@@ -1,11 +1,11 @@
 ## 1. Contracts, Policy, and Bounded Memory
 
-- [ ] 1.1 (CACHE-001) Add framework cache contracts for `CacheScope`, dependency/context parsing, versioned `LLMCacheKey`, typed lookup/write outcomes, cache entry identity, and owner-token single-flight leases; expose them from `framework.llm.cache` without infrastructure imports.
-- [ ] 1.2 (CACHE-002) Implement versioned canonical semantic payload construction and domain-separated HMAC key generation for scope, deployment, and request identity; reject unsupported values and retain unknown metadata conservatively.
-- [ ] 1.3 (CACHE-003) Replace boolean-only cache policy with deterministic mode-aware eligibility decisions covering task/agent allowlists, scope, dependency revisions, temperature/seed, tools, freshness/side-effect markers, output contract, and stable reason codes.
-- [ ] 1.4 (CACHE-004) Replace the unbounded memory dictionary with a bounded, thread-safe, monotonic-clock, LRU, TTL, byte-limited `InMemoryLLMCache` implementing store and owner-token lease contracts with isolated return values.
-- [ ] 1.5 (CACHE-005) Add versioned safe response projection/entry encoding and a shared deterministic cache-write validator that rechecks current response format/output schema, rejects tool calls and unsafe fields, and reconstructs a fresh response on read.
-- [ ] 1.6 Add focused contract tests for canonicalization, HMAC redaction, scope/deployment/generation isolation, eligibility reasons, safe projection, schema validation, memory TTL/LRU/size/deep-copy/thread safety, and stale-owner release protection.
+- [x] 1.1 (CACHE-001) Add framework cache contracts for `CacheScope`, dependency/context parsing, versioned `LLMCacheKey`, typed lookup/write outcomes, cache entry identity, and owner-token single-flight leases; expose them from `framework.llm.cache` without infrastructure imports.
+- [x] 1.2 (CACHE-002) Implement versioned canonical semantic payload construction and domain-separated HMAC key generation for scope, deployment, and request identity; reject unsupported values and retain unknown metadata conservatively.
+- [x] 1.3 (CACHE-003) Replace boolean-only cache policy with deterministic mode-aware eligibility decisions covering task/agent allowlists, scope, dependency revisions, temperature/seed, tools, freshness/side-effect markers, output contract, and stable reason codes.
+- [x] 1.4 (CACHE-004) Replace the unbounded memory dictionary with a bounded, thread-safe, monotonic-clock, LRU, TTL, byte-limited `InMemoryLLMCache` implementing store and owner-token lease contracts with isolated return values.
+- [x] 1.5 (CACHE-005) Add versioned safe response projection/entry encoding and a shared deterministic cache-write validator that rechecks current response format/output schema, rejects tool calls and unsafe fields, and reconstructs a fresh response on read.
+- [x] 1.6 Add focused contract tests for canonicalization, HMAC redaction, scope/deployment/generation isolation, eligibility reasons, safe projection, schema validation, memory TTL/LRU/size/deep-copy/thread safety, and stale-owner release protection.
 
 ## 2. Router, Accounting, Events, and Composition Boundary
 

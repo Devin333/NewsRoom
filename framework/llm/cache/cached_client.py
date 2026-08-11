@@ -11,6 +11,12 @@ from framework.llm.models.response import LLMResponse
 
 
 class CachedLLMClient:
+    """Development/test compatibility cache.
+
+    Production cache orchestration belongs to ``LLMRouter`` so hits can precede
+    cooldown and provider-budget admission.
+    """
+
     def __init__(
         self,
         client: LLMClient,
@@ -73,4 +79,3 @@ class CachedLLMClient:
             }
         )
         return replace(response, metadata=metadata)
-
