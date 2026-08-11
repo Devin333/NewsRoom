@@ -117,18 +117,8 @@ class ReaderRepairContextBuilder:
                 },
             }
         )
-        compression_records = tuple(
-            sorted(
-                (
-                    event["payload"]
-                    for event in self.context_assembler.events
-                    if event.get("event_type") == "context_compression_recorded"
-                ),
-                key=lambda record: (
-                    0 if any(str(ref).startswith("paper://") for ref in record.get("preserved_refs", ())) else 1,
-                    str(record.get("compression_id", "")),
-                ),
-            )
+        compression_records = self.context_assembler.compression_record_projections(
+            envelope_id=envelope.envelope_id,
         )
         return ReaderRepairContextBuildResult(
             context_pack=context_pack,

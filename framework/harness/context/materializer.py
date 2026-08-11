@@ -190,6 +190,7 @@ class ContextGroupMaterializer:
                 "legacy_segment_id": segment.segment_id,
                 "legacy_segment_type": segment.segment_type.value,
                 "legacy_compression_level": segment.compression_level.value,
+                "legacy_token_estimate": segment.token_estimate,
             }
             if segment.segment_type is ContextSegmentType.GLOBAL_POLICY:
                 groups.append(
@@ -248,6 +249,12 @@ class ContextGroupMaterializer:
                         content_ref=segment.content_ref,
                         source_refs=source_refs,
                         protection=reasons,
+                        reconstruction_policy=(
+                            ContextReconstructionPolicy.DURABLE_REF
+                            if segment.metadata.get("reconstruction_ref")
+                            else ContextReconstructionPolicy.NONE
+                        ),
+                        reconstruction_ref=segment.metadata.get("reconstruction_ref"),
                         semantic_metadata=semantic_metadata,
                     )
                 )

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+from dataclasses import replace
 
 from framework.harness.context.models import ContextEnvelope, ContextSnapshot
 from framework.harness.control_plane.errors import HarnessValidationError
@@ -13,25 +14,32 @@ class ContextSnapshotStore:
         self.envelopes: dict[str, ContextEnvelope] = {}
 
     def save(self, envelope: ContextEnvelope) -> ContextSnapshot:
-        refs = _envelope_refs(envelope)
-        checksum = _checksum(envelope)
+        _, snapshot = self.save_bound(envelope)
+        return snapshot
+
+    def save_bound(self, envelope: ContextEnvelope) -> tuple[ContextEnvelope, ContextSnapshot]:
+        """Persist one immutable legacy projection without mutating it after save."""
+        snapshot_id = f"context-snapshot://{len(self.snapshots) + 1}"
+        bound_envelope = replace(envelope, snapshot_ref=snapshot_id)
+        refs = _envelope_refs(bound_envelope)
+        checksum = _checksum(bound_envelope)
         snapshot = ContextSnapshot(
-            snapshot_id=f"context-snapshot://{len(self.snapshots) + 1}",
-            envelope_id=envelope.envelope_id,
-            run_id=envelope.run_id,
-            step_id=envelope.step_id,
-            phase=envelope.phase,
-            segment_refs=tuple(segment.content_ref for segment in envelope.segments),
-            assembled_prompt_ref=f"artifact://assembled-context/{envelope.envelope_id}",
+            snapshot_id=snapshot_id,
+            envelope_id=bound_envelope.envelope_id,
+            run_id=bound_envelope.run_id,
+            step_id=bound_envelope.step_id,
+            phase=bound_envelope.phase,
+            segment_refs=tuple(segment.content_ref for segment in bound_envelope.segments),
+            assembled_prompt_ref=f"artifact://assembled-context/{bound_envelope.envelope_id}",
             refs=refs,
-            token_estimate=envelope.token_estimate,
-            cache_key=envelope.cache_policy.cache_key if envelope.cache_policy else f"context:{envelope.envelope_id}",
+            token_estimate=bound_envelope.token_estimate,
+            cache_key=bound_envelope.cache_policy.cache_key if bound_envelope.cache_policy else f"context:{bound_envelope.envelope_id}",
             checksum=checksum,
             metadata={"payload_saved": False},
         )
         self.snapshots[snapshot.snapshot_id] = snapshot
-        self.envelopes[envelope.envelope_id] = envelope
-        return snapshot
+        self.envelopes[bound_envelope.envelope_id] = bound_envelope
+        return bound_envelope, snapshot
 
     def load(self, snapshot_id: str) -> ContextSnapshot:
         return self.snapshots[snapshot_id]

@@ -1681,11 +1681,11 @@ class ResearchSinglePaperRuntime:
             workspace.context_envelope.snapshot_ref or ""
         )
         workspace.compression_records = _research_ordered_compression_records(
-            [
-                event["payload"]
-                for event in workspace.context_assembler.events
-                if event.get("event_type") == "context_compression_recorded"
-            ]
+            list(
+                workspace.context_assembler.compression_record_projections(
+                    envelope_id=workspace.context_envelope.envelope_id,
+                )
+            )
         )
         add_member(
             "research-context-snapshot",
@@ -2221,8 +2221,8 @@ def _research_ordered_compression_records(records: list[dict[str, Any]]) -> list
     return sorted(
         records,
         key=lambda record: (
-            0 if any(str(ref).startswith("paper://") for ref in record.get("preserved_refs", ())) else 1,
-            str(record.get("compression_id", "")),
+            str(record.get("record_ref", {}).get("ref", "")),
+            str(record.get("activation_event_id", "")),
         ),
     )
 
