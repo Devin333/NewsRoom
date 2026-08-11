@@ -5,6 +5,13 @@ from interfaces.composition.research_errors import (
     ResearchRemediation,
     ResearchRuntimeUnavailableError,
 )
+from interfaces.composition.llm_cache import (
+    LLMCacheConfigurationError,
+    LLMCacheSettings,
+    build_cache_aware_llm_router,
+    build_llm_cache_runtime,
+    build_llm_cache_runtime_from_env,
+)
 from interfaces.composition.research import (
     ResearchRuntimeComposition,
     ResearchRuntimeProvider,
@@ -25,6 +32,8 @@ from interfaces.composition.research_settings import (
 )
 
 __all__ = [
+    "LLMCacheConfigurationError",
+    "LLMCacheSettings",
     "ResearchArtifactSettings",
     "ResearchCapability",
     "ResearchCompositionError",
@@ -41,6 +50,9 @@ __all__ = [
     "ResearchSourceSettings",
     "build_research_application_service",
     "build_research_runtime_composition",
+    "build_cache_aware_llm_router",
+    "build_llm_cache_runtime",
+    "build_llm_cache_runtime_from_env",
     "close_default_research_runtime",
     "default_research_runtime_provider",
     "reset_default_research_runtime",

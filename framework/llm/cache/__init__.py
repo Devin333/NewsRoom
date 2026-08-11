@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from framework.llm.cache.cached_client import CachedLLMClient
 from framework.llm.cache.contracts import (
     CacheContext,
     CacheDependencies,
@@ -41,7 +40,6 @@ from framework.llm.cache.runtime import (
 
 __all__ = [
     "CACHE_ENTRY_SCHEMA_VERSION",
-    "CachedLLMClient",
     "CacheCanonicalizationError",
     "CacheContext",
     "CacheDependencies",

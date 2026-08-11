@@ -16,7 +16,6 @@ from framework.llm.budget import (
 )
 from framework.llm.cache import (
     CACHE_ENTRY_SCHEMA_VERSION,
-    CachedLLMClient,
     CacheCanonicalizationError,
     CacheContext,
     CacheDependencies,
@@ -125,7 +124,6 @@ from framework.llm.structured_output import (
 
 __all__ = [
     "CACHE_ENTRY_SCHEMA_VERSION",
-    "CachedLLMClient",
     "CacheCanonicalizationError",
     "CacheContext",
     "CacheDependencies",

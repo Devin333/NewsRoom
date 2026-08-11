@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from framework.llm import (
-    CachedLLMClient,
     FakeLLMClient,
     InMemoryLLMCache,
     LLMCachePolicy,
@@ -13,6 +12,7 @@ from framework.llm import (
     PromptVariables,
     REDACTED_VALUE,
 )
+from framework.llm.cache.cached_client import CachedLLMClient
 
 
 def test_fake_client_supports_prd_helpers_and_streaming() -> None:

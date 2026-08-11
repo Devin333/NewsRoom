@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass
-from typing import Any
+from dataclasses import dataclass, field
+from types import MappingProxyType
+from typing import Any, Mapping
 
 from framework.llm.cache.contracts import CacheContext, CacheEligibility, CacheMode
 from framework.llm.cache.key import CacheCanonicalizationError, canonical_json_bytes
@@ -18,6 +19,10 @@ class LLMCachePolicy:
     cacheable_task_types: tuple[str, ...] = ()
     no_cache_agent_ids: tuple[str, ...] = ()
     required_dependencies: tuple[str, ...] = ()
+    task_required_dependencies: Mapping[str, tuple[str, ...]] = field(
+        default_factory=dict,
+        repr=False,
+    )
     freshness_sensitive_task_types: tuple[str, ...] = (
         "live_research",
         "latest",
@@ -54,6 +59,18 @@ class LLMCachePolicy:
             self,
             "required_dependencies",
             _normalized_names(self.required_dependencies, field="required_dependencies"),
+        )
+        task_dependencies: dict[str, tuple[str, ...]] = {}
+        for task_type, dependencies in dict(self.task_required_dependencies or {}).items():
+            normalized_task = _normalized_name(task_type, field="task_required_dependencies")
+            task_dependencies[normalized_task] = _normalized_names(
+                tuple(dependencies),
+                field=f"task_required_dependencies.{normalized_task}",
+            )
+        object.__setattr__(
+            self,
+            "task_required_dependencies",
+            MappingProxyType(task_dependencies),
         )
         object.__setattr__(
             self,
@@ -94,7 +111,15 @@ class LLMCachePolicy:
         if context.freshness_sensitive or task_type in self.freshness_sensitive_task_types:
             return CacheEligibility(False, "freshness_sensitive_task", context)
 
-        if context.dependencies.missing(self.required_dependencies):
+        required_dependencies = tuple(
+            dict.fromkeys(
+                (
+                    *self.required_dependencies,
+                    *self.task_required_dependencies.get(task_type, ()),
+                )
+            )
+        )
+        if context.dependencies.missing(required_dependencies):
             return CacheEligibility(False, "missing_dependency_revision", context)
         if not _supported_output_contract(request.response_format, request.output_schema):
             return CacheEligibility(False, "unsupported_output_contract", context)
@@ -138,3 +163,9 @@ def _normalized_names(values: tuple[str, ...], *, field: str) -> tuple[str, ...]
             raise ValueError(f"{field} must contain non-empty strings")
         parsed.append(value.strip())
     return tuple(dict.fromkeys(parsed))
+
+
+def _normalized_name(value: Any, *, field: str) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"{field} must contain non-empty string keys")
+    return value.strip()

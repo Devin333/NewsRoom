@@ -112,6 +112,7 @@ pythonpath = [".", "sdk/python"]
 addopts = ["--import-mode=importlib", "-m", "not live_research_e2e"]
 markers = [
   "live_research_e2e: opt-in live arXiv and LLM production-composition coverage; select explicitly with valid credentials",
+  "redis_integration: opt-in isolated Redis integration coverage; select explicitly with a dedicated test URL",
 ]
 
 [tool.pyright]
