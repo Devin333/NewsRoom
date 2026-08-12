@@ -9,7 +9,7 @@ from framework.agent.loop.parser import AgentActionParser
 from framework.agent.loop.prompt import PromptBuilder
 from framework.agent.loop.judge import OutputJudge
 from framework.agent.subagents import SubAgentExecutor
-from framework.agent.runtime.llm import GlobalBudgetTracker
+from framework.llm.budget import GlobalBudgetTracker
 from framework.llm.models import LLMClient
 from framework.memory import MemoryPolicy, MemoryRuntime
 from framework.tool import ToolExecutor

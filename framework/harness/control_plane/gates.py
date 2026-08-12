@@ -4,6 +4,9 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from framework.events.canonical import checksum_for
+from framework.harness.control_plane.cumulative_budget import (
+    HarnessCumulativeBudgetFact,
+)
 from framework.harness.control_plane.errors import HarnessValidationError
 from framework.harness.control_plane.policy import HarnessBudgetSnapshot
 from framework.harness.control_plane.state import HarnessState, HarnessStepState
@@ -74,6 +77,7 @@ class GateContext:
     worker_result: HarnessWorkerResult | None = None
     quality_verdict: HarnessQualityVerdict | None = None
     budget: HarnessBudgetSnapshot | None = None
+    cumulative_budget_fact: HarnessCumulativeBudgetFact | None = None
 
 
 class DeterministicGate:
@@ -234,6 +238,54 @@ class BudgetGate(DeterministicGate):
         )
 
 
+class CumulativeLLMBudgetGate(DeterministicGate):
+    gate_name = "cumulative_llm_budget"
+    gate_version = "1"
+
+    def evaluate(self, context: GateContext) -> HarnessGateResult:
+        fact = context.cumulative_budget_fact
+        if fact is None:
+            return HarnessGateResult(
+                gate_name=self.gate_name,
+                passed=True,
+                reason="no cumulative LLM budget fact",
+                details={"reason_code": "budget_fact_not_applicable"},
+            )
+        projection = fact.control_projection()
+        if fact.resolution_status != "verified":
+            return HarnessGateResult(
+                gate_name=self.gate_name,
+                passed=False,
+                reason="canonical cumulative LLM budget fact is invalid",
+                details={
+                    "reason_code": fact.reason_code or "budget_fact_invalid",
+                    "canonical_budget_fact": projection,
+                },
+            )
+        if not fact.within_budget:
+            return HarnessGateResult(
+                gate_name=self.gate_name,
+                passed=False,
+                reason="canonical cumulative LLM budget did not admit continuation",
+                details={
+                    "reason_code": (
+                        "budget_usage_indeterminate"
+                        if fact.indeterminate
+                        else "cumulative_llm_budget_denied"
+                    ),
+                    "canonical_budget_fact": projection,
+                },
+            )
+        return HarnessGateResult(
+            gate_name=self.gate_name,
+            passed=True,
+            details={
+                "reason_code": "cumulative_llm_budget_verified",
+                "canonical_budget_fact": projection,
+            },
+        )
+
+
 class SkillEvolutionBudgetGate(DeterministicGate):
     gate_name = "skill_evolution_budget"
 
@@ -281,6 +333,7 @@ def default_verify_gates() -> tuple[DeterministicGate, ...]:
         DeduplicationGate(),
         ScoreRangeGate(),
         BudgetGate(),
+        CumulativeLLMBudgetGate(),
         SkillEvolutionBudgetGate(),
     )
 
@@ -358,6 +411,7 @@ def _is_checksum(value: str) -> bool:
 
 __all__ = [
     "BudgetGate",
+    "CumulativeLLMBudgetGate",
     "DeduplicationGate",
     "DeterministicGate",
     "GateContext",

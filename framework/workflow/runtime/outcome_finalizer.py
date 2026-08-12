@@ -306,7 +306,12 @@ def workflow_metrics_payload(
             if agent_metrics.get("global_budget_usage") is not None:
                 metrics["global_budget_usage"] = agent_metrics.get("global_budget_usage")
     if global_budget_tracker is not None and hasattr(global_budget_tracker, "snapshot"):
-        metrics["global_budget_usage"] = global_budget_tracker.snapshot()
+        canonical_snapshot = getattr(global_budget_tracker, "canonical_snapshot", None)
+        metrics["global_budget_usage"] = (
+            canonical_snapshot()
+            if callable(canonical_snapshot)
+            else global_budget_tracker.snapshot()
+        )
         budget_summary = budget_summary_from_tracker(global_budget_tracker)
         if budget_summary is not None:
             metrics["budget"] = budget_summary

@@ -324,7 +324,7 @@ def test_cache_hit_replay_is_bounded_isolated_and_avoids_provider_state() -> Non
             ),
         )
     )
-    budget = GlobalBudgetTracker(GlobalBudgetPolicy(max_llm_calls=1))
+    budget = GlobalBudgetTracker(GlobalBudgetPolicy(max_llm_calls=3))
     cooldown = InMemoryLLMCooldownTracker(
         LLMCooldownPolicy(
             cooldown_on_rate_limit_seconds=60,
@@ -358,7 +358,7 @@ def test_cache_hit_replay_is_bounded_isolated_and_avoids_provider_state() -> Non
     replay = list(router.stream("route", request))
 
     assert client.stream_calls == 1
-    assert budget.usage.llm_calls == 1
+    assert budget.usage.llm_calls == 2
     assert budget.usage.token_usage == TokenUsage(input_tokens=11, output_tokens=8)
     assert cooldown.state("primary") == cooldown_before
     assert [event.event_type for event in replay].count("message_start") == 1
@@ -386,6 +386,7 @@ def test_cache_hit_replay_is_bounded_isolated_and_avoids_provider_state() -> Non
     replay[0].metadata["provider"] = "mutated"
     next_replay = list(router.stream("route", request))
     assert next_replay[0].metadata["provider"] == "test"
+    assert budget.usage.llm_calls == 3
 
 
 def test_empty_cached_response_replays_only_legal_terminal_sequence() -> None:

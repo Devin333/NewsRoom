@@ -1,85 +1,15 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from time import perf_counter
 from typing import Any
 
+from framework.llm.budget import (
+    GlobalBudgetPolicy,
+    GlobalBudgetTracker,
+)
 from framework.llm.models import TokenUsage
 from framework.shared.json import to_jsonable
-
-
-@dataclass(frozen=True)
-class GlobalBudgetPolicy:
-    max_total_cost_usd: float | None = None
-    max_total_tokens: int | None = None
-    max_llm_calls: int | None = None
-    on_budget_exceeded: str = "fail"
-
-
-@dataclass(frozen=True)
-class GlobalBudgetUsage:
-    llm_calls: int = 0
-    token_usage: TokenUsage = field(default_factory=TokenUsage)
-    estimated_cost_usd: float = 0.0
-
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "llm_calls": self.llm_calls,
-            "token_usage": self.token_usage.to_dict(),
-            "estimated_cost_usd": self.estimated_cost_usd,
-        }
-
-
-class GlobalBudgetTracker:
-    def __init__(self, policy: GlobalBudgetPolicy) -> None:
-        self.policy = policy
-        self._usage = GlobalBudgetUsage()
-
-    @property
-    def usage(self) -> GlobalBudgetUsage:
-        return self._usage
-
-    def snapshot(self) -> dict[str, Any]:
-        return to_jsonable(self._usage.to_dict())
-
-    def record_llm_call(
-        self,
-        usage: TokenUsage,
-        pricing: Any | None = None,
-        *,
-        estimated_cost_usd: float | None = None,
-        replace_reserved_prompt_tokens: int | None = None,
-        count_request: bool = True,
-    ) -> Any:
-        _ = pricing
-        reserved_prompt_tokens = max(0, int(replace_reserved_prompt_tokens or 0))
-        self._usage = GlobalBudgetUsage(
-            llm_calls=self._usage.llm_calls + (1 if count_request else 0),
-            token_usage=TokenUsage(
-                input_tokens=(
-                    self._usage.token_usage.input_tokens
-                    - reserved_prompt_tokens
-                    + usage.input_tokens
-                ),
-                output_tokens=self._usage.token_usage.output_tokens + usage.output_tokens,
-                reasoning_tokens=(
-                    self._usage.token_usage.reasoning_tokens + usage.reasoning_tokens
-                ),
-                cached_input_tokens=(
-                    self._usage.token_usage.cached_input_tokens + usage.cached_input_tokens
-                ),
-            ),
-            estimated_cost_usd=round(
-                self._usage.estimated_cost_usd
-                + float(
-                    estimated_cost_usd
-                    if estimated_cost_usd is not None
-                    else usage.estimated_cost_usd or 0.0
-                ),
-                12,
-            ),
-        )
-        return self.snapshot()
 
 
 @dataclass(frozen=True)
@@ -230,6 +160,28 @@ def budget_usage_from_snapshot(
     tool_calls: int = 0,
     wall_time_seconds: float = 0.0,
 ) -> WorkflowBudgetUsage:
+    if snapshot.get("schema_version") is not None:
+        scopes = snapshot.get("scopes")
+        if isinstance(scopes, list) and scopes:
+            root_scope_id = snapshot.get("root_scope_id")
+            root = next(
+                (
+                    item
+                    for item in scopes
+                    if isinstance(item, dict)
+                    and isinstance(item.get("scope"), dict)
+                    and item["scope"].get("scope_id") == root_scope_id
+                ),
+                None,
+            )
+            if isinstance(root, dict):
+                committed = root.get("committed")
+                reserved = root.get("reserved")
+                if isinstance(committed, dict) and isinstance(reserved, dict):
+                    snapshot = _legacy_projection_from_canonical_amounts(
+                        committed,
+                        reserved,
+                    )
     token_usage = snapshot.get("token_usage") if isinstance(snapshot, dict) else {}
     if not isinstance(token_usage, dict):
         token_usage = {}
@@ -295,7 +247,11 @@ def budget_summary_from_usage(
 def budget_summary_from_tracker(global_budget_tracker: Any | None) -> dict[str, Any] | None:
     if global_budget_tracker is None or not hasattr(global_budget_tracker, "snapshot"):
         return None
-    snapshot = global_budget_tracker.snapshot()
+    snapshot = (
+        global_budget_tracker.canonical_snapshot()
+        if hasattr(global_budget_tracker, "canonical_snapshot")
+        else global_budget_tracker.snapshot()
+    )
     if not isinstance(snapshot, dict):
         return None
     usage = budget_usage_from_snapshot(snapshot)
@@ -323,22 +279,31 @@ def restore_global_budget_tracker_usage(
 ) -> bool:
     if global_budget_tracker is None or not isinstance(snapshot, dict):
         return False
-    if not hasattr(global_budget_tracker, "_usage"):
+    restore = getattr(global_budget_tracker, "restore", None)
+    if not callable(restore):
         return False
-    token_usage = snapshot.get("token_usage")
-    if not isinstance(token_usage, dict):
-        token_usage = {}
-    global_budget_tracker._usage = GlobalBudgetUsage(
-        llm_calls=int(snapshot.get("llm_calls") or 0),
-        token_usage=TokenUsage(
-            input_tokens=int(token_usage.get("input_tokens") or 0),
-            output_tokens=int(token_usage.get("output_tokens") or 0),
-            reasoning_tokens=int(token_usage.get("reasoning_tokens") or 0),
-            cached_input_tokens=int(token_usage.get("cached_input_tokens") or 0),
-        ),
-        estimated_cost_usd=float(snapshot.get("estimated_cost_usd") or 0.0),
-    )
+    restore(snapshot)
     return True
+
+
+def _legacy_projection_from_canonical_amounts(
+    committed: dict[str, Any],
+    reserved: dict[str, Any],
+) -> dict[str, Any]:
+    def total(name: str) -> int:
+        return int(committed.get(name) or 0) + int(reserved.get(name) or 0)
+
+    return {
+        "llm_calls": total("llm_calls"),
+        "token_usage": {
+            "input_tokens": total("input_tokens"),
+            "output_tokens": total("output_tokens"),
+            "reasoning_tokens": total("reasoning_tokens"),
+            "cached_input_tokens": total("cached_input_tokens"),
+        },
+        "estimated_cost_usd": float(committed.get("estimated_cost_usd") or 0)
+        + float(reserved.get("estimated_cost_usd") or 0),
+    }
 
 
 def _workflow_budget_policy_from_global_tracker(

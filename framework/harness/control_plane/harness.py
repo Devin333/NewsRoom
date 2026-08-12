@@ -18,6 +18,11 @@ from framework.events.errors import (
     EventStoreCorruptionError,
     EventStreamVersionConflictError,
 )
+from framework.events.budget import DurableBudgetFactResolver
+from framework.harness.control_plane.cumulative_budget import (
+    HarnessCumulativeBudgetFact,
+    resolve_harness_cumulative_budget_fact,
+)
 from framework.harness.control_plane.activity import (
     HARNESS_ACTIVITY_CONTRACT,
     HarnessActivity,
@@ -35,6 +40,7 @@ from framework.harness.control_plane.gate_registry import (
     GateReference,
 )
 from framework.harness.control_plane.gates import (
+    CumulativeLLMBudgetGate,
     DeterministicGate,
     GateContext,
     HarnessGateResult,
@@ -572,6 +578,7 @@ class HarnessControlPlane:
         graph_activity_dispatcher: HarnessGraphActivityDispatcherPort | None = None,
         timer_wake_port: HarnessTimerWakePort | None = None,
         side_effect_attempt_owner_id: str | None = None,
+        budget_fact_resolver: DurableBudgetFactResolver | None = None,
     ) -> None:
         if event_port is None:
             raise HarnessValidationError(
@@ -630,6 +637,12 @@ class HarnessControlPlane:
         ):
             raise TypeError("timer_wake_port must implement HarnessTimerWakePort")
         self.timer_wake_port = timer_wake_port
+        resolver_factory = getattr(event_port, "budget_fact_resolver", None)
+        self._budget_fact_resolver = (
+            budget_fact_resolver
+            if budget_fact_resolver is not None
+            else resolver_factory() if callable(resolver_factory) else None
+        )
         self.graph_preflight = graph_preflight or HarnessGraphPreflight(
             policy=HarnessGraphPreflightPolicy(),
         )
@@ -681,6 +694,10 @@ class HarnessControlPlane:
             str,
             dict[str, HarnessQualityVerdict],
         ] = {}
+        self._graph_budget_facts: dict[
+            str,
+            dict[str, HarnessCumulativeBudgetFact],
+        ] = {}
 
     def _require_graph_runtime(self) -> HarnessGraphControlPlaneRuntime:
         if self._graph_runtime is None:
@@ -713,6 +730,7 @@ class HarnessControlPlane:
             self._graph_outputs,
             self._graph_gate_results,
             self._graph_quality_verdicts,
+            self._graph_budget_facts,
         ):
             cache.pop(run_id, None)
 
@@ -2141,6 +2159,7 @@ class HarnessControlPlane:
                 self._committed_events.append(event)
         worker_results: dict[str, HarnessWorkerResult] = {}
         self._graph_worker_results[run_id] = worker_results
+        self._graph_budget_facts[run_id] = {}
         self._graph_outputs[run_id] = {}
         recovery = self._require_graph_runtime().transition_port.recover_graph(run_id)
         graph = self._prepared_graphs[run_id]
@@ -2163,6 +2182,18 @@ class HarnessControlPlane:
             )
             result = _coerce_worker_result(recorded)
             worker_results[activity.node_instance_id] = result
+            fact = resolve_harness_cumulative_budget_fact(
+                run_id=run_id,
+                worker_result=result,
+                resolver=self._budget_fact_resolver,
+            )
+            if fact is not None:
+                self._graph_budget_facts[run_id][activity.node_instance_id] = fact
+                self._record_or_validate_budget_fact(
+                    run_spec,
+                    activity,
+                    fact,
+                )
         definitions = {item.node_id: item for item in graph.nodes}
         for node in state.node_instances:
             if (
@@ -2863,11 +2894,67 @@ class HarnessControlPlane:
         self._graph_worker_results.setdefault(run_id, {})[activity.node_instance_id] = (
             worker_result
         )
+        budget_fact = resolve_harness_cumulative_budget_fact(
+            run_id=run_id,
+            worker_result=worker_result,
+            resolver=self._budget_fact_resolver,
+        )
+        if budget_fact is not None:
+            self._graph_budget_facts.setdefault(run_id, {})[
+                activity.node_instance_id
+            ] = budget_fact
+            self._record_or_validate_budget_fact(
+                run_spec,
+                activity,
+                budget_fact,
+            )
         self._record_graph_worker_status(
             run_spec,
             state,
             activity,
             worker_result,
+        )
+
+    def _record_or_validate_budget_fact(
+        self,
+        run_spec: HarnessRunSpec,
+        activity: HarnessGraphActivity,
+        fact: HarnessCumulativeBudgetFact,
+    ) -> HarnessEvent:
+        step_id = activity.step_ref.contract_id
+        expected_payload = fact.control_projection()
+        matches = tuple(
+            event
+            for event in self.event_port.read_history(run_spec.run_id)
+            if event.event_type is HarnessEventType.BUDGET_FACT_RECORDED
+            and event.step_id == step_id
+            and event.payload.get("operation_id") == fact.operation_id
+            and event.payload.get("ledger_revision") == fact.ledger_revision
+        )
+        if matches:
+            if len(matches) != 1 or not _budget_fact_payload_matches(
+                matches[0].payload,
+                expected_payload,
+            ):
+                raise EventStoreCorruptionError(
+                    "durable Harness budget fact conflicts with canonical ledger history"
+                )
+            return matches[0]
+        return self._record_event(
+            HarnessEvent(
+                event_type=HarnessEventType.BUDGET_FACT_RECORDED,
+                run_id=run_spec.run_id,
+                step_id=step_id,
+                payload=expected_payload,
+                metadata={
+                    "node_instance_id": activity.node_instance_id,
+                    "attempt": activity.attempt,
+                },
+                occurred_at=_graph_time(
+                    run_spec,
+                    activity.causal_decision_sequence + 2,
+                ),
+            )
         )
 
     def _execute_graph_compensation(
@@ -3564,6 +3651,10 @@ class HarnessControlPlane:
             worker_observation = StepWorkerObservation.from_worker_result(
                 worker_result,
                 accepted_evidence=activity_evidence,
+                cumulative_budget_fact=self._graph_budget_facts.get(
+                    state.run_id,
+                    {},
+                ).get(node.instance_id),
             )
 
         approval_evidence = max(
@@ -3717,7 +3808,7 @@ class HarnessControlPlane:
     ) -> HarnessGraphState:
         if step_id is None:
             raise HarnessValidationError("VERIFY decision is missing its Step binding")
-        entries = self._graph_verify_gate_entries(run_spec, step_id)
+        entries = self._graph_verify_gate_entries(run_spec, state, step_id)
         results = self._evaluate_graph_gates(
             run_spec,
             state,
@@ -3741,11 +3832,26 @@ class HarnessControlPlane:
     def _graph_verify_gate_entries(
         self,
         run_spec: HarnessRunSpec,
+        state: HarnessGraphState,
         step_id: str,
     ) -> tuple[tuple[str, DeterministicGate], ...]:
         entries: list[tuple[str, DeterministicGate]] = [
             (_gate_reference(gate), gate) for gate in self.verify_gates
         ]
+        node = _graph_node_for_step(state, step_id)
+        cumulative_budget_fact = self._graph_budget_facts.get(
+            run_spec.run_id,
+            {},
+        ).get(node.instance_id)
+        if cumulative_budget_fact is None:
+            # The cumulative ledger is opt-in at the worker boundary. Keep
+            # legacy graph runs byte-for-byte compatible until a durable fact
+            # is actually available for deterministic verification.
+            entries = [
+                (reference, gate)
+                for reference, gate in entries
+                if not isinstance(gate, CumulativeLLMBudgetGate)
+            ]
         entries.extend(
             (str(binding.reference), binding.gate)
             for binding in self._gate_bindings_by_run.get(
@@ -3826,7 +3932,7 @@ class HarnessControlPlane:
                 raise EventIncompleteHistoryError(
                     "verifying Graph node lacks its Step binding"
                 )
-            entries = self._graph_verify_gate_entries(run_spec, step_id)
+            entries = self._graph_verify_gate_entries(run_spec, state, step_id)
             observations = tuple(
                 commit.observation
                 for commit in recovery.observation_commits
@@ -3944,6 +4050,10 @@ class HarnessControlPlane:
             worker_result=worker_result,
             quality_verdict=None,
             budget=self._graph_budget_snapshot(run_spec, state),
+            cumulative_budget_fact=self._graph_budget_facts.get(
+                run_spec.run_id,
+                {},
+            ).get(node.instance_id),
         )
         results = tuple(
             self._evaluate_gate(gate, reference=reference, context=context)
@@ -5899,8 +6009,22 @@ def _gate_input_ref(context: GateContext, reference: str) -> str:
                 else context.quality_verdict.to_dict()
             ),
             "budget": None if context.budget is None else context.budget.to_dict(),
+            "cumulative_budget_fact": (
+                None
+                if context.cumulative_budget_fact is None
+                else context.cumulative_budget_fact.control_projection()
+            ),
         }
     )
+
+
+def _budget_fact_payload_matches(
+    stored: Mapping[str, Any],
+    expected: Mapping[str, Any],
+) -> bool:
+    projection = dict(stored)
+    projection.pop("projection_schema", None)
+    return projection == dict(expected)
 
 
 def _is_valid_gate_result(result: HarnessGateResult) -> bool:

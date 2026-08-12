@@ -291,16 +291,28 @@ def transcript_entry_from_event(event: Any, *, phase_index: int | None = None) -
     metadata.update({"event_type": event_type, "event_payload": event_payload})
     if phase_index is not None:
         metadata["phase_index"] = phase_index
+    budget_fact = (
+        event_payload if event_type == "budget_fact_recorded" else None
+    )
     return HarnessTranscriptEntry(
         entry_id=_optional_text(payload.get("event_id")),
         run_id=str(payload.get("run_id")),
         step_id=payload.get("step_id"),
         phase=phase,
         decision=event_payload if event_type == "decision_recorded" else None,
-        input_refs=tuple(event_payload.get("input_refs", ())),
+        input_refs=(
+            (str(event_payload["fact_ref"]),)
+            if budget_fact is not None
+            and isinstance(event_payload.get("fact_ref"), str)
+            else tuple(event_payload.get("input_refs", ()))
+        ),
         output_refs=tuple(event_payload.get("output_refs", ())),
         gate_results=tuple(event_payload.get("gate_results", ())),
-        budget_snapshot=event_payload.get("budget_snapshot") or event_payload.get("metadata", {}).get("budget_snapshot"),
+        budget_snapshot=(
+            budget_fact
+            or event_payload.get("budget_snapshot")
+            or event_payload.get("metadata", {}).get("budget_snapshot")
+        ),
         worker_call_ref=event_payload.get("worker_call_ref"),
         artifact_refs=tuple(event_payload.get("artifact_refs", event_payload.get("artifacts", ()))),
         metadata=metadata,
@@ -398,6 +410,8 @@ def _phase_from_event_type(event_type: str) -> str:
     if "worker" in event_type:
         return "execute"
     if "gate" in event_type or "verify" in event_type:
+        return "verify"
+    if event_type == "budget_fact_recorded":
         return "verify"
     if "decision" in event_type:
         return "decision"

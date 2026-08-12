@@ -234,7 +234,7 @@ def _profile(
     )
 
 
-def test_cache_hit_precedes_cooldown_and_provider_budget_and_is_current_call_metadata() -> None:
+def test_cache_hit_precedes_cooldown_and_is_counted_as_current_logical_call() -> None:
     now = datetime(2026, 8, 11, tzinfo=UTC)
     cache = CountingCache()
     runtime = _runtime(CacheMode.READ_WRITE, cache)
@@ -249,7 +249,7 @@ def test_cache_hit_precedes_cooldown_and_provider_budget_and_is_current_call_met
         "primary",
         LLMProviderError("down", error_type="server_error", retryable=True, status_code=503),
     )
-    budget = GlobalBudgetTracker(GlobalBudgetPolicy(max_llm_calls=0))
+    budget = GlobalBudgetTracker(GlobalBudgetPolicy(max_llm_calls=1))
 
     response = _router(
         runtime,
@@ -261,7 +261,7 @@ def test_cache_hit_precedes_cooldown_and_provider_budget_and_is_current_call_met
 
     assert response.content == "cached response"
     assert client.call_count == 0
-    assert budget.usage.llm_calls == 0
+    assert budget.usage.llm_calls == 1
     assert cooldown.state("primary") is not None
     assert response.metadata["llm_cache_hit"] is True
     assert response.metadata["llm_provider_call"] is False
@@ -276,6 +276,56 @@ def test_cache_hit_precedes_cooldown_and_provider_budget_and_is_current_call_met
     event_payload = json.dumps(response.metadata["llm_router_events"], sort_keys=True)
     assert "classify this stable input" not in event_payload
     assert "tenant-a" not in event_payload
+
+
+def test_cache_hit_cannot_bypass_exhausted_logical_call_budget() -> None:
+    cache = CountingCache()
+    runtime = _runtime(CacheMode.READ_WRITE, cache)
+    request = _request()
+    _seed(runtime, cache, request)
+    reads_before = cache.get_calls
+    client = FakeLLMClient(["provider must not be called"])
+    budget = GlobalBudgetTracker(GlobalBudgetPolicy(max_llm_calls=0))
+
+    with pytest.raises(LLMRouteError) as raised:
+        _router(
+            runtime,
+            ModelDeployment("primary", "test", "primary-model", client),
+            global_budget_tracker=budget,
+        ).complete("route", request)
+
+    assert raised.value.error_type == "global_budget_exceeded"
+    assert client.call_count == 0
+    assert cache.get_calls == reads_before
+    assert budget.usage.llm_calls == 0
+
+
+def test_cache_hit_does_not_require_physical_token_or_cost_capacity() -> None:
+    cache = CountingCache()
+    runtime = _runtime(CacheMode.READ_WRITE, cache)
+    request = _request()
+    _seed(runtime, cache, request)
+    client = FakeLLMClient(["provider must not be called"])
+    budget = GlobalBudgetTracker(
+        GlobalBudgetPolicy(
+            max_llm_calls=1,
+            max_total_tokens=0,
+            max_total_cost_usd=0,
+        )
+    )
+
+    response = _router(
+        runtime,
+        ModelDeployment("primary", "test", "primary-model", client),
+        global_budget_tracker=budget,
+    ).complete("route", request)
+
+    assert response.content == "cached response"
+    assert client.call_count == 0
+    assert budget.usage.llm_calls == 1
+    assert budget.usage.token_usage.total_tokens == 0
+    assert budget.usage.estimated_cost_usd == 0
+    assert response.metadata["llm_provider_call"] is False
 
 
 def test_cache_entry_events_manifest_and_metrics_exclude_sensitive_material() -> None:

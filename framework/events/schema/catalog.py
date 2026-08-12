@@ -76,6 +76,16 @@ TASK_PLAN_EVENT_TYPES = (
     "TASK_PLAN_HALTED",
 )
 
+BUDGET_EVENT_DATA_SCHEMA = "newsroom.budget-event/v1"
+BUDGET_EVENT_TYPES = (
+    "budget_reservation_created",
+    "budget_reservation_denied",
+    "budget_reservation_settled",
+    "budget_reservation_released",
+    "budget_reservation_expired",
+    "budget_reservation_indeterminate",
+)
+
 
 SUPPORTED_HISTORICAL_ENVELOPE_SCHEMAS = frozenset(
     {
@@ -627,6 +637,7 @@ HARNESS_EVENT_ALIASES = (
     "decision_recorded",
     "worker_called",
     "worker_result_recorded",
+    "budget_fact_recorded",
     "gate_evaluated",
     "checkpoint_created",
     "context_compaction_planned",
@@ -674,6 +685,17 @@ def default_event_schema_catalog(
     telemetry: EventTelemetry | None = None,
 ) -> EventSchemaCatalog:
     catalog = EventSchemaCatalog(telemetry=telemetry)
+    for event_type in BUDGET_EVENT_TYPES:
+        catalog.register(
+            EventSchemaRegistration(
+                event_type=event_type,
+                data_schema=BUDGET_EVENT_DATA_SCHEMA,
+                json_schema=_budget_event_payload_schema(),
+                sensitivity_policy=SensitivityPolicy(),
+                current=True,
+                authoritative_context_fields=("run_id",),
+            )
+        )
     for event_type in WORKFLOW_EVENT_ALIASES:
         catalog.register(
             EventSchemaRegistration(
@@ -772,6 +794,181 @@ def default_event_schema_catalog(
             )
         )
     return catalog
+
+
+def _budget_event_payload_schema() -> dict[str, Any]:
+    amount_properties = {
+        "llm_calls": {"type": "integer", "minimum": 0, "maximum": 2**63 - 1},
+        "input_tokens": {"type": "integer", "minimum": 0, "maximum": 2**63 - 1},
+        "output_tokens": {"type": "integer", "minimum": 0, "maximum": 2**63 - 1},
+        "reasoning_tokens": {"type": "integer", "minimum": 0, "maximum": 2**63 - 1},
+        "cached_input_tokens": {"type": "integer", "minimum": 0, "maximum": 2**63 - 1},
+        "estimated_cost_usd": {
+            "type": "string",
+            "pattern": r"^(0|[1-9][0-9]*)(\.[0-9]{12})$",
+        },
+    }
+    amount_schema = {
+        "type": "object",
+        "additionalProperties": False,
+        "required": list(amount_properties),
+        "properties": amount_properties,
+    }
+    scope_schema = {
+        "type": "object",
+        "additionalProperties": False,
+        "required": [
+            "run_id",
+            "scope_id",
+            "scope_type",
+            "parent_scope_id",
+            "policy_revision",
+        ],
+        "properties": {
+            "run_id": {"type": "string", "minLength": 1, "maxLength": 512},
+            "scope_id": {"type": "string", "minLength": 1, "maxLength": 512},
+            "scope_type": {
+                "enum": ["run", "workflow", "agent_loop", "subagent", "operation"]
+            },
+            "parent_scope_id": {
+                "type": ["string", "null"],
+                "maxLength": 512,
+            },
+            "policy_revision": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 512,
+            },
+        },
+    }
+    checksum_schema = {
+        "type": "string",
+        "pattern": r"^sha256:[0-9a-f]{64}$",
+    }
+    reservation_schema = {
+        "type": "object",
+        "additionalProperties": False,
+        "required": [
+            "reservation_id",
+            "operation_id",
+            "idempotency_key",
+            "scope",
+            "policy_digest",
+            "requested",
+            "status",
+            "created_event_id",
+            "created_at_epoch_ms",
+        ],
+        "properties": {
+            "reservation_id": {"type": "string", "minLength": 1, "maxLength": 512},
+            "operation_id": {"type": "string", "minLength": 1, "maxLength": 512},
+            "idempotency_key": {"type": "string", "minLength": 1, "maxLength": 512},
+            "scope": scope_schema,
+            "policy_digest": checksum_schema,
+            "requested": amount_schema,
+            "status": {
+                "enum": ["reserved", "settled", "released", "expired", "indeterminate"]
+            },
+            "created_event_id": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 512,
+            },
+            "created_at_epoch_ms": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 2**63 - 1,
+            },
+        },
+    }
+    settlement_schema = {
+        "type": "object",
+        "additionalProperties": False,
+        "required": [
+            "reservation_id",
+            "operation_id",
+            "scope",
+            "policy_digest",
+            "actual",
+            "request_dispatched",
+            "cache_hit",
+            "outcome",
+            "settled_event_id",
+            "reason_code",
+        ],
+        "properties": {
+            "reservation_id": {"type": "string", "minLength": 1, "maxLength": 512},
+            "operation_id": {"type": "string", "minLength": 1, "maxLength": 512},
+            "scope": scope_schema,
+            "policy_digest": checksum_schema,
+            "actual": amount_schema,
+            "request_dispatched": {"type": "boolean"},
+            "cache_hit": {"type": "boolean"},
+            "outcome": {
+                "enum": ["succeeded", "failed", "cancelled", "indeterminate"]
+            },
+            "settled_event_id": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 512,
+            },
+            "reason_code": {
+                "type": ["string", "null"],
+                "maxLength": 512,
+            },
+        },
+    }
+    return {
+        "type": "object",
+        "additionalProperties": False,
+        "required": [
+            "scope",
+            "policy_digest",
+            "ledger_revision",
+            "operation_id",
+            "idempotency_key",
+            "reservation_id",
+            "amounts",
+            "reason_codes",
+            "outcome",
+            "reservation",
+            "settlement",
+        ],
+        "properties": {
+            "scope": scope_schema,
+            "policy_digest": checksum_schema,
+            "ledger_revision": {"type": "integer", "minimum": 1},
+            "operation_id": {"type": "string", "minLength": 1, "maxLength": 512},
+            "idempotency_key": {"type": "string", "minLength": 1, "maxLength": 512},
+            "reservation_id": {"type": ["string", "null"], "maxLength": 512},
+            "amounts": amount_schema,
+            "reason_codes": {
+                "type": "array",
+                "items": {"type": "string", "minLength": 1, "maxLength": 512},
+                "maxItems": 16,
+                "uniqueItems": True,
+            },
+            "outcome": {
+                "anyOf": [
+                    {
+                        "enum": [
+                            "reserved",
+                            "denied",
+                            "succeeded",
+                            "failed",
+                            "cancelled",
+                            "released",
+                            "expired",
+                            "indeterminate",
+                        ]
+                    },
+                    {"type": "null"},
+                ]
+            },
+            "reservation": {"anyOf": [reservation_schema, {"type": "null"}]},
+            "settlement": {"anyOf": [settlement_schema, {"type": "null"}]},
+        },
+    }
 
 
 _TEXT = {"type": "string", "minLength": 1, "maxLength": 1024}
@@ -2179,6 +2376,61 @@ def _harness_payload_schema(event_type: str) -> dict[str, Any]:
             any_of=(
                 {"required": ["details"]},
                 {"required": ["projection_schema", "details_ref"]},
+            ),
+        )
+    if event_type == "budget_fact_recorded":
+        return _payload_schema(
+            properties={
+                "projection_schema": {"const": "harness-safe-summary/v1"},
+                "resolution_status": {"enum": ["verified", "invalid"]},
+                "operation_id": _TEXT,
+                "ledger_revision": _POSITIVE_INTEGER,
+                "within_budget": _BOOLEAN,
+                "violations": {
+                    "type": "array",
+                    "items": _TEXT,
+                    "maxItems": 16,
+                    "uniqueItems": True,
+                },
+                "fact_ref": {"anyOf": [_CHECKSUM_TEXT, {"type": "null"}]},
+                "event_id": {"anyOf": [_TEXT, {"type": "null"}]},
+                "event_type": {
+                    "anyOf": [
+                        {
+                            "enum": [
+                                "budget_reservation_denied",
+                                "budget_reservation_settled",
+                                "budget_reservation_released",
+                                "budget_reservation_expired",
+                                "budget_reservation_indeterminate",
+                            ]
+                        },
+                        {"type": "null"},
+                    ]
+                },
+                "reservation_id": {"anyOf": [_TEXT, {"type": "null"}]},
+                "policy_digest": {"anyOf": [_CHECKSUM_TEXT, {"type": "null"}]},
+                "scope_id": {"anyOf": [_TEXT, {"type": "null"}]},
+                "stream_sequence": {
+                    "anyOf": [_POSITIVE_INTEGER, {"type": "null"}]
+                },
+                "reason_code": {"anyOf": [_TEXT, {"type": "null"}]},
+            },
+            required=(
+                "projection_schema",
+                "resolution_status",
+                "operation_id",
+                "ledger_revision",
+                "within_budget",
+                "violations",
+                "fact_ref",
+                "event_id",
+                "event_type",
+                "reservation_id",
+                "policy_digest",
+                "scope_id",
+                "stream_sequence",
+                "reason_code",
             ),
         )
     if event_type == "checkpoint_created":

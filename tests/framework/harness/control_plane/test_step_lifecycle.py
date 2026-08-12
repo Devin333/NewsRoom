@@ -15,6 +15,7 @@ import pytest
 
 import framework.harness.control_plane.step_lifecycle as step_lifecycle_module
 from framework.harness.control_plane.errors import HarnessValidationError
+from framework.harness.control_plane.cumulative_budget import HarnessCumulativeBudgetFact
 from framework.harness.control_plane.gates import HarnessGateResult
 from framework.harness.control_plane.graph_state import (
     HarnessAttemptEvidenceReference,
@@ -129,6 +130,99 @@ def test_plan_execute_verify_phase_mapping_is_bounded_and_local_to_one_step() ->
         assert transition.transition_type is expected
         assert transition.step_id == "draft"
         assert transition.lifecycle_version == HARNESS_STEP_LIFECYCLE_VERSION
+
+
+@pytest.mark.parametrize(
+    ("fact", "expected", "reason_code"),
+    (
+        (
+            HarnessCumulativeBudgetFact(
+                resolution_status="verified",
+                operation_id="operation-allowed",
+                ledger_revision=2,
+                within_budget=True,
+                violations=(),
+                fact_ref="sha256:" + "a" * 64,
+                event_id="event-allowed",
+                event_type="budget_reservation_settled",
+                reservation_id="reservation-allowed",
+                policy_digest="sha256:" + "b" * 64,
+                scope_id="run-budget:root",
+                stream_sequence=2,
+            ),
+            StepLifecycleTransitionType.VERIFY_STEP,
+            "worker_succeeded_verify",
+        ),
+        (
+            HarnessCumulativeBudgetFact(
+                resolution_status="verified",
+                operation_id="operation-denied",
+                ledger_revision=3,
+                within_budget=False,
+                violations=("max_llm_calls",),
+                fact_ref="sha256:" + "c" * 64,
+                event_id="event-denied",
+                event_type="budget_reservation_denied",
+                reservation_id=None,
+                policy_digest="sha256:" + "d" * 64,
+                scope_id="run-budget:root",
+                stream_sequence=3,
+            ),
+            StepLifecycleTransitionType.HALT_STEP,
+            "cumulative_llm_budget_exhausted",
+        ),
+        (
+            HarnessCumulativeBudgetFact(
+                resolution_status="verified",
+                operation_id="operation-indeterminate",
+                ledger_revision=4,
+                within_budget=False,
+                violations=("dispatch_indeterminate",),
+                fact_ref="sha256:" + "e" * 64,
+                event_id="event-indeterminate",
+                event_type="budget_reservation_indeterminate",
+                reservation_id="reservation-indeterminate",
+                policy_digest="sha256:" + "f" * 64,
+                scope_id="run-budget:root",
+                stream_sequence=4,
+            ),
+            StepLifecycleTransitionType.HALT_STEP,
+            "cumulative_llm_budget_indeterminate",
+        ),
+        (
+            HarnessCumulativeBudgetFact(
+                resolution_status="invalid",
+                operation_id="operation-invalid",
+                ledger_revision=5,
+                within_budget=False,
+                violations=(),
+                reason_code="budget_fact_history_invalid",
+            ),
+            StepLifecycleTransitionType.HALT_STEP,
+            "budget_fact_history_invalid",
+        ),
+    ),
+)
+def test_canonical_cumulative_budget_fact_controls_post_execute_transition(
+    fact: HarnessCumulativeBudgetFact,
+    expected: StepLifecycleTransitionType,
+    reason_code: str,
+) -> None:
+    transition = _MACHINE.next_transition(
+        _step(),
+        _state(HarnessStepStatus.RUNNING),
+        StepLifecycleObservations(
+            worker_result=StepWorkerObservation(
+                "succeeded",
+                cumulative_budget_fact=fact,
+            )
+        ),
+        _budget(),
+    )
+
+    assert transition is not None
+    assert transition.transition_type is expected
+    assert transition.reason_code == reason_code
 
 
 @pytest.mark.parametrize(

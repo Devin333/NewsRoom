@@ -105,6 +105,7 @@ from framework.harness.workflow.versioning import (
     HARNESS_GRAPH_STATE_SCHEMA,
 )
 from framework.harness.workers.result import HarnessWorkerResult, HarnessWorkerStatus
+from framework.events.budget import CanonicalBudgetEventSink, DurableBudgetFactResolver
 from framework.shared.time import format_datetime, parse_datetime
 
 
@@ -1073,6 +1074,18 @@ class DurableHarnessEventPort:
                 "durable Harness transition reader is required; memory-only recovery is forbidden"
             )
         return self._reader
+
+    def budget_fact_resolver(self) -> DurableBudgetFactResolver:
+        return DurableBudgetFactResolver(
+            self._require_reader(),
+            tenant_id=self._adapter.tenant_id,
+        )
+
+    def budget_event_sink(self) -> CanonicalBudgetEventSink:
+        return CanonicalBudgetEventSink(
+            self._runtime,
+            tenant_id=self._adapter.tenant_id,
+        )
 
     def _on_canonical_event_committed(self, event: StoredEvent) -> None:
         """Allow graph-aware subclasses to advance a validated local snapshot."""

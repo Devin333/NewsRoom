@@ -1,4 +1,6 @@
 from framework.events.schema.catalog import (
+    BUDGET_EVENT_DATA_SCHEMA,
+    BUDGET_EVENT_TYPES,
     ATTEMPT_EVENT_DATA_SCHEMA,
     ATTEMPT_EVENT_TYPES,
     HARNESS_EVENT_ALIASES,
@@ -37,6 +39,8 @@ from framework.events.schema.security import (
 )
 
 __all__ = [
+    "BUDGET_EVENT_DATA_SCHEMA",
+    "BUDGET_EVENT_TYPES",
     "ATTEMPT_EVENT_DATA_SCHEMA",
     "ATTEMPT_EVENT_TYPES",
     "DEFAULT_FORBIDDEN_SECRET_KEYS",

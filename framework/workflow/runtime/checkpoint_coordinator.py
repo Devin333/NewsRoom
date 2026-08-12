@@ -75,11 +75,16 @@ class CheckpointCoordinator:
             last_sequence,
         )
         metadata: dict[str, Any] = {"profile": profile}
-        if self._global_budget_tracker is not None and hasattr(
-            self._global_budget_tracker,
-            "snapshot",
-        ):
-            metadata["budget_usage"] = self._global_budget_tracker.snapshot()
+        if self._global_budget_tracker is not None:
+            canonical_snapshot = getattr(
+                self._global_budget_tracker,
+                "canonical_snapshot",
+                None,
+            )
+            if callable(canonical_snapshot):
+                metadata["budget_usage"] = canonical_snapshot()
+            elif hasattr(self._global_budget_tracker, "snapshot"):
+                metadata["budget_usage"] = self._global_budget_tracker.snapshot()
         if execution_limits is not None:
             snapshot = execution_limits.snapshot(now=time.monotonic())
             snapshot["resume_policy"] = (

@@ -19,7 +19,7 @@ from framework.events.propagation import normalize_trace_carrier
 
 if TYPE_CHECKING:
     from framework.agent.models import AgentLoopResult, AgentSpec
-    from framework.agent.runtime.llm import GlobalBudgetTracker
+    from framework.llm.budget import GlobalBudgetTracker
     from framework.llm.models import LLMClient
     from framework.tool import ToolRegistry
 
@@ -167,11 +167,21 @@ class LocalSubAgentExecutor:
             },
             links=(trace_link,),
         ):
+            child_budget_tracker = (
+                self._global_budget_tracker.child_tracker(
+                    (
+                        f"subagent:{task.parent_agent_id}:{task.child_agent_id}:"
+                        f"{_optional_metadata_str(task.metadata, 'run_id') or 'run'}"
+                    )
+                )
+                if self._global_budget_tracker is not None
+                else None
+            )
             result = AgentRunner(
                 llm_client=self._llm_client,
                 tool_registry=self._tool_registry,
                 conversation_store=self._conversation_store,
-                global_budget_tracker=self._global_budget_tracker,
+                global_budget_tracker=child_budget_tracker,
                 subagent_executor=self if self._allow_nested_subagents else None,
             ).run(
                 child_agent,

@@ -55,9 +55,9 @@ class _RecordingBudgetTracker(GlobalBudgetTracker):
         super().__init__(GlobalBudgetPolicy(max_llm_calls=10))
         self.reservations: list[int | None] = []
 
-    def reserve_llm_call(self, estimated_prompt_tokens=None):  # type: ignore[no-untyped-def]
-        self.reservations.append(estimated_prompt_tokens)
-        return super().reserve_llm_call(estimated_prompt_tokens)
+    def reserve_prepared_operation(self, **kwargs):  # type: ignore[no-untyped-def]
+        self.reservations.append(kwargs["input_tokens"])
+        return super().reserve_prepared_operation(**kwargs)
 
 
 class _ScriptedStreamClient:
@@ -387,7 +387,10 @@ def test_completed_stream_is_cached_and_replayed_without_provider_usage() -> Non
     assert replay[-1].metadata["llm_cache_hit"] is True
     assert client.stream_open_count == 1
     assert store.entry_count == 1
+    # The replay admits only a logical call; physical token reservation occurs
+    # on the provider miss, so the cache hit must not reserve provider tokens.
     assert budget.reservations == [100]
+    assert budget.usage.llm_calls == 2
     assert [event.text_delta for event in replay if event.event_type == "text_delta"] == [
         "cached stream"
     ]

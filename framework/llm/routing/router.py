@@ -4,6 +4,7 @@ import json
 import time
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone as _tz
+from hashlib import sha256
 from typing import Any, Iterable, Iterator
 
 from framework.llm.cache import (
@@ -21,8 +22,10 @@ from framework.llm.cache.stream import (
     iter_cached_response_events,
 )
 from framework.llm.budget import (
+    GlobalBudgetCheck,
     GlobalBudgetExceededError,
     GlobalBudgetTracker,
+    LLMBudgetOperation,
     LLMBudgetExceededError,
     LLMBudgetGuard,
 )
@@ -40,6 +43,7 @@ from framework.llm.models import (
     LLMRequest,
     LLMResponse,
     LLMStreamEvent,
+    TokenUsage,
 )
 from framework.llm.redaction import redact_sensitive_values
 from framework.llm.routing.cooldown import InMemoryLLMCooldownTracker, LLMCooldownState
@@ -114,6 +118,17 @@ class _CacheReplayDeadlineExceeded(RuntimeError):
     pass
 
 
+@dataclass(frozen=True)
+class _RouterBudgetAttempt:
+    logical_operation_id: str | None = None
+    operation: LLMBudgetOperation | None = None
+    preflight_check: GlobalBudgetCheck | None = None
+
+    @property
+    def operation_id(self) -> str | None:
+        return self.operation.operation_id if self.operation is not None else None
+
+
 class LLMRouter:
     def __init__(
         self,
@@ -174,6 +189,9 @@ class LLMRouter:
                 ],
             )
         return resolved
+
+    def manages_global_budget(self) -> bool:
+        return self._global_budget_tracker is not None
 
     def complete_for(
         self,
@@ -263,6 +281,11 @@ class LLMRouter:
         deployment_chain = route.deployment_chain()
         resolution_trace = _safe_resolution_trace(resolution_trace)
         overflow_recovery_used = False
+        logical_budget_operation_id = self._logical_budget_operation_id(
+            request,
+            route_id=route.route_id,
+            streaming=False,
+        )
         self._record_structured_output_contract_compiled(
             route_events,
             route_id=route.route_id,
@@ -440,14 +463,78 @@ class LLMRouter:
                 )
 
             prepared_request = prepared.normalized_request
-            prompt_token_count = prepared.token_count.total_input_tokens
-            cache_attempt = self._prepare_cache_attempt(
-                request=prepared_request,
-                route=route,
-                deployment=deployment,
-                events=route_events,
-                prepared=prepared,
-            )
+            try:
+                logical_budget_attempt = self._reserve_global_budget_logical(
+                    deployment=deployment,
+                    logical_operation_id=logical_budget_operation_id,
+                    attempt_index=index + 1,
+                )
+            except GlobalBudgetExceededError as exc:
+                errors.append(
+                    {
+                        "deployment_id": deployment_id,
+                        "error_type": "global_budget_exceeded",
+                        "retryable": False,
+                        "global_budget_check": exc.check.to_dict(),
+                    }
+                )
+                self._record_event(
+                    route_events,
+                    "llm_global_budget_exceeded",
+                    route.route_id,
+                    deployment=deployment,
+                    metadata={
+                        "phase": "logical_admission",
+                        "global_budget_check": exc.check.to_dict(),
+                        "retryable": False,
+                    },
+                )
+                raise self._build_route_error(
+                    f"LLM route {route.route_id} exceeded global budget before deployment {deployment_id}",
+                    route_id=route.route_id,
+                    error_type="global_budget_exceeded",
+                    retryable=False,
+                    request=request,
+                    attempted_deployments=attempted_deployments,
+                    errors=errors,
+                    events=route_events,
+                    resolution_trace=resolution_trace,
+                ) from None
+            try:
+                cache_attempt = self._prepare_cache_attempt(
+                    request=prepared_request,
+                    route=route,
+                    deployment=deployment,
+                    events=route_events,
+                    prepared=prepared,
+                )
+            except Exception:
+                self._release_global_budget_attempt(
+                    logical_budget_attempt,
+                    reason="cache_preparation_failed_before_dispatch",
+                )
+                raise
+            cache_preparation = cache_attempt.preparation
+            if (
+                self._cache_runtime is not None
+                and cache_preparation is not None
+                and self._cache_runtime.deadline_expired(cache_preparation)
+            ):
+                self._release_global_budget_attempt(
+                    logical_budget_attempt,
+                    reason="cache_deadline_before_execution",
+                )
+                raise self._build_cache_deadline_error(
+                    cache_attempt,
+                    request=request,
+                    route=route,
+                    deployment=deployment,
+                    attempted_deployments=attempted_deployments,
+                    events=route_events,
+                    errors=errors,
+                    resolution_trace=resolution_trace,
+                    phase="cache_admission",
+                )
             if cache_attempt.hit:
                 return self._return_cache_hit(
                     cache_attempt,
@@ -461,7 +548,12 @@ class LLMRouter:
                     errors=errors,
                     resolution_trace=resolution_trace,
                     attempt_index=index + 1,
+                    budget_attempt=logical_budget_attempt,
                 )
+            self._release_global_budget_attempt(
+                logical_budget_attempt,
+                reason="cache_miss_before_physical_admission",
+            )
             cooldown_until = self._active_cooldown_until(deployment)
             if cooldown_until is not None:
                 errors.append(
@@ -519,10 +611,19 @@ class LLMRouter:
                     resolution_trace=resolution_trace,
                 )
             try:
-                preflight_budget_check = self._check_global_budget_before_call(
-                    estimated_prompt_tokens=prompt_token_count,
+                budget_attempt = self._reserve_global_budget_attempt(
+                    prepared=prepared,
+                    deployment=deployment,
+                    logical_operation_id=logical_budget_operation_id,
+                    attempt_index=index + 1,
                 )
             except GlobalBudgetExceededError as exc:
+                self._release_cache_attempt(
+                    cache_attempt,
+                    route=route,
+                    deployment=deployment,
+                    events=route_events,
+                )
                 errors.append(
                     {
                         "deployment_id": deployment_id,
@@ -537,19 +638,13 @@ class LLMRouter:
                     route.route_id,
                     deployment=deployment,
                     metadata={
-                        "phase": "preflight",
+                        "phase": "physical_admission",
                         "global_budget_check": exc.check.to_dict(),
                         "retryable": False,
                     },
                 )
-                self._release_cache_attempt(
-                    cache_attempt,
-                    route=route,
-                    deployment=deployment,
-                    events=route_events,
-                )
                 raise self._build_route_error(
-                    f"LLM route {route.route_id} exceeded global budget before deployment {deployment_id}",
+                    f"LLM route {route.route_id} exceeded physical budget before deployment {deployment_id}",
                     route_id=route.route_id,
                     error_type="global_budget_exceeded",
                     retryable=False,
@@ -559,7 +654,6 @@ class LLMRouter:
                     events=route_events,
                     resolution_trace=resolution_trace,
                 ) from None
-
             self._record_event(
                 route_events,
                 "llm_provider_call_started",
@@ -570,7 +664,20 @@ class LLMRouter:
             try:
                 response = deployment.client.complete(prepared_request)
             except LLMProviderError as exc:
+                if exc.status_code is None:
+                    global_failure_check = self._mark_global_budget_indeterminate(
+                        budget_attempt,
+                        reason="provider_dispatch_indeterminate",
+                    )
+                else:
+                    global_failure_check = self._settle_global_budget_failure(
+                        budget_attempt,
+                        deployment=deployment,
+                        reason=exc.error_type,
+                    )
                 error_payload = _provider_error_payload(deployment_id, exc)
+                if global_failure_check is not None:
+                    error_payload["global_budget_check"] = global_failure_check.to_dict()
                 cooldown_state = self._record_provider_failure(deployment_id, exc)
                 if cooldown_state is not None:
                     error_payload["cooldown_state"] = cooldown_state.to_dict()
@@ -674,14 +781,21 @@ class LLMRouter:
                     resolution_trace=resolution_trace,
                 ) from None
             except Exception as exc:
-                errors.append(
-                    {
-                        "deployment_id": deployment_id,
-                        "error_type": "client_error",
-                        "error_class": type(exc).__name__,
-                        "retryable": False,
-                    }
+                global_failure_check = self._mark_global_budget_indeterminate(
+                    budget_attempt,
+                    reason="provider_dispatch_indeterminate",
                 )
+                error_payload = {
+                    "deployment_id": deployment_id,
+                    "error_type": "client_error",
+                    "error_class": type(exc).__name__,
+                    "retryable": False,
+                }
+                if global_failure_check is not None:
+                    error_payload["global_budget_check"] = (
+                        global_failure_check.to_dict()
+                    )
+                errors.append(error_payload)
                 self._record_event(
                     route_events,
                     "llm_deployment_attempt_failed",
@@ -724,11 +838,23 @@ class LLMRouter:
                         response=response,
                     )
                 except CacheResponseValidationError:
+                    global_budget_check = self._settle_global_budget_attempt(
+                        budget_attempt,
+                        response,
+                        deployment=deployment,
+                        budget_check=None,
+                        outcome="failed",
+                    )
                     errors.append(
                         {
                             "deployment_id": deployment_id,
                             "error_type": "structured_output_validation_error",
                             "retryable": False,
+                            "global_budget_check": (
+                                global_budget_check.to_dict()
+                                if global_budget_check is not None
+                                else None
+                            ),
                         }
                     )
                     self._record_event(
@@ -774,12 +900,24 @@ class LLMRouter:
             try:
                 budget_check = _check_budget(route, deployment, response)
             except LLMBudgetExceededError as exc:
+                global_budget_check = self._settle_global_budget_attempt(
+                    budget_attempt,
+                    response,
+                    deployment=deployment,
+                    budget_check=exc.check,
+                    outcome="failed",
+                )
                 errors.append(
                     {
                         "deployment_id": deployment_id,
                         "error_type": "llm_budget_exceeded",
                         "retryable": False,
                         "budget_check": exc.check.to_dict(),
+                        "global_budget_check": (
+                            global_budget_check.to_dict()
+                            if global_budget_check is not None
+                            else None
+                        ),
                     }
                 )
                 self._record_event(
@@ -806,50 +944,12 @@ class LLMRouter:
                     events=route_events,
                     resolution_trace=resolution_trace,
                 ) from None
-            try:
-                global_budget_check = self._record_global_budget_call(
-                    response,
-                    deployment=deployment,
-                    budget_check=budget_check,
-                    prompt_token_estimate=prompt_token_count,
-                )
-            except GlobalBudgetExceededError as exc:
-                errors.append(
-                    {
-                        "deployment_id": deployment_id,
-                        "error_type": "global_budget_exceeded",
-                        "retryable": False,
-                        "global_budget_check": exc.check.to_dict(),
-                    }
-                )
-                self._record_event(
-                    route_events,
-                    "llm_global_budget_exceeded",
-                    route.route_id,
-                    deployment=deployment,
-                    metadata={
-                        "phase": "post_call",
-                        "global_budget_check": exc.check.to_dict(),
-                        "retryable": False,
-                    },
-                )
-                self._release_cache_attempt(
-                    cache_attempt,
-                    route=route,
-                    deployment=deployment,
-                    events=route_events,
-                )
-                raise self._build_route_error(
-                    f"LLM route {route.route_id} exceeded global budget at deployment {deployment_id}",
-                    route_id=route.route_id,
-                    error_type="global_budget_exceeded",
-                    retryable=False,
-                    request=request,
-                    attempted_deployments=attempted_deployments,
-                    errors=errors,
-                    events=route_events,
-                    resolution_trace=resolution_trace,
-                ) from None
+            global_budget_check = self._settle_global_budget_attempt(
+                budget_attempt,
+                response,
+                deployment=deployment,
+                budget_check=budget_check,
+            )
             if (
                 self._cache_runtime is not None
                 and cache_attempt.eligible
@@ -910,8 +1010,8 @@ class LLMRouter:
                     "cache_hit": False,
                     "usage": response.usage.to_dict(),
                     "preflight_global_budget_check": (
-                        preflight_budget_check.to_dict()
-                        if preflight_budget_check is not None
+                        budget_attempt.preflight_check.to_dict()
+                        if budget_attempt.preflight_check is not None
                         else None
                     ),
                     "budget_check": budget_check.to_dict() if budget_check is not None else None,
@@ -987,6 +1087,11 @@ class LLMRouter:
         deployment_chain = route.deployment_chain()
         resolution_trace = _safe_resolution_trace(resolution_trace)
         overflow_recovery_used = False
+        logical_budget_operation_id = self._logical_budget_operation_id(
+            request,
+            route_id=route.route_id,
+            streaming=True,
+        )
         self._record_structured_output_contract_compiled(
             route_events,
             route_id=route.route_id,
@@ -1175,20 +1280,68 @@ class LLMRouter:
                 )
 
             prepared_request = prepared.normalized_request
-            prompt_token_count = prepared.token_count.total_input_tokens
-            cache_attempt = self._prepare_cache_attempt(
-                request=prepared_request,
-                route=route,
-                deployment=deployment,
-                events=route_events,
-                prepared=prepared,
-            )
+            try:
+                logical_budget_attempt = self._reserve_global_budget_logical(
+                    deployment=deployment,
+                    logical_operation_id=logical_budget_operation_id,
+                    attempt_index=index + 1,
+                )
+            except GlobalBudgetExceededError as exc:
+                errors.append(
+                    {
+                        "deployment_id": deployment_id,
+                        "error_type": "global_budget_exceeded",
+                        "retryable": False,
+                        "global_budget_check": exc.check.to_dict(),
+                    }
+                )
+                self._record_event(
+                    route_events,
+                    "llm_global_budget_exceeded",
+                    route.route_id,
+                    deployment=deployment,
+                    metadata={
+                        "phase": "logical_admission",
+                        "global_budget_check": exc.check.to_dict(),
+                        "retryable": False,
+                        "stream": True,
+                    },
+                )
+                raise self._build_route_error(
+                    f"LLM route {route.route_id} exceeded global budget before deployment {deployment_id}",
+                    route_id=route.route_id,
+                    error_type="global_budget_exceeded",
+                    retryable=False,
+                    request=request,
+                    attempted_deployments=attempted_deployments,
+                    errors=errors,
+                    events=route_events,
+                    resolution_trace=resolution_trace,
+                ) from None
+            try:
+                cache_attempt = self._prepare_cache_attempt(
+                    request=prepared_request,
+                    route=route,
+                    deployment=deployment,
+                    events=route_events,
+                    prepared=prepared,
+                )
+            except Exception:
+                self._release_global_budget_attempt(
+                    logical_budget_attempt,
+                    reason="cache_preparation_failed_before_dispatch",
+                )
+                raise
             cache_preparation = cache_attempt.preparation
             if (
                 self._cache_runtime is not None
                 and cache_preparation is not None
                 and self._cache_runtime.deadline_expired(cache_preparation)
             ):
+                self._release_global_budget_attempt(
+                    logical_budget_attempt,
+                    reason="cache_deadline_before_execution",
+                )
                 raise self._build_cache_deadline_error(
                     cache_attempt,
                     request=request,
@@ -1213,6 +1366,7 @@ class LLMRouter:
                     errors=errors,
                     resolution_trace=resolution_trace,
                     attempt_index=index + 1,
+                    budget_attempt=logical_budget_attempt,
                 )
                 try:
                     yield from self._cache_hit_stream_events(
@@ -1253,6 +1407,10 @@ class LLMRouter:
                 )
                 return
 
+            self._release_global_budget_attempt(
+                logical_budget_attempt,
+                reason="cache_miss_before_physical_admission",
+            )
             cooldown_until = self._active_cooldown_until(deployment)
             if cooldown_until is not None:
                 errors.append(
@@ -1305,10 +1463,19 @@ class LLMRouter:
                 )
 
             try:
-                preflight_budget_check = self._check_global_budget_before_call(
-                    estimated_prompt_tokens=prompt_token_count,
+                budget_attempt = self._reserve_global_budget_attempt(
+                    prepared=prepared,
+                    deployment=deployment,
+                    logical_operation_id=logical_budget_operation_id,
+                    attempt_index=index + 1,
                 )
             except GlobalBudgetExceededError as exc:
+                self._release_cache_attempt(
+                    cache_attempt,
+                    route=route,
+                    deployment=deployment,
+                    events=route_events,
+                )
                 errors.append(
                     {
                         "deployment_id": deployment_id,
@@ -1323,19 +1490,14 @@ class LLMRouter:
                     route.route_id,
                     deployment=deployment,
                     metadata={
-                        "phase": "preflight",
+                        "phase": "physical_admission",
                         "global_budget_check": exc.check.to_dict(),
                         "retryable": False,
+                        "stream": True,
                     },
                 )
-                self._release_cache_attempt(
-                    cache_attempt,
-                    route=route,
-                    deployment=deployment,
-                    events=route_events,
-                )
                 raise self._build_route_error(
-                    f"LLM route {route.route_id} exceeded global budget before deployment {deployment_id}",
+                    f"LLM route {route.route_id} exceeded physical budget before deployment {deployment_id}",
                     route_id=route.route_id,
                     error_type="global_budget_exceeded",
                     retryable=False,
@@ -1358,6 +1520,10 @@ class LLMRouter:
                 source_iterator = iter(deployment.client.stream(prepared_request))
                 first_event = LLMStreamEvent.from_any(next(source_iterator))
             except StopIteration:
+                global_failure_check = self._mark_global_budget_indeterminate(
+                    budget_attempt,
+                    reason="stream_terminal_missing",
+                )
                 self._record_stream_cache_outcome(
                     cache_attempt,
                     route=route,
@@ -1379,6 +1545,11 @@ class LLMRouter:
                         "deployment_id": deployment_id,
                         "error_type": "provider_stream_empty",
                         "retryable": False,
+                        "global_budget_check": (
+                            global_failure_check.to_dict()
+                            if global_failure_check is not None
+                            else None
+                        ),
                     }
                 )
                 raise self._build_route_error(
@@ -1393,6 +1564,17 @@ class LLMRouter:
                     resolution_trace=resolution_trace,
                 ) from None
             except LLMProviderError as exc:
+                if exc.status_code is None:
+                    global_failure_check = self._mark_global_budget_indeterminate(
+                        budget_attempt,
+                        reason="provider_dispatch_indeterminate",
+                    )
+                else:
+                    global_failure_check = self._settle_global_budget_failure(
+                        budget_attempt,
+                        deployment=deployment,
+                        reason=exc.error_type,
+                    )
                 self._record_structured_output_rejection(
                     route_events,
                     route=route,
@@ -1410,7 +1592,10 @@ class LLMRouter:
                     provider_call=True,
                     metadata={"error_class": type(exc).__name__},
                 )
-                errors.append(_provider_error_payload(deployment_id, exc))
+                error_payload = _provider_error_payload(deployment_id, exc)
+                if global_failure_check is not None:
+                    error_payload["global_budget_check"] = global_failure_check.to_dict()
+                errors.append(error_payload)
                 self._record_provider_failure(deployment_id, exc)
                 self._record_event(
                     route_events,
@@ -1492,6 +1677,10 @@ class LLMRouter:
                     resolution_trace=resolution_trace,
                 ) from None
             except Exception as exc:
+                global_failure_check = self._mark_global_budget_indeterminate(
+                    budget_attempt,
+                    reason="provider_dispatch_indeterminate",
+                )
                 self._record_stream_cache_outcome(
                     cache_attempt,
                     route=route,
@@ -1508,14 +1697,17 @@ class LLMRouter:
                     deployment=deployment,
                     events=route_events,
                 )
-                errors.append(
-                    {
-                        "deployment_id": deployment_id,
-                        "error_type": "client_error",
-                        "error_class": type(exc).__name__,
-                        "retryable": False,
-                    }
-                )
+                error_payload = {
+                    "deployment_id": deployment_id,
+                    "error_type": "client_error",
+                    "error_class": type(exc).__name__,
+                    "retryable": False,
+                }
+                if global_failure_check is not None:
+                    error_payload["global_budget_check"] = (
+                        global_failure_check.to_dict()
+                    )
+                errors.append(error_payload)
                 raise self._build_route_error(
                     f"LLM route {route.route_id} client failed while opening stream at deployment {deployment_id}",
                     route_id=route.route_id,
@@ -1549,6 +1741,10 @@ class LLMRouter:
                         visible_output = True
                         yield event
             except GeneratorExit:
+                self._mark_global_budget_indeterminate(
+                    budget_attempt,
+                    reason="stream_consumer_closed_before_terminal",
+                )
                 _close_iterator(source_iterator)
                 self._record_stream_cache_outcome(
                     cache_attempt,
@@ -1567,6 +1763,10 @@ class LLMRouter:
                 )
                 raise
             except LLMProviderError as exc:
+                global_failure_check = self._mark_global_budget_indeterminate(
+                    budget_attempt,
+                    reason="stream_terminal_missing",
+                )
                 _close_iterator(source_iterator)
                 self._record_structured_output_rejection(
                     route_events,
@@ -1585,7 +1785,10 @@ class LLMRouter:
                     provider_call=True,
                     metadata={"error_class": type(exc).__name__},
                 )
-                errors.append(_provider_error_payload(deployment_id, exc))
+                error_payload = _provider_error_payload(deployment_id, exc)
+                if global_failure_check is not None:
+                    error_payload["global_budget_check"] = global_failure_check.to_dict()
+                errors.append(error_payload)
                 self._record_provider_failure(deployment_id, exc)
                 self._record_event(
                     route_events,
@@ -1634,6 +1837,10 @@ class LLMRouter:
                     resolution_trace=resolution_trace,
                 ) from None
             except Exception as exc:
+                global_failure_check = self._mark_global_budget_indeterminate(
+                    budget_attempt,
+                    reason="stream_terminal_missing",
+                )
                 _close_iterator(source_iterator)
                 protocol_reason = (
                     exc.reason if isinstance(exc, LLMStreamProtocolError) else None
@@ -1655,15 +1862,18 @@ class LLMRouter:
                         "error_class": type(exc).__name__,
                     },
                 )
-                errors.append(
-                    {
-                        "deployment_id": deployment_id,
-                        "error_type": "client_error",
-                        "error_class": type(exc).__name__,
-                        "retryable": False,
-                        "visible_output": visible_output,
-                    }
-                )
+                error_payload = {
+                    "deployment_id": deployment_id,
+                    "error_type": "client_error",
+                    "error_class": type(exc).__name__,
+                    "retryable": False,
+                    "visible_output": visible_output,
+                }
+                if global_failure_check is not None:
+                    error_payload["global_budget_check"] = (
+                        global_failure_check.to_dict()
+                    )
+                errors.append(error_payload)
                 self._release_cache_attempt(
                     cache_attempt,
                     route=route,
@@ -1683,6 +1893,10 @@ class LLMRouter:
                 ) from None
 
             if terminal_event is None:
+                global_failure_check = self._mark_global_budget_indeterminate(
+                    budget_attempt,
+                    reason="stream_terminal_missing",
+                )
                 self._record_stream_cache_outcome(
                     cache_attempt,
                     route=route,
@@ -1705,6 +1919,11 @@ class LLMRouter:
                         "error_type": "provider_stream_incomplete",
                         "retryable": False,
                         "visible_output": visible_output,
+                        "global_budget_check": (
+                            global_failure_check.to_dict()
+                            if global_failure_check is not None
+                            else None
+                        ),
                     }
                 )
                 raise self._build_route_error(
@@ -1744,13 +1963,14 @@ class LLMRouter:
                 self._cooldown_tracker.record_success(deployment_id)
             try:
                 budget_check = _check_budget(route, deployment, response)
-                global_budget_check = self._record_global_budget_call(
+            except LLMBudgetExceededError as exc:
+                global_budget_check = self._settle_global_budget_attempt(
+                    budget_attempt,
                     response,
                     deployment=deployment,
-                    budget_check=budget_check,
-                    prompt_token_estimate=prompt_token_count,
+                    budget_check=exc.check,
+                    outcome="failed",
                 )
-            except (LLMBudgetExceededError, GlobalBudgetExceededError) as exc:
                 self._record_stream_cache_outcome(
                     cache_attempt,
                     route=route,
@@ -1766,11 +1986,7 @@ class LLMRouter:
                     deployment=deployment,
                     events=route_events,
                 )
-                error_type = (
-                    "llm_budget_exceeded"
-                    if isinstance(exc, LLMBudgetExceededError)
-                    else "global_budget_exceeded"
-                )
+                error_type = "llm_budget_exceeded"
                 check = exc.check.to_dict()
                 errors.append(
                     {
@@ -1778,6 +1994,11 @@ class LLMRouter:
                         "error_type": error_type,
                         "retryable": False,
                         "budget_check": check,
+                        "global_budget_check": (
+                            global_budget_check.to_dict()
+                            if global_budget_check is not None
+                            else None
+                        ),
                     }
                 )
                 raise self._build_route_error(
@@ -1791,6 +2012,13 @@ class LLMRouter:
                     events=route_events,
                     resolution_trace=resolution_trace,
                 ) from None
+            else:
+                global_budget_check = self._settle_global_budget_attempt(
+                    budget_attempt,
+                    response,
+                    deployment=deployment,
+                    budget_check=budget_check,
+                )
 
             if capture_result.cacheable and (
                 self._cache_runtime is not None
@@ -1818,8 +2046,8 @@ class LLMRouter:
                     "stream": True,
                     "usage": response.usage.to_dict(),
                     "preflight_global_budget_check": (
-                        preflight_budget_check.to_dict()
-                        if preflight_budget_check is not None
+                        budget_attempt.preflight_check.to_dict()
+                        if budget_attempt.preflight_check is not None
                         else None
                     ),
                     "budget_check": budget_check.to_dict() if budget_check is not None else None,
@@ -2744,6 +2972,7 @@ class LLMRouter:
         errors: list[dict[str, Any]],
         resolution_trace: Iterable[dict[str, Any]],
         attempt_index: int,
+        budget_attempt: _RouterBudgetAttempt,
     ) -> LLMResponse:
         if state.response is None:
             raise RuntimeError("cache hit response is required")
@@ -2786,6 +3015,10 @@ class LLMRouter:
             "cached_input_tokens": 0,
             "total_tokens": 0,
         }
+        global_budget_check = self._settle_global_budget_cache_hit(
+            budget_attempt,
+            observed_usage=state.response.usage,
+        )
         return _with_routing_metadata(
             state.response,
             request=request,
@@ -2794,7 +3027,7 @@ class LLMRouter:
             attempted_deployments=attempted_deployments,
             fallback_used=fallback_used,
             budget_check=None,
-            global_budget_check=None,
+            global_budget_check=global_budget_check,
             events=events,
             errors=errors,
             resolution_trace=resolution_trace,
@@ -3153,32 +3386,169 @@ class LLMRouter:
             return None
         return self._cooldown_tracker.record_failure(deployment_id, error)
 
-    def _check_global_budget_before_call(self, *, estimated_prompt_tokens: int):
-        if self._global_budget_tracker is None:
+    def _logical_budget_operation_id(
+        self,
+        request: LLMRequest,
+        *,
+        route_id: str,
+        streaming: bool,
+    ) -> str | None:
+        tracker = self._global_budget_tracker
+        if tracker is None:
             return None
-        return self._global_budget_tracker.reserve_llm_call(
-            estimated_prompt_tokens=estimated_prompt_tokens,
+        supplied = request.metadata.get("llm_budget_operation_id")
+        if isinstance(supplied, str) and supplied.strip():
+            digest = sha256(
+                f"{supplied.strip()}\0{route_id}\0{streaming}".encode("utf-8")
+            ).hexdigest()
+            return f"router-logical:external:{digest}"
+        prefix = "router-stream" if streaming else "router-complete"
+        return tracker.next_operation_identity(prefix)
+
+    def _reserve_global_budget_attempt(
+        self,
+        *,
+        prepared: PreparedLLMRequest,
+        deployment: ModelDeployment,
+        logical_operation_id: str | None,
+        attempt_index: int,
+    ) -> _RouterBudgetAttempt:
+        tracker = self._global_budget_tracker
+        if tracker is None or logical_operation_id is None:
+            return _RouterBudgetAttempt()
+        operation_id = (
+            f"{logical_operation_id}:attempt:{attempt_index}:"
+            f"{deployment.deployment_id}"
+        )
+        operation = tracker.reserve_prepared_operation(
+            operation_id=operation_id,
+            idempotency_key=f"{operation_id}:reservation",
+            input_tokens=prepared.token_count.total_input_tokens,
+            output_tokens=prepared.effective_budget.reserved_output_tokens,
+            pricing=deployment.pricing,
+        )
+        if isinstance(operation, GlobalBudgetCheck):
+            raise GlobalBudgetExceededError(operation)
+        return _RouterBudgetAttempt(
+            logical_operation_id=logical_operation_id,
+            operation=operation,
+            preflight_check=tracker.check_for_operation(operation),
         )
 
-    def _record_global_budget_call(
+    def _reserve_global_budget_logical(
         self,
+        *,
+        deployment: ModelDeployment,
+        logical_operation_id: str | None,
+        attempt_index: int,
+    ) -> _RouterBudgetAttempt:
+        tracker = self._global_budget_tracker
+        cache_runtime = self._cache_runtime
+        if (
+            tracker is None
+            or logical_operation_id is None
+            or cache_runtime is None
+            or not cache_runtime.mode.reads
+        ):
+            return _RouterBudgetAttempt()
+        operation_id = (
+            f"{logical_operation_id}:logical:{attempt_index}:"
+            f"{deployment.deployment_id}"
+        )
+        operation = tracker.reserve_operation(
+            operation_id=operation_id,
+            idempotency_key=f"{operation_id}:reservation",
+            input_tokens=0,
+            output_tokens=0,
+            estimated_cost_usd=0,
+            count_request=True,
+        )
+        if isinstance(operation, GlobalBudgetCheck):
+            raise GlobalBudgetExceededError(operation)
+        return _RouterBudgetAttempt(
+            logical_operation_id=logical_operation_id,
+            operation=operation,
+            preflight_check=tracker.check_for_operation(operation),
+        )
+
+    def _settle_global_budget_attempt(
+        self,
+        attempt: _RouterBudgetAttempt,
         response: LLMResponse,
         *,
         deployment: ModelDeployment,
         budget_check,
-        prompt_token_estimate: int,
+        outcome: str = "succeeded",
     ):
-        if self._global_budget_tracker is None:
+        if self._global_budget_tracker is None or attempt.operation is None:
             return None
         estimated_cost_usd = (
             budget_check.estimated_cost_usd if budget_check is not None else None
         )
-        return self._global_budget_tracker.record_llm_call(
+        return self._global_budget_tracker.settle_operation(
+            attempt.operation,
             response.usage,
             deployment.pricing,
             estimated_cost_usd=estimated_cost_usd,
-            replace_reserved_prompt_tokens=prompt_token_estimate,
-            count_request=False,
+            outcome=outcome,
+        )
+
+    def _settle_global_budget_cache_hit(
+        self,
+        attempt: _RouterBudgetAttempt,
+        *,
+        observed_usage: TokenUsage,
+    ) -> GlobalBudgetCheck | None:
+        if self._global_budget_tracker is None or attempt.operation is None:
+            return None
+        return self._global_budget_tracker.settle_cache_hit(
+            attempt.operation,
+            observed_usage=observed_usage,
+        )
+
+    def _settle_global_budget_failure(
+        self,
+        attempt: _RouterBudgetAttempt,
+        *,
+        deployment: ModelDeployment,
+        reason: str,
+    ) -> GlobalBudgetCheck | None:
+        if self._global_budget_tracker is None or attempt.operation is None:
+            return None
+        return self._global_budget_tracker.settle_operation(
+            attempt.operation,
+            TokenUsage(),
+            deployment.pricing,
+            estimated_cost_usd=0,
+            request_dispatched=True,
+            outcome="failed",
+            reason_code=reason,
+        )
+
+    def _release_global_budget_attempt(
+        self,
+        attempt: _RouterBudgetAttempt,
+        *,
+        reason: str,
+    ) -> GlobalBudgetCheck | None:
+        if self._global_budget_tracker is None or attempt.operation is None:
+            return None
+        return self._global_budget_tracker.release_operation(
+            attempt.operation,
+            reason=reason,
+        )
+
+    def _mark_global_budget_indeterminate(
+        self,
+        attempt: _RouterBudgetAttempt,
+        *,
+        reason: str,
+    ) -> GlobalBudgetCheck | None:
+        if self._global_budget_tracker is None or attempt.operation is None:
+            return None
+        return self._global_budget_tracker.mark_operation_indeterminate(
+            attempt.operation,
+            reason=reason,
         )
 
 
@@ -3348,6 +3718,8 @@ def _with_routing_metadata(
     if global_budget_check is not None:
         metadata["llm_global_budget_check"] = global_budget_check.to_dict()
         metadata["llm_global_budget_usage"] = global_budget_check.usage.to_dict()
+        metadata["llm_budget_operation_id"] = global_budget_check.operation_id
+        metadata["llm_budget_reservation_id"] = global_budget_check.reservation_id
     return replace(response, metadata=metadata)
 
 

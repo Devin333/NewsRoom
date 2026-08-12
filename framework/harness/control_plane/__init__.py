@@ -24,6 +24,7 @@ from framework.harness.control_plane.event_log import (
 )
 from framework.harness.control_plane.gates import (
     BudgetGate,
+    CumulativeLLMBudgetGate,
     DeduplicationGate,
     DeterministicGate,
     GateContext,
@@ -32,6 +33,10 @@ from framework.harness.control_plane.gates import (
     ScoreRangeGate,
     SkillEvolutionBudgetGate,
     ToolAllowlistGate,
+)
+from framework.harness.control_plane.cumulative_budget import (
+    HarnessCumulativeBudgetFact,
+    resolve_harness_cumulative_budget_fact,
 )
 from framework.harness.control_plane.gate_registry import (
     DeterministicGateRegistry,
@@ -200,6 +205,7 @@ from framework.harness.control_plane.transition import (
 
 __all__ = [
     "BudgetGate",
+    "CumulativeLLMBudgetGate",
     "DeduplicationGate",
     "DeterministicGate",
     "DeterministicGateRegistry",
@@ -213,6 +219,7 @@ __all__ = [
     "HARNESS_LEGACY_EVENT_EVIDENCE_SCHEMA",
     "HarnessAcceptedGraphObservation",
     "HarnessBudgetSnapshot",
+    "HarnessCumulativeBudgetFact",
     "HarnessActivity",
     "HarnessActivityResultRecord",
     "HarnessActiveActivityState",
@@ -338,6 +345,7 @@ __all__ = [
     "ToolAllowlistGate",
     "WorkflowGraphEvaluator",
     "assert_step_completion_allowed",
+    "resolve_harness_cumulative_budget_fact",
     "build_harness_history_verifier",
     "event_log_entry_from_harness_event",
     "event_log_entry_from_stored_event",

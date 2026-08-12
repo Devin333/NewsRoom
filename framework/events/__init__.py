@@ -239,6 +239,16 @@ from framework.events.runtime import (
     subscription_definition_fingerprint,
     validate_inbox_transaction_capability,
 )
+from framework.events.budget import (
+    BUDGET_EVENT_DATA_SCHEMA,
+    BUDGET_EVENT_SOURCE,
+    BUDGET_EVENT_TYPES,
+    CanonicalBudgetFact,
+    CanonicalBudgetEventSink,
+    DurableBudgetFactResolver,
+    budget_event_from_stored_event,
+    budget_event_payload,
+)
 from framework.events.schema import (
     EventSchemaCatalog,
     EventSchemaRegistration,
@@ -333,6 +343,14 @@ from framework.events.telemetry import (
 )
 
 __all__ = [
+    "BUDGET_EVENT_DATA_SCHEMA",
+    "BUDGET_EVENT_SOURCE",
+    "BUDGET_EVENT_TYPES",
+    "CanonicalBudgetFact",
+    "CanonicalBudgetEventSink",
+    "DurableBudgetFactResolver",
+    "budget_event_from_stored_event",
+    "budget_event_payload",
     "ActivityRecorder",
     "ActivityRecordingHandle",
     "AuxiliaryFailureAction",

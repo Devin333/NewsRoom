@@ -21,6 +21,7 @@ class HarnessEventType(StrEnum):
     DECISION_RECORDED = "decision_recorded"
     WORKER_CALLED = "worker_called"
     WORKER_RESULT_RECORDED = "worker_result_recorded"
+    BUDGET_FACT_RECORDED = "budget_fact_recorded"
     GATE_EVALUATED = "gate_evaluated"
     CHECKPOINT_CREATED = "checkpoint_created"
     CONTEXT_COMPACTION_PLANNED = "context_compaction_planned"

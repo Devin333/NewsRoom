@@ -8,6 +8,7 @@ UTC = _tz.utc
 from hashlib import sha256
 from pathlib import Path
 from typing import Any, Protocol
+from uuid import uuid4
 
 from framework.agent.artifacts import (
     ArtifactManager,
@@ -18,6 +19,7 @@ from framework.agent.artifacts import (
 )
 from framework.agent.artifacts.models import ArtifactRef
 from framework.events.errors import EventContractError
+from framework.events.budget import CanonicalBudgetEventSink
 from framework.events.ports import EventReaderPort, EventRuntimePort
 from framework.events.runtime.models import (
     MAX_PAGE_LIMIT,
@@ -163,6 +165,7 @@ class WorkflowRunner:
         profile: str,
         run_id: str | None = None,
     ) -> RunResult:
+        effective_run_id = run_id or uuid4().hex
         executor = WorkflowExecutor(
             function_step_runner=None,
             step_runner_registry=self._step_runner_registry,
@@ -171,11 +174,16 @@ class WorkflowRunner:
             event_runtime=self._event_runtime,
             event_reader=self._event_reader,
             event_schema_catalog=self._event_schema_catalog,
-            global_budget_tracker=self._budget_tracker_for_run(),
+            global_budget_tracker=self._budget_tracker_for_run(effective_run_id),
             artifact_publishers=self._artifact_publishers,
             routing_engine=self._routing_engine,
         )
-        result = executor.execute(workflow, request, profile=profile, run_id=run_id)
+        result = executor.execute(
+            workflow,
+            request,
+            profile=profile,
+            run_id=effective_run_id,
+        )
         self._persist_storage_indexes(result)
         return RunResult.from_workflow_result(result)
 
@@ -194,7 +202,7 @@ class WorkflowRunner:
             event_runtime=self._event_runtime,
             event_reader=self._event_reader,
             event_schema_catalog=self._event_schema_catalog,
-            global_budget_tracker=self._budget_tracker_for_run(),
+            global_budget_tracker=self._budget_tracker_for_run(plan.run_id),
             artifact_publishers=self._artifact_publishers,
             routing_engine=self._routing_engine,
         )
@@ -227,6 +235,9 @@ class WorkflowRunner:
         resume_metadata: dict[str, Any] | None = None,
         target_step_id: str | None = None,
     ) -> RunResult:
+        effective_run_id = (
+            run_id or f"{checkpoint.run_id}-resume-{checkpoint.checkpoint_id}"
+        )
         executor = WorkflowExecutor(
             function_step_runner=None,
             step_runner_registry=self._step_runner_registry,
@@ -235,7 +246,7 @@ class WorkflowRunner:
             event_runtime=self._event_runtime,
             event_reader=self._event_reader,
             event_schema_catalog=self._event_schema_catalog,
-            global_budget_tracker=self._budget_tracker_for_run(),
+            global_budget_tracker=self._budget_tracker_for_run(effective_run_id),
             artifact_publishers=self._artifact_publishers,
             routing_engine=self._routing_engine,
         )
@@ -243,7 +254,7 @@ class WorkflowRunner:
             workflow,
             checkpoint,
             profile=profile,
-            run_id=run_id,
+            run_id=effective_run_id,
             buffer_updates=buffer_updates,
             resume_metadata=resume_metadata,
             target_step_id=target_step_id,
@@ -331,11 +342,25 @@ class WorkflowRunner:
             actor=actor,
         )
 
-    def _budget_tracker_for_run(self) -> GlobalBudgetTracker | None:
+    def _budget_tracker_for_run(
+        self,
+        run_id: str | None = None,
+    ) -> GlobalBudgetTracker | None:
         if self._global_budget_tracker is not None:
+            if (
+                run_id is not None
+                and self._global_budget_tracker.scope.run_id != run_id
+            ):
+                raise ValueError(
+                    "global budget tracker run_id does not match workflow run_id"
+                )
             return self._global_budget_tracker
         if self._global_budget_policy is not None:
-            return GlobalBudgetTracker(self._global_budget_policy)
+            return GlobalBudgetTracker(
+                self._global_budget_policy,
+                run_id=run_id or "workflow-pending",
+                event_sink=CanonicalBudgetEventSink(self._event_runtime),
+            )
         return None
 
     def _persist_storage_indexes(self, result: WorkflowResult) -> None:

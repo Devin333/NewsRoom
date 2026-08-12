@@ -7,6 +7,9 @@ from enum import StrEnum
 from typing import Any
 
 from framework.harness.control_plane.errors import HarnessValidationError
+from framework.harness.control_plane.cumulative_budget import (
+    HarnessCumulativeBudgetFact,
+)
 from framework.harness.control_plane.gate_registry import GateReference
 from framework.harness.control_plane.gates import HarnessGateResult
 from framework.harness.control_plane.graph_state import (
@@ -304,6 +307,7 @@ class StepWorkerObservation:
     error_type: str | None = None
     candidate_observations: Mapping[str, Any] = field(default_factory=dict)
     accepted_evidence: HarnessAttemptEvidenceReference | None = None
+    cumulative_budget_fact: HarnessCumulativeBudgetFact | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "status", HarnessWorkerStatus(self.status))
@@ -336,6 +340,13 @@ class StepWorkerObservation:
                 HarnessEvidenceKind.ACTIVITY_RESULT,
                 "worker observation",
             )
+        if self.cumulative_budget_fact is not None and not isinstance(
+            self.cumulative_budget_fact,
+            HarnessCumulativeBudgetFact,
+        ):
+            raise TypeError(
+                "cumulative_budget_fact must be HarnessCumulativeBudgetFact"
+            )
 
     @classmethod
     def from_worker_result(
@@ -343,6 +354,7 @@ class StepWorkerObservation:
         result: HarnessWorkerResult,
         *,
         accepted_evidence: HarnessAttemptEvidenceReference | None = None,
+        cumulative_budget_fact: HarnessCumulativeBudgetFact | None = None,
     ) -> StepWorkerObservation:
         if not isinstance(result, HarnessWorkerResult):
             raise TypeError("result must be HarnessWorkerResult")
@@ -358,6 +370,7 @@ class StepWorkerObservation:
             error_type=None if error_type is None else str(error_type),
             candidate_observations=result.candidate_payload(),
             accepted_evidence=accepted_evidence,
+            cumulative_budget_fact=cumulative_budget_fact,
         )
 
     def control_payload(self) -> dict[str, Any]:
@@ -365,6 +378,11 @@ class StepWorkerObservation:
             "status": self.status.value,
             "error": self.error,
             "error_type": self.error_type,
+            "cumulative_budget_fact": (
+                None
+                if self.cumulative_budget_fact is None
+                else self.cumulative_budget_fact.control_projection()
+            ),
         }
 
     def to_dict(self) -> dict[str, Any]:
@@ -1312,6 +1330,38 @@ class StepLifecycleStateMachine:
                 "worker_result_pending",
                 observations=observations,
             )
+        cumulative_fact = worker.cumulative_budget_fact
+        if cumulative_fact is not None:
+            fact_payload = {
+                "canonical_budget_fact": cumulative_fact.control_projection()
+            }
+            if cumulative_fact.resolution_status != "verified":
+                return _transition(
+                    StepLifecycleTransitionType.HALT_STEP,
+                    state,
+                    cumulative_fact.reason_code or "budget_fact_invalid",
+                    reason="canonical cumulative LLM budget fact is invalid",
+                    payload=fact_payload,
+                    observations=observations,
+                )
+            if cumulative_fact.indeterminate:
+                return _transition(
+                    StepLifecycleTransitionType.HALT_STEP,
+                    state,
+                    "cumulative_llm_budget_indeterminate",
+                    reason="cumulative LLM usage is indeterminate",
+                    payload=fact_payload,
+                    observations=observations,
+                )
+            if cumulative_fact.denied and budget.halt_on_budget_exceeded:
+                return _transition(
+                    StepLifecycleTransitionType.HALT_STEP,
+                    state,
+                    "cumulative_llm_budget_exhausted",
+                    reason="cumulative LLM budget is exhausted",
+                    payload=fact_payload,
+                    observations=observations,
+                )
         if worker.status is HarnessWorkerStatus.SUCCEEDED:
             if policy.approval_required and not observations.approval_granted:
                 return _transition(

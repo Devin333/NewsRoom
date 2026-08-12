@@ -104,6 +104,7 @@ from framework.harness.context import (
 )
 from framework.harness.control_plane import (
     BudgetGate,
+    CumulativeLLMBudgetGate,
     DeduplicationGate,
     DeterministicGate,
     DeterministicGateRegistry,
@@ -118,6 +119,7 @@ from framework.harness.control_plane import (
     HarnessAcceptedGraphObservation,
     HarnessBudget,
     HarnessBudgetSnapshot,
+    HarnessCumulativeBudgetFact,
     HarnessActivity,
     HarnessActivityResultRecord,
     HarnessActiveActivityState,
@@ -549,6 +551,7 @@ __all__ = [
     "BoundedRAGSessionController",
     "BoundedLoop",
     "BudgetGate",
+    "CumulativeLLMBudgetGate",
     "CallableLLMWorkerAdapter",
     "CallableSkillWorkerAdapter",
     "CallableSubAgentWorkerAdapter",
@@ -699,6 +702,7 @@ __all__ = [
     "HarnessAttemptEvidenceReference",
     "HarnessBudget",
     "HarnessBudgetSnapshot",
+    "HarnessCumulativeBudgetFact",
     "HarnessBudgetCounterState",
     "HarnessBranchOutputReference",
     "HarnessCheckpoint",

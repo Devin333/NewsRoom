@@ -1,13 +1,15 @@
 # 阶段 26：Unified Budget Governance PRD
 
-> Document status: `READY_FOR_OPENSPEC`
-> Implementation status: `NOT_STARTED`
+> Document status: `FINAL`
+> Implementation status: `IMPLEMENTED`
 > Version: `v1.0`
 > Priority: `P0`（Harness 资源控制、并发正确性与 durable replay）
 > Scope: `framework/governance/budget`、`framework/llm/budget`、`framework/agent/runtime/llm.py`、`framework/workflow/governance/budget.py` 及其 production callsites/tests
 > Baseline: 阶段 20 的 `WF-002/U10`、阶段 22 的 retry-credit 边界、阶段 23 的 cache 语义、阶段 24 的 model-aware context preflight
 > Proposed OpenSpec change: `framework-budget-contract-convergence`
 > Last updated: `2026-08-12`
+
+> Implementation evidence: canonical ledger and cross-layer cutover are implemented in the paths listed in [Section 8.2](#82-文件策略); the focused OpenSpec change is `openspec/changes/framework-budget-contract-convergence`. Final repository smoke and commit evidence are recorded in that change's `evidence.md`.
 
 ## 0. 一句话结论
 

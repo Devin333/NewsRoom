@@ -51,9 +51,9 @@ class _RecordingBudgetTracker(GlobalBudgetTracker):
         super().__init__(GlobalBudgetPolicy(max_llm_calls=10))
         self.reserved_prompt_tokens: list[int | None] = []
 
-    def reserve_llm_call(self, estimated_prompt_tokens=None):  # type: ignore[no-untyped-def]
-        self.reserved_prompt_tokens.append(estimated_prompt_tokens)
-        return super().reserve_llm_call(estimated_prompt_tokens)
+    def reserve_prepared_operation(self, **kwargs):  # type: ignore[no-untyped-def]
+        self.reserved_prompt_tokens.append(kwargs["input_tokens"])
+        return super().reserve_prepared_operation(**kwargs)
 
 
 class _OverflowClient:

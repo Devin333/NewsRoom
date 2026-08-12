@@ -53,10 +53,13 @@ from framework.agent.session import (
 )
 from framework.agent.models.trace import AgentLoopTrace, IterationTrace
 from framework.events import TraceContext, W3CTracePropagator
-from framework.agent.runtime.llm import (
+from framework.llm.budget import (
+    GlobalBudgetCheck,
     GlobalBudgetExceededError,
     GlobalBudgetTracker,
+    LLMBudgetOperation,
 )
+from framework.llm.context import estimate_request_tokens
 from framework.llm.models import (
     LLMClient,
     LLMRequest,
@@ -115,6 +118,7 @@ class AgentLoop:
         self._output_judge = output_judge or OutputJudge()
         self._output_normalizer = output_normalizer or identity_output_normalizer
         self._global_budget_tracker = global_budget_tracker
+        self._active_budget_operation: LLMBudgetOperation | None = None
         self._subagent_executor = subagent_executor
         self._memory_runtime = memory_runtime
         self._memory_policy = memory_policy or DEFAULT_AGENT_MEMORY_POLICY
@@ -202,7 +206,12 @@ class AgentLoop:
             )
             trace.record_prompt(iteration_trace, request)
             try:
-                self._check_global_budget_before_llm_call(metrics)
+                self._reserve_global_budget_before_llm_call(
+                    metrics,
+                    request=request,
+                    agent=agent,
+                    iteration=iteration,
+                )
             except GlobalBudgetExceededError as exc:
                 trace.mark_stop_candidate(
                     iteration_trace,
@@ -258,6 +267,10 @@ class AgentLoop:
                     llm_call_artifacts=llm_call_artifacts,
                 )
             except Exception as exc:
+                self._mark_active_budget_indeterminate(
+                    metrics,
+                    reason="agent_direct_llm_dispatch_indeterminate"
+                )
                 if _is_global_budget_exception(exc):
                     metrics.llm_error_count += 1
                     trace.record_llm_error(iteration_trace, exc)
@@ -1128,10 +1141,35 @@ class AgentLoop:
             tool_calls=list(response.tool_calls),
         )
 
-    def _check_global_budget_before_llm_call(self, metrics: AgentLoopMetrics) -> None:
+    def _reserve_global_budget_before_llm_call(
+        self,
+        metrics: AgentLoopMetrics,
+        *,
+        request: LLMRequest,
+        agent: AgentSpec,
+        iteration: int,
+    ) -> None:
         if self._global_budget_tracker is None:
             return
-        check = self._global_budget_tracker.check_before_llm_call()
+        if _client_manages_global_budget(self._llm_client):
+            return
+        operation_id = self._global_budget_tracker.next_operation_identity(
+            f"agent:{agent.agent_id}:iteration:{iteration}"
+        )
+        operation = self._global_budget_tracker.reserve_direct_operation(
+            operation_id=operation_id,
+            idempotency_key=f"{operation_id}:reservation",
+            input_tokens=estimate_request_tokens(request),
+            output_tokens=(
+                max(0, int(request.max_tokens))
+                if request.max_tokens is not None
+                else None
+            ),
+        )
+        if isinstance(operation, GlobalBudgetCheck):
+            raise GlobalBudgetExceededError(operation)
+        self._active_budget_operation = operation
+        check = self._global_budget_tracker.check_for_operation(operation)
         metrics.global_budget_check = check.to_dict()
         metrics.global_budget_usage = check.usage.to_dict()
 
@@ -1144,6 +1182,7 @@ class AgentLoop:
         router_budget_check = metadata.get("llm_global_budget_check")
         router_budget_usage = metadata.get("llm_global_budget_usage")
         if isinstance(router_budget_check, dict):
+            self._active_budget_operation = None
             metrics.global_budget_check = dict(router_budget_check)
             metrics.global_budget_usage = (
                 dict(router_budget_usage) if isinstance(router_budget_usage, dict) else None
@@ -1151,9 +1190,31 @@ class AgentLoop:
             return
         if self._global_budget_tracker is None:
             return
-        check = self._global_budget_tracker.record_llm_call(
+        operation = self._active_budget_operation
+        self._active_budget_operation = None
+        if operation is None:
+            return
+        check = self._global_budget_tracker.settle_operation(
+            operation,
             response.usage,
             estimated_cost_usd=_optional_float(metadata.get("llm_estimated_cost_usd")),
+        )
+        metrics.global_budget_check = check.to_dict()
+        metrics.global_budget_usage = check.usage.to_dict()
+
+    def _mark_active_budget_indeterminate(
+        self,
+        metrics: AgentLoopMetrics,
+        *,
+        reason: str,
+    ) -> None:
+        operation = self._active_budget_operation
+        self._active_budget_operation = None
+        if self._global_budget_tracker is None or operation is None:
+            return
+        check = self._global_budget_tracker.mark_operation_indeterminate(
+            operation,
+            reason=reason,
         )
         metrics.global_budget_check = check.to_dict()
         metrics.global_budget_usage = check.usage.to_dict()
@@ -1892,6 +1953,11 @@ def _is_global_budget_exception(exc: Exception) -> bool:
             return False
         return isinstance(payload, dict) and payload.get("error_type") == "global_budget_exceeded"
     return False
+
+
+def _client_manages_global_budget(client: Any) -> bool:
+    capability = getattr(client, "manages_global_budget", None)
+    return bool(capability() if callable(capability) else capability)
 
 
 def _structured_output_failure_verdict(
