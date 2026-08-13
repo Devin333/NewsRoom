@@ -2,13 +2,13 @@
 
 - [ ] 1.1 完成 `harness-workflow-graph-runtime` 的实现与严格验证，并归档使 `harness-workflow-graph` 成为 canonical capability
 - [ ] 1.2 基于归档后的 canonical spec rebase 本 change，补上 `Legacy Workflow Graph Compilation` 的最终 `REMOVED` delta
-- [ ] 1.3 生成机器可读的生产依赖 inventory，覆盖 `framework/workflow` 92 个 tracked files、所有外部 imports、public exports、registries、reflection strings 和 CLI/API/MCP/SDK entrypoints
-- [ ] 1.4 盘点所有 persisted run manifests、events、checkpoints、replay bundles、artifact indexes、conversation cursors、iteration checkpoints 及其 schema/version
+- [x] 1.3 生成机器可读的生产依赖 inventory，覆盖 `framework/workflow` 92 个 tracked files、所有外部 imports、public exports、registries、reflection strings 和 CLI/API/MCP/SDK entrypoints
+- [x] 1.4 盘点所有 persisted run manifests、events、checkpoints、replay bundles、artifact indexes、conversation cursors、iteration checkpoints 及其 schema/version
 - [ ] 1.5 为 inventory 的每一行填写 `keep/adapt/migrate/delete/quarantine`、replacement owner、caller、数据处置、迁移 phase、验证命令和删除 commit
 - [ ] 1.6 建立 architecture freeze gate，阻止新增 `framework.workflow`、`framework.harness.workflow`、`WorkflowRunner`、`WorkflowExecutor` 和 legacy schema writer
-- [ ] 1.7 记录当前 Research Graph golden definition、normalized graph checksum、gate evidence、terminal manifest 和 offline replay 基线
+- [x] 1.7 记录当前 Research Graph golden definition、normalized graph checksum、gate evidence、terminal manifest 和 offline replay 基线
 - [ ] 1.8 确认所有受管环境、artifact roots、event/checkpoint stores、index databases 和维护窗口 owner
-- [ ] 1.9 审计所有 active `workflow-*`、`*workflow*` OpenSpec changes；仍会同步旧 runtime requirement 的 change 必须改为 superseded/`--skip-specs` 归档或先重写为 Graph contract
+- [x] 1.9 审计所有 active `workflow-*`、`*workflow*` OpenSpec changes；仍会同步旧 runtime requirement 的 change 必须改为 superseded/`--skip-specs` 归档或先重写为 Graph contract
 
 ## 2. Graph-only 公共契约
 
