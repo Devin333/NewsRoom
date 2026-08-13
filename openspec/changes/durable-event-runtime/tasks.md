@@ -80,5 +80,5 @@
 - [x] 10.1 Run all `tests/framework/events`, event/trace contracts, Workflow/Harness runtime, checkpoint, manifest, inspection, storage event, and API/CLI/MCP targeted suites including every new adversarial and fault-injection case.
 - [x] 10.2 Run real SQLite multi-process/single-host fault tests and real PostgreSQL concurrent-writer/transaction/crash integration tests; FakeConnection-only tests do not satisfy this gate.
 - [x] 10.3 Measure and record the PRD append/delivery/recovery SLO benchmark under the fixed workload, verify size/backlog limits, and attach machine/configuration evidence.
-- [ ] 10.4 Run `openspec validate durable-event-runtime --strict`, `python -m scripts.dev compile`, `python -m scripts.dev smoke`, `openspec validate --all --strict`, and `git diff --check`; fix root causes for every failure.
+- [x] 10.4 Run `openspec validate durable-event-runtime --strict`, `python -m scripts.dev compile`, `python -m scripts.dev smoke`, `openspec validate --all --strict`, and `git diff --check`; fix root causes for every failure.
 - [ ] 10.5 Update PRD implementation status, completed task evidence, migrations, commits, benchmark results, and rollback drill only after every Definition of Done item is satisfied, then commit each implementation batch without unrelated worktree changes.
