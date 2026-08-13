@@ -48,6 +48,7 @@ class ResearchCapability(str, Enum):
     RUN_STORE = "research.storage.run_store"
     RUN_STORE_ROOT = "research.storage.run_store_root"
     RUN_RECORD_MAX_BYTES = "research.storage.run_record_max_bytes"
+    GRAPH_ARTIFACT_PERSISTENCE = "research.graph_artifact_persistence"
     EVENT_LOG = "research.event_log"
     DOCUMENT_COMPILER = "research.document_compiler"
     CANDIDATE_WORKER = "research.candidate_worker"

@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+from framework.harness.runtime import GraphArtifactRolloutMode
 from interfaces.composition.research_errors import (
     ResearchConfigurationError,
     ResearchRuntimeUnavailableError,
@@ -61,6 +62,17 @@ def test_from_env_builds_immutable_defaults_without_creating_storage(
     assert settings.run_store.supported_schema_versions == ("v1", "v2")
     assert settings.run_store.rollback_schema_versions == ("v1", "v2")
     assert settings.run_store.reconciliation_max_runs == 100
+    assert settings.graph_artifact_persistence.mode is GraphArtifactRolloutMode.SHADOW
+    assert (
+        settings.graph_artifact_persistence.policy_version
+        == "graph-artifact-policy@1"
+    )
+    assert settings.graph_artifact_persistence.inline_max_bytes == 32 * 1024
+    assert settings.graph_artifact_persistence.max_artifacts_per_run == 200
+    assert (
+        settings.graph_artifact_persistence.max_materialized_bytes_per_run
+        == 500 * 1024 * 1024
+    )
     assert not settings.artifact.root.exists()
     assert not settings.research_root.exists()
 
@@ -153,6 +165,84 @@ def test_from_env_normalizes_all_research_configuration_groups(tmp_path: Path) -
     assert settings.run_store.supported_schema_versions == ("v1", "v2")
     assert settings.run_store.rollback_schema_versions == ("v1", "v2")
     assert settings.run_store.reconciliation_max_runs == 17
+
+
+def test_from_env_normalizes_explicit_graph_artifact_persistence_snapshot(
+    tmp_path: Path,
+) -> None:
+    settings = ResearchRuntimeSettings.from_env(
+        {
+            **_minimum_env(),
+            "NEWS_RESEARCH_GRAPH_ARTIFACT_MODE": "ENFORCE",
+            "NEWS_RESEARCH_GRAPH_ARTIFACT_POLICY_VERSION": "graph-artifact-policy@2",
+            "NEWS_RESEARCH_GRAPH_ARTIFACT_READABLE_POLICY_VERSIONS": (
+                "graph-artifact-policy@1,graph-artifact-policy@2"
+            ),
+            "NEWS_RESEARCH_GRAPH_ARTIFACT_INLINE_MAX_BYTES": "4096",
+            "NEWS_RESEARCH_GRAPH_ARTIFACT_INLINE_MAX_DEPTH": "6",
+            "NEWS_RESEARCH_GRAPH_ARTIFACT_INLINE_MAX_KEYS": "64",
+            "NEWS_RESEARCH_GRAPH_ARTIFACT_SUMMARY_MAX_BYTES": "2048",
+            "NEWS_RESEARCH_GRAPH_ARTIFACT_SUMMARY_MAX_TOKENS": "512",
+            "NEWS_RESEARCH_GRAPH_ARTIFACT_SAMPLE_MAX_BYTES": "8192",
+            "NEWS_RESEARCH_GRAPH_ARTIFACT_MAX_BYTES": "10485760",
+            "NEWS_RESEARCH_GRAPH_ARTIFACT_MAX_PER_RUN": "25",
+            "NEWS_RESEARCH_GRAPH_ARTIFACT_MAX_MATERIALIZED_BYTES_PER_RUN": "20971520",
+            "NEWS_RESEARCH_GRAPH_ARTIFACT_MAX_CONTEXT_REFS": "4",
+            "NEWS_RESEARCH_GRAPH_ARTIFACT_MAX_CONTEXT_LOADED_BYTES": "1048576",
+            "NEWS_RESEARCH_GRAPH_ARTIFACT_MAX_CONTEXT_LOADED_TOKENS": "262144",
+            "NEWS_RESEARCH_GRAPH_ARTIFACT_DEDUP_SCOPE": "TENANT_CHECKSUM_MEDIA_TYPE",
+            "NEWS_RESEARCH_GRAPH_ARTIFACT_CACHE_TTL_SECONDS": "3600",
+            "NEWS_RESEARCH_GRAPH_ARTIFACT_RETENTION_EPHEMERAL_DAYS": "2",
+            "NEWS_RESEARCH_GRAPH_ARTIFACT_RETENTION_RUN_DAYS": "45",
+            "NEWS_RESEARCH_GRAPH_ARTIFACT_RETENTION_EVIDENCE_DAYS": "365",
+            "NEWS_RESEARCH_GRAPH_ARTIFACT_RETENTION_REPORT_DAYS": "3650",
+            "NEWS_RESEARCH_GRAPH_ARTIFACT_RETENTION_CACHE_DAYS": "2",
+        },
+        cwd=tmp_path,
+    )
+
+    config = settings.graph_artifact_persistence
+    assert config.mode is GraphArtifactRolloutMode.ENFORCE
+    assert config.policy_version == "graph-artifact-policy@2"
+    assert config.readable_policy_versions == (
+        "graph-artifact-policy@1",
+        "graph-artifact-policy@2",
+    )
+    assert config.inline_max_bytes == 4096
+    assert config.max_artifact_bytes == 10 * 1024 * 1024
+    assert config.max_materialized_bytes_per_run == 20 * 1024 * 1024
+    assert config.retention.report_days == 3650
+
+
+@pytest.mark.parametrize(
+    ("name", "value"),
+    [
+        ("NEWS_RESEARCH_GRAPH_ARTIFACT_MODE", "worker_selected"),
+        (
+            "NEWS_RESEARCH_GRAPH_ARTIFACT_POLICY_VERSION",
+            "graph-artifact-policy@2",
+        ),
+        ("NEWS_RESEARCH_GRAPH_ARTIFACT_INLINE_MAX_BYTES", "0"),
+        ("NEWS_RESEARCH_GRAPH_ARTIFACT_MAX_BYTES", "999999999"),
+        ("NEWS_RESEARCH_GRAPH_ARTIFACT_CACHE_TTL_SECONDS", "30"),
+        ("NEWS_RESEARCH_GRAPH_ARTIFACT_RETENTION_REPORT_DAYS", "0"),
+    ],
+)
+def test_graph_artifact_configuration_fails_closed_without_echoing_value(
+    tmp_path: Path,
+    name: str,
+    value: str,
+) -> None:
+    with pytest.raises(ResearchConfigurationError) as exc_info:
+        ResearchRuntimeSettings.from_env(
+            {**_minimum_env(), name: value},
+            cwd=tmp_path,
+        )
+
+    error = exc_info.value
+    assert error.capabilities == ("research.graph_artifact_persistence",)
+    assert value not in str(error)
+    assert value not in json.dumps(error.to_public_dict(), sort_keys=True)
 
 
 def test_from_env_uses_existing_shared_llm_artifact_and_parser_names(

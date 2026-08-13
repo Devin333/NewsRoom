@@ -154,6 +154,14 @@ def test_provider_caches_explicit_composition_and_reuses_source_provider(
     assert provider.service_factory() is first.service
     assert first.resources == (resources[0],)
     assert calls == [(settings, source_provider)]
+    assert (
+        calls[0][0].graph_artifact_persistence
+        is settings.graph_artifact_persistence
+    )
+    assert (
+        first.settings.graph_artifact_persistence.policy_version
+        == "graph-artifact-policy@1"
+    )
     assert provider.initialized is True
 
     provider.reset()

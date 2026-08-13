@@ -9,6 +9,11 @@ from pathlib import Path
 from typing import NoReturn
 from urllib.parse import urlsplit, urlunsplit
 
+from framework.harness.runtime.result_errors import GraphArtifactResultError
+from framework.harness.runtime.result_policy import (
+    GraphArtifactPersistenceConfig,
+    GraphArtifactRetentionSettings,
+)
 from interfaces.composition.research_errors import (
     ResearchConfigurationError,
     ResearchRemediation,
@@ -280,6 +285,7 @@ class ResearchRuntimeSettings:
     rag: ResearchRAGSettings
     artifact: ResearchArtifactSettings
     run_store: ResearchRunStoreSettings
+    graph_artifact_persistence: GraphArtifactPersistenceConfig
 
     def __post_init__(self) -> None:
         _directory_root(self.research_root, "research.storage.root")
@@ -290,6 +296,11 @@ class ResearchRuntimeSettings:
             (self.rag, ResearchRAGSettings, "research.rag"),
             (self.artifact, ResearchArtifactSettings, "research.storage.artifact"),
             (self.run_store, ResearchRunStoreSettings, "research.storage.run_store"),
+            (
+                self.graph_artifact_persistence,
+                GraphArtifactPersistenceConfig,
+                "research.graph_artifact_persistence",
+            ),
         )
         for value, expected_type, capability in expected_types:
             if not isinstance(value, expected_type):
@@ -592,6 +603,7 @@ class ResearchRuntimeSettings:
                     capability="research.storage.run_store",
                 ),
             ),
+            graph_artifact_persistence=_graph_artifact_persistence_from_env(values),
         )
         if not _secret_is_present(values, settings.llm.api_key_env):
             raise ResearchRuntimeUnavailableError(
@@ -600,6 +612,150 @@ class ResearchRuntimeSettings:
                 retryable=False,
             )
         return settings
+
+
+def _graph_artifact_persistence_from_env(
+    values: Mapping[str, str],
+) -> GraphArtifactPersistenceConfig:
+    capability = "research.graph_artifact_persistence"
+    try:
+        return GraphArtifactPersistenceConfig(
+            mode=_first_text(
+                values,
+                ("NEWS_RESEARCH_GRAPH_ARTIFACT_MODE",),
+                "shadow",
+            ).lower(),
+            policy_version=_first_text(
+                values,
+                ("NEWS_RESEARCH_GRAPH_ARTIFACT_POLICY_VERSION",),
+                "graph-artifact-policy@1",
+            ),
+            readable_policy_versions=_text_tuple(
+                _first_text(
+                    values,
+                    ("NEWS_RESEARCH_GRAPH_ARTIFACT_READABLE_POLICY_VERSIONS",),
+                    "graph-artifact-policy@1",
+                ),
+                capability=capability,
+                max_length=2_048,
+            ),
+            inline_max_bytes=_env_int(
+                values,
+                "NEWS_RESEARCH_GRAPH_ARTIFACT_INLINE_MAX_BYTES",
+                32 * 1024,
+                capability=capability,
+            ),
+            inline_max_depth=_env_int(
+                values,
+                "NEWS_RESEARCH_GRAPH_ARTIFACT_INLINE_MAX_DEPTH",
+                8,
+                capability=capability,
+            ),
+            inline_max_keys=_env_int(
+                values,
+                "NEWS_RESEARCH_GRAPH_ARTIFACT_INLINE_MAX_KEYS",
+                256,
+                capability=capability,
+            ),
+            summary_max_bytes=_env_int(
+                values,
+                "NEWS_RESEARCH_GRAPH_ARTIFACT_SUMMARY_MAX_BYTES",
+                8 * 1024,
+                capability=capability,
+            ),
+            summary_max_tokens=_env_int(
+                values,
+                "NEWS_RESEARCH_GRAPH_ARTIFACT_SUMMARY_MAX_TOKENS",
+                2_048,
+                capability=capability,
+            ),
+            sample_max_bytes=_env_int(
+                values,
+                "NEWS_RESEARCH_GRAPH_ARTIFACT_SAMPLE_MAX_BYTES",
+                64 * 1024,
+                capability=capability,
+            ),
+            max_artifact_bytes=_env_int(
+                values,
+                "NEWS_RESEARCH_GRAPH_ARTIFACT_MAX_BYTES",
+                512 * 1024 * 1024,
+                capability=capability,
+            ),
+            max_artifacts_per_run=_env_int(
+                values,
+                "NEWS_RESEARCH_GRAPH_ARTIFACT_MAX_PER_RUN",
+                200,
+                capability=capability,
+            ),
+            max_materialized_bytes_per_run=_env_int(
+                values,
+                "NEWS_RESEARCH_GRAPH_ARTIFACT_MAX_MATERIALIZED_BYTES_PER_RUN",
+                500 * 1024 * 1024,
+                capability=capability,
+            ),
+            max_context_artifact_refs=_env_int(
+                values,
+                "NEWS_RESEARCH_GRAPH_ARTIFACT_MAX_CONTEXT_REFS",
+                12,
+                capability=capability,
+            ),
+            max_context_loaded_bytes=_env_int(
+                values,
+                "NEWS_RESEARCH_GRAPH_ARTIFACT_MAX_CONTEXT_LOADED_BYTES",
+                4 * 1024 * 1024,
+                capability=capability,
+            ),
+            max_context_loaded_tokens=_env_int(
+                values,
+                "NEWS_RESEARCH_GRAPH_ARTIFACT_MAX_CONTEXT_LOADED_TOKENS",
+                1_048_576,
+                capability=capability,
+            ),
+            dedup_scope=_first_text(
+                values,
+                ("NEWS_RESEARCH_GRAPH_ARTIFACT_DEDUP_SCOPE",),
+                "tenant_checksum_media_type",
+            ).lower(),
+            cache_default_ttl_seconds=_env_int(
+                values,
+                "NEWS_RESEARCH_GRAPH_ARTIFACT_CACHE_TTL_SECONDS",
+                86_400,
+                capability=capability,
+            ),
+            retention=GraphArtifactRetentionSettings(
+                ephemeral_days=_env_int(
+                    values,
+                    "NEWS_RESEARCH_GRAPH_ARTIFACT_RETENTION_EPHEMERAL_DAYS",
+                    1,
+                    capability=capability,
+                ),
+                run_days=_env_int(
+                    values,
+                    "NEWS_RESEARCH_GRAPH_ARTIFACT_RETENTION_RUN_DAYS",
+                    30,
+                    capability=capability,
+                ),
+                evidence_days=_env_int(
+                    values,
+                    "NEWS_RESEARCH_GRAPH_ARTIFACT_RETENTION_EVIDENCE_DAYS",
+                    180,
+                    capability=capability,
+                ),
+                report_days=_optional_env_int(
+                    values,
+                    "NEWS_RESEARCH_GRAPH_ARTIFACT_RETENTION_REPORT_DAYS",
+                    capability=capability,
+                ),
+                cache_days=_env_int(
+                    values,
+                    "NEWS_RESEARCH_GRAPH_ARTIFACT_RETENTION_CACHE_DAYS",
+                    1,
+                    capability=capability,
+                ),
+            ),
+        )
+    except GraphArtifactResultError:
+        _invalid(capability)
 
 
 def _base_path(value: str | os.PathLike[str] | None) -> Path:
@@ -710,6 +866,18 @@ def _env_int(
         _invalid(capability)
 
 
+def _optional_env_int(
+    values: Mapping[str, str],
+    name: str,
+    *,
+    capability: str,
+) -> int | None:
+    raw = values.get(name)
+    if raw is None or not str(raw).strip():
+        return None
+    return _env_int(values, name, 0, capability=capability)
+
+
 def _env_int_from_names(
     values: Mapping[str, str],
     names: tuple[str, ...],
@@ -768,6 +936,20 @@ def _parser_backends(value: str) -> tuple[str, ...]:
     if len(value) > 256:
         _invalid("research.parser.backends")
     return tuple(part.strip().lower() for part in value.split(",") if part.strip())
+
+
+def _text_tuple(
+    value: str,
+    *,
+    capability: str,
+    max_length: int,
+) -> tuple[str, ...]:
+    if len(value) > max_length:
+        _invalid(capability)
+    items = tuple(part.strip() for part in value.split(",") if part.strip())
+    if not items or len(items) != len(set(items)):
+        _invalid(capability)
+    return items
 
 
 def _research_run_schema_version(value: str, capability: str) -> str:
