@@ -1,1 +1,0 @@
-{"concurrent_dispatchers_observed":0,"dispatcher_claims_paused":true,"drill_id":"durable-event-runtime-7a595636","schema":"newsroom.durable-event-rollback-traffic-control/v1","source_checksum":"sha256:2c2a6f9bcf671ffc3a0d1716d697adf0e2aff530f27652783089c9952d3bc991","source_ref":"newsroom-source://durable-event-runtime-7a595636/traffic_control","traffic_frozen":true}

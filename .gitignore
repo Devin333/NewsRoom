@@ -224,6 +224,7 @@ private.pem
 .tmp/
 .hex-skills/
 .agents/live-review/
+docs/
 openspec/
 .codex/
 .claude/
