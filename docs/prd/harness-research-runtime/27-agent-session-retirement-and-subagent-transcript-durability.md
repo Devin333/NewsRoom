@@ -32,7 +32,7 @@ Phase B: 再删除 obsolete agent session runtime、AgentLoop hook 和专用 tes
 | Canonical baseline | 归档 `harness-dynamic-task-planning`、`harness-taskplan-integrity-hardening` | `149e5180`、`47a7c201` | 完成 |
 | Phase A | durable subagent context/output/transcript bundle、typed receipt、TaskPlan result/event/replay lineage、Research production injection | implementation `db3fda0c`；evidence `06ea9da1`；archive `cf1deec5` | 完成并归档 |
 | Phase B | 删除 obsolete agent session packages、AgentLoop hook、AgentSpec policy 和专用传播；保留独立 session owners | implementation `ba874567`；evidence `155722aa`；archive `f8bca8a9` | 完成并归档 |
-| Corrective closure | canonical artifact-ref verifier、acceptance/replay 二次校验、durable parent halt、historical SQLite operations boundary | proposal `561020b5`；implementation `3968fc17` | 完成，随本 PRD 收口归档 |
+| Corrective closure | canonical artifact-ref verifier、acceptance/replay 二次校验、durable parent halt、historical SQLite operations boundary | proposal `561020b5`；implementation `3968fc17`；evidence/PRD `9a6628ef` | 完成并归档至 `2026-08-13-close-subagent-artifact-evidence-and-retirement-docs` |
 
 最终边界保持不变：`LLM/subagent as worker, Harness as control plane`。AgentLoop/AgentRunner 不拥有 shared-session 状态，MemoryRuntime 不承载 operational transcript，artifact publication 仍由 Research terminal authority 决定。
 
@@ -786,7 +786,7 @@ OpenSpec `tasks.md` 和 `evidence.md` 必须维护以下映射，不能用一个
 | Phase B | implementation `ba874567`；evidence `155722aa`；archive `f8bca8a9` | main regression `2128 passed, 23 deselected`；smoke `2096 passed, 23 deselected`；OpenSpec all-strict `524 passed, 0 failed` |
 | Corrective closure | proposal `561020b5`；implementation `3968fc17`；本 change `evidence.md` | Harness focused `94 passed`；Research/composition/architecture focused `52 passed, 2 skipped`；compile PASS；smoke `2100 passed, 23 deselected`；source validation `0 errors, 0 warnings`；change strict 与 all-strict PASS |
 
-Phase A/B 的 requirement-level evidence 位于各自 2026-08-13 archive 的 `evidence.md`；corrective evidence 随本 PRD 收口后进入对应 archive。以上通过项均为 live tree 实测，不以 tasks checkbox 代替。
+Phase A/B 的 requirement-level evidence 位于各自 2026-08-13 archive 的 `evidence.md`；corrective evidence 位于 `openspec/changes/archive/2026-08-13-close-subagent-artifact-evidence-and-retirement-docs/evidence.md`。以上通过项均为 live tree 实测，不以 tasks checkbox 代替。
 
 ## 16. 风险、回滚与运行保护
 
