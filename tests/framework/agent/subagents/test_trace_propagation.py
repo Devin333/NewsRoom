@@ -26,6 +26,7 @@ def test_subagent_handoff_extracts_child_scope_and_records_link(
 ) -> None:
     producer = W3CSpanContext.root()
     observed: list[W3CSpanContext | None] = []
+    invocations: list[tuple[dict[str, Any], dict[str, Any]]] = []
 
     class _AgentRunner:
         def __init__(self, **kwargs: Any) -> None:
@@ -36,6 +37,7 @@ def test_subagent_handoff_extracts_child_scope_and_records_link(
             observed.append(
                 context if isinstance(context, W3CSpanContext) else None
             )
+            invocations.append((inputs, kwargs))
             return SimpleNamespace(
                 success=True,
                 output={"checked": inputs["subagent_task"]},
@@ -61,11 +63,25 @@ def test_subagent_handoff_extracts_child_scope_and_records_link(
         child_agent_id="critic",
         task="check evidence",
         trace_carrier=W3CTracePropagator().inject(producer),
+        metadata={
+            "session_id": "retired-shared-session",
+            "run_id": "run-1",
+            "workflow_id": "workflow-1",
+            "step_id": "step-1",
+            "workflow_checkpoint_id": "checkpoint-1",
+        },
     )
 
     result = executor.run(task)
 
     assert result.success is True
+    child_inputs, runner_kwargs = invocations[0]
+    assert child_inputs["run_id"] == "run-1"
+    assert child_inputs["workflow_id"] == "workflow-1"
+    assert "session_id" not in child_inputs
+    assert runner_kwargs["run_id"] == "run-1"
+    assert runner_kwargs["step_id"] == "step-1"
+    assert runner_kwargs["workflow_checkpoint_id"] == "checkpoint-1"
     context = observed[0]
     assert isinstance(context, W3CSpanContext)
     assert context.trace_id == producer.trace_id

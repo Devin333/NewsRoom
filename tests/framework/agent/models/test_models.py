@@ -51,3 +51,28 @@ def test_agent_policy_status_action_and_result_prd_helpers() -> None:
 def test_agent_spec_rejects_empty_agent_id() -> None:
     with pytest.raises(ValueError, match="agent_id is required"):
         AgentSpec(agent_id="", name="bad", instructions="nope")
+
+
+def test_agent_spec_rejects_retired_session_context_policy() -> None:
+    with pytest.raises(ValueError, match="agent_session_context_policy_retired"):
+        AgentSpec.from_dict(
+            {
+                "agent_id": "analyst",
+                "name": "Analyst",
+                "instructions": "Return JSON",
+                "session_context_policy": None,
+            }
+        )
+
+
+def test_agent_spec_roundtrip_has_no_retired_session_policy() -> None:
+    spec = AgentSpec(
+        agent_id="analyst",
+        name="Analyst",
+        instructions="Return JSON",
+    )
+
+    payload = spec.to_dict()
+
+    assert "session_context_policy" not in payload
+    assert AgentSpec.from_dict(payload) == spec

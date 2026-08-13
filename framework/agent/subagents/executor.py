@@ -222,7 +222,7 @@ def _child_inputs(task: SubAgentTask) -> dict[str, Any]:
         "parent_agent_id": task.parent_agent_id,
         **deepcopy(task.inputs),
     }
-    for key in ("session_id", "run_id", "workflow_id"):
+    for key in ("run_id", "workflow_id"):
         value = task.metadata.get(key)
         if key not in child_inputs and value:
             child_inputs[key] = str(value)
