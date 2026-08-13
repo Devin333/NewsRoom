@@ -2,7 +2,20 @@ from __future__ import annotations
 
 from contextlib import AbstractContextManager
 from dataclasses import dataclass, field
-from typing import Any, Protocol, runtime_checkable
+from datetime import datetime
+from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
+
+if TYPE_CHECKING:
+    from framework.harness.artifacts.catalog import (
+        ArtifactCatalogClaim,
+        ArtifactCatalogEntry,
+        ArtifactCatalogGcPlan,
+        ArtifactCatalogReconciliationPlan,
+        ArtifactCatalogRegistrationRequest,
+        ArtifactCatalogRegistrationResult,
+        ArtifactLogicalReference,
+        ArtifactVerificationReceipt,
+    )
 
 from framework.harness.control_plane.errors import HarnessValidationError
 from framework.shared.json import to_jsonable
@@ -83,8 +96,80 @@ class RunBoundArtifactPort(ArtifactPort, Protocol):
         ...
 
 
+@runtime_checkable
+class ArtifactCatalogPort(Protocol):
+    """Metadata authority for verified physical artifacts and logical owners."""
+
+    def register(
+        self,
+        request: "ArtifactCatalogRegistrationRequest",
+    ) -> "ArtifactCatalogRegistrationResult":
+        ...
+
+    def get(self, entry_id: str) -> "ArtifactCatalogEntry":
+        ...
+
+    def find_by_checksum(
+        self,
+        *,
+        tenant_id: str,
+        content_checksum: str,
+        media_type: str | None = None,
+        producer_revision: str | None = None,
+    ) -> tuple["ArtifactCatalogEntry", ...]:
+        ...
+
+    def list_by_run(
+        self,
+        *,
+        tenant_id: str,
+        run_id: str,
+    ) -> tuple["ArtifactCatalogEntry", ...]:
+        ...
+
+    def list_claims_by_run(
+        self,
+        *,
+        tenant_id: str,
+        run_id: str,
+    ) -> tuple["ArtifactCatalogClaim", ...]:
+        ...
+
+    def list_references(
+        self,
+        entry_id: str,
+    ) -> tuple["ArtifactLogicalReference", ...]:
+        ...
+
+    def add_reference(
+        self,
+        reference: "ArtifactLogicalReference",
+    ) -> "ArtifactLogicalReference":
+        ...
+
+    def remove_reference(
+        self,
+        *,
+        tenant_id: str,
+        reference_id: str,
+    ) -> bool:
+        ...
+
+    def plan_gc(self, *, now: datetime) -> "ArtifactCatalogGcPlan":
+        ...
+
+    def reconcile(
+        self,
+        *,
+        now: datetime,
+        physical_inventory: tuple["ArtifactVerificationReceipt", ...] | None = None,
+    ) -> "ArtifactCatalogReconciliationPlan":
+        ...
+
+
 __all__ = [
     "ArtifactPort",
+    "ArtifactCatalogPort",
     "ArtifactReferenceVerifierPort",
     "ArtifactRef",
     "ArtifactWriteRequest",

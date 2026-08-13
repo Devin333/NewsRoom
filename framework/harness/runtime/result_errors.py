@@ -15,6 +15,9 @@ class GraphArtifactResultErrorCode(StrEnum):
     ARTIFACT_WRITE_FAILED = "artifact_write_failed"
     ARTIFACT_READBACK_FAILED = "artifact_readback_failed"
     ARTIFACT_SCOPE_MISMATCH = "artifact_scope_mismatch"
+    ARTIFACT_CATALOG_CORRUPT = "artifact_catalog_corrupt"
+    ARTIFACT_CATALOG_NOT_FOUND = "artifact_catalog_not_found"
+    ARTIFACT_REFERENCE_CONFLICT = "artifact_reference_conflict"
     CACHE_IDENTITY_INVALID = "cache_identity_invalid"
     CONTEXT_BUDGET_EXCEEDED = "context_budget_exceeded"
     SENSITIVE_PAYLOAD_REJECTED = "sensitive_payload_rejected"
@@ -40,6 +43,15 @@ _MESSAGES: Mapping[GraphArtifactResultErrorCode, str] = {
     ),
     GraphArtifactResultErrorCode.ARTIFACT_SCOPE_MISMATCH: (
         "graph artifact result reference is outside the authorized scope"
+    ),
+    GraphArtifactResultErrorCode.ARTIFACT_CATALOG_CORRUPT: (
+        "graph artifact catalog state failed integrity validation"
+    ),
+    GraphArtifactResultErrorCode.ARTIFACT_CATALOG_NOT_FOUND: (
+        "graph artifact catalog record was not found"
+    ),
+    GraphArtifactResultErrorCode.ARTIFACT_REFERENCE_CONFLICT: (
+        "graph artifact catalog reference conflicts with committed ownership"
     ),
     GraphArtifactResultErrorCode.CACHE_IDENTITY_INVALID: (
         "graph artifact cache identity is invalid"

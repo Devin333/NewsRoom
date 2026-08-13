@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from framework.harness.artifacts.fake import FakeArtifactPort
 from framework.harness.artifacts.ports import (
+    ArtifactCatalogPort,
     ArtifactPort,
     ArtifactReferenceVerifierPort,
     ArtifactRef,
@@ -10,6 +11,7 @@ from framework.harness.artifacts.ports import (
 )
 
 __all__ = [
+    "ArtifactCatalogPort",
     "ArtifactPort",
     "ArtifactReferenceVerifierPort",
     "ArtifactRef",
