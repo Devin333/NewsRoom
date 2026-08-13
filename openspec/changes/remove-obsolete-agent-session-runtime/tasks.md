@@ -20,11 +20,11 @@
 ## 4. Historical OpenSpec Retirement
 
 - [x] 4.1 Record canonical spec hashes, archive `paper-agent-shared-session-analysis` with `--skip-specs`, and prove canonical hashes are unchanged. (ASR-FR-005)
-- [ ] 4.2 Record requirement-level implementation, test, archive, and commit evidence in `evidence.md`. (ASR-FR-001..006)
+- [x] 4.2 Record requirement-level implementation, test, archive, and commit evidence in `evidence.md`. (ASR-FR-001..006)
 
 ## 5. Verification
 
 - [x] 5.1 Run focused framework agent, Harness, Research, retained-session, conversation, and architecture tests.
 - [x] 5.2 Run `./.venv/Scripts/python.exe -m scripts.dev compile` and fix all source/contract failures.
 - [x] 5.3 Run `./.venv/Scripts/python.exe -m scripts.dev smoke` and fix every mandatory gate failure.
-- [ ] 5.4 Run `openspec validate remove-obsolete-agent-session-runtime --strict` and `openspec validate --all --strict`, then confirm ASR-FR-001..006 each have implementation, test, archive, and commit evidence.
+- [x] 5.4 Run `openspec validate remove-obsolete-agent-session-runtime --strict` and `openspec validate --all --strict`, then confirm ASR-FR-001..006 each have implementation, test, archive, and commit evidence.
