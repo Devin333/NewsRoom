@@ -142,6 +142,84 @@ def verified_atomic_write(
             _cleanup_owned_file(guard_path, guard_owned)
 
 
+def verified_atomic_create(
+    target: Path,
+    content: bytes,
+    *,
+    root: Path,
+    identity: str,
+) -> bool:
+    """Publish one immutable regular file, returning false if it already exists.
+
+    A same-directory hard link makes publication create-if-absent on Windows and
+    POSIX. The fully written temporary file remains owned by this call and is
+    removed after the link succeeds or loses a concurrent race.
+    """
+
+    canonical_root = root.resolve(strict=False)
+    target = _lexical_descendant(target, root=canonical_root, identity=identity)
+    _ensure_directory_chain(target.parent, root=canonical_root, identity=identity)
+    parent_before = _verified_directory(target.parent, identity=identity, role="parent")
+    existing = _regular_file_or_missing(target, identity=identity)
+    if existing is not None:
+        return False
+
+    descriptor, raw_path = tempfile.mkstemp(
+        dir=target.parent,
+        prefix=f".{target.name}.",
+        suffix=".tmp",
+    )
+    temporary_path = Path(raw_path)
+    temporary_owned: os.stat_result | None = None
+    try:
+        try:
+            with os.fdopen(descriptor, "wb") as handle:
+                descriptor = -1
+                handle.write(content)
+                handle.flush()
+                os.fsync(handle.fileno())
+        finally:
+            if descriptor != -1:
+                os.close(descriptor)
+        temporary_owned = os.lstat(temporary_path)
+        _require_regular(temporary_owned, identity=identity, role="owned temporary file")
+        _assert_parent_unchanged(
+            target.parent,
+            expected=parent_before,
+            root=canonical_root,
+            identity=identity,
+        )
+        try:
+            os.link(temporary_path, target)
+        except FileExistsError:
+            _regular_file_or_missing(target, identity=identity)
+            return False
+        except OSError as exc:
+            if target.exists():
+                _regular_file_or_missing(target, identity=identity)
+                return False
+            raise ArtifactStoreMetadataError(
+                f"immutable artifact create failed: {identity}"
+            ) from exc
+        committed = os.lstat(target)
+        _require_regular(committed, identity=identity, role="committed target")
+        if not os.path.samestat(temporary_owned, committed):
+            raise ArtifactStoreMetadataError(
+                f"immutable artifact committed target identity mismatch: {identity}"
+            )
+        _assert_parent_unchanged(
+            target.parent,
+            expected=parent_before,
+            root=canonical_root,
+            identity=identity,
+        )
+        _fsync_directory(target.parent, -1)
+        return True
+    finally:
+        if temporary_owned is not None:
+            _cleanup_owned_file(temporary_path, temporary_owned)
+
+
 def reject_link_chain(
     path: Path,
     *,
@@ -341,5 +419,6 @@ def _fsync_directory(directory: Path, descriptor: int) -> None:
 __all__ = [
     "is_link_or_reparse_point",
     "reject_link_chain",
+    "verified_atomic_create",
     "verified_atomic_write",
 ]

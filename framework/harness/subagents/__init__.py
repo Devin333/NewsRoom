@@ -25,9 +25,35 @@ from framework.harness.subagents.models import (
     SubAgentSpec,
     SubAgentStatus,
 )
+from framework.harness.subagents.observability import (
+    SUBAGENT_TRANSCRIPT_BYTES,
+    SUBAGENT_TRANSCRIPT_COMMIT_FAILED,
+    SUBAGENT_TRANSCRIPT_COMMIT_LATENCY_MS,
+    SUBAGENT_TRANSCRIPT_COMMIT_SUCCEEDED,
+    SUBAGENT_TRANSCRIPT_CONFLICT,
+    SUBAGENT_TRANSCRIPT_CORRUPT,
+    SUBAGENT_TRANSCRIPT_RECOVERY_REUSED_TOTAL,
+    SUBAGENT_TRANSCRIPT_VERIFY_FAILED,
+    SubAgentTranscriptObservation,
+    SubAgentTranscriptObservationSink,
+)
 from framework.harness.subagents.policy import SubAgentBudget, SubAgentMemoryPolicy, SubAgentToolPolicy
 from framework.harness.subagents.runtime import SubAgentRuntime
-from framework.harness.subagents.transcript import FakeSubAgentTranscriptStore, SubAgentTranscript
+from framework.harness.subagents.transcript import (
+    DEFAULT_MAX_BUNDLE_BYTES,
+    DEFAULT_MAX_OUTPUT_BYTES,
+    DEFAULT_MAX_TRANSCRIPT_BYTES,
+    FakeSubAgentTranscriptStore,
+    SubAgentAttemptIdentity,
+    SubAgentContextEvidence,
+    SubAgentOutputDocument,
+    SubAgentTranscript,
+    SubAgentTranscriptConflictError,
+    SubAgentTranscriptCorruptError,
+    SubAgentTranscriptReceipt,
+    SubAgentTranscriptStoreError,
+    SubAgentTranscriptStorePort,
+)
 
 __all__ = [
     "FORBIDDEN_SUBAGENT_CONTEXT_KEYS",
@@ -36,6 +62,9 @@ __all__ = [
     "FakeSubAgentGateSuite",
     "FakeSubAgentRuntime",
     "FakeSubAgentTranscriptStore",
+    "DEFAULT_MAX_BUNDLE_BYTES",
+    "DEFAULT_MAX_OUTPUT_BYTES",
+    "DEFAULT_MAX_TRANSCRIPT_BYTES",
     "FakeSubAgentWorker",
     "SubAgentBudget",
     "SubAgentBudgetGate",
@@ -57,7 +86,25 @@ __all__ = [
     "SubAgentToolAllowlistGate",
     "SubAgentToolPolicy",
     "SubAgentTranscript",
+    "SubAgentAttemptIdentity",
+    "SubAgentContextEvidence",
+    "SubAgentOutputDocument",
+    "SubAgentTranscriptConflictError",
+    "SubAgentTranscriptCorruptError",
+    "SubAgentTranscriptReceipt",
+    "SubAgentTranscriptStoreError",
+    "SubAgentTranscriptStorePort",
     "SubAgentTranscriptGate",
+    "SubAgentTranscriptObservation",
+    "SubAgentTranscriptObservationSink",
+    "SUBAGENT_TRANSCRIPT_BYTES",
+    "SUBAGENT_TRANSCRIPT_COMMIT_FAILED",
+    "SUBAGENT_TRANSCRIPT_COMMIT_LATENCY_MS",
+    "SUBAGENT_TRANSCRIPT_COMMIT_SUCCEEDED",
+    "SUBAGENT_TRANSCRIPT_CONFLICT",
+    "SUBAGENT_TRANSCRIPT_CORRUPT",
+    "SUBAGENT_TRANSCRIPT_RECOVERY_REUSED_TOTAL",
+    "SUBAGENT_TRANSCRIPT_VERIFY_FAILED",
     "fake_subagent_spec",
     "verify_handoff",
 ]

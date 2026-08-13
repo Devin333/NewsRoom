@@ -75,6 +75,7 @@ from framework.harness import (
     RAGSessionSpec,
     SubAgentRuntime,
     TaskPlanResultVerifier,
+    subagent_attempt_evidence,
     DurableTaskPlanStore,
     transcript_entry_from_event,
 )
@@ -112,7 +113,10 @@ from infrastructure.research.github_repository import (
 from infrastructure.research.local_chunk_store import LocalChunkPayloadStore
 from infrastructure.research.source_provider import ArxivResearchSourceProvider
 from infrastructure.storage.events.factory import durable_event_storage_from_env
-from infrastructure.storage.harness import SQLiteHarnessSideEffectStore
+from infrastructure.storage.harness import (
+    FilesystemSubAgentTranscriptStore,
+    SQLiteHarnessSideEffectStore,
+)
 from business.research.workflows import (
     RESEARCH_DYNAMIC_CAPABILITIES,
     RESEARCH_DYNAMIC_SUBAGENT_IDS,
@@ -1227,6 +1231,14 @@ def _build_configured_composition(
             artifact_store=artifact_port.store,
             tenant_id=_RESEARCH_EVENT_TENANT_ID,
         )
+        subagent_transcript_store = FilesystemSubAgentTranscriptStore(
+            settings.artifact.root,
+            max_output_bytes=settings.artifact.max_bytes,
+            max_bundle_bytes=max(
+                settings.artifact.max_bytes + 4 * 1024 * 1024,
+                12 * 1024 * 1024,
+            ),
+        )
 
         def dynamic_task_plan_runner_factory(*, workspace: Any, dependencies: Any):
             workflow_graph = HarnessWorkflowGraphCompiler().compile(
@@ -1256,7 +1268,8 @@ def _build_configured_composition(
                 workers={
                     RESEARCH_DYNAMIC_SUBAGENT_IDS[capability]: worker
                     for capability, worker in task_workers.items()
-                }
+                },
+                transcript_store=subagent_transcript_store,
             )
             subagent_adapter = ResolvedSubAgentTaskAdapter(subagent_runtime)
             gate_registry = build_paper_analysis_gate_registry()
@@ -1305,7 +1318,8 @@ def _build_configured_composition(
                 build_research_analysis_task_gate_registry(
                     gate_registry,
                     context_factory=gate_context,
-                )
+                ),
+                transcript_store=subagent_transcript_store,
             )
             context_pack = ContextEnvelope(
                 envelope_id=f"research-task-plan-context:{workspace.request.run_id}",
@@ -1339,13 +1353,53 @@ def _build_configured_composition(
                     stage_id=instance.stage_id,
                     context_pack=context_pack,
                     budget_snapshot=HarnessBudgetSnapshot.from_budget(HarnessBudget.safe_default()),
+                    attempt=instance.attempt,
+                    observed_at=plan.accepted_at,
                 )
                 succeeded = child.status.value == "succeeded"
                 return HarnessWorkerResult(
                     status="succeeded" if succeeded else "failed",
-                    output=child.output if succeeded else {},
-                    artifacts=child.artifact_refs if succeeded else (),
-                    diagnostics={"subagent_id": child.subagent_id, "transcript_ref": child.transcript_ref},
+                    output=child.output,
+                    artifacts=child.artifact_refs,
+                    diagnostics={"subagent_id": child.subagent_id},
+                    evidence=(subagent_attempt_evidence(child.transcript_receipt),)
+                    if child.transcript_receipt is not None
+                    else (),
+                    error=None if succeeded else "Research analysis subagent gate failed",
+                )
+
+            def recover(binding, instance):
+                plan = dynamic_task_plan_store.plan(
+                    instance.run_id,
+                    instance.stage_id,
+                    instance.plan_version,
+                )
+                if plan is None:
+                    raise RuntimeError("dynamic TaskPlan plan artifact is unavailable")
+                resolved = next(item for item in plan.tasks if item.task_id == instance.task_id)
+                child = subagent_adapter.recover(
+                    resolved_task=resolved,
+                    binding=binding,
+                    task_instance_id=instance.task_instance_id,
+                    parent_run_id=instance.run_id,
+                    workflow_id=plan.workflow_id,
+                    stage_id=instance.stage_id,
+                    context_pack=context_pack,
+                    budget_snapshot=HarnessBudgetSnapshot.from_budget(HarnessBudget.safe_default()),
+                    attempt=instance.attempt,
+                    observed_at=plan.accepted_at,
+                )
+                if child is None:
+                    return None
+                succeeded = child.status.value == "succeeded"
+                return HarnessWorkerResult(
+                    status="succeeded" if succeeded else "failed",
+                    output=child.output,
+                    artifacts=child.artifact_refs,
+                    diagnostics={"subagent_id": child.subagent_id, "recovered": True},
+                    evidence=(subagent_attempt_evidence(child.transcript_receipt),)
+                    if child.transcript_receipt is not None
+                    else (),
                     error=None if succeeded else "Research analysis subagent gate failed",
                 )
 
@@ -1356,6 +1410,7 @@ def _build_configured_composition(
                 capability_registry=capability_registry,
                 store=dynamic_task_plan_store,
                 worker_executor=execute,
+                worker_result_recovery=recover,
                 result_verifier=result_verifier,
                 policy=policy,
             )

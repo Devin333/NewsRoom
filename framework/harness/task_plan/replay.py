@@ -5,6 +5,7 @@ from dataclasses import dataclass, field, replace
 from typing import Any
 
 from framework.harness.control_plane.errors import HarnessValidationError
+from framework.harness.subagents.transcript import SubAgentTranscriptStorePort
 from framework.harness.task_plan.canonical import (
     canonical_payload_checksum,
     checksum,
@@ -169,6 +170,17 @@ class TaskPlanReplayReport:
 
 class TaskPlanReplayReducer:
     """Pure reducer over recorded plans, events, and result references only."""
+
+    def __init__(
+        self,
+        transcript_store: SubAgentTranscriptStorePort | None = None,
+    ) -> None:
+        if transcript_store is not None and not isinstance(
+            transcript_store,
+            SubAgentTranscriptStorePort,
+        ):
+            raise TypeError("transcript_store must implement SubAgentTranscriptStorePort")
+        self._transcript_store = transcript_store
 
     def reduce(
         self,
@@ -345,7 +357,12 @@ class TaskPlanReplayReducer:
                 task_plan = _task_plan_for_event(event, plans_by_version)
                 instance = _instance_for_event(event, task_plan)
                 _require_recorded_instance(instances, instance, event)
-                result = _result_for_event(event, results_by_attempt, task_plan)
+                result = _result_for_event(
+                    event,
+                    results_by_attempt,
+                    task_plan,
+                    transcript_store=self._transcript_store,
+                )
                 pending_results[(instance.task_instance_id, instance.attempt, task_plan.version)] = result
             elif event.event_type in _TASK_TERMINAL_EVENTS:
                 projection = _require_projection(projection, event)
@@ -819,6 +836,8 @@ def _result_for_event(
     event: TaskPlanEvent,
     results: Mapping[tuple[str, int, int], TaskResultRecord],
     plan: ValidatedTaskPlan,
+    *,
+    transcript_store: SubAgentTranscriptStorePort | None = None,
 ) -> TaskResultRecord:
     assert event.task_instance_id is not None
     assert event.attempt is not None
@@ -846,13 +865,92 @@ def _result_for_event(
         or payload.get("result_checksum") != result.result_checksum
         or tuple(payload.get("gate_refs", ())) != result.verified_gate_refs
         or tuple(payload.get("gate_evidence_refs", ())) != result.gate_evidence_refs
+        or payload.get("transcript_ref") != result.transcript_ref
+        or payload.get("transcript_checksum") != result.transcript_checksum
+        or payload.get("subagent_output_ref") != result.subagent_output_ref
+        or payload.get("subagent_output_checksum") != result.subagent_output_checksum
     ):
         raise HarnessValidationError(
             "TaskPlan result event does not match recorded result evidence",
             code="task_plan_replay_result_mismatch",
             details={"task_id": result.task_id},
         )
+    _verify_replay_subagent_evidence(
+        result,
+        definition=definition,
+        transcript_store=transcript_store,
+    )
     return result
+
+
+def _verify_replay_subagent_evidence(
+    result: TaskResultRecord,
+    *,
+    definition: Any,
+    transcript_store: SubAgentTranscriptStorePort | None,
+) -> None:
+    if definition.subagent_id is None:
+        return
+    if result.schema_version == "newsroom.harness-task-plan-result/v1":
+        raise HarnessValidationError(
+            "legacy subagent result has no durable transcript evidence",
+            code="subagent_transcript_legacy_unavailable",
+            details={"task_id": result.task_id},
+        )
+    if (
+        result.transcript_ref is None
+        or result.transcript_checksum is None
+        or result.subagent_output_ref is None
+        or result.subagent_output_checksum is None
+    ):
+        raise HarnessValidationError(
+            "subagent result is missing durable transcript evidence",
+            code="task_plan_subagent_evidence_required",
+            details={"task_id": result.task_id},
+        )
+    if transcript_store is None:
+        raise HarnessValidationError(
+            "TaskPlan replay requires a subagent transcript store",
+            code="task_plan_subagent_transcript_store_required",
+        )
+    transcript = transcript_store.read(result.transcript_ref)
+    output = transcript_store.read_output(result.subagent_output_ref)
+    stored = transcript_store.find_by_identity(transcript.identity)
+    if stored is None:
+        raise HarnessValidationError(
+            "subagent transcript receipt is unavailable during replay",
+            code="subagent_transcript_not_found",
+        )
+    if (
+        stored.transcript_ref != result.transcript_ref
+        or stored.transcript_checksum != result.transcript_checksum
+        or stored.output_ref != result.subagent_output_ref
+        or stored.output_checksum != result.subagent_output_checksum
+        or output.output_checksum != result.subagent_output_checksum
+        or output.identity != transcript.identity
+        or transcript.output_ref != output.ref
+        or transcript.output_checksum != output.output_checksum
+        or transcript.identity.parent_run_id != result.run_id
+        or transcript.identity.workflow_id != result.workflow_id
+        or transcript.identity.stage_id != result.stage_id
+        or transcript.identity.task_instance_id != result.task_instance_id
+        or transcript.identity.attempt != result.attempt
+        or transcript.identity.task_id != result.task_id
+        or transcript.identity.subagent_id != definition.subagent_id
+        or (
+            result.status is TaskLifecycle.SUCCEEDED
+            and output.status != "succeeded"
+        )
+        or (
+            result.status is TaskLifecycle.FAILED
+            and output.status == "succeeded"
+        )
+    ):
+        raise HarnessValidationError(
+            "TaskPlan replay subagent evidence identity is inconsistent",
+            code="task_plan_replay_result_mismatch",
+        )
+    transcript_store.verify(stored)
 
 
 def _apply_terminal_result(
@@ -899,6 +997,17 @@ def _apply_terminal_result(
     ) != result.gate_evidence_refs:
         raise HarnessValidationError(
             "TaskPlan terminal event gate evidence does not match result evidence",
+            code="task_plan_replay_result_mismatch",
+            details={"task_id": result.task_id},
+        )
+    if (
+        payload.get("transcript_ref") != result.transcript_ref
+        or payload.get("transcript_checksum") != result.transcript_checksum
+        or payload.get("subagent_output_ref") != result.subagent_output_ref
+        or payload.get("subagent_output_checksum") != result.subagent_output_checksum
+    ):
+        raise HarnessValidationError(
+            "TaskPlan terminal event subagent evidence does not match result",
             code="task_plan_replay_result_mismatch",
             details={"task_id": result.task_id},
         )

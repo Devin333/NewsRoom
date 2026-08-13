@@ -20,4 +20,8 @@ def test_parent_trace_can_reference_child_transcript() -> None:
     assert transcript.parent_run_id == "parent"
     assert transcript.child_run_id != transcript.parent_run_id
     assert transcript.to_dict()["ref"] == result.transcript_ref
-    assert SubAgentTranscriptGate().evaluate(result).passed is True
+    assert SubAgentTranscriptGate().evaluate(
+        result,
+        store=runtime.transcript_store,
+        identity=transcript.identity,
+    ).passed is True

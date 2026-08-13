@@ -13,6 +13,11 @@ from threading import RLock
 from typing import Any, Protocol, runtime_checkable
 
 from framework.harness.control_plane.errors import HarnessValidationError
+from framework.harness.subagents.transcript import (
+    SubAgentOutputDocument,
+    SubAgentTranscriptReceipt,
+    SubAgentTranscriptStorePort,
+)
 from framework.harness.task_plan.canonical import (
     canonical_payload_checksum,
     checksum,
@@ -27,7 +32,14 @@ from framework.harness.task_plan.models import (
     TaskLifecycle,
 )
 from framework.harness.task_plan.store import TaskResultRecord
-from framework.harness.workers.result import HarnessWorkerResult, HarnessWorkerStatus
+from framework.harness.workers.result import (
+    HarnessWorkerEvidence,
+    HarnessWorkerResult,
+    HarnessWorkerStatus,
+)
+
+
+SUBAGENT_ATTEMPT_EVIDENCE_TYPE = "subagent_attempt"
 
 
 @dataclass(frozen=True, slots=True)
@@ -196,10 +208,21 @@ class TaskPlanResultVerificationRequest:
 class TaskPlanResultVerifier:
     """Validate identity, usage boundaries and exact task gates before commit."""
 
-    def __init__(self, gates: TaskPlanGateEvaluatorPort | None = None) -> None:
+    def __init__(
+        self,
+        gates: TaskPlanGateEvaluatorPort | None = None,
+        *,
+        transcript_store: SubAgentTranscriptStorePort | None = None,
+    ) -> None:
         self._gates = gates or TaskPlanGateRegistry()
         if not isinstance(self._gates, TaskPlanGateEvaluatorPort):
             raise TypeError("gates must implement TaskPlanGateEvaluatorPort")
+        if transcript_store is not None and not isinstance(
+            transcript_store,
+            SubAgentTranscriptStorePort,
+        ):
+            raise TypeError("transcript_store must implement SubAgentTranscriptStorePort")
+        self._transcript_store = transcript_store
 
     def verify(
         self,
@@ -243,6 +266,13 @@ class TaskPlanResultVerifier:
                 code="task_plan_result_side_effect_forbidden",
             )
 
+        receipt, output_document = self._verify_subagent_evidence(
+            result,
+            task=task,
+            instance=instance,
+            workflow_id=resolved_workflow_id,
+        )
+
         if result.status is not HarnessWorkerStatus.SUCCEEDED:
             return _failure_record(
                 task,
@@ -250,6 +280,7 @@ class TaskPlanResultVerifier:
                 result,
                 "task_worker_failed",
                 workflow_id=resolved_workflow_id,
+                receipt=receipt,
             )
 
         _validate_worker_usage(result.metrics, task)
@@ -280,6 +311,7 @@ class TaskPlanResultVerifier:
                 workflow_id=resolved_workflow_id,
                 verified_gate_refs=tuple(item.gate_ref for item in evidence),
                 gate_evidence_refs=tuple(item.evidence_checksum for item in evidence),
+                receipt=receipt,
             )
         return TaskResultRecord(
             run_id=instance.run_id,
@@ -294,14 +326,97 @@ class TaskPlanResultVerifier:
             task_checksum=instance.task_definition_checksum,
             binding_checksum=task.binding_checksum,
             status=TaskLifecycle.SUCCEEDED,
-            result_ref=result.candidate_result_ref,
-            output_refs=result.artifacts,
+            result_ref=(
+                receipt.output_ref if receipt is not None else result.candidate_result_ref
+            ),
+            output_refs=(
+                output_document.artifact_refs
+                if output_document is not None
+                else result.artifacts
+            ),
             output_roles=(task.output_role,),
             output_schema_ref=task.task.output_contract.schema_ref,
             usage=dict(result.metrics),
             verified_gate_refs=tuple(item.gate_ref for item in evidence),
             gate_evidence_refs=tuple(item.evidence_checksum for item in evidence),
+            transcript_ref=receipt.transcript_ref if receipt else None,
+            transcript_checksum=receipt.transcript_checksum if receipt else None,
+            subagent_output_ref=receipt.output_ref if receipt else None,
+            subagent_output_checksum=receipt.output_checksum if receipt else None,
         )
+
+    def _verify_subagent_evidence(
+        self,
+        result: HarnessWorkerResult,
+        *,
+        task: ResolvedTaskSpec,
+        instance: TaskInstance,
+        workflow_id: str,
+    ) -> tuple[SubAgentTranscriptReceipt | None, SubAgentOutputDocument | None]:
+        entries = tuple(
+            item
+            for item in result.evidence
+            if item.evidence_type == SUBAGENT_ATTEMPT_EVIDENCE_TYPE
+        )
+        if task.subagent_id is None:
+            if entries:
+                raise HarnessValidationError(
+                    "non-subagent task must not carry subagent attempt evidence",
+                    code="task_plan_unexpected_subagent_evidence",
+                )
+            return None, None
+        if self._transcript_store is None:
+            raise HarnessValidationError(
+                "subagent TaskPlan verification requires a transcript store",
+                code="task_plan_subagent_transcript_store_required",
+            )
+        if len(entries) != 1:
+            raise HarnessValidationError(
+                "subagent TaskPlan result requires exactly one attempt receipt",
+                code="task_plan_subagent_evidence_required",
+            )
+        receipt = _receipt_from_evidence(entries[0])
+        self._transcript_store.verify(receipt)
+        transcript = self._transcript_store.read(receipt.transcript_ref)
+        output = self._transcript_store.read_output(receipt.output_ref)
+        identity = transcript.identity
+        if (
+            identity.parent_run_id != instance.run_id
+            or identity.workflow_id != workflow_id
+            or identity.stage_id != instance.stage_id
+            or identity.task_id != instance.task_id
+            or identity.task_instance_id != instance.task_instance_id
+            or identity.attempt != instance.attempt
+            or identity.subagent_id != task.subagent_id
+            or identity.invocation_id != receipt.invocation_id
+            or output.identity != identity
+        ):
+            raise HarnessValidationError(
+                "subagent evidence does not match accepted TaskPlan attempt",
+                code="task_plan_subagent_evidence_mismatch",
+            )
+        if canonical_payload_checksum(output.output) != canonical_payload_checksum(result.output):
+            raise HarnessValidationError(
+                "subagent durable output does not match worker result",
+                code="task_plan_subagent_output_mismatch",
+            )
+        if output.artifact_refs != result.artifacts:
+            raise HarnessValidationError(
+                "subagent durable artifact refs do not match worker result",
+                code="task_plan_subagent_output_mismatch",
+            )
+        if (
+            result.status is HarnessWorkerStatus.SUCCEEDED
+            and output.status != "succeeded"
+        ) or (
+            result.status is not HarnessWorkerStatus.SUCCEEDED
+            and output.status == "succeeded"
+        ):
+            raise HarnessValidationError(
+                "subagent durable status does not match worker result",
+                code="task_plan_subagent_output_mismatch",
+            )
+        return receipt, output
 
 
 def _failure_record(
@@ -313,6 +428,7 @@ def _failure_record(
     workflow_id: str,
     verified_gate_refs: tuple[str, ...] = (),
     gate_evidence_refs: tuple[str, ...] = (),
+    receipt: SubAgentTranscriptReceipt | None = None,
 ) -> TaskResultRecord:
     return TaskResultRecord(
         run_id=instance.run_id,
@@ -332,7 +448,36 @@ def _failure_record(
         error_code=identifier(reason_code, "reason_code"),
         verified_gate_refs=verified_gate_refs,
         gate_evidence_refs=gate_evidence_refs,
+        transcript_ref=receipt.transcript_ref if receipt else None,
+        transcript_checksum=receipt.transcript_checksum if receipt else None,
+        subagent_output_ref=receipt.output_ref if receipt else None,
+        subagent_output_checksum=receipt.output_checksum if receipt else None,
     )
+
+
+def subagent_attempt_evidence(
+    receipt: SubAgentTranscriptReceipt,
+) -> HarnessWorkerEvidence:
+    if not isinstance(receipt, SubAgentTranscriptReceipt):
+        raise TypeError("receipt must be SubAgentTranscriptReceipt")
+    return HarnessWorkerEvidence(
+        evidence_type=SUBAGENT_ATTEMPT_EVIDENCE_TYPE,
+        payload=receipt.to_dict(),
+    )
+
+
+def _receipt_from_evidence(
+    evidence: HarnessWorkerEvidence,
+) -> SubAgentTranscriptReceipt:
+    try:
+        return SubAgentTranscriptReceipt.from_dict(evidence.payload)
+    except HarnessValidationError:
+        raise
+    except Exception as exc:
+        raise HarnessValidationError(
+            "subagent worker evidence receipt is invalid",
+            code="task_plan_subagent_evidence_mismatch",
+        ) from exc
 
 
 def _require_task_instance_identity(task: ResolvedTaskSpec, instance: TaskInstance) -> None:
@@ -403,4 +548,5 @@ __all__ = [
     "TaskPlanGateRequest",
     "TaskPlanResultVerificationRequest",
     "TaskPlanResultVerifier",
+    "subagent_attempt_evidence",
 ]

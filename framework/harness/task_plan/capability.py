@@ -348,7 +348,65 @@ class ResolvedSubAgentTaskAdapter:
         stage_id: str,
         context_pack: ContextEnvelope,
         budget_snapshot: HarnessBudgetSnapshot,
+        attempt: int,
+        observed_at: Any,
     ) -> SubAgentResult:
+        invocation = self._build_invocation(
+            resolved_task=resolved_task,
+            binding=binding,
+            task_instance_id=task_instance_id,
+            parent_run_id=parent_run_id,
+            workflow_id=workflow_id,
+            stage_id=stage_id,
+            context_pack=context_pack,
+            budget_snapshot=budget_snapshot,
+            attempt=attempt,
+            observed_at=observed_at,
+        )
+        return self._runtime.invoke(invocation)
+
+    def recover(
+        self,
+        *,
+        resolved_task: ResolvedTaskSpec,
+        binding: ResolvedCapabilityBinding,
+        task_instance_id: str,
+        parent_run_id: str,
+        workflow_id: str,
+        stage_id: str,
+        context_pack: ContextEnvelope,
+        budget_snapshot: HarnessBudgetSnapshot,
+        attempt: int,
+        observed_at: Any,
+    ) -> SubAgentResult | None:
+        invocation = self._build_invocation(
+            resolved_task=resolved_task,
+            binding=binding,
+            task_instance_id=task_instance_id,
+            parent_run_id=parent_run_id,
+            workflow_id=workflow_id,
+            stage_id=stage_id,
+            context_pack=context_pack,
+            budget_snapshot=budget_snapshot,
+            attempt=attempt,
+            observed_at=observed_at,
+        )
+        return self._runtime.recover(invocation)
+
+    def _build_invocation(
+        self,
+        *,
+        resolved_task: ResolvedTaskSpec,
+        binding: ResolvedCapabilityBinding,
+        task_instance_id: str,
+        parent_run_id: str,
+        workflow_id: str,
+        stage_id: str,
+        context_pack: ContextEnvelope,
+        budget_snapshot: HarnessBudgetSnapshot,
+        attempt: int,
+        observed_at: Any,
+    ) -> SubAgentInvocation:
         if binding.worker_ref != resolved_task.worker_ref:
             raise HarnessValidationError(
                 "dynamic task worker binding changed before dispatch",
@@ -385,9 +443,7 @@ class ResolvedSubAgentTaskAdapter:
             spec=bounded_spec,
             context_pack=context_pack,
             input_refs=resolved_task.task.input_refs,
-            memory_context_refs=tuple(
-                f"memory://{namespace}" for namespace in resolved_task.allowed_memory_namespaces
-            ),
+            memory_context_refs=(),
             budget_snapshot=budget_snapshot,
         )
         invocation = SubAgentInvocation(
@@ -396,6 +452,10 @@ class ResolvedSubAgentTaskAdapter:
             child_run_id=child_run_id,
             workflow_id=workflow_id,
             step_id=stage_id,
+            task_id=resolved_task.task_id,
+            task_instance_id=task_instance_id,
+            attempt=attempt,
+            observed_at=observed_at,
             subagent_spec=bounded_spec,
             input_refs=resolved_task.task.input_refs,
             context_envelope=envelope,
@@ -406,7 +466,7 @@ class ResolvedSubAgentTaskAdapter:
                 "task_definition_checksum": resolved_task.task_definition_checksum,
             },
         )
-        return self._runtime.invoke(invocation)
+        return invocation
 
 
 __all__ = [

@@ -466,6 +466,55 @@ def test_rejected_candidate_batch_is_atomic_when_second_event_fails():
     assert store.read_events(candidate.run_id, candidate.stage_id) == ()
 
 
+@pytest.mark.parametrize(
+    ("status", "failed_event_type"),
+    (
+        (TaskLifecycle.SUCCEEDED, "TASK_COMPLETED"),
+        (TaskLifecycle.FAILED, "TASK_FAILED"),
+    ),
+)
+def test_result_document_and_terminal_events_are_atomic(
+    status: TaskLifecycle,
+    failed_event_type: str,
+):
+    artifacts = _ArtifactStore()
+    event_store = _EventStore(fail_on_event_type=failed_event_type)
+    store = _store(event_store, artifacts)
+    candidate, plan, _, _ = _accepted_plan((_task("structure"),))
+    store.append_candidate(candidate)
+    store.accept_plan(plan)
+    instance = _start(store, plan, "structure")
+    result = _result(plan, instance, status=status)
+    before_events = store.read_events(plan.run_id, plan.stage_id)
+
+    with pytest.raises(RuntimeError, match="injected batch failure"):
+        store.append_result(result)
+
+    # The result artifact and speculative projections are not authoritative
+    # until both result and terminal events become visible together.
+    assert store.read_events(plan.run_id, plan.stage_id) == before_events
+    projection = store.load_projection(plan.run_id, plan.stage_id)
+    assert projection.tasks[0].status is TaskLifecycle.RUNNING
+    assert store.results_for(
+        plan.run_id,
+        plan.stage_id,
+        plan.plan_id,
+        plan.version,
+    ) == ()
+
+    event_store.fail_on_event_type = None
+    assert store.append_result(result) == result.result_checksum
+    event_types = [
+        event.event_type for event in store.read_events(plan.run_id, plan.stage_id)
+    ]
+    assert event_types[-2:] == [
+        "TASK_RESULT_ACCEPTED"
+        if status is TaskLifecycle.SUCCEEDED
+        else "TASK_RESULT_REJECTED",
+        failed_event_type,
+    ]
+
+
 def test_durable_store_retries_a_concurrent_sequence_conflict_without_duplicate_event():
     artifacts = _ArtifactStore()
     event_store = _EventStore()

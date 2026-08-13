@@ -374,6 +374,7 @@ class ResearchAnalysisTaskPlanStageWorker:
         store: TaskPlanStorePort,
         worker_executor: Any,
         result_verifier: TaskPlanResultVerifierPort,
+        worker_result_recovery: Any | None = None,
         policy: TaskPlanPolicy | None = None,
         allow_test_store: bool = False,
     ) -> None:
@@ -404,6 +405,7 @@ class ResearchAnalysisTaskPlanStageWorker:
             aggregator=build_research_analysis_task_plan_aggregator(),
             result_verifier=result_verifier,
             worker_executor=worker_executor,
+            worker_result_recovery=worker_result_recovery,
         )
 
     def __call__(self, task: Mapping[str, Any]):

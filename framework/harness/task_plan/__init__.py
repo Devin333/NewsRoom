@@ -121,6 +121,7 @@ from framework.harness.task_plan.verification import (
     TaskPlanGateRequest,
     TaskPlanResultVerificationRequest,
     TaskPlanResultVerifier,
+    subagent_attempt_evidence,
 )
 
 
@@ -220,6 +221,7 @@ __all__ = [
     "TaskPlanGateRequest",
     "TaskPlanResultVerificationRequest",
     "TaskPlanResultVerifier",
+    "subagent_attempt_evidence",
     "TASK_PLAN_EVENT_SCHEMA",
     "TASK_PLAN_EVENT_TYPES",
     "materialize_queue_task",

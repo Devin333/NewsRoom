@@ -18,6 +18,69 @@ class HarnessWorkerStatus(StrEnum):
     WAITING_APPROVAL = "waiting_approval"
 
 
+HARNESS_WORKER_EVIDENCE_SCHEMA = "newsroom.harness-worker-evidence/v1"
+
+
+@dataclass(frozen=True, slots=True)
+class HarnessWorkerEvidence:
+    evidence_type: str
+    payload: Mapping[str, Any]
+    schema_version: str = HARNESS_WORKER_EVIDENCE_SCHEMA
+    evidence_checksum: str = field(init=False)
+
+    def __post_init__(self) -> None:
+        evidence_type = str(self.evidence_type).strip()
+        if not evidence_type or evidence_type != self.evidence_type:
+            raise HarnessValidationError(
+                "worker evidence_type must be a non-blank trimmed string",
+                code="invalid_worker_evidence",
+            )
+        if self.schema_version != HARNESS_WORKER_EVIDENCE_SCHEMA:
+            raise HarnessValidationError(
+                "worker evidence schema is unsupported",
+                code="invalid_worker_evidence",
+            )
+        payload = _require_mapping(self.payload, "evidence.payload")
+        object.__setattr__(self, "payload", payload)
+        object.__setattr__(
+            self,
+            "evidence_checksum",
+            checksum_for(self.checksum_projection()),
+        )
+
+    def checksum_projection(self) -> dict[str, Any]:
+        return {
+            "schema_version": self.schema_version,
+            "evidence_type": self.evidence_type,
+            "payload": to_jsonable(self.payload),
+        }
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            **self.checksum_projection(),
+            "evidence_checksum": self.evidence_checksum,
+        }
+
+    @classmethod
+    def from_dict(cls, value: Mapping[str, Any]) -> "HarnessWorkerEvidence":
+        if not isinstance(value, Mapping):
+            raise HarnessValidationError("worker evidence must be an object")
+        payload = dict(value)
+        supplied = str(payload.pop("evidence_checksum", ""))
+        if set(payload) != {"schema_version", "evidence_type", "payload"}:
+            raise HarnessValidationError(
+                "worker evidence fields are invalid",
+                code="invalid_worker_evidence",
+            )
+        evidence = cls(**payload)
+        if supplied != evidence.evidence_checksum:
+            raise HarnessValidationError(
+                "worker evidence checksum does not match",
+                code="invalid_worker_evidence",
+            )
+        return evidence
+
+
 FORBIDDEN_WORKER_RESULT_KEYS = frozenset(
     {
         "next_step",
@@ -87,6 +150,7 @@ class HarnessWorkerResult:
     artifacts: tuple[str, ...] = ()
     diagnostics: dict[str, Any] = field(default_factory=dict)
     metrics: dict[str, Any] = field(default_factory=dict)
+    evidence: tuple[HarnessWorkerEvidence | Mapping[str, Any], ...] = ()
     error: str | None = None
     effect_intent: HarnessSideEffectIntent | None = None
 
@@ -116,6 +180,24 @@ class HarnessWorkerResult:
         object.__setattr__(self, "artifacts", _candidate_artifact_refs(self.artifacts))
         object.__setattr__(self, "diagnostics", diagnostics)
         object.__setattr__(self, "metrics", metrics)
+        evidence: list[HarnessWorkerEvidence] = []
+        for item in self.evidence:
+            if isinstance(item, HarnessWorkerEvidence):
+                evidence.append(item)
+            elif isinstance(item, Mapping):
+                evidence.append(HarnessWorkerEvidence.from_dict(item))
+            else:
+                raise HarnessValidationError(
+                    "worker evidence must contain typed values",
+                    code="invalid_worker_evidence",
+                )
+        identities = [(item.evidence_type, item.evidence_checksum) for item in evidence]
+        if len(identities) != len(set(identities)):
+            raise HarnessValidationError(
+                "worker evidence must contain unique entries",
+                code="invalid_worker_evidence",
+            )
+        object.__setattr__(self, "evidence", tuple(evidence))
         if self.effect_intent is not None and not isinstance(
             self.effect_intent,
             HarnessSideEffectIntent,
@@ -137,7 +219,7 @@ class HarnessWorkerResult:
 
     def candidate_payload(self) -> dict[str, Any]:
         """Return worker content without the self-referential intent envelope."""
-        return {
+        payload = {
             "status": self.status.value,
             "output": to_jsonable(self.output),
             "artifacts": list(self.artifacts),
@@ -145,6 +227,11 @@ class HarnessWorkerResult:
             "metrics": to_jsonable(self.metrics),
             "error": self.error,
         }
+        # Preserve the v1 candidate checksum for ordinary workers. Typed
+        # evidence extends the payload only when a worker actually supplies it.
+        if self.evidence:
+            payload["evidence"] = [item.to_dict() for item in self.evidence]
+        return payload
 
     @property
     def candidate_result_ref(self) -> str:
@@ -209,7 +296,7 @@ def harness_worker_candidate_ref(value: HarnessWorkerResult | Mapping[str, Any])
     payload = dict(value)
     payload.pop("effect_intent", None)
     required = {"status", "output", "artifacts", "diagnostics", "metrics", "error"}
-    if set(payload) != required:
+    if set(payload) not in {frozenset(required), frozenset((*required, "evidence"))}:
         raise HarnessValidationError("worker candidate payload fields are invalid")
     return checksum_for(payload)
 
@@ -219,6 +306,7 @@ __all__ = [
     "FORBIDDEN_WORKER_DECISION_PATHS_VERSION",
     "FORBIDDEN_WORKER_RESULT_KEYS",
     "HarnessWorkerResult",
+    "HarnessWorkerEvidence",
     "HarnessWorkerStatus",
     "harness_worker_candidate_ref",
 ]

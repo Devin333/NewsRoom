@@ -32,6 +32,8 @@ from framework.harness.task_plan.models import (
 
 
 TASK_PLAN_EVENT_SCHEMA = "newsroom.harness-task-plan-event/v1"
+TASK_PLAN_RESULT_SCHEMA_V1 = "newsroom.harness-task-plan-result/v1"
+TASK_PLAN_RESULT_SCHEMA_V2 = "newsroom.harness-task-plan-result/v2"
 TASK_PLAN_EVENT_TYPES = (
     "PLAN_CANDIDATE_BUILT",
     "PLAN_CANDIDATE_REJECTED",
@@ -80,9 +82,22 @@ class TaskResultRecord:
     error_code: str | None = None
     verified_gate_refs: tuple[str, ...] = ()
     gate_evidence_refs: tuple[str, ...] = ()
+    transcript_ref: str | None = None
+    transcript_checksum: str | None = None
+    subagent_output_ref: str | None = None
+    subagent_output_checksum: str | None = None
+    schema_version: str = TASK_PLAN_RESULT_SCHEMA_V2
     result_checksum: str = field(init=False)
 
     def __post_init__(self) -> None:
+        if self.schema_version not in {
+            TASK_PLAN_RESULT_SCHEMA_V1,
+            TASK_PLAN_RESULT_SCHEMA_V2,
+        }:
+            raise HarnessValidationError(
+                "TaskResultRecord schema is unsupported",
+                code="task_plan_result_schema_unsupported",
+            )
         for name in ("run_id", "workflow_id", "stage_id", "plan_id", "task_id", "task_instance_id"):
             object.__setattr__(self, name, identifier(getattr(self, name), name))
         object.__setattr__(self, "plan_version", positive_int(self.plan_version, "plan_version"))
@@ -127,6 +142,54 @@ class TaskResultRecord:
                 item_kind="reference",
             ),
         )
+        evidence_values = (
+            self.transcript_ref,
+            self.transcript_checksum,
+            self.subagent_output_ref,
+            self.subagent_output_checksum,
+        )
+        if self.schema_version == TASK_PLAN_RESULT_SCHEMA_V1 and any(
+            item is not None for item in evidence_values
+        ):
+            raise HarnessValidationError(
+                "legacy TaskResultRecord must not carry v2 evidence",
+                code="task_plan_result_invalid",
+            )
+        if any(item is not None for item in evidence_values) and not all(
+            item is not None for item in evidence_values
+        ):
+            raise HarnessValidationError(
+                "TaskPlan subagent evidence fields must be complete",
+                code="task_plan_result_invalid",
+            )
+        object.__setattr__(
+            self,
+            "transcript_ref",
+            reference(self.transcript_ref, "transcript_ref")
+            if self.transcript_ref
+            else None,
+        )
+        object.__setattr__(
+            self,
+            "transcript_checksum",
+            checksum(self.transcript_checksum, "transcript_checksum")
+            if self.transcript_checksum
+            else None,
+        )
+        object.__setattr__(
+            self,
+            "subagent_output_ref",
+            reference(self.subagent_output_ref, "subagent_output_ref")
+            if self.subagent_output_ref
+            else None,
+        )
+        object.__setattr__(
+            self,
+            "subagent_output_checksum",
+            checksum(self.subagent_output_checksum, "subagent_output_checksum")
+            if self.subagent_output_checksum
+            else None,
+        )
         if self.gate_evidence_refs and len(self.gate_evidence_refs) != len(
             self.verified_gate_refs
         ):
@@ -157,10 +220,19 @@ class TaskResultRecord:
                 "failed task result must not carry accepted output references",
                 code="task_plan_result_invalid",
             )
+        if (
+            self.status is TaskLifecycle.SUCCEEDED
+            and self.subagent_output_ref is not None
+            and self.result_ref != self.subagent_output_ref
+        ):
+            raise HarnessValidationError(
+                "successful subagent result_ref must use its durable output ref",
+                code="task_plan_result_invalid",
+            )
         object.__setattr__(self, "result_checksum", canonical_payload_checksum(self.checksum_projection()))
 
     def checksum_projection(self) -> dict[str, Any]:
-        return {
+        payload = {
             "run_id": self.run_id,
             "workflow_id": self.workflow_id,
             "stage_id": self.stage_id,
@@ -182,6 +254,16 @@ class TaskResultRecord:
             "verified_gate_refs": list(self.verified_gate_refs),
             "gate_evidence_refs": list(self.gate_evidence_refs),
         }
+        if self.schema_version == TASK_PLAN_RESULT_SCHEMA_V2:
+            payload = {
+                "schema_version": self.schema_version,
+                **payload,
+                "transcript_ref": self.transcript_ref,
+                "transcript_checksum": self.transcript_checksum,
+                "subagent_output_ref": self.subagent_output_ref,
+                "subagent_output_checksum": self.subagent_output_checksum,
+            }
+        return payload
 
     def to_dict(self, *, include_checksum: bool = True) -> dict[str, Any]:
         payload = self.checksum_projection()
@@ -191,8 +273,29 @@ class TaskResultRecord:
 
     @classmethod
     def from_dict(cls, value: Mapping[str, Any]) -> "TaskResultRecord":
-        required = frozenset(cls.__dataclass_fields__) - {"result_checksum"}
-        payload = exact_keys(value, required=required | {"result_checksum"}, model=cls.__name__)
+        common = frozenset(
+            {
+                "run_id", "workflow_id", "stage_id", "plan_id", "plan_version",
+                "task_id", "task_instance_id", "attempt", "worker_ref",
+                "task_checksum", "binding_checksum", "status", "result_ref",
+                "output_refs", "output_roles", "output_schema_ref", "usage",
+                "error_code", "verified_gate_refs", "gate_evidence_refs",
+                "result_checksum",
+            }
+        )
+        if "schema_version" not in value:
+            payload = exact_keys(value, required=common, model=cls.__name__)
+            payload["schema_version"] = TASK_PLAN_RESULT_SCHEMA_V1
+        else:
+            payload = exact_keys(
+                value,
+                required=common
+                | {
+                    "schema_version", "transcript_ref", "transcript_checksum",
+                    "subagent_output_ref", "subagent_output_checksum",
+                },
+                model=cls.__name__,
+            )
         supplied = checksum(payload.pop("result_checksum"), "result_checksum")
         result = cls(**payload)
         if supplied != result.result_checksum:
@@ -563,6 +666,7 @@ class InMemoryTaskPlanStore:
                 raise HarnessValidationError("task result belongs to a different attempt", code="task_plan_wrong_attempt")
             if task.status in {TaskLifecycle.SUCCEEDED, TaskLifecycle.SKIPPED}:
                 raise HarnessValidationError("task already has a committed terminal result", code="task_plan_duplicate_result_conflict")
+            _require_subagent_result_evidence(result, definition)
             _validate_result_usage(result, definition)
             if result.status is TaskLifecycle.SUCCEEDED:
                 if result.output_schema_ref != definition.task.output_contract.schema_ref:
@@ -816,6 +920,10 @@ def _result_event(result: TaskResultRecord, event_type: str, sequence: int, *, g
             "result_checksum": result.result_checksum,
             "gate_refs": list(result.verified_gate_refs),
             "gate_evidence_refs": list(result.gate_evidence_refs),
+            "transcript_ref": result.transcript_ref,
+            "transcript_checksum": result.transcript_checksum,
+            "subagent_output_ref": result.subagent_output_ref,
+            "subagent_output_checksum": result.subagent_output_checksum,
         },
         sequence=sequence,
     )
@@ -847,6 +955,10 @@ def _terminal_result_event(
             "result_checksum": result.result_checksum,
             "gate_refs": list(result.verified_gate_refs),
             "gate_evidence_refs": list(result.gate_evidence_refs),
+            "transcript_ref": result.transcript_ref,
+            "transcript_checksum": result.transcript_checksum,
+            "subagent_output_ref": result.subagent_output_ref,
+            "subagent_output_checksum": result.subagent_output_checksum,
         },
         sequence=sequence,
     )
@@ -880,6 +992,34 @@ def _validate_result_usage(result: TaskResultRecord, definition: Any) -> None:
                 code="task_plan_result_budget_exceeded",
                 details={"field": str(raw_name), "used": raw_value, "limit": limit},
             )
+
+
+def _require_subagent_result_evidence(
+    result: TaskResultRecord,
+    definition: Any,
+) -> None:
+    evidence = (
+        result.transcript_ref,
+        result.transcript_checksum,
+        result.subagent_output_ref,
+        result.subagent_output_checksum,
+    )
+    if definition.subagent_id is not None:
+        if result.schema_version == TASK_PLAN_RESULT_SCHEMA_V1:
+            raise HarnessValidationError(
+                "legacy subagent result has no durable transcript evidence",
+                code="subagent_transcript_legacy_unavailable",
+            )
+        if not all(item is not None for item in evidence):
+            raise HarnessValidationError(
+                "subagent task result requires durable transcript evidence",
+                code="task_plan_subagent_evidence_required",
+            )
+    elif any(item is not None for item in evidence):
+        raise HarnessValidationError(
+            "non-subagent task result must not carry subagent evidence",
+            code="task_plan_unexpected_subagent_evidence",
+        )
 
 
 def _settle_result_budget(

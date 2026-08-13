@@ -7,6 +7,7 @@ from framework.harness.subagents.gates import FakeSubAgentGateSuite
 from framework.harness.subagents.models import SubAgentInvocation, SubAgentSpec
 from framework.harness.subagents.runtime import SubAgentRuntime
 from framework.harness.subagents.transcript import FakeSubAgentTranscriptStore
+from framework.shared.time import utc_now
 from framework.harness.workers.fake import FakeSubAgentWorker
 from framework.harness.workers.result import HarnessWorkerResult
 
@@ -44,7 +45,7 @@ class FakeSubAgentRuntime(SubAgentRuntime):
             spec=self.spec,
             context_pack=context or ContextEnvelope(envelope_id="context://subagent", token_estimate=10),
             input_refs=input_refs,
-            memory_context_refs=tuple(f"memory://{namespace}" for namespace in self.spec.allowed_memory_namespaces),
+            memory_context_refs=(),
             budget_snapshot=snapshot,
         )
         return SubAgentInvocation(
@@ -53,6 +54,10 @@ class FakeSubAgentRuntime(SubAgentRuntime):
             child_run_id=child_run_id,
             workflow_id=workflow_id,
             step_id=step_id,
+            task_id=self.spec.subagent_id,
+            task_instance_id=f"test-instance-{self._invocation_count}",
+            attempt=1,
+            observed_at=utc_now(),
             subagent_spec=self.spec,
             input_refs=input_refs,
             context_envelope=envelope,

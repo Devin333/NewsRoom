@@ -2,13 +2,15 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import StrEnum
+from datetime import datetime
 from typing import Any
 
 from framework.harness.context.models import ContextEnvelope
 from framework.harness.control_plane.errors import HarnessValidationError
 from framework.harness.control_plane.policy import HarnessBudgetSnapshot
+from framework.harness.subagents.transcript import SubAgentTranscriptReceipt
 from framework.shared.json import stable_json_dumps, to_jsonable
-from framework.shared.time import format_datetime, utc_now
+from framework.shared.time import format_datetime, parse_datetime, utc_now
 
 
 FORBIDDEN_SUBAGENT_CONTEXT_KEYS = frozenset(
@@ -148,6 +150,10 @@ class SubAgentInvocation:
     child_run_id: str
     workflow_id: str
     step_id: str
+    task_id: str
+    task_instance_id: str
+    attempt: int
+    observed_at: datetime
     subagent_spec: SubAgentSpec
     input_refs: tuple[str, ...]
     context_envelope: SubAgentContextEnvelope
@@ -155,9 +161,22 @@ class SubAgentInvocation:
     metadata: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        for field_name in ("invocation_id", "parent_run_id", "child_run_id", "workflow_id", "step_id"):
+        for field_name in (
+            "invocation_id",
+            "parent_run_id",
+            "child_run_id",
+            "workflow_id",
+            "step_id",
+            "task_id",
+            "task_instance_id",
+        ):
             if not str(getattr(self, field_name)).strip():
                 raise HarnessValidationError(f"{field_name} is required")
+        if isinstance(self.attempt, bool) or not isinstance(self.attempt, int) or self.attempt <= 0:
+            raise HarnessValidationError("attempt must be a positive integer")
+        observed_at = parse_datetime(self.observed_at)
+        if observed_at is None:
+            raise HarnessValidationError("observed_at must be a timezone-aware timestamp")
         if not isinstance(self.subagent_spec, SubAgentSpec):
             raise HarnessValidationError("subagent_spec must be SubAgentSpec")
         if not isinstance(self.context_envelope, SubAgentContextEnvelope):
@@ -166,6 +185,7 @@ class SubAgentInvocation:
             raise HarnessValidationError("budget_snapshot must be HarnessBudgetSnapshot")
         object.__setattr__(self, "input_refs", tuple(str(ref) for ref in self.input_refs))
         object.__setattr__(self, "metadata", dict(self.metadata))
+        object.__setattr__(self, "observed_at", observed_at)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -174,6 +194,10 @@ class SubAgentInvocation:
             "child_run_id": self.child_run_id,
             "workflow_id": self.workflow_id,
             "step_id": self.step_id,
+            "task_id": self.task_id,
+            "task_instance_id": self.task_instance_id,
+            "attempt": self.attempt,
+            "observed_at": format_datetime(self.observed_at),
             "subagent_spec": self.subagent_spec.to_dict(),
             "input_refs": list(self.input_refs),
             "context_envelope": self.context_envelope.to_dict(),
@@ -240,7 +264,7 @@ class SubAgentResult:
     tool_call_refs: tuple[str, ...] = ()
     warnings: tuple[str, ...] = ()
     errors: tuple[str, ...] = ()
-    transcript_ref: str | None = None
+    transcript_receipt: SubAgentTranscriptReceipt | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
@@ -257,7 +281,18 @@ class SubAgentResult:
         object.__setattr__(self, "tool_call_refs", tuple(str(ref) for ref in self.tool_call_refs))
         object.__setattr__(self, "warnings", tuple(str(warning) for warning in self.warnings))
         object.__setattr__(self, "errors", tuple(str(error) for error in self.errors))
+        if self.transcript_receipt is not None and not isinstance(
+            self.transcript_receipt,
+            SubAgentTranscriptReceipt,
+        ):
+            raise HarnessValidationError("transcript_receipt must be SubAgentTranscriptReceipt")
         object.__setattr__(self, "metadata", dict(self.metadata))
+
+    @property
+    def transcript_ref(self) -> str | None:
+        """Read-only projection; the typed receipt remains authoritative."""
+
+        return self.transcript_receipt.transcript_ref if self.transcript_receipt else None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -271,7 +306,11 @@ class SubAgentResult:
             "tool_call_refs": list(self.tool_call_refs),
             "warnings": list(self.warnings),
             "errors": list(self.errors),
-            "transcript_ref": self.transcript_ref,
+            "transcript_receipt": (
+                self.transcript_receipt.to_dict()
+                if self.transcript_receipt is not None
+                else None
+            ),
             "metadata": to_jsonable(self.metadata),
         }
 

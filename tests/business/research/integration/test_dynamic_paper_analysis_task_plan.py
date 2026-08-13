@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from copy import deepcopy
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -34,10 +35,14 @@ from framework.harness import (
     HarnessWorkerResult,
     InMemoryHarnessEventPort,
     InMemoryTaskPlanStore,
+    FakeSubAgentTranscriptStore,
     ResolvedSubAgentTaskAdapter,
     SubAgentRuntime,
     SubAgentStatus,
+    TaskLifecycle,
     TaskPlanResultVerifier,
+    TaskPlanReplayReducer,
+    subagent_attempt_evidence,
 )
 from framework.harness.control_plane.gates import GateContext
 from framework.harness.workflow import HarnessWorkerType, HarnessWorkflowGraphCompiler
@@ -46,6 +51,7 @@ from framework.harness.workflow.graph import (
     HarnessContractKind,
     HarnessContractReference,
 )
+from infrastructure.storage.harness import FilesystemSubAgentTranscriptStore
 from interfaces.services.research_service import (
     InMemoryResearchRunStore,
     ResearchAnalyzeInput,
@@ -116,12 +122,19 @@ class _DynamicTaskPlanFactory:
         self,
         *,
         outline_transform: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
+        transcript_root: Path | None = None,
+        crash_after_receipt_once: bool = False,
     ) -> None:
         self.outline_transform = outline_transform
+        self.transcript_root = transcript_root
+        self.crash_after_receipt_once = crash_after_receipt_once
+        self._crashed_after_receipt = False
         self.stores: list[InMemoryTaskPlanStore] = []
+        self.transcript_stores: list[Any] = []
         self.outline_workers: list[_PlanOutlineWorker] = []
         self.subagent_runtimes: list[SubAgentRuntime] = []
         self.subagent_workers: list[dict[str, _WorkspaceAnalysisSubAgent]] = []
+        self.stage_workers: list[ResearchAnalysisTaskPlanStageWorker] = []
 
     def __call__(self, *, workspace: Any, dependencies: Any):
         policy = build_research_analysis_task_plan_policy()
@@ -146,11 +159,17 @@ class _DynamicTaskPlanFactory:
             for capability, worker in workers.items()
         }
         registry = build_research_analysis_capability_registry(bindings)
+        transcript_store = (
+            FilesystemSubAgentTranscriptStore(self.transcript_root)
+            if self.transcript_root is not None
+            else FakeSubAgentTranscriptStore()
+        )
         runtime = SubAgentRuntime(
             workers={
                 RESEARCH_DYNAMIC_SUBAGENT_IDS[capability]: worker
                 for capability, worker in workers.items()
-            }
+            },
+            transcript_store=transcript_store,
         )
         adapter = ResolvedSubAgentTaskAdapter(runtime)
         store = InMemoryTaskPlanStore()
@@ -220,7 +239,7 @@ class _DynamicTaskPlanFactory:
             context_factory=gate_context,
         )
 
-        def execute(resolved_binding, task_instance):
+        def resolve_task(task_instance):
             plan = store.plan(
                 task_instance.run_id,
                 task_instance.stage_id,
@@ -232,7 +251,12 @@ class _DynamicTaskPlanFactory:
                 for task in plan.tasks
                 if task.task_id == task_instance.task_id
             )
-            subagent_result = adapter.invoke(
+            return plan, resolved_task
+
+        def invoke_child(resolved_binding, task_instance, *, recover: bool = False):
+            plan, resolved_task = resolve_task(task_instance)
+            method = adapter.recover if recover else adapter.invoke
+            return method(
                 resolved_task=resolved_task,
                 binding=resolved_binding,
                 task_instance_id=task_instance.task_instance_id,
@@ -241,38 +265,70 @@ class _DynamicTaskPlanFactory:
                 stage_id=task_instance.stage_id,
                 context_pack=context_pack,
                 budget_snapshot=budget,
+                attempt=task_instance.attempt,
+                observed_at=plan.accepted_at,
             )
+
+        def worker_result(subagent_result, *, recovered: bool = False):
+            if subagent_result is None:
+                return None
             succeeded = subagent_result.status is SubAgentStatus.SUCCEEDED
             return HarnessWorkerResult(
                 status="succeeded" if succeeded else "failed",
-                output=subagent_result.output if succeeded else {},
-                artifacts=subagent_result.artifact_refs if succeeded else (),
+                output=subagent_result.output,
+                artifacts=subagent_result.artifact_refs,
                 diagnostics={
                     "subagent_id": subagent_result.subagent_id,
-                    "transcript_ref": subagent_result.transcript_ref,
+                    "recovered": recovered,
                 },
+                evidence=(subagent_attempt_evidence(subagent_result.transcript_receipt),)
+                if subagent_result.transcript_receipt is not None
+                else (),
                 error=None if succeeded else "Research analysis subagent gate failed",
+            )
+
+        def execute(resolved_binding, task_instance):
+            result = worker_result(invoke_child(resolved_binding, task_instance))
+            assert result is not None
+            if (
+                self.crash_after_receipt_once
+                and not self._crashed_after_receipt
+            ):
+                self._crashed_after_receipt = True
+                raise RuntimeError("injected post-receipt crash")
+            return result
+
+        def recover(resolved_binding, task_instance):
+            return worker_result(
+                invoke_child(resolved_binding, task_instance, recover=True),
+                recovered=True,
             )
 
         graph = HarnessWorkflowGraphCompiler().compile(
             build_dynamic_paper_analysis_workflow_spec()
         ).graph
-        worker = ResearchAnalysisTaskPlanStageWorker(
+        stage_worker = ResearchAnalysisTaskPlanStageWorker(
             graph_checksum=graph.checksum,
             accepted_at="2026-08-01T00:00:00Z",
             candidate_builder=ResearchAnalysisPlanCandidateBuilder(outline_worker),
             capability_registry=registry,
             store=store,
             worker_executor=execute,
-            result_verifier=TaskPlanResultVerifier(task_gate_registry),
+            worker_result_recovery=recover,
+            result_verifier=TaskPlanResultVerifier(
+                task_gate_registry,
+                transcript_store=transcript_store,
+            ),
             policy=policy,
             allow_test_store=True,
         )
         self.stores.append(store)
+        self.transcript_stores.append(transcript_store)
         self.outline_workers.append(outline_worker)
         self.subagent_runtimes.append(runtime)
         self.subagent_workers.append(workers)
-        return worker
+        self.stage_workers.append(stage_worker)
+        return stage_worker
 
 
 def test_dynamic_task_plan_fake_llm_and_subagents_publish_through_fixed_path() -> None:
@@ -439,6 +495,119 @@ def test_dynamic_replay_uses_recorded_outer_result_without_live_plan_or_subagent
     assert all(
         worker.calls == [] for worker in factory.subagent_workers[1].values()
     )
+
+
+def test_dynamic_task_plan_filesystem_transcripts_reopen_and_replay_offline(
+    tmp_path: Path,
+) -> None:
+    transcript_root = tmp_path / "artifacts"
+    factory = _DynamicTaskPlanFactory(transcript_root=transcript_root)
+    result = _analyze(
+        "dynamic-durable-lineage",
+        dynamic=True,
+        dynamic_factory=factory,
+    )
+
+    assert result.succeeded is True
+    store = factory.stores[0]
+    plan = store.plan(result.run_id, "dynamic_analysis_stage")
+    assert plan is not None
+    records = store.results_for(result.run_id, plan.stage_id, plan.plan_id, plan.version)
+    assert len(records) == 3
+    reopened = FilesystemSubAgentTranscriptStore(transcript_root)
+    for record in records:
+        assert record.transcript_ref is not None
+        assert record.subagent_output_ref is not None
+        transcript = reopened.read(record.transcript_ref)
+        output = reopened.read_output(record.subagent_output_ref)
+        receipt = reopened.find_by_identity(transcript.identity)
+        assert receipt is not None
+        assert reopened.verify(receipt) == receipt
+        assert receipt.transcript_checksum == record.transcript_checksum
+        assert receipt.output_checksum == record.subagent_output_checksum
+        assert output.identity == transcript.identity
+        assert output.status == "succeeded"
+
+    outline_calls = factory.outline_workers[0].calls
+    subagent_calls = {
+        capability: len(worker.calls)
+        for capability, worker in factory.subagent_workers[0].items()
+    }
+    replay = TaskPlanReplayReducer(reopened).replay(
+        (plan,),
+        store.read_events(result.run_id, plan.stage_id),
+        results=records,
+    )
+    assert replay.projection.tasks
+    assert all(
+        task.status is TaskLifecycle.SUCCEEDED
+        for task in replay.projection.tasks
+    )
+    assert factory.outline_workers[0].calls == outline_calls
+    assert {
+        capability: len(worker.calls)
+        for capability, worker in factory.subagent_workers[0].items()
+    } == subagent_calls
+
+
+def test_dynamic_task_plan_recovers_post_receipt_crash_without_duplicate_worker(
+    tmp_path: Path,
+) -> None:
+    factory = _DynamicTaskPlanFactory(
+        transcript_root=tmp_path / "artifacts",
+        crash_after_receipt_once=True,
+    )
+    artifact_port = FakeArtifactPort()
+    runtime = _runtime(
+        dynamic_factory=factory,
+        artifact_port=artifact_port,
+    )
+    request = AnalyzePaperRequest(
+        run_id="dynamic-post-receipt-crash",
+        paper_id="paper-harness-001",
+        source_ref="https://arxiv.org/abs/2606.00123",
+        user_id="user-1",
+        options={"dynamic_analysis": True},
+    )
+
+    first = AnalyzePaperUseCase(runtime).analyze(request)
+
+    assert first.succeeded is False
+    assert first.artifact_refs == {}
+    first_workers = factory.subagent_workers[0]
+    first_counts = {
+        capability: len(worker.calls)
+        for capability, worker in first_workers.items()
+    }
+    assert sum(first_counts.values()) == 1
+    store = factory.stores[0]
+    plan = store.plan(request.run_id, "dynamic_analysis_stage")
+    assert plan is not None
+    projection = store.load_projection(request.run_id, plan.stage_id)
+    assert sum(
+        state.status in {TaskLifecycle.DISPATCHED, TaskLifecycle.RUNNING}
+        for state in projection.tasks
+    ) == 1
+    assert sum(state.status is TaskLifecycle.PENDING for state in projection.tasks) == 2
+
+    resumed = factory.stage_workers[0].run(
+        {
+            "run_id": request.run_id,
+            "step_id": "dynamic_analysis_stage",
+            "worker_type": HarnessWorkerType.TASK_PLAN.value,
+            "inputs": {
+                "document": {},
+                "evidence_pack": {},
+            },
+        }
+    )
+
+    assert resumed.status.value == "succeeded"
+    assert all(len(worker.calls) == 1 for worker in first_workers.values())
+    records = store.results_for(request.run_id, plan.stage_id, plan.plan_id, plan.version)
+    assert len(records) == 3
+    assert all(record.transcript_ref for record in records)
+    assert all(record.subagent_output_ref for record in records)
 
 
 def test_production_shaped_stage_worker_rejects_in_memory_store_by_default() -> None:

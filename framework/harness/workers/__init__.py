@@ -8,6 +8,7 @@ from framework.harness.workers.result import (
     FORBIDDEN_WORKER_DECISION_PATHS_VERSION,
     FORBIDDEN_WORKER_RESULT_KEYS,
     HarnessWorkerResult,
+    HarnessWorkerEvidence,
     HarnessWorkerStatus,
     harness_worker_candidate_ref,
 )
@@ -23,6 +24,7 @@ __all__ = [
     "FORBIDDEN_WORKER_DECISION_PATHS_VERSION",
     "FORBIDDEN_WORKER_RESULT_KEYS",
     "HarnessWorkerResult",
+    "HarnessWorkerEvidence",
     "HarnessWorkerStatus",
     "harness_worker_candidate_ref",
     "LLMWorkerPort",

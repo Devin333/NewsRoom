@@ -17,7 +17,10 @@ from framework.harness.task_plan.ports import (
 )
 from framework.harness.task_plan.patches import TaskPlanPatchValidator
 from framework.harness.task_plan.models import PlanPatch
-from framework.harness.task_plan.scheduler import TaskPlanReadyDecision
+from framework.harness.task_plan.scheduler import (
+    TaskPlanReadyDecision,
+    task_instance_for_attempt,
+)
 from framework.harness.task_plan.store import TaskPlanEvent, TaskPlanStorePort, TaskResultRecord
 from framework.harness.task_plan.validation import TaskPlanValidationContext, TaskPlanValidator
 from framework.harness.workers.result import HarnessWorkerResult, HarnessWorkerStatus
@@ -43,6 +46,7 @@ class TaskPlanStageRunner(TaskPlanStageRunnerPort):
         aggregator: TaskPlanAggregator | None = None,
         result_verifier: TaskPlanResultVerifierPort | None = None,
         worker_executor: Any | None = None,
+        worker_result_recovery: Any | None = None,
     ) -> None:
         if not isinstance(store, TaskPlanStorePort):
             raise TypeError("store must implement TaskPlanStorePort")
@@ -60,6 +64,9 @@ class TaskPlanStageRunner(TaskPlanStageRunnerPort):
         self.aggregator = aggregator or TaskPlanAggregator()
         self.result_verifier = result_verifier or TaskPlanResultVerifier()
         self.worker_executor = worker_executor
+        if worker_result_recovery is not None and not callable(worker_result_recovery):
+            raise TypeError("worker_result_recovery must be callable")
+        self.worker_result_recovery = worker_result_recovery
         self.patch_validator = TaskPlanPatchValidator()
 
     def apply_patch(self, request: TaskPlanStageRequest, patch: PlanPatch) -> ValidatedTaskPlan:
@@ -225,6 +232,8 @@ class TaskPlanStageRunner(TaskPlanStageRunnerPort):
         max_rounds = max(1, plan.limits.max_tasks * plan.limits.max_task_attempts + plan.limits.max_replans + 1)
         for _ in range(max_rounds):
             projection = self.store.load_projection(request.run_id, request.stage_id)
+            if self._recover_committed_subagent_results(request, plan, projection):
+                continue
             decision = self.scheduler.next_task_plan_decision(
                 projection,
                 plan.limits.max_parallelism,
@@ -251,7 +260,6 @@ class TaskPlanStageRunner(TaskPlanStageRunnerPort):
                     "TASK_READY",
                     reserved,
                 )
-            for task_request in decision.task_requests:
                 projection = self.scheduler.mark_task_plan_dispatched(
                     self.store.load_projection(request.run_id, request.stage_id),
                     task_request,
@@ -263,7 +271,6 @@ class TaskPlanStageRunner(TaskPlanStageRunnerPort):
                     "TASK_DISPATCHED",
                     projection,
                 )
-            for task_request in decision.task_requests:
                 projection = self.scheduler.mark_task_plan_started(
                     self.store.load_projection(request.run_id, request.stage_id),
                     task_request,
@@ -275,7 +282,6 @@ class TaskPlanStageRunner(TaskPlanStageRunnerPort):
                     "TASK_STARTED",
                     projection,
                 )
-            for task_request in decision.task_requests:
                 result = self._invoke(task_request, plan, request.policy)
                 self.store.append_result(result)
                 if result.status is TaskLifecycle.FAILED:
@@ -298,6 +304,64 @@ class TaskPlanStageRunner(TaskPlanStageRunnerPort):
                     else:
                         raise HarnessValidationError("task retry budget exhausted", code="task_plan_retry_exhausted", details={"task_id": result.task_id})
         raise HarnessValidationError("TaskPlan execution exceeded bounded rounds", code="task_plan_execution_bound_exceeded")
+
+    def _recover_committed_subagent_results(
+        self,
+        request: TaskPlanStageRequest,
+        plan: ValidatedTaskPlan,
+        projection: Any,
+    ) -> bool:
+        if self.worker_result_recovery is None:
+            return False
+        recovered_any = False
+        definitions = {item.task_id: item for item in plan.tasks}
+        for state in projection.tasks:
+            definition = definitions[state.task_id]
+            if definition.subagent_id is None or state.status not in {
+                TaskLifecycle.DISPATCHED,
+                TaskLifecycle.RUNNING,
+            }:
+                continue
+            if state.active_instance_id is None or state.attempts <= 0:
+                raise HarnessValidationError(
+                    "active subagent task is missing attempt identity",
+                    code="task_plan_recovery_attempt_missing",
+                )
+            instance = task_instance_for_attempt(
+                plan,
+                state.task_id,
+                state.attempts,
+                task_instance_id=state.active_instance_id,
+            )
+            binding = self.capability_registry.resolve(
+                definition.task.worker_capability,
+                request.policy,
+            )
+            candidate = self.worker_result_recovery(binding, instance)
+            if candidate is None:
+                raise HarnessValidationError(
+                    "active subagent attempt has no committed outcome receipt",
+                    code="task_plan_subagent_attempt_indeterminate",
+                    details={"task_id": state.task_id, "attempt": state.attempts},
+                )
+            if not isinstance(candidate, HarnessWorkerResult):
+                raise HarnessValidationError(
+                    "subagent result recovery returned invalid evidence",
+                    code="task_plan_result_invalid",
+                )
+            verified = self.result_verifier.verify(
+                candidate,
+                task=definition,
+                request=TaskPlanResultVerificationRequest(
+                    task=definition,
+                    instance=instance,
+                    worker_result=candidate,
+                    workflow_id=plan.workflow_id,
+                ),
+            )
+            self.store.append_result(verified)
+            recovered_any = True
+        return recovered_any
 
     def _commit_task_transition(
         self,

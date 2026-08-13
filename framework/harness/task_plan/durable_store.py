@@ -44,6 +44,7 @@ from framework.harness.task_plan.store import (
     _plan_contains_task_version,
     _plan_event,
     _projection_for_plan,
+    _require_subagent_result_evidence,
     _require_projection_transition_identity,
     _result_event,
     _settle_result_budget,
@@ -624,6 +625,7 @@ class DurableTaskPlanStore:
                 "task already has a committed terminal result",
                 code="task_plan_duplicate_result_conflict",
             )
+        _require_subagent_result_evidence(result, definition)
         _validate_result_usage(result, definition)
 
         if result.status is TaskLifecycle.SUCCEEDED:

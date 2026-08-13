@@ -5,9 +5,11 @@ import pytest
 from framework.events.canonical import checksum_for
 from framework.harness import (
     FORBIDDEN_WORKER_RESULT_KEYS,
+    HarnessWorkerEvidence,
     HarnessValidationError,
     HarnessSideEffectIntent,
     HarnessWorkerResult,
+    harness_worker_candidate_ref,
 )
 
 
@@ -39,6 +41,30 @@ def test_worker_result_exposes_candidate_data_only() -> None:
         "metrics": {"tokens": 12},
         "error": None,
     }
+
+
+def test_worker_result_adds_typed_evidence_only_when_present() -> None:
+    evidence = HarnessWorkerEvidence(
+        evidence_type="subagent_attempt",
+        payload={"transcript_ref": "subagent-transcript://v1/run/transcript"},
+    )
+    result = HarnessWorkerResult(status="succeeded", evidence=(evidence,))
+
+    assert result.to_dict()["evidence"] == [evidence.to_dict()]
+    assert harness_worker_candidate_ref(result.to_dict()) == result.candidate_result_ref
+
+
+def test_candidate_ref_preserves_legacy_payload_shape_without_evidence() -> None:
+    legacy = {
+        "status": "succeeded",
+        "output": {"candidate": "legacy"},
+        "artifacts": [],
+        "diagnostics": {},
+        "metrics": {},
+        "error": None,
+    }
+
+    assert harness_worker_candidate_ref(legacy) == checksum_for(legacy)
 
 
 def test_worker_result_allows_observations_and_completed_domain_facts() -> None:
