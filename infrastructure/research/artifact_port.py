@@ -266,6 +266,49 @@ class FilesystemHarnessArtifactPort:
         )
         return result
 
+    def verify_artifact_ref(self, ref: str, *, expected_run_id: str) -> None:
+        """Verify canonical artifact integrity without exposing its payload.
+
+        TaskPlan acceptance happens before Research terminal publication. This
+        method therefore validates the run binding, manifest, checksum, size,
+        and stored bytes directly, while the normal ``read_artifact`` method
+        continues to enforce publication visibility for payload readers.
+        """
+
+        run_id: str | None = None
+        try:
+            run_id, artifact_type = self._parse_ref(ref)
+            expected = validate_artifact_path_segment(
+                expected_run_id,
+                field="expected artifact ref run_id",
+            )
+            if run_id != expected:
+                raise ArtifactRunBindingError(
+                    "artifact ref run_id does not match the expected parent run"
+                )
+            manifest = self.manager.read_run_manifest(run_id)
+            self._read_artifact_payload(
+                manifest,
+                run_id=run_id,
+                artifact_type=artifact_type,
+            )
+        except Exception as exc:
+            emit_research_persistence_diagnostic(
+                component="artifact_store",
+                operation="artifact_read",
+                outcome="failed",
+                reason=_artifact_failure_reason(exc),
+                run_id=run_id,
+            )
+            raise
+        emit_research_persistence_diagnostic(
+            component="artifact_store",
+            operation="artifact_read",
+            outcome="succeeded",
+            reason="completed",
+            run_id=run_id,
+        )
+
     def read_diagnostic_artifact(
         self,
         ref: str,

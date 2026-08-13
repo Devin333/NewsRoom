@@ -13,6 +13,7 @@ import pytest
 
 from framework.agent.artifacts import (
     ArtifactChecksumMismatchError,
+    ArtifactNotFoundError,
     ArtifactStoreMetadataError,
     compute_checksum,
 )
@@ -20,6 +21,7 @@ from framework.harness import ArtifactWriteRequest
 from framework.shared.json import stable_json_dumps
 from framework.workflow.runtime.manifest import manifest_hash
 from infrastructure.research.artifact_port import (
+    ArtifactPublicationVisibilityError,
     ArtifactRunBindingError,
     ArtifactWriteConflictError,
     FilesystemHarnessArtifactPort,
@@ -80,6 +82,42 @@ def test_round_trip_is_restart_safe_and_records_integrity_metadata(tmp_path) -> 
 
     restarted = FilesystemHarnessArtifactPort(tmp_path)
     assert restarted.read_artifact(ref.ref) == request.to_dict()
+
+
+def test_artifact_ref_verifier_checks_integrity_without_publication_access(
+    tmp_path,
+) -> None:
+    publication_calls: list[object] = []
+    port = FilesystemHarnessArtifactPort(
+        tmp_path,
+        accepted_run_resolver=lambda claim: (publication_calls.append(claim) or False),
+    )
+    with port.bind_run("run-1"):
+        ref = port.write_artifact(
+            ArtifactWriteRequest("research-analysis", {"status": "candidate"})
+        )
+
+    assert port.verify_artifact_ref(ref.ref, expected_run_id="run-1") is None
+    assert publication_calls == []
+    with pytest.raises(ArtifactPublicationVisibilityError):
+        port.read_artifact(ref.ref)
+    assert len(publication_calls) == 1
+
+
+def test_artifact_ref_verifier_rejects_missing_and_cross_run_refs(tmp_path) -> None:
+    port = FilesystemHarnessArtifactPort(tmp_path)
+    with port.bind_run("run-1"):
+        ref = port.write_artifact(
+            ArtifactWriteRequest("research-analysis", {"status": "candidate"})
+        )
+
+    with pytest.raises(ArtifactRunBindingError, match="expected parent run"):
+        port.verify_artifact_ref(ref.ref, expected_run_id="run-2")
+    with pytest.raises(ArtifactNotFoundError):
+        port.verify_artifact_ref(
+            "artifact://missing-run/research-analysis",
+            expected_run_id="missing-run",
+        )
 
 
 def test_long_artifact_type_uses_bounded_hashed_path_without_changing_ref(
@@ -190,6 +228,8 @@ def test_noncanonical_references_are_rejected(tmp_path, ref: str) -> None:
 
     with pytest.raises((ArtifactStoreMetadataError, ValueError)):
         port.read_artifact(ref)
+    with pytest.raises((ArtifactStoreMetadataError, ValueError)):
+        port.verify_artifact_ref(ref, expected_run_id="run-1")
 
 
 def test_artifact_byte_tamper_is_detected(tmp_path) -> None:
@@ -201,6 +241,8 @@ def test_artifact_byte_tamper_is_detected(tmp_path) -> None:
 
     with pytest.raises(ArtifactChecksumMismatchError):
         port.read_artifact(ref.ref)
+    with pytest.raises(ArtifactChecksumMismatchError):
+        port.verify_artifact_ref(ref.ref, expected_run_id="run-1")
 
 
 def test_manifest_hash_is_required_by_research_adapter(tmp_path) -> None:

@@ -12,6 +12,7 @@ from dataclasses import dataclass, field
 from threading import RLock
 from typing import Any, Protocol, runtime_checkable
 
+from framework.harness.artifacts import ArtifactReferenceVerifierPort
 from framework.harness.control_plane.errors import HarnessValidationError
 from framework.harness.subagents.transcript import (
     SubAgentOutputDocument,
@@ -213,6 +214,7 @@ class TaskPlanResultVerifier:
         gates: TaskPlanGateEvaluatorPort | None = None,
         *,
         transcript_store: SubAgentTranscriptStorePort | None = None,
+        artifact_reference_verifier: ArtifactReferenceVerifierPort | None = None,
     ) -> None:
         self._gates = gates or TaskPlanGateRegistry()
         if not isinstance(self._gates, TaskPlanGateEvaluatorPort):
@@ -223,6 +225,15 @@ class TaskPlanResultVerifier:
         ):
             raise TypeError("transcript_store must implement SubAgentTranscriptStorePort")
         self._transcript_store = transcript_store
+        if artifact_reference_verifier is not None and not isinstance(
+            artifact_reference_verifier,
+            ArtifactReferenceVerifierPort,
+        ):
+            raise TypeError(
+                "artifact_reference_verifier must implement "
+                "ArtifactReferenceVerifierPort"
+            )
+        self._artifact_reference_verifier = artifact_reference_verifier
 
     def verify(
         self,
@@ -405,6 +416,11 @@ class TaskPlanResultVerifier:
                 "subagent durable artifact refs do not match worker result",
                 code="task_plan_subagent_output_mismatch",
             )
+        _verify_artifact_references(
+            output.artifact_refs,
+            expected_run_id=instance.run_id,
+            verifier=self._artifact_reference_verifier,
+        )
         if (
             result.status is HarnessWorkerStatus.SUCCEEDED
             and output.status != "succeeded"
@@ -417,6 +433,30 @@ class TaskPlanResultVerifier:
                 code="task_plan_subagent_output_mismatch",
             )
         return receipt, output
+
+
+def _verify_artifact_references(
+    refs: tuple[str, ...],
+    *,
+    expected_run_id: str,
+    verifier: ArtifactReferenceVerifierPort | None,
+) -> None:
+    if not refs:
+        return
+    if verifier is None:
+        raise HarnessValidationError(
+            "subagent artifact refs require a canonical verifier",
+            code="task_plan_subagent_artifact_verifier_required",
+        )
+    for index, ref in enumerate(refs):
+        try:
+            verifier.verify_artifact_ref(ref, expected_run_id=expected_run_id)
+        except Exception as exc:
+            raise HarnessValidationError(
+                "subagent artifact ref could not be verified by its canonical owner",
+                code="task_plan_subagent_artifact_unverified",
+                details={"artifact_index": index},
+            ) from exc
 
 
 def _failure_record(

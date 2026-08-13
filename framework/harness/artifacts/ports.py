@@ -70,9 +70,23 @@ class ArtifactPort(Protocol):
 
 
 @runtime_checkable
+class ArtifactReferenceVerifierPort(Protocol):
+    """Verify one canonical artifact ref without returning its payload."""
+
+    def verify_artifact_ref(self, ref: str, *, expected_run_id: str) -> None:
+        ...
+
+
+@runtime_checkable
 class RunBoundArtifactPort(ArtifactPort, Protocol):
     def bind_run(self, run_id: str) -> AbstractContextManager[str]:
         ...
 
 
-__all__ = ["ArtifactPort", "ArtifactRef", "ArtifactWriteRequest", "RunBoundArtifactPort"]
+__all__ = [
+    "ArtifactPort",
+    "ArtifactReferenceVerifierPort",
+    "ArtifactRef",
+    "ArtifactWriteRequest",
+    "RunBoundArtifactPort",
+]

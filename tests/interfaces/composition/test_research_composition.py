@@ -22,7 +22,7 @@ from business.research.application.single_paper_runtime import (
 from business.research.document.cascade_parser import CascadeDocumentParser
 from business.research.document.chunk_storage import PaperChunkStoreAdapter
 from business.research.document.latex_compiler import ArxivLatexDocumentCompiler
-from framework.harness import ContextAssembler
+from framework.harness import ArtifactReferenceVerifierPort, ContextAssembler
 from framework.harness.control_plane.durable_events import (
     DurableHarnessTransitionPort,
 )
@@ -334,6 +334,15 @@ def test_valid_settings_compose_full_durable_production_graph(
             ),
             context_assembler=ContextAssembler(),
         )
+        dynamic_stage = runtime.dynamic_task_plan_runner_factory(
+            workspace=candidate_workspace,
+            dependencies=object(),
+        )
+        configured_verifier = (
+            dynamic_stage._runner.result_verifier._artifact_reference_verifier
+        )
+        assert configured_verifier is runtime.artifact_port
+        assert isinstance(configured_verifier, ArtifactReferenceVerifierPort)
         publish_worker = runtime._worker_registry(candidate_workspace)[
             "publish_artifacts"
         ]

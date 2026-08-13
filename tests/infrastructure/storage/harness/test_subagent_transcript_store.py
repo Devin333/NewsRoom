@@ -4,6 +4,7 @@ import json
 import subprocess
 import sys
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -11,6 +12,7 @@ from typing import Any
 import pytest
 
 from framework.harness import (
+    HarnessValidationError,
     SubAgentAttemptIdentity,
     SubAgentContextEvidence,
     SubAgentOutputDocument,
@@ -188,6 +190,23 @@ def test_same_identity_different_documents_conflict_without_overwrite(tmp_path: 
     assert captured.value.code == "subagent_transcript_conflict"
     assert store.verify(original) == original
     assert dict(store.read_output(original.output_ref).output) == {"result": "first"}
+
+
+def test_checksum_valid_bundle_with_disagreeing_artifact_refs_is_rejected(
+    tmp_path: Path,
+) -> None:
+    store = FilesystemSubAgentTranscriptStore(tmp_path, clock=lambda: FIXED_TIME)
+    context, output, transcript = _documents()
+    inconsistent = replace(
+        transcript,
+        artifact_refs=("artifact://analysis/different",),
+    )
+
+    with pytest.raises(HarnessValidationError) as captured:
+        store.write(context, output, inconsistent)
+
+    assert captured.value.code == "subagent_artifact_refs_mismatch"
+    assert not tuple(tmp_path.rglob("*.json"))
 
 
 def test_two_store_instances_commit_same_attempt_once_under_thread_race(tmp_path: Path) -> None:

@@ -22,6 +22,10 @@ PRODUCTION_ROOTS = tuple(
     PROJECT_ROOT / name
     for name in ("business", "framework", "infrastructure", "interfaces", "scripts")
 )
+LEGACY_SESSION_DATABASE = ".newsroom/paper-agent-sessions.sqlite3"
+RETIREMENT_OPERATIONS_NOTE = (
+    PROJECT_ROOT / "docs" / "operations" / "agent-session-retirement.md"
+)
 
 
 def test_obsolete_agent_session_packages_and_dedicated_tests_are_absent() -> None:
@@ -139,4 +143,20 @@ def test_no_production_fake_or_noop_agent_session_fallback_exists() -> None:
             for token in forbidden_tokens:
                 if token in source:
                     violations.append(f"{path.relative_to(PROJECT_ROOT).as_posix()}: {token}")
+    assert violations == []
+
+
+def test_historical_agent_session_data_is_operator_owned_and_never_recreated() -> None:
+    note = RETIREMENT_OPERATIONS_NOTE.read_text(encoding="utf-8")
+    assert LEGACY_SESSION_DATABASE in note
+    assert "orphaned historical data" in note
+    assert "must not automatically" in note.lower()
+    assert "operator" in note.lower()
+
+    violations: list[str] = []
+    for root in PRODUCTION_ROOTS:
+        for path in sorted(root.rglob("*.py")):
+            source = path.read_text(encoding="utf-8")
+            if LEGACY_SESSION_DATABASE in source or "paper-agent-sessions.sqlite3" in source:
+                violations.append(path.relative_to(PROJECT_ROOT).as_posix())
     assert violations == []

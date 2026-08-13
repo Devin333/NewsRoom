@@ -1320,6 +1320,7 @@ def _build_configured_composition(
                     context_factory=gate_context,
                 ),
                 transcript_store=subagent_transcript_store,
+                artifact_reference_verifier=artifact_port,
             )
             context_pack = ContextEnvelope(
                 envelope_id=f"research-task-plan-context:{workspace.request.run_id}",

@@ -5,8 +5,12 @@ from pathlib import Path
 
 import pytest
 
+from framework.agent.artifacts import FilesystemArtifactStore
+from framework.events.runtime.publisher import EventRuntime
+from framework.events.schema import default_event_schema_catalog
 from framework.harness import (
     ContextEnvelope,
+    DurableTaskPlanStore,
     FakePlanCandidateBuilder,
     HarnessBudget,
     HarnessBudgetSnapshot,
@@ -51,6 +55,7 @@ from framework.harness.workflow.graph import (
     HarnessContractReference,
 )
 from infrastructure.storage.harness import FilesystemSubAgentTranscriptStore
+from infrastructure.storage.events import SQLiteEventStore
 
 
 ACCEPTED_AT = "2026-08-13T00:00:00Z"
@@ -61,8 +66,14 @@ class _CountingSubAgentWorker:
     worker_version = "1"
     worker_type = HarnessWorkerType.SUBAGENT
 
-    def __init__(self, *, status: str = "succeeded") -> None:
+    def __init__(
+        self,
+        *,
+        status: str = "succeeded",
+        artifacts: tuple[str, ...] = (),
+    ) -> None:
         self.status = status
+        self.artifacts = artifacts
         self.calls = 0
 
     def execute(self, _task):
@@ -70,12 +81,29 @@ class _CountingSubAgentWorker:
         return HarnessWorkerResult(
             status=self.status,
             output={"result": "durable candidate"},
-            artifacts=("artifact://lineage/candidate",),
+            artifacts=self.artifacts,
             error=None if self.status == "succeeded" else "worker failed",
         )
 
 
-def _fixture(tmp_path: Path, *, worker_status: str = "succeeded"):
+class _RecordingArtifactVerifier:
+    def __init__(self, valid_refs: tuple[str, ...] = ()) -> None:
+        self.valid_refs = set(valid_refs)
+        self.calls: list[tuple[str, str]] = []
+
+    def verify_artifact_ref(self, ref: str, *, expected_run_id: str) -> None:
+        self.calls.append((ref, expected_run_id))
+        if expected_run_id != "lineage-run" or ref not in self.valid_refs:
+            raise ValueError("artifact evidence is not owned by the accepted run")
+
+
+def _fixture(
+    tmp_path: Path,
+    *,
+    worker_status: str = "succeeded",
+    worker_artifacts: tuple[str, ...] = (),
+    artifact_reference_verifier=None,
+):
     graph_checksum = canonical_payload_checksum({"graph": "subagent-lineage"})
     spec = SubAgentSpec(
         subagent_id="lineage-subagent",
@@ -93,7 +121,10 @@ def _fixture(tmp_path: Path, *, worker_status: str = "succeeded"):
         context_policy={"allow_sibling_history": False},
         budget={"max_turns": 2, "max_tool_calls": 1, "max_memory_ops": 1},
     )
-    worker = _CountingSubAgentWorker(status=worker_status)
+    worker = _CountingSubAgentWorker(
+        status=worker_status,
+        artifacts=worker_artifacts,
+    )
     registration = TaskCapabilityRegistration(
         capability="research.lineage",
         worker_binding=HarnessWorkerBinding(
@@ -202,7 +233,11 @@ def _fixture(tmp_path: Path, *, worker_status: str = "succeeded"):
     adapter = ResolvedSubAgentTaskAdapter(runtime)
     gates = TaskPlanGateRegistry()
     gates.register("LineageGate@1", lambda _request: True, deterministic=True)
-    verifier = TaskPlanResultVerifier(gates, transcript_store=transcript_store)
+    verifier = TaskPlanResultVerifier(
+        gates,
+        transcript_store=transcript_store,
+        artifact_reference_verifier=artifact_reference_verifier,
+    )
     context_pack = ContextEnvelope(
         envelope_id="lineage-context",
         run_id=plan.run_id,
@@ -267,6 +302,7 @@ def _fixture(tmp_path: Path, *, worker_status: str = "succeeded"):
         "registry": registry,
         "worker": worker,
         "transcript_store": transcript_store,
+        "artifact_reference_verifier": artifact_reference_verifier,
         "verifier": verifier,
         "instance": instance,
         "resolved": resolved,
@@ -324,8 +360,19 @@ def _start_attempt(store, plan, instance) -> None:
         )
 
 
-def _committed_lineage(tmp_path: Path, *, worker_status: str = "succeeded"):
-    fixture = _fixture(tmp_path, worker_status=worker_status)
+def _committed_lineage(
+    tmp_path: Path,
+    *,
+    worker_status: str = "succeeded",
+    worker_artifacts: tuple[str, ...] = (),
+    artifact_reference_verifier=None,
+):
+    fixture = _fixture(
+        tmp_path,
+        worker_status=worker_status,
+        worker_artifacts=worker_artifacts,
+        artifact_reference_verifier=artifact_reference_verifier,
+    )
     store = InMemoryTaskPlanStore()
     store.append_candidate(fixture["candidate"])
     store.accept_plan(fixture["plan"])
@@ -417,6 +464,163 @@ def test_offline_replay_verifies_transcript_and_rejects_event_lineage_mismatch(
         )
     assert captured.value.code == "task_plan_replay_result_mismatch"
     assert fixture["worker"].calls == worker_calls
+
+
+def test_subagent_artifact_refs_require_the_canonical_owner(tmp_path: Path) -> None:
+    artifact_ref = "artifact://lineage-run/candidate"
+    missing = _fixture(
+        tmp_path / "missing-verifier",
+        worker_artifacts=(artifact_ref,),
+    )
+    with pytest.raises(HarnessValidationError) as missing_error:
+        missing["verifier"].verify(
+            missing["invoke"](),
+            task=missing["resolved"],
+            request=missing["instance"],
+            workflow_id=missing["plan"].workflow_id,
+        )
+    assert missing_error.value.code == "task_plan_subagent_artifact_verifier_required"
+
+    rejecting_verifier = _RecordingArtifactVerifier()
+    fabricated = _fixture(
+        tmp_path / "fabricated",
+        worker_artifacts=(artifact_ref,),
+        artifact_reference_verifier=rejecting_verifier,
+    )
+    with pytest.raises(HarnessValidationError) as fabricated_error:
+        fabricated["verifier"].verify(
+            fabricated["invoke"](),
+            task=fabricated["resolved"],
+            request=fabricated["instance"],
+            workflow_id=fabricated["plan"].workflow_id,
+        )
+    assert fabricated_error.value.code == "task_plan_subagent_artifact_unverified"
+    assert fabricated_error.value.details == {"artifact_index": 0}
+
+    accepting_verifier = _RecordingArtifactVerifier((artifact_ref,))
+    accepted = _committed_lineage(
+        tmp_path / "accepted",
+        worker_artifacts=(artifact_ref,),
+        artifact_reference_verifier=accepting_verifier,
+    )
+    assert accepted["record"].output_refs == (artifact_ref,)
+    assert accepting_verifier.calls == [(artifact_ref, "lineage-run")]
+
+
+def test_offline_replay_revalidates_artifact_refs_without_live_worker_call(
+    tmp_path: Path,
+) -> None:
+    artifact_ref = "artifact://lineage-run/candidate"
+    artifact_verifier = _RecordingArtifactVerifier((artifact_ref,))
+    fixture = _committed_lineage(
+        tmp_path,
+        worker_artifacts=(artifact_ref,),
+        artifact_reference_verifier=artifact_verifier,
+    )
+    events = fixture["store"].read_events(
+        fixture["plan"].run_id,
+        fixture["plan"].stage_id,
+    )
+    worker_calls = fixture["worker"].calls
+
+    replay = TaskPlanReplayReducer(
+        fixture["transcript_store"],
+        artifact_reference_verifier=artifact_verifier,
+    ).replay(
+        (fixture["plan"],),
+        events,
+        results=(fixture["record"],),
+    )
+
+    assert replay.verified is True
+    assert fixture["worker"].calls == worker_calls == 1
+    assert artifact_verifier.calls == [
+        (artifact_ref, "lineage-run"),
+        (artifact_ref, "lineage-run"),
+    ]
+
+    artifact_verifier.valid_refs.clear()
+    with pytest.raises(HarnessValidationError) as changed_error:
+        TaskPlanReplayReducer(
+            fixture["transcript_store"],
+            artifact_reference_verifier=artifact_verifier,
+        ).replay(
+            (fixture["plan"],),
+            events,
+            results=(fixture["record"],),
+        )
+    assert changed_error.value.code == "task_plan_subagent_artifact_unverified"
+    assert fixture["worker"].calls == worker_calls
+
+    with pytest.raises(HarnessValidationError) as missing_error:
+        TaskPlanReplayReducer(fixture["transcript_store"]).replay(
+            (fixture["plan"],),
+            events,
+            results=(fixture["record"],),
+        )
+    assert missing_error.value.code == "task_plan_subagent_artifact_verifier_required"
+
+
+def test_artifact_verification_failure_halts_parent_without_task_result(
+    tmp_path: Path,
+) -> None:
+    artifact_ref = "artifact://lineage-run/fabricated"
+    artifact_verifier = _RecordingArtifactVerifier()
+    fixture = _fixture(
+        tmp_path,
+        worker_artifacts=(artifact_ref,),
+        artifact_reference_verifier=artifact_verifier,
+    )
+    database = tmp_path / "task-plan-events.sqlite3"
+    # Keep immutable TaskPlan document paths below the Windows legacy path limit.
+    task_plan_artifacts = tmp_path.parent / "halt-artifacts"
+    event_store = SQLiteEventStore(database)
+    store = DurableTaskPlanStore(
+        EventRuntime(
+            store=event_store,
+            schema_catalog=default_event_schema_catalog(),
+        ),
+        event_store,
+        artifact_store=FilesystemArtifactStore(task_plan_artifacts),
+    )
+    runner = TaskPlanStageRunner(
+        candidate_builder=FakePlanCandidateBuilder(fixture["candidate"]),
+        capability_registry=fixture["registry"],
+        store=store,
+        result_verifier=fixture["verifier"],
+        worker_executor=lambda *_args: fixture["invoke"](),
+    )
+
+    result = runner.run(fixture["request"])
+
+    assert result.status.value == "blocked"
+    assert result.diagnostics["reason_code"] == "task_plan_subagent_artifact_unverified"
+    reopened_event_store = SQLiteEventStore(database)
+    reopened = DurableTaskPlanStore(
+        EventRuntime(
+            store=reopened_event_store,
+            schema_catalog=default_event_schema_catalog(),
+        ),
+        reopened_event_store,
+        artifact_store=FilesystemArtifactStore(task_plan_artifacts),
+    )
+    plan = reopened.plan(fixture["plan"].run_id, fixture["plan"].stage_id)
+    assert plan is not None
+    assert reopened.results_for(
+        plan.run_id,
+        plan.stage_id,
+        plan.plan_id,
+        plan.version,
+    ) == ()
+    events = reopened.read_events(plan.run_id, plan.stage_id)
+    assert events[-1].event_type == "TASK_PLAN_HALTED"
+    assert events[-1].reason_code == "task_plan_subagent_artifact_unverified"
+    assert not {
+        "TASK_RESULT_ACCEPTED",
+        "TASK_RESULT_REJECTED",
+        "TASK_COMPLETED",
+        "TASK_FAILED",
+    }.intersection(event.event_type for event in events)
 
 
 def test_receipt_before_task_result_is_recovered_without_live_worker_call(

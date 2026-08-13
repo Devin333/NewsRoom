@@ -4,6 +4,7 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field, replace
 from typing import Any
 
+from framework.harness.artifacts import ArtifactReferenceVerifierPort
 from framework.harness.control_plane.errors import HarnessValidationError
 from framework.harness.subagents.transcript import SubAgentTranscriptStorePort
 from framework.harness.task_plan.canonical import (
@@ -174,6 +175,8 @@ class TaskPlanReplayReducer:
     def __init__(
         self,
         transcript_store: SubAgentTranscriptStorePort | None = None,
+        *,
+        artifact_reference_verifier: ArtifactReferenceVerifierPort | None = None,
     ) -> None:
         if transcript_store is not None and not isinstance(
             transcript_store,
@@ -181,6 +184,15 @@ class TaskPlanReplayReducer:
         ):
             raise TypeError("transcript_store must implement SubAgentTranscriptStorePort")
         self._transcript_store = transcript_store
+        if artifact_reference_verifier is not None and not isinstance(
+            artifact_reference_verifier,
+            ArtifactReferenceVerifierPort,
+        ):
+            raise TypeError(
+                "artifact_reference_verifier must implement "
+                "ArtifactReferenceVerifierPort"
+            )
+        self._artifact_reference_verifier = artifact_reference_verifier
 
     def reduce(
         self,
@@ -362,6 +374,7 @@ class TaskPlanReplayReducer:
                     results_by_attempt,
                     task_plan,
                     transcript_store=self._transcript_store,
+                    artifact_reference_verifier=self._artifact_reference_verifier,
                 )
                 pending_results[(instance.task_instance_id, instance.attempt, task_plan.version)] = result
             elif event.event_type in _TASK_TERMINAL_EVENTS:
@@ -838,6 +851,7 @@ def _result_for_event(
     plan: ValidatedTaskPlan,
     *,
     transcript_store: SubAgentTranscriptStorePort | None = None,
+    artifact_reference_verifier: ArtifactReferenceVerifierPort | None = None,
 ) -> TaskResultRecord:
     assert event.task_instance_id is not None
     assert event.attempt is not None
@@ -879,6 +893,7 @@ def _result_for_event(
         result,
         definition=definition,
         transcript_store=transcript_store,
+        artifact_reference_verifier=artifact_reference_verifier,
     )
     return result
 
@@ -888,6 +903,7 @@ def _verify_replay_subagent_evidence(
     *,
     definition: Any,
     transcript_store: SubAgentTranscriptStorePort | None,
+    artifact_reference_verifier: ArtifactReferenceVerifierPort | None,
 ) -> None:
     if definition.subagent_id is None:
         return
@@ -927,6 +943,10 @@ def _verify_replay_subagent_evidence(
         or stored.output_ref != result.subagent_output_ref
         or stored.output_checksum != result.subagent_output_checksum
         or output.output_checksum != result.subagent_output_checksum
+        or (
+            result.status is TaskLifecycle.SUCCEEDED
+            and output.artifact_refs != result.output_refs
+        )
         or output.identity != transcript.identity
         or transcript.output_ref != output.ref
         or transcript.output_checksum != output.output_checksum
@@ -951,6 +971,35 @@ def _verify_replay_subagent_evidence(
             code="task_plan_replay_result_mismatch",
         )
     transcript_store.verify(stored)
+    _verify_replay_artifact_references(
+        output.artifact_refs,
+        expected_run_id=result.run_id,
+        verifier=artifact_reference_verifier,
+    )
+
+
+def _verify_replay_artifact_references(
+    refs: tuple[str, ...],
+    *,
+    expected_run_id: str,
+    verifier: ArtifactReferenceVerifierPort | None,
+) -> None:
+    if not refs:
+        return
+    if verifier is None:
+        raise HarnessValidationError(
+            "subagent artifact refs require a canonical verifier during replay",
+            code="task_plan_subagent_artifact_verifier_required",
+        )
+    for index, ref in enumerate(refs):
+        try:
+            verifier.verify_artifact_ref(ref, expected_run_id=expected_run_id)
+        except Exception as exc:
+            raise HarnessValidationError(
+                "subagent artifact ref could not be verified during replay",
+                code="task_plan_subagent_artifact_unverified",
+                details={"artifact_index": index},
+            ) from exc
 
 
 def _apply_terminal_result(

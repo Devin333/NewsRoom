@@ -777,6 +777,11 @@ def _validate_bundle_identity(context: SubAgentContextEvidence, output: SubAgent
         raise HarnessValidationError("transcript output ref does not match output document", code="subagent_output_ref_mismatch")
     if transcript.output_checksum is not None and transcript.output_checksum != output.output_checksum:
         raise HarnessValidationError("transcript output checksum does not match output document", code="subagent_output_checksum_mismatch")
+    if transcript.artifact_refs != output.artifact_refs:
+        raise HarnessValidationError(
+            "transcript artifact refs do not match output document",
+            code="subagent_artifact_refs_mismatch",
+        )
 
 
 __all__ = [
