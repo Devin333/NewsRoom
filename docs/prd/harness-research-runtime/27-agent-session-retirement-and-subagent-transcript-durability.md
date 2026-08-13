@@ -1,19 +1,19 @@
 # 阶段 27：Agent Session Retirement 与 SubAgent Transcript Durability PRD
 
-> Document status: `READY_FOR_OPENSPEC`
-> Implementation status: `NOT_STARTED`
-> Version: `v1.0`
+> Document status: `COMPLETE`
+> Implementation status: `COMPLETE`
+> Version: `v1.1`
 > Priority: `P0`（Harness replay/audit 完整性）+ `P1`（obsolete runtime retirement）
-> Scope: `framework/harness/subagents`、`framework/harness/task_plan`、Research production composition、`framework/agent/session`、`framework/memory/session` 及相关 tests/exports/OpenSpec history
+> Scope: `framework/harness/subagents`、`framework/harness/task_plan`、Harness artifact verification、Research production composition、obsolete agent-session retirement、operations/docs 及相关 tests/exports/OpenSpec history
 > Baseline: 阶段 3C、阶段 4、阶段 20；OpenSpec `harness-runtime`、`harness-dynamic-task-planning`、`harness-taskplan-integrity-hardening`、`harness-context-compaction-verification`；2026-08-12 framework audit
-> Proposed OpenSpec changes: `harness-durable-subagent-transcript`，随后 `remove-obsolete-agent-session-runtime`
-> Last updated: `2026-08-12`
+> Delivered OpenSpec changes: `harness-durable-subagent-transcript`、`remove-obsolete-agent-session-runtime`、`close-subagent-artifact-evidence-and-retirement-docs`
+> Last updated: `2026-08-13`
 
 ## 0. 一句话结论
 
 NewsRoom 仍然需要 subagent isolation、structured handoff、access boundary、lifecycle、compaction、memory authority 和 durable replay，但这些能力已经属于 Harness control plane，不应继续补齐无人使用的 `framework/agent/session` mutable blackboard。
 
-本阶段按不可颠倒的顺序完成两件事：
+本阶段按不可颠倒的顺序完成两项核心交付，并在交付后审计中追加一次 corrective closure：
 
 ```text
 Phase A: 先让 production SubAgent transcript 真正 durable、可解析、可校验、可 replay
@@ -23,11 +23,24 @@ Phase B: 再删除 obsolete agent session runtime、AgentLoop hook 和专用 tes
 
 不得在 Phase A 未通过前删除旧代码以制造“已经收敛”的假象，也不得为了保留旧代码而给 `AgentRunner` 新增 session store/workspace 参数。
 
+### 0.1 最终交付结果
+
+本 PRD 已按三个有序变更完成。第三个变更来自交付后审计：Phase A 虽已让 transcript/output durable，但 `artifact_refs` 仍只做字符串相等比较；Phase B 虽已删除旧 runtime，但历史 SQLite 文件缺少 operator 处置说明。两处均已在最终验收前补齐，未恢复第二套 session 状态面。
+
+| 阶段 | OpenSpec / 结果 | 关键提交 | 状态 |
+| --- | --- | --- | --- |
+| Canonical baseline | 归档 `harness-dynamic-task-planning`、`harness-taskplan-integrity-hardening` | `149e5180`、`47a7c201` | 完成 |
+| Phase A | durable subagent context/output/transcript bundle、typed receipt、TaskPlan result/event/replay lineage、Research production injection | implementation `db3fda0c`；evidence `06ea9da1`；archive `cf1deec5` | 完成并归档 |
+| Phase B | 删除 obsolete agent session packages、AgentLoop hook、AgentSpec policy 和专用传播；保留独立 session owners | implementation `ba874567`；evidence `155722aa`；archive `f8bca8a9` | 完成并归档 |
+| Corrective closure | canonical artifact-ref verifier、acceptance/replay 二次校验、durable parent halt、historical SQLite operations boundary | proposal `561020b5`；implementation `3968fc17` | 完成，随本 PRD 收口归档 |
+
+最终边界保持不变：`LLM/subagent as worker, Harness as control plane`。AgentLoop/AgentRunner 不拥有 shared-session 状态，MemoryRuntime 不承载 operational transcript，artifact publication 仍由 Research terminal authority 决定。
+
 ## 1. 背景与已确认事实
 
 ### 1.1 全框架审查基线
 
-2026-08-12 审查对 `framework/` 下 758 个 Python 文件完成了 AST、定义和内部依赖扫描，约 193,644 行，0 个解析错误，并深读以下生产链路：
+2026-08-12 审查对 `framework/` 下 758 个 Python 文件完成了 AST、定义和内部依赖扫描，约 193,644 行，0 个解析错误，并深读以下生产链路。下表是实施前基线，用于解释缺口来源，不代表 2026-08-13 的 live state：
 
 ```text
 framework/agent/session
@@ -143,6 +156,7 @@ framework/agent/session
 | AST-Goal-2 | 让 transcript body、receipt、TaskPlan result/event lineage 可持久解析并校验 identity/checksum |
 | AST-Goal-3 | 让 persistence failure、tampering 和 missing ref fail closed |
 | AST-Goal-4 | 保持 transcript 只保存审计事实、refs 和 bounded summaries，不泄漏 raw/private context |
+| AST-Goal-5 | 让每个非空 subagent artifact ref 在 acceptance/replay 时由 canonical owner 绑定 parent run 并校验 manifest/checksum/size/bytes |
 | ASR-Goal-1 | 删除没有生产消费者的 `framework/agent/session` 与 `framework/memory/session` |
 | ASR-Goal-2 | 删除 AgentLoop shared-session hook，明确禁止 AgentRunner session integration |
 | ASR-Goal-3 | 以 OpenSpec supersession/skip-specs 方式保留历史，不污染 canonical specs |
@@ -156,6 +170,7 @@ framework/agent/session
 | accepted/rejected TaskPlan result 无法追到 transcript | `0` |
 | restart 后 transcript read/verify 成功率 | `100%`（合法 fixture） |
 | tampered/missing/mismatched transcript 被接受 | `0` |
+| fabricated、cross-run、missing 或 tampered subagent artifact ref 被接受 | `0` |
 | duplicate same-identity/same-checksum write | 幂等，新增记录数 `0` |
 | duplicate same-identity/different-checksum write | `100%` fail closed |
 | replay 期间真实 worker/tool/memory write 调用 | `0` |
@@ -186,6 +201,7 @@ framework/agent/session
 | transcript physical persistence | `infrastructure/storage/harness` | Research composition 与未来 Harness composition | 默认内存 dict、MemoryRuntime、public Research artifact index |
 | invocation/context/handoff gates | `framework/harness/subagents` | `SubAgentRuntime` | AgentLoop shared workspace policy |
 | TaskPlan result/event lineage | `framework/harness/task_plan` | durable TaskPlan store/replay | diagnostics dict 成为唯一 durable owner |
+| subagent artifact ref integrity | `framework/harness/artifacts` verifier port；具体 artifact adapter 为 physical owner | Research `FilesystemHarnessArtifactPort` | TaskPlan 自建 artifact index、字符串自证、通过 verifier 读取 payload/发布 |
 | run event/replay事实 | `framework/events` + Harness transition/event ports | inspection/replay | transcript store决定 workflow route |
 | context selection/redaction/compaction | `framework/harness/context` | production ContextAssembler/runtime | `framework/agent/session` assembler/compactor |
 | memory proposal/commit | `framework/harness/memory` | approved memory adapter | session store直接写 operational memory |
@@ -203,6 +219,8 @@ framework/agent/session
 8. transcript 不保存 raw parent messages、sibling transcript/private notes、hidden prompt、secret、完整大输出或未授权 memory/tool payload。
 9. offline replay 只读 durable facts，不重新执行 subagent、LLM、tool、retrieval、memory write 或 publication。
 10. Phase B 删除前必须有 production replacement acceptance；删除后不得保留隐式 fallback。
+11. 非空 subagent artifact refs 必须由显式 `ArtifactReferenceVerifierPort` 在 acceptance/recovery/replay 重新校验；无 verifier、跨 parent run、missing 或 tamper 全部 fail closed。
+12. artifact verification 只证明 ownership/integrity，不返回 payload、不授予 publication visibility；失败在写入 TaskResult 前产生 durable parent `TASK_PLAN_HALTED`。
 
 ## 5. 目标运行流程
 
@@ -217,7 +235,8 @@ flowchart TD
     S --> R["Typed SubAgentTranscriptReceipt"]
     R --> V["SubAgentTranscriptGate verifies identity + checksum + resolvability"]
     V --> Q["TaskPlan deterministic result verifier"]
-    Q --> D["Durable TaskResultRecord + TaskPlan events"]
+    Q --> O["Canonical artifact owner verifies refs"]
+    O --> D["Durable TaskResultRecord + TaskPlan events"]
     D --> A["Aggregate accepted output refs"]
     S -->|"write/read/verify failure"| F["Durable parent failure event"]
     F --> H["Harness controlled retry or halt"]
@@ -231,6 +250,7 @@ worker candidate
   -> durable transcript body
   -> verified receipt
   -> TaskPlan result verification
+  -> canonical artifact-ref verification（仅非空 refs）
   -> durable result/event
   -> next scheduler decision
 ```
@@ -273,7 +293,7 @@ transcript_checksum
 
 约束：
 
-- `schema_version` 首版建议为 `newsroom.subagent_transcript.v1`。
+- 当前 transcript schema 为 `newsroom.subagent-transcript/v1`；context、output、receipt 和 atomic bundle 使用各自独立的 versioned schema。
 - `transcript_id` 由 invocation/attempt identity 稳定生成，不使用随机 suffix。
 - `observed_at` 来自 accepted invocation/attempt observation，不在 retry 序列化时重新取当前时间。
 - checksum 覆盖除 checksum 自身外的 canonical JSON；map key、tuple/list、reason code 和 gate 顺序必须确定。
@@ -307,10 +327,13 @@ receipt 必须能与 invocation、transcript body、TaskPlan result 和 event �
 framework port 至少提供以下语义：
 
 ```text
-write(transcript) -> SubAgentTranscriptReceipt
+write(context, output, transcript) -> SubAgentTranscriptReceipt
 read(transcript_ref) -> SubAgentTranscript
+read_context(context_ref) -> SubAgentContextEvidence
+read_output(output_ref) -> SubAgentOutputDocument
 verify(receipt) -> SubAgentTranscriptReceipt
 refs_for_parent(parent_run_id) -> tuple[str, ...]
+find_by_identity(identity) -> SubAgentTranscriptReceipt | None
 ```
 
 如实现需要按 child/task 查询，可增加 typed query object，但不提供无边界全库 scan。
@@ -337,10 +360,10 @@ production adapter 放在 `infrastructure/storage/harness`，复用现有原子�
 
 ### 6.5 Output/result ref closure
 
-当前 `SubAgentTranscript.output_ref` 是逻辑 URI，TaskPlan `candidate_result_ref` 是内容 checksum。Phase A 必须明确以下二选一，并由 OpenSpec design 固化：
+实施结果采用第一种：bounded worker output 作为 durable `SubAgentOutputDocument` 与 transcript bundle 一起原子持久化，`TaskResultRecord` 持有其 canonical ref/checksum。对于 output document 中额外声明的 `artifact_refs`，由各 artifact canonical owner 通过 framework port 校验，不复制 payload。
 
-1. worker candidate output 作为 bounded durable result document 保存，transcript/TaskResult/event 共同引用其 canonical ref/checksum；或
-2. worker output 已由 canonical artifact/activity-result owner durable 保存，transcript 只引用该 owner 返回的 ref/checksum。
+1. 已采用：worker candidate output 作为 bounded durable result document 保存，transcript/TaskResult/event 共同引用其 canonical ref/checksum。
+2. 扩展 artifact refs：`ArtifactReferenceVerifierPort.verify_artifact_ref(ref, expected_run_id=...)` 必须由 canonical owner 实现；Research adapter 校验 ref syntax、parent-run binding、manifest identity、size、checksum 和 bytes，返回 `None` 且不触发 publication resolver。
 
 禁止：
 
@@ -349,6 +372,14 @@ production adapter 放在 `infrastructure/storage/harness`，复用现有原子�
 - 只持久化 output hash，却把它描述为可读取的 payload ref。
 
 如果某个 subagent output 没有 durable owner，`SubAgentTranscriptGate` 必须拒绝 acceptance，不能降级为 warning。
+
+### 6.6 Artifact reference verification
+
+- 空 `artifact_refs` 合法，保持现有 artifact-free subagent 行为。
+- 非空 refs 且未注入 verifier 时，stable reason 为 `task_plan_subagent_artifact_verifier_required`。
+- owner 无法验证 malformed、missing、cross-run、stale 或 corrupt ref 时，stable reason 为 `task_plan_subagent_artifact_unverified`，不得泄漏 backend exception/path。
+- acceptance 与 offline replay 都必须校验；replay 不得调用 live worker/tool/memory/publication。
+- transcript 和 output document 的 artifact tuple 必须完全一致；success `TaskResultRecord.output_refs` 也必须一致。failed TaskResult 不携带 accepted outputs，但 replay 仍从 durable output document 校验失败尝试的 refs。
 
 ## 7. TaskPlan 与 event lineage
 
@@ -516,12 +547,14 @@ SubAgentExecutor run_id/workflow_id/step_id/trace propagation
 | AST-FR-010 | Transcript content SHALL 使用 allowlist、redaction、size bound，禁止 raw/private/secret payload。 |
 | AST-FR-011 | Production store SHALL 支持 restart、multi-instance concurrency、tamper detection 和 bounded scoped query。 |
 | AST-FR-012 | Pre-v1 in-memory transcript SHALL 返回 typed legacy-unavailable diagnostic，不得制造可解析假象。 |
+| AST-FR-013 | 每个非空 subagent artifact ref SHALL 在 acceptance 与 replay 时由显式 canonical verifier 按 parent run、manifest、size、checksum 和 bytes 重新校验；无 verifier 或校验失败 MUST 在写入 TaskResult 前 fail closed，且不得读取 payload 或授予 publication visibility。 |
 | ASR-FR-001 | Replacement acceptance 后系统 SHALL 删除 `framework/agent/session` 与 `framework/memory/session`。 |
 | ASR-FR-002 | 系统 SHALL 删除 AgentLoop shared-session policy/workspace/prompt injection surface。 |
 | ASR-FR-003 | 系统 MUST NOT 向 AgentRunner 添加 session store/workspace integration。 |
 | ASR-FR-004 | Retirement SHALL 保留 Harness context/memory/RAG、conversation 和独立业务 session 能力。 |
 | ASR-FR-005 | 旧 `paper-agent-shared-session-analysis` SHALL 以 historical superseded 方式归档，且不得把旧 specs merge 到 canonical specs。 |
 | ASR-FR-006 | Retirement SHALL 不保留 compatibility layer、feature fallback 或 no-op session implementation。 |
+| ASR-FR-007 | 遗留 `.newsroom/paper-agent-sessions.sqlite3` SHALL 被视为 operator-owned orphaned historical data；production runtime 不得自动创建、读取、迁移、归档或删除，并必须提供 operations note。 |
 
 ## 11. OpenSpec 拆分与实施顺序
 
@@ -574,6 +607,17 @@ Change B 应修改 canonical `legacy-runtime-cleanup` requirement，记录旧 sh
 
 `--skip-specs` 是强制要求：旧 change 从未成为当前 canonical capability，普通 archive 会把过期 shared-session SHALL 合入 main specs。归档动作必须保留 proposal/design/tasks/specs 作为历史证据，并在 Change B evidence 中记录 superseded reason 和 replacement refs。旧 change 归档及 canonical diff 验证完成后，Change B 才能正常归档到 `legacy-runtime-cleanup`。
 
+### 11.4 Corrective closure：`close-subagent-artifact-evidence-and-retirement-docs`
+
+Phase A/B 交付后执行 requirement-by-requirement 审计，并以第三个独立 change 闭合两项未被原 acceptance oracle 捕获的缺口：
+
+1. 在 `framework/harness/artifacts` 定义 read-only `ArtifactReferenceVerifierPort`，由 artifact canonical owner 实现。
+2. TaskPlan acceptance 与 replay 对非空 subagent `artifact_refs` 重新校验；无 verifier 或 owner 校验失败时使用 stable reason fail closed，并在 parent stage 记录 durable `TASK_PLAN_HALTED`。
+3. Research production composition 注入其 `FilesystemHarnessArtifactPort`，验证只证明 ownership/integrity，不调用 publication resolver，也不返回 payload。
+4. 发布 `docs/operations/agent-session-retirement.md`，明确历史 SQLite 文件是 operator-owned orphaned data，NewsRoom 不自动访问或删除。
+
+该 change 正常归档到 canonical `harness-runtime`、`harness-task-plan` 和 `legacy-runtime-cleanup`，不创建新的平行 capability。
+
 ## 12. 代码影响面
 
 | 位置 | 处理 |
@@ -587,6 +631,8 @@ Change B 应修改 canonical `legacy-runtime-cleanup` requirement，记录旧 sh
 | `framework/harness/task_plan/store.py` | versioned `TaskResultRecord`/event evidence fields |
 | `framework/harness/task_plan/durable_store.py` | durable roundtrip、migration、recovery/reconciliation |
 | `framework/harness/task_plan/replay.py` | replay 校验 transcript evidence，不调用 worker |
+| `framework/harness/artifacts/ports.py` | 定义 canonical artifact-ref read-only verification port |
+| `infrastructure/research/artifact_port.py` | 实现 run-bound manifest/checksum/size/bytes 校验，不授予 publication visibility |
 | `infrastructure/storage/harness/` | 新增 production durable transcript adapter |
 | `interfaces/composition/research.py` | 显式构造/注入 adapter，移除 diagnostics-only ref wiring |
 | `framework/agent/session/**` | Change B 删除 |
@@ -595,6 +641,7 @@ Change B 应修改 canonical `legacy-runtime-cleanup` requirement，记录旧 sh
 | `framework/agent/loop/loop.py` | Change B 删除 session workspace/context hook |
 | `framework/agent/subagents/executor.py` | Change B 仅删除 obsolete `session_id` metadata propagation |
 | `tests/framework/agent/session/**` | Change B 删除；有价值的不变量迁到 Harness tests |
+| `docs/operations/agent-session-retirement.md` | 记录历史 SQLite 数据的 operator ownership 与显式处置边界 |
 
 如果 OpenSpec design 发现 canonical event/activity store 已能无重复地承载 transcript body，可调整 infrastructure 文件名，但不得改变 owner matrix、durability gate 或不使用 Research publication semantics 的要求。
 
@@ -638,8 +685,17 @@ Change B 应修改 canonical `legacy-runtime-cleanup` requirement，记录旧 sh
 - `AgentRunner` signature 没有 session store/workspace。
 - `SubAgentExecutor` 保留 `run_id/workflow_id/step_id`，不再特殊传播 shared-session `session_id`。
 - Harness RAG、Research reading session、auth/project lab session、conversation cursor/compaction tests 继续通过。
+- production source 不得重新创建、访问或自动删除 retired SQLite path，operations note 不得丢失。
 
-### 13.5 建议验证命令
+### 13.5 Artifact evidence closure tests
+
+- fabricated ref 即使同时出现在 worker result、output document 和 transcript 中也必须拒绝。
+- missing verifier、malformed/missing/cross-run/tampered ref 返回固定 reason，不泄漏 backend path/exception。
+- valid ref 在 acceptance 与 replay 均由 canonical owner 验证；replay live worker/tool/memory/publication 调用为零。
+- artifact verification failure 在 durable parent store 中形成 `TASK_PLAN_HALTED`，且不追加 TaskResult。
+- production Research composition 注入真实 artifact owner，不使用 fake 或 string-only verifier。
+
+### 13.6 已执行验证命令
 
 Change A：
 
@@ -661,6 +717,17 @@ python -m scripts.dev smoke
 openspec validate --all --strict
 ```
 
+Corrective closure：
+
+```powershell
+openspec validate close-subagent-artifact-evidence-and-retirement-docs --strict
+python -m pytest tests/framework/harness/task_plan tests/framework/harness/subagents tests/framework/harness/workers -q
+python -m pytest tests/infrastructure/research/test_artifact_port.py tests/interfaces/composition tests/architecture/test_obsolete_agent_session_retirement.py -q
+python -m scripts.dev compile
+python -m scripts.dev smoke
+openspec validate --all --strict
+```
+
 必须使用 `./.venv/Scripts/python.exe` 对应的项目解释器执行 Python checks；上面的 `python` 表示该解释器，不表示系统 Python。
 
 ## 14. 需求、任务与测试映射
@@ -673,12 +740,14 @@ OpenSpec `tasks.md` 和 `evidence.md` 必须维护以下映射，不能用一个
 | AST-FR-005..006 | TaskPlan lineage + output ref closure tasks | durable result/event/ref resolution integration tests |
 | AST-FR-007..009 | failure/recovery/replay tasks | crash matrix、zero-live-call replay、stable reason evidence |
 | AST-FR-010..012 | security/store/legacy tasks | adversarial redaction、restart/concurrency/tamper、legacy diagnostic tests |
+| AST-FR-013 | canonical artifact verifier + TaskPlan acceptance/replay tasks | fabricated/missing/cross-run/tamper、valid owner、durable halt、zero-live-call replay tests |
 | ASR-FR-001..003 | package/hook/API deletion tasks | import/export/signature inventory + focused tests |
 | ASR-FR-004 | retained capability regression task | RAG/reading/auth/conversation suites |
 | ASR-FR-005 | OpenSpec historical archive task | `--skip-specs` command/result + canonical spec diff |
 | ASR-FR-006 | compatibility absence task | zero shim/fallback/no-op scan + architecture test |
+| ASR-FR-007 | historical data operations boundary task | protected operations note + production path recreation/access/deletion scan |
 
-每项 requirement 必须映射到一个 accountable task、一个 passing test/evidence 和一个 implementation commit。Change A 与 Change B 不得共用“全部 smoke 通过”替代各自的局部 oracle。
+每项 requirement 必须映射到一个 accountable task、一个 passing test/evidence 和一个 implementation commit。三个 changes 不得共用“全部 smoke 通过”替代各自的局部 oracle。
 
 ## 15. 验收标准
 
@@ -701,12 +770,23 @@ OpenSpec `tasks.md` 和 `evidence.md` 必须维护以下映射，不能用一个
 
 ### 15.3 Release acceptance
 
-- 两个 OpenSpec changes 分别 strict-valid。
-- 每个 change 完成后分别提交，Change A commit 在 Change B 之前。
-- `python -m scripts.dev smoke` 两阶段均为 `0 failed`。
+- 三个 OpenSpec changes 分别 strict-valid，并按 Phase A、Phase B、corrective closure 的依赖顺序交付。
+- 每个 change 的实现和 evidence 分别提交；Change A commit 在 Change B 之前，corrective closure 在交付后审计之后。
+- `python -m scripts.dev smoke` 三次验收均为 `0 failed`。
 - `openspec validate --all --strict` 通过。
 - 旧 change 使用 `--skip-specs` 归档后，canonical specs 没有新增 `agent-shared-session`、paper agent orchestrator 或 SQLite session default requirements。
 - worktree 只包含本阶段预期文件，不混入其他 active changes。
+
+### 15.4 最终验收证据
+
+| 范围 | Evidence / commit | 验证结果 |
+| --- | --- | --- |
+| Canonical baseline | `149e5180`、`47a7c201` | 两个 TaskPlan baseline changes 按依赖归档，strict-valid |
+| Phase A | implementation `db3fda0c`；evidence `06ea9da1`；archive `cf1deec5` | focused `160 passed`；smoke `2090 passed, 23 deselected`；OpenSpec all-strict `525 passed, 0 failed` |
+| Phase B | implementation `ba874567`；evidence `155722aa`；archive `f8bca8a9` | main regression `2128 passed, 23 deselected`；smoke `2096 passed, 23 deselected`；OpenSpec all-strict `524 passed, 0 failed` |
+| Corrective closure | proposal `561020b5`；implementation `3968fc17`；本 change `evidence.md` | Harness focused `94 passed`；Research/composition/architecture focused `52 passed, 2 skipped`；compile PASS；smoke `2100 passed, 23 deselected`；source validation `0 errors, 0 warnings`；change strict 与 all-strict PASS |
+
+Phase A/B 的 requirement-level evidence 位于各自 2026-08-13 archive 的 `evidence.md`；corrective evidence 随本 PRD 收口后进入对应 archive。以上通过项均为 live tree 实测，不以 tasks checkbox 代替。
 
 ## 16. 风险、回滚与运行保护
 
@@ -728,46 +808,41 @@ OpenSpec `tasks.md` 和 `evidence.md` 必须维护以下映射，不能用一个
 3. restart/replay acceptance 和 soak window 通过。
 4. Change B 删除旧 runtime。
 5. 归档旧 change，验证 canonical specs 未变化。
+6. requirement-by-requirement audit 发现 artifact owner 和 historical-data documentation 缺口后，以 corrective change 补齐并重新执行全量 gates。
 
 若 Change A 上线后 durable store 持续失败，应暂停 dynamic subagent admission或让 Harness 受控 halted；不得切回进程内 fake 后继续对外宣称可 replay。
 
 ## 17. Definition of Done
 
-- [ ] TaskPlan 两个完成态 baseline changes 已按依赖归档，或真实阻断已解决；不存在跨 active change 的平行 spec。
-- [ ] `harness-durable-subagent-transcript` 已创建，正确修改 canonical `harness-runtime` 与 `harness-task-plan`，strict-valid、完成、单独提交并归档。
-- [ ] production transcript body、receipt、TaskPlan result/event lineage durable 且可解析。
-- [ ] transcript gate 验证 identity/checksum/read-back，不再只看 truthy ref。
-- [ ] output/result refs 全部有 canonical durable owner。
-- [ ] crash/restart/concurrency/tamper/security/offline replay tests 通过。
-- [ ] replacement acceptance gate 全部通过。
-- [ ] `remove-obsolete-agent-session-runtime` 已创建、strict-valid、完成并单独提交。
-- [ ] obsolete packages、AgentLoop hook、AgentSpec policy、专用 `session_id` propagation 和 tests 已删除。
-- [ ] 无 AgentRunner session integration、compatibility layer、production fake 或 stale config。
-- [ ] retained RAG/reading/auth/project/conversation session suites 通过。
-- [ ] 旧 `paper-agent-shared-session-analysis` 已使用 `--skip-specs` 归档，历史保留且 canonical specs 未被污染。
-- [ ] 两阶段 mandatory smoke 与最终 `openspec validate --all --strict` 通过。
+- [x] TaskPlan 两个完成态 baseline changes 已按依赖归档；不存在跨 active change 的平行 spec。
+- [x] `harness-durable-subagent-transcript` 已正确修改 canonical `harness-runtime` 与 `harness-task-plan`，strict-valid、完成、单独提交并归档。
+- [x] production transcript body、receipt、TaskPlan result/event lineage durable 且可解析。
+- [x] transcript gate 验证 identity/checksum/read-back，不再只看 truthy ref。
+- [x] transcript/output refs 有 canonical durable owner；非空 artifact refs 由 canonical artifact verifier 在 acceptance/replay 校验。
+- [x] artifact verifier 缺失或 malformed/missing/cross-run/tampered ref 会在 TaskResult 前 fail closed，并留下 durable parent halt evidence。
+- [x] crash/restart/concurrency/tamper/security/offline replay tests 通过。
+- [x] replacement acceptance gate 全部通过。
+- [x] `remove-obsolete-agent-session-runtime` 已 strict-valid、完成、单独提交并归档。
+- [x] obsolete packages、AgentLoop hook、AgentSpec policy、专用 `session_id` propagation 和 tests 已删除。
+- [x] 无 AgentRunner session integration、compatibility layer、production fake 或 stale config。
+- [x] retained RAG/reading/auth/project/conversation session suites 通过。
+- [x] 旧 `paper-agent-shared-session-analysis` 已使用 `--skip-specs` 归档，历史保留且 canonical specs 未被污染。
+- [x] historical SQLite 数据已明确为 operator-owned orphaned data；production 不自动访问或删除，operations note 有 architecture guard。
+- [x] 三个 changes 的 focused tests、compile、mandatory smoke、change strict 与最终 `openspec validate --all --strict` 全部通过。
 
-## 18. 可复制给 Codex 的任务提示
+## 18. 后续维护护栏
 
 ```text
-请执行 docs/prd/harness-research-runtime/27-agent-session-retirement-and-subagent-transcript-durability.md。
-
-必须按两个独立 OpenSpec change 顺序执行：
-1. 先创建并实现 harness-durable-subagent-transcript。
-2. 只有 Phase A replacement acceptance 全部通过后，才创建并实现 remove-obsolete-agent-session-runtime。
-
-关键要求：
 - Harness 是唯一控制面，LLM/subagent 只生成 candidate。
 - production SubAgentRuntime 必须显式注入 durable transcript store，禁止 implicit fake。
 - transcript 必须 versioned、checksum-bound，并绑定 parent/child/workflow/stage/task/attempt identity。
 - transcript gate 必须验证 durable receipt、identity、checksum 和 read-back，不能只检查 ref 非空。
-- TaskPlan result/events 必须保存 transcript lineage，所有 output/evidence refs 必须可解析。
+- TaskPlan result/events 必须保存 transcript lineage；非空 artifact refs 必须由 canonical owner 在 acceptance/replay 校验。
 - persistence failure、tamper、missing/conflicting ref 必须 fail closed。
 - offline replay 不得调用真实 worker/tool/memory/publication。
-- Phase B 删除 framework/agent/session、framework/memory/session、AgentSessionContextPolicy、AgentLoop shared-session hook 和专用 tests。
-- 不给 AgentRunner 增加 session 参数，不保留 compatibility layer。
+- 不得恢复 framework/agent/session、framework/memory/session、AgentSessionContextPolicy 或 AgentLoop shared-session hook。
+- 不给 AgentRunner 增加 session 参数，不保留 compatibility layer，也不建立第二套 transcript/artifact owner。
 - 不删除 Harness RAG、Research reading session、auth/project lab session、conversation cursor/compaction 或通用 run/workflow correlation。
-- 旧 paper-agent-shared-session-analysis 只能用 openspec archive ... --skip-specs 归档，不能把过期 specs 合入 canonical specs。
-- 每个 change 完成后运行 strict validation、范围匹配 tests、python -m scripts.dev smoke，并单独提交。
-- 全部回复、计划、问题、总结和状态更新使用中文。
+- 不自动读取、迁移或删除 .newsroom/paper-agent-sessions.sqlite3；历史数据处置必须由 operator 显式决定。
+- 后续修改这些边界必须通过新的 OpenSpec change、范围匹配 tests、mandatory smoke 和 strict validation。
 ```

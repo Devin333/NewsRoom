@@ -18,8 +18,8 @@
 
 ## 4. PRD And Verification
 
-- [ ] 4.1 Update the phase-27 PRD metadata, traceability, acceptance evidence, and Definition of Done after implementation gates pass.
-- [ ] 4.2 Record requirement-level evidence for this corrective change.
+- [x] 4.1 Update the phase-27 PRD metadata, traceability, acceptance evidence, and Definition of Done after implementation gates pass.
+- [x] 4.2 Record requirement-level evidence for this corrective change.
 - [x] 4.3 Run focused Harness/Research/architecture tests and `./.venv/Scripts/python.exe -m scripts.dev compile`.
 - [x] 4.4 Run mandatory `./.venv/Scripts/python.exe -m scripts.dev smoke`, `openspec validate close-subagent-artifact-evidence-and-retirement-docs --strict`, and `openspec validate --all --strict`.
-- [ ] 4.5 Audit every phase-27 PRD requirement against live code, tests, OpenSpec archives, release evidence, and commits before marking the work complete.
+- [x] 4.5 Audit every phase-27 PRD requirement against live code, tests, OpenSpec archives, release evidence, and commits before marking the work complete.
