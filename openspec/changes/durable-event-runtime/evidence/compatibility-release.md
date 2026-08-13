@@ -119,6 +119,32 @@ The referenced PostgreSQL staging database
 audit. Database presence and technical invariants do not constitute the three
 independent rollback signatures or the separate D/A/B/C qualification chain.
 
+### 2026-08-14 external-state audit refresh
+
+The machine-readable refresh is retained in
+`external-governance-audit-20260814.json`. It binds local commit
+`57c8754d84a8ce1021c9b187cb3c48e59f97eb7d`, current remote `main`
+`32bed65ff4cc60d229f8612c3c6f0c0dd8aa2cb7`, the pending-policy file checksum,
+and GitHub API facts observed at `2026-08-13T17:06:01.956Z`.
+
+The public repository still has zero rulesets, protected deployment
+environments, deployment records, releases, tags, Actions secrets/variables,
+or webhooks. `main` is not branch-protected, repository access still exposes
+only the single admin collaborator `Devin333`, and no independent governance,
+observer, or consumer-owner identity is configured. CI run `31663376947`
+passed for remote `main`, but CI success is not deployment observation,
+consumer approval, trusted-time evidence, or release qualification.
+
+The refresh parsed 53 tracked evidence JSON files and counted exact top-level
+schema values. It found zero trust-activation D, observation A, consumer
+sign-off B, deletion-deployment attestation C, rollback approval, rollback
+external attestation, or rollback qualification records. Templates, verifier
+constants, Markdown descriptions, and approval-pending technical bundles were
+not counted as signed records. The active policy remains
+`pending_external_activation` with a null trust epoch and three null roots, so
+tasks 9.5 and 10.5 remain open and this evidence does not authorize a dependent
+Graph-only code apply.
+
 ## Read cutover
 
 - `RunInspectionService` and `WorkflowRunner` capture one fixed durable stream

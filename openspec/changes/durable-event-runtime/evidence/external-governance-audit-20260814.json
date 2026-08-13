@@ -1,0 +1,99 @@
+{
+  "schema": "newsroom.durable-event-external-governance-audit/v1",
+  "audited_at": "2026-08-13T17:06:01.956Z",
+  "audit_local_date": "2026-08-14",
+  "repository": "Devin333/NewsRoom",
+  "local_source_commit": "57c8754d84a8ce1021c9b187cb3c48e59f97eb7d",
+  "remote_main_commit": "32bed65ff4cc60d229f8612c3c6f0c0dd8aa2cb7",
+  "compatibility_policy": {
+    "path": "openspec/changes/durable-event-runtime/evidence/compatibility-observation-policy.json",
+    "file_checksum": "sha256:9512d717fa910e1c5d00a757d473f61381def9e6c7353c83d3a1a464a3e303df",
+    "declared_policy_checksum": "sha256:17568d14e4a8514081a75f64fdb80fd5da6b47203b2d91a9efec1baeb0263767",
+    "authority_trust_status": "pending_external_activation",
+    "trust_epoch": null,
+    "trusted_governance_authority": null,
+    "trusted_observer_authority": null,
+    "trusted_consumer_owner_authority": null
+  },
+  "github_repository_state": {
+    "ruleset_count": 0,
+    "main_branch_protected": false,
+    "deployment_environment_count": 0,
+    "deployment_count": 0,
+    "release_count": 0,
+    "tag_count": 0,
+    "actions_secret_count": 0,
+    "actions_variable_count": 0,
+    "webhook_count": 0,
+    "actions_enabled": true,
+    "actions_allowed": "all",
+    "actions_sha_pinning_required": false,
+    "collaborators": [
+      {
+        "login": "Devin333",
+        "role": "admin"
+      }
+    ],
+    "latest_ci": {
+      "run_id": 31663376947,
+      "head_sha": "32bed65ff4cc60d229f8612c3c6f0c0dd8aa2cb7",
+      "status": "completed",
+      "conclusion": "success",
+      "created_at": "2026-08-13T03:15:38Z",
+      "updated_at": "2026-08-13T03:51:01Z"
+    }
+  },
+  "tracked_evidence_scan": {
+    "json_files_scanned": 53,
+    "method": "Parse tracked evidence JSON and count exact top-level schema values; templates, source constants, Markdown, and test fixtures do not qualify as signed records.",
+    "schema_counts": {
+      "newsroom.durable-event-compatibility-trust-activation/v1": 0,
+      "newsroom.durable-event-compatibility-observation/v2": 0,
+      "newsroom.durable-event-compatibility-consumer-signoff/v2": 0,
+      "newsroom.durable-event-compatibility-deletion-deployment-attestation/v1": 0,
+      "newsroom.durable-event-rollback-approval/v1": 0,
+      "newsroom.durable-event-rollback-external/v2": 0,
+      "newsroom.durable-event-rollback-qualification/v2": 0
+    }
+  },
+  "current_technical_handoff": {
+    "path": "openspec/changes/durable-event-runtime/evidence/rollback-staging-7a595636-awaiting-approval",
+    "status": "awaiting_approval",
+    "is_release_qualification": false
+  },
+  "qualification": {
+    "durable_event_task_9_5_qualified": false,
+    "harness_workflow_graph_runtime_dependency_qualified": false,
+    "graph_only_code_apply_allowed": false,
+    "blocking_reasons": [
+      "No pre-existing independent governance bootstrap trust is activated in policy and compiled production verifier state.",
+      "No signed D/A/B/C compatibility qualification records exist in tracked evidence.",
+      "No independently signed rollback approval, external attestation, or rollback qualification records exist in tracked evidence.",
+      "Repository governance exposes one admin collaborator and no independent deployment or consumer-owner authority.",
+      "A successful CI run proves repository checks only and cannot establish deployment observation, consumer approval, trusted time, or release qualification."
+    ]
+  },
+  "required_external_sequence": [
+    "Establish a pre-existing independent release-security/change-control governance bootstrap root in compiled production trust.",
+    "Deploy the content-addressed verifier and retain independently auditable non-backfillable activation/time evidence.",
+    "Sign trust-activation record D with a positive trust epoch and three mutually independent Ed25519 authorities.",
+    "Observe the real bounded compatibility release and sign record A after D activation.",
+    "Obtain independent consumer-owner approval B for the exact qualified deletion build plan.",
+    "Deploy only the B-approved build and obtain post-deployment observer attestation C.",
+    "Complete the separate rollback approval, external attestation, qualification, and strict verification chain.",
+    "Re-run final repository gates, close durable-event-runtime, and only then archive harness-workflow-graph-runtime."
+  ],
+  "reproduction_commands": [
+    "git fetch origin --prune",
+    "gh api repos/Devin333/NewsRoom/rulesets --paginate",
+    "gh api repos/Devin333/NewsRoom/environments --paginate",
+    "gh api repos/Devin333/NewsRoom/deployments?per_page=100",
+    "gh release list --repo Devin333/NewsRoom --limit 100",
+    "gh api repos/Devin333/NewsRoom/tags?per_page=100",
+    "gh api repos/Devin333/NewsRoom/collaborators?per_page=100",
+    "gh api repos/Devin333/NewsRoom/actions/secrets",
+    "gh api repos/Devin333/NewsRoom/actions/variables",
+    "gh api repos/Devin333/NewsRoom/hooks?per_page=100",
+    "gh run list --repo Devin333/NewsRoom --limit 20 --json databaseId,headSha,status,conclusion,workflowName,createdAt,updatedAt,url"
+  ]
+}
