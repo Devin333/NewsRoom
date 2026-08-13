@@ -12,8 +12,12 @@ class GraphArtifactResultErrorCode(StrEnum):
     RESULT_SCHEMA_INVALID = "result_schema_invalid"
     RESULT_TOO_LARGE = "result_too_large"
     ARTIFACT_QUOTA_EXCEEDED = "artifact_quota_exceeded"
+    ARTIFACT_QUOTA_RESERVATION_FAILED = "artifact_quota_reservation_failed"
+    ARTIFACT_QUOTA_SETTLEMENT_FAILED = "artifact_quota_settlement_failed"
     ARTIFACT_WRITE_FAILED = "artifact_write_failed"
     ARTIFACT_READBACK_FAILED = "artifact_readback_failed"
+    CACHE_WRITE_FAILED = "cache_write_failed"
+    CACHE_READBACK_FAILED = "cache_readback_failed"
     ARTIFACT_SCOPE_MISMATCH = "artifact_scope_mismatch"
     ARTIFACT_CATALOG_CORRUPT = "artifact_catalog_corrupt"
     ARTIFACT_CATALOG_NOT_FOUND = "artifact_catalog_not_found"
@@ -23,6 +27,7 @@ class GraphArtifactResultErrorCode(StrEnum):
     SENSITIVE_PAYLOAD_REJECTED = "sensitive_payload_rejected"
     POLICY_VERSION_UNSUPPORTED = "policy_version_unsupported"
     RESULT_IDENTITY_CONFLICT = "result_identity_conflict"
+    RESULT_LEDGER_FAILED = "result_ledger_failed"
 
 
 _MESSAGES: Mapping[GraphArtifactResultErrorCode, str] = {
@@ -35,11 +40,23 @@ _MESSAGES: Mapping[GraphArtifactResultErrorCode, str] = {
     GraphArtifactResultErrorCode.ARTIFACT_QUOTA_EXCEEDED: (
         "graph artifact result exceeds a configured quota"
     ),
+    GraphArtifactResultErrorCode.ARTIFACT_QUOTA_RESERVATION_FAILED: (
+        "graph artifact result quota reservation could not be completed"
+    ),
+    GraphArtifactResultErrorCode.ARTIFACT_QUOTA_SETTLEMENT_FAILED: (
+        "graph artifact result quota settlement could not be completed"
+    ),
     GraphArtifactResultErrorCode.ARTIFACT_WRITE_FAILED: (
         "graph artifact result could not be written"
     ),
     GraphArtifactResultErrorCode.ARTIFACT_READBACK_FAILED: (
         "graph artifact result could not be verified after writing"
+    ),
+    GraphArtifactResultErrorCode.CACHE_WRITE_FAILED: (
+        "graph artifact result cache entry could not be written"
+    ),
+    GraphArtifactResultErrorCode.CACHE_READBACK_FAILED: (
+        "graph artifact result cache entry could not be verified"
     ),
     GraphArtifactResultErrorCode.ARTIFACT_SCOPE_MISMATCH: (
         "graph artifact result reference is outside the authorized scope"
@@ -68,12 +85,20 @@ _MESSAGES: Mapping[GraphArtifactResultErrorCode, str] = {
     GraphArtifactResultErrorCode.RESULT_IDENTITY_CONFLICT: (
         "graph artifact result identity was already committed with different content"
     ),
+    GraphArtifactResultErrorCode.RESULT_LEDGER_FAILED: (
+        "graph artifact result attempt identity could not be committed"
+    ),
 }
 
 _RETRYABLE = frozenset(
     {
         GraphArtifactResultErrorCode.ARTIFACT_WRITE_FAILED,
         GraphArtifactResultErrorCode.ARTIFACT_READBACK_FAILED,
+        GraphArtifactResultErrorCode.ARTIFACT_QUOTA_RESERVATION_FAILED,
+        GraphArtifactResultErrorCode.ARTIFACT_QUOTA_SETTLEMENT_FAILED,
+        GraphArtifactResultErrorCode.CACHE_WRITE_FAILED,
+        GraphArtifactResultErrorCode.CACHE_READBACK_FAILED,
+        GraphArtifactResultErrorCode.RESULT_LEDGER_FAILED,
         GraphArtifactResultErrorCode.CONTEXT_BUDGET_EXCEEDED,
     }
 )
@@ -94,6 +119,8 @@ _DETAIL_KEYS = frozenset(
         "reason",
         "required",
         "reserved",
+        "reservation",
+        "outcome",
     }
 )
 _SAFE_DETAIL_TEXT = re.compile(r"[A-Za-z0-9_.:@+-]{1,128}\Z")

@@ -44,6 +44,17 @@ from framework.harness.runtime.result_policy import (
     PersistenceEvaluation,
     PersistencePolicy,
 )
+from framework.harness.runtime.materializer import (
+    MaterializationResult,
+    ResultAttemptLedgerPort,
+    ResultCachePort,
+    ResultCacheWriteRequest,
+    ResultMaterializationObservation,
+    ResultMaterializationOutcome,
+    ResultMaterializer,
+    ResultQuotaPort,
+    ResultQuotaReservation,
+)
 
 __all__ = [
     "ArtifactClass",
@@ -80,8 +91,17 @@ __all__ = [
     "PersistenceMode",
     "PersistencePolicy",
     "PersistenceReason",
+    "MaterializationResult",
+    "ResultAttemptLedgerPort",
+    "ResultCachePort",
+    "ResultCacheWriteRequest",
+    "ResultMaterializationObservation",
+    "ResultMaterializationOutcome",
+    "ResultMaterializer",
     "ResultMetrics",
     "ResultProvenance",
+    "ResultQuotaPort",
+    "ResultQuotaReservation",
     "ResultSensitivity",
     "RetentionClass",
     "checkpoint_checksum",

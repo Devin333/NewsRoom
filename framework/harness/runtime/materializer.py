@@ -1,0 +1,791 @@
+from __future__ import annotations
+
+import base64
+import hashlib
+from collections.abc import Callable, Mapping
+from contextlib import AbstractContextManager, nullcontext
+from dataclasses import dataclass
+from datetime import datetime, timedelta
+from enum import StrEnum
+from typing import Any, Protocol, runtime_checkable
+
+from framework.harness.artifacts.catalog import (
+    ArtifactCatalogRegistrationRequest,
+    ArtifactVerificationReceipt,
+)
+from framework.harness.artifacts.ports import (
+    ArtifactCatalogPort,
+    ArtifactPort,
+    ArtifactRef,
+    ArtifactWriteRequest,
+)
+from framework.harness.runtime.result_canonical import (
+    aware_datetime,
+    checksum,
+    exact_keys,
+    exact_reference,
+    identifier,
+    media_type,
+    non_negative_int,
+    reference,
+    serialize_candidate,
+    sha256_checksum,
+)
+from framework.harness.runtime.result_errors import (
+    GraphArtifactResultError,
+    GraphArtifactResultErrorCode,
+    result_error,
+)
+from framework.harness.runtime.result_models import (
+    ArtifactRecord,
+    CacheRef,
+    NodeResultBinding,
+    NodeResultEnvelope,
+    PersistenceDecision,
+    PersistenceMode,
+    PersistenceReason,
+    ResultMetrics,
+)
+from framework.harness.runtime.result_policy import (
+    NodeResultRequest,
+    PersistenceBudgetSnapshot,
+    PersistenceEvaluation,
+    PersistencePolicy,
+)
+from framework.harness.workflow.canonical import thaw_json
+from framework.shared.json import stable_json_dumps
+from framework.shared.time import utc_now
+
+
+RESULT_PAYLOAD_SCHEMA = "newsroom.graph-result-payload@1"
+
+
+class ResultMaterializationOutcome(StrEnum):
+    SUCCEEDED = "succeeded"
+    OMITTED = "omitted"
+    FAILED = "failed"
+
+
+@dataclass(frozen=True, slots=True)
+class ResultQuotaReservation:
+    reservation_id: str
+    tenant_id: str
+    run_id: str
+    reservation_key: str
+    reserved_bytes: int
+    object_count: int
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "reservation_id", reference(self.reservation_id, "reservation.id"))
+        object.__setattr__(self, "tenant_id", identifier(self.tenant_id, "reservation.tenant_id"))
+        object.__setattr__(self, "run_id", identifier(self.run_id, "reservation.run_id"))
+        object.__setattr__(self, "reservation_key", reference(self.reservation_key, "reservation.key"))
+        object.__setattr__(self, "reserved_bytes", non_negative_int(self.reserved_bytes, "reservation.bytes"))
+        object.__setattr__(self, "object_count", non_negative_int(self.object_count, "reservation.object_count"))
+        if self.object_count < 1:
+            raise result_error(GraphArtifactResultErrorCode.RESULT_SCHEMA_INVALID, field="reservation.object_count")
+
+
+@runtime_checkable
+class ResultQuotaPort(Protocol):
+    """Reserve and settle durable result quota outside the framework domain."""
+
+    def reserve(
+        self,
+        *,
+        tenant_id: str,
+        run_id: str,
+        reservation_key: str,
+        requested_bytes: int,
+        object_count: int,
+    ) -> ResultQuotaReservation | None:
+        ...
+
+    def settle(
+        self,
+        reservation: ResultQuotaReservation,
+        *,
+        actual_bytes: int,
+        object_count: int,
+        outcome: ResultMaterializationOutcome,
+    ) -> None:
+        ...
+
+
+@dataclass(frozen=True, slots=True)
+class ResultCacheWriteRequest:
+    cache_key: str
+    tenant_id: str
+    payload: Mapping[str, Any]
+    media_type: str
+    content_checksum: str
+    byte_size: int
+    dependency_digest: str
+    policy_version: str
+    expires_at: datetime
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "cache_key", reference(self.cache_key, "cache_write.key"))
+        object.__setattr__(self, "tenant_id", identifier(self.tenant_id, "cache_write.tenant_id"))
+        if not isinstance(self.payload, Mapping):
+            raise result_error(GraphArtifactResultErrorCode.RESULT_SCHEMA_INVALID, field="cache_write.payload")
+        object.__setattr__(self, "payload", dict(self.payload))
+        object.__setattr__(self, "media_type", media_type(self.media_type, "cache_write.media_type"))
+        object.__setattr__(self, "content_checksum", checksum(self.content_checksum, "cache_write.content_checksum"))
+        object.__setattr__(self, "byte_size", non_negative_int(self.byte_size, "cache_write.byte_size"))
+        object.__setattr__(self, "dependency_digest", checksum(self.dependency_digest, "cache_write.dependency_digest"))
+        object.__setattr__(self, "policy_version", exact_reference(self.policy_version, "cache_write.policy_version"))
+        object.__setattr__(self, "expires_at", aware_datetime(self.expires_at, "cache_write.expires_at"))
+
+
+@runtime_checkable
+class ResultCachePort(Protocol):
+    def write(self, request: ResultCacheWriteRequest) -> str:
+        ...
+
+    def read(self, ref: str) -> Mapping[str, Any]:
+        ...
+
+
+@runtime_checkable
+class ResultAttemptLedgerPort(Protocol):
+    """Durable first-writer-wins envelope ledger for one node attempt."""
+
+    def get(self, binding: NodeResultBinding) -> NodeResultEnvelope | None:
+        ...
+
+    def put(self, envelope: NodeResultEnvelope) -> NodeResultEnvelope:
+        ...
+
+
+@dataclass(frozen=True, slots=True)
+class ResultMaterializationObservation:
+    binding: NodeResultBinding
+    outcome: ResultMaterializationOutcome
+    mode: PersistenceMode
+    candidate_bytes: int
+    reservation_id: str | None = None
+    reason: PersistenceReason | None = None
+    error_code: GraphArtifactResultErrorCode | None = None
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.binding, NodeResultBinding):
+            raise result_error(GraphArtifactResultErrorCode.RESULT_SCHEMA_INVALID, field="observation.binding")
+        object.__setattr__(self, "outcome", ResultMaterializationOutcome(self.outcome))
+        object.__setattr__(self, "mode", PersistenceMode(self.mode))
+        object.__setattr__(self, "candidate_bytes", non_negative_int(self.candidate_bytes, "observation.candidate_bytes"))
+        if self.reservation_id is not None:
+            object.__setattr__(self, "reservation_id", reference(self.reservation_id, "observation.reservation_id"))
+        if self.reason is not None:
+            object.__setattr__(self, "reason", PersistenceReason(self.reason))
+        if self.error_code is not None:
+            object.__setattr__(self, "error_code", GraphArtifactResultErrorCode(self.error_code))
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "binding": self.binding.to_dict(),
+            "outcome": self.outcome.value,
+            "mode": self.mode.value,
+            "candidate_bytes": self.candidate_bytes,
+            "reservation_id": self.reservation_id,
+            "reason": self.reason.value if self.reason is not None else None,
+            "error_code": self.error_code.value if self.error_code is not None else None,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class MaterializationResult:
+    envelope: NodeResultEnvelope
+    observation: ResultMaterializationObservation
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.envelope, NodeResultEnvelope):
+            raise result_error(GraphArtifactResultErrorCode.RESULT_SCHEMA_INVALID, field="materialization.envelope")
+        if not isinstance(self.observation, ResultMaterializationObservation):
+            raise result_error(GraphArtifactResultErrorCode.RESULT_SCHEMA_INVALID, field="materialization.observation")
+        if self.observation.binding != self.envelope.binding:
+            raise result_error(GraphArtifactResultErrorCode.RESULT_IDENTITY_CONFLICT, field="materialization.binding")
+
+
+class ResultMaterializer:
+    """The Harness-owned, bounded transition from a worker candidate to a result envelope."""
+
+    def __init__(
+        self,
+        *,
+        policy: PersistencePolicy,
+        artifact_port: ArtifactPort,
+        catalog: ArtifactCatalogPort,
+        quota: ResultQuotaPort,
+        cache: ResultCachePort,
+        attempts: ResultAttemptLedgerPort,
+        clock: Callable[[], datetime] = utc_now,
+        observation_sink: Callable[[ResultMaterializationObservation], None] | None = None,
+    ) -> None:
+        if not isinstance(policy, PersistencePolicy):
+            raise result_error(GraphArtifactResultErrorCode.RESULT_SCHEMA_INVALID, field="materializer.policy")
+        for value, field_name in (
+            (artifact_port, "artifact_port"),
+            (catalog, "catalog"),
+            (quota, "quota"),
+            (cache, "cache"),
+            (attempts, "attempts"),
+        ):
+            if value is None:
+                raise result_error(GraphArtifactResultErrorCode.RESULT_SCHEMA_INVALID, field=f"materializer.{field_name}")
+        if not callable(getattr(artifact_port, "bind_run", None)):
+            raise result_error(GraphArtifactResultErrorCode.RESULT_SCHEMA_INVALID, field="materializer.artifact_port.bind_run")
+        if not callable(clock):
+            raise result_error(GraphArtifactResultErrorCode.RESULT_SCHEMA_INVALID, field="materializer.clock")
+        if observation_sink is not None and not callable(observation_sink):
+            raise result_error(GraphArtifactResultErrorCode.RESULT_SCHEMA_INVALID, field="materializer.observation_sink")
+        self._policy = policy
+        self._artifact_port = artifact_port
+        self._catalog = catalog
+        self._quota = quota
+        self._cache = cache
+        self._attempts = attempts
+        self._clock = clock
+        self._observation_sink = observation_sink
+
+    def materialize(
+        self,
+        request: NodeResultRequest,
+        *,
+        budget: PersistenceBudgetSnapshot | None = None,
+    ) -> MaterializationResult:
+        if not isinstance(request, NodeResultRequest):
+            raise result_error(GraphArtifactResultErrorCode.RESULT_SCHEMA_INVALID, field="request")
+        existing = self._get_existing(request)
+        if existing is not None:
+            self._assert_existing_compatible(
+                existing,
+                request,
+                policy_version=self._policy.config.policy_version,
+            )
+            observation = self._observation(
+                request,
+                outcome=ResultMaterializationOutcome.SUCCEEDED,
+                mode=existing.persistence_decision.mode,
+                candidate_bytes=request.candidate_bytes,
+                reason=existing.persistence_decision.reason,
+            )
+            self._emit(observation)
+            return MaterializationResult(envelope=existing, observation=observation)
+
+        evaluation: PersistenceEvaluation | None = None
+        reservation: ResultQuotaReservation | None = None
+        settlement_attempted = False
+        try:
+            evaluation = self._policy.evaluate(request, budget=budget)
+            decision = evaluation.decision
+            if decision.mode in {PersistenceMode.ARTIFACT, PersistenceMode.CACHE}:
+                reservation = self._reserve(request, evaluation)
+                if reservation is None:
+                    if decision.required:
+                        raise result_error(
+                            GraphArtifactResultErrorCode.ARTIFACT_QUOTA_EXCEEDED,
+                            mode=decision.mode,
+                            required=True,
+                        )
+                    evaluation = self._omitted_evaluation(request)
+                    envelope = self._build_envelope(request, evaluation)
+                    settlement_attempted = True
+                    self._settle(reservation, request, ResultMaterializationOutcome.OMITTED)
+                    observation = self._observation(
+                        request,
+                        outcome=ResultMaterializationOutcome.OMITTED,
+                        mode=PersistenceMode.OMITTED,
+                        candidate_bytes=request.candidate_bytes,
+                        reason=PersistenceReason.QUOTA_EXCEEDED,
+                    )
+                    stored = self._put_attempt(envelope)
+                    if stored != envelope:
+                        envelope = stored
+                    self._emit(observation)
+                    return MaterializationResult(envelope=envelope, observation=observation)
+            if decision.mode is PersistenceMode.INLINE:
+                envelope = self._build_envelope(request, evaluation)
+            elif decision.mode is PersistenceMode.ARTIFACT:
+                record = self._materialize_artifact(request)
+                envelope = self._build_envelope(request, evaluation, records=(record,))
+            elif decision.mode is PersistenceMode.CACHE:
+                cache_ref = self._materialize_cache(request, evaluation)
+                envelope = self._build_envelope(request, evaluation, caches=(cache_ref,))
+            else:
+                envelope = self._build_envelope(request, evaluation)
+            settlement_attempted = True
+            self._settle(reservation, request, ResultMaterializationOutcome.SUCCEEDED)
+            stored = self._put_attempt(envelope)
+            if stored != envelope:
+                self._assert_existing_compatible(
+                    stored,
+                    request,
+                    policy_version=evaluation.decision.policy_version,
+                )
+                envelope = stored
+            observation = self._observation(
+                request,
+                outcome=ResultMaterializationOutcome.SUCCEEDED,
+                mode=envelope.persistence_decision.mode,
+                candidate_bytes=request.candidate_bytes,
+                reservation_id=reservation.reservation_id if reservation is not None else None,
+                reason=envelope.persistence_decision.reason,
+            )
+            self._emit(observation)
+            return MaterializationResult(envelope=envelope, observation=observation)
+        except GraphArtifactResultError as exc:
+            if reservation is not None and not settlement_attempted:
+                settlement_attempted = True
+                self._settle(reservation, request, ResultMaterializationOutcome.FAILED, suppress_error=True)
+            self._emit(
+                self._observation(
+                    request,
+                    outcome=ResultMaterializationOutcome.FAILED,
+                    mode=evaluation.decision.mode if evaluation is not None else PersistenceMode.OMITTED,
+                    candidate_bytes=request.candidate_bytes,
+                    reservation_id=reservation.reservation_id if reservation is not None else None,
+                    reason=evaluation.decision.reason if evaluation is not None else None,
+                    error_code=exc.error_code,
+                )
+            )
+            raise
+        except Exception as exc:
+            if reservation is not None and not settlement_attempted:
+                settlement_attempted = True
+                self._settle(reservation, request, ResultMaterializationOutcome.FAILED, suppress_error=True)
+            error = result_error(
+                GraphArtifactResultErrorCode.ARTIFACT_WRITE_FAILED,
+                mode=evaluation.decision.mode if evaluation is not None else PersistenceMode.OMITTED,
+            )
+            self._emit(
+                self._observation(
+                    request,
+                    outcome=ResultMaterializationOutcome.FAILED,
+                    mode=evaluation.decision.mode if evaluation is not None else PersistenceMode.OMITTED,
+                    candidate_bytes=request.candidate_bytes,
+                    reservation_id=reservation.reservation_id if reservation is not None else None,
+                    reason=evaluation.decision.reason if evaluation is not None else None,
+                    error_code=error.error_code,
+                )
+            )
+            raise error from exc
+
+    def _get_existing(self, request: NodeResultRequest) -> NodeResultEnvelope | None:
+        try:
+            existing = self._attempts.get(request.binding)
+        except GraphArtifactResultError:
+            raise
+        except Exception as exc:
+            raise result_error(GraphArtifactResultErrorCode.RESULT_LEDGER_FAILED, field="attempt.get") from exc
+        if existing is not None and not isinstance(existing, NodeResultEnvelope):
+            raise result_error(GraphArtifactResultErrorCode.RESULT_LEDGER_FAILED, field="attempt.envelope")
+        return existing
+
+    def _put_attempt(self, envelope: NodeResultEnvelope) -> NodeResultEnvelope:
+        try:
+            stored = self._attempts.put(envelope)
+        except GraphArtifactResultError:
+            raise
+        except Exception as exc:
+            raise result_error(GraphArtifactResultErrorCode.RESULT_LEDGER_FAILED, field="attempt.put") from exc
+        if not isinstance(stored, NodeResultEnvelope):
+            raise result_error(GraphArtifactResultErrorCode.RESULT_LEDGER_FAILED, field="attempt.envelope")
+        return stored
+
+    def _assert_existing_compatible(
+        self,
+        existing: NodeResultEnvelope,
+        request: NodeResultRequest,
+        *,
+        policy_version: str,
+    ) -> None:
+        if (
+            existing.binding != request.binding
+            or existing.candidate_checksum != request.candidate_checksum
+            or existing.output_schema_ref != request.output_schema_ref
+            or existing.output_schema_digest != request.output_schema_digest
+            or existing.status != request.status
+            or existing.persistence_decision.policy_version != policy_version
+        ):
+            raise result_error(GraphArtifactResultErrorCode.RESULT_IDENTITY_CONFLICT, field="attempt")
+
+    def _reserve(
+        self,
+        request: NodeResultRequest,
+        evaluation: PersistenceEvaluation,
+    ) -> ResultQuotaReservation | None:
+        try:
+            reservation = self._quota.reserve(
+                tenant_id=request.binding.tenant_id,
+                run_id=request.binding.run_id,
+                reservation_key=self._quota_key(request, evaluation),
+                requested_bytes=evaluation.decision.reserved_bytes,
+                object_count=1,
+            )
+        except GraphArtifactResultError:
+            raise
+        except Exception as exc:
+            raise result_error(GraphArtifactResultErrorCode.ARTIFACT_QUOTA_RESERVATION_FAILED, field="quota.reserve") from exc
+        if reservation is not None and not isinstance(reservation, ResultQuotaReservation):
+            raise result_error(GraphArtifactResultErrorCode.ARTIFACT_QUOTA_RESERVATION_FAILED, field="quota.reservation")
+        if reservation is not None and (
+            reservation.tenant_id != request.binding.tenant_id
+            or reservation.run_id != request.binding.run_id
+            or reservation.reserved_bytes != evaluation.decision.reserved_bytes
+        ):
+            raise result_error(GraphArtifactResultErrorCode.ARTIFACT_SCOPE_MISMATCH, field="quota.reservation")
+        return reservation
+
+    def _settle(
+        self,
+        reservation: ResultQuotaReservation | None,
+        request: NodeResultRequest,
+        outcome: ResultMaterializationOutcome,
+        *,
+        suppress_error: bool = False,
+    ) -> None:
+        if reservation is None:
+            return
+        try:
+            self._quota.settle(
+                reservation,
+                actual_bytes=request.candidate_bytes if outcome is ResultMaterializationOutcome.SUCCEEDED else 0,
+                object_count=1 if outcome is ResultMaterializationOutcome.SUCCEEDED else 0,
+                outcome=outcome,
+            )
+        except GraphArtifactResultError:
+            if not suppress_error:
+                raise
+        except Exception as exc:
+            if not suppress_error:
+                raise result_error(GraphArtifactResultErrorCode.ARTIFACT_QUOTA_SETTLEMENT_FAILED, field="quota.settle") from exc
+
+    def _materialize_artifact(self, request: NodeResultRequest) -> ArtifactRecord:
+        artifact_id = self._artifact_id(request)
+        artifact_type = self._artifact_type(request)
+        payload = _candidate_payload(request)
+        write_request = ArtifactWriteRequest(
+            artifact_type=artifact_type,
+            payload=payload,
+            media_type="application/json",
+            metadata={
+                "tenant_id": request.binding.tenant_id,
+                "run_id": request.binding.run_id,
+                "graph_id": request.binding.graph_id,
+                "node_id": request.binding.node_id,
+                "attempt_id": request.binding.attempt_id,
+                "candidate_checksum": request.candidate_checksum,
+            },
+        )
+        try:
+            with self._bound_run(request.binding.run_id):
+                ref = self._artifact_port.write_artifact(write_request)
+                if not isinstance(ref, ArtifactRef):
+                    raise result_error(GraphArtifactResultErrorCode.ARTIFACT_WRITE_FAILED, field="artifact.ref")
+                stored = self._artifact_port.read_artifact(ref.ref)
+        except GraphArtifactResultError:
+            raise
+        except Exception as exc:
+            raise result_error(GraphArtifactResultErrorCode.ARTIFACT_WRITE_FAILED, field="artifact.write") from exc
+        _verify_scope(ref, request)
+        _verify_candidate_payload(stored, request, error_code=GraphArtifactResultErrorCode.ARTIFACT_READBACK_FAILED)
+        record = self._artifact_record(request, ref, artifact_id, artifact_type)
+        verification = ArtifactVerificationReceipt.for_record(record, verified_at=self._verified_at(request.created_at))
+        registration = ArtifactCatalogRegistrationRequest(
+            record=record,
+            verification=verification,
+            initial_reference=ArtifactCatalogRegistrationRequest.from_verified_record(
+                record,
+                verified_at=verification.verified_at,
+            ).initial_reference,
+        )
+        try:
+            self._catalog.register(registration)
+        except GraphArtifactResultError:
+            raise
+        except Exception as exc:
+            raise result_error(GraphArtifactResultErrorCode.ARTIFACT_WRITE_FAILED, field="catalog.register") from exc
+        return record
+
+    def _materialize_cache(
+        self,
+        request: NodeResultRequest,
+        evaluation: PersistenceEvaluation,
+    ) -> CacheRef:
+        if request.dependency_digest is None:
+            raise result_error(GraphArtifactResultErrorCode.CACHE_IDENTITY_INVALID, field="dependency_digest")
+        expires_at = request.created_at + timedelta(seconds=self._policy.config.cache_default_ttl_seconds)
+        cache_request = ResultCacheWriteRequest(
+            cache_key=self._cache_key(request, evaluation),
+            tenant_id=request.binding.tenant_id,
+            payload=_candidate_payload(request),
+            media_type=request.media_type,
+            content_checksum=request.candidate_checksum,
+            byte_size=request.candidate_bytes,
+            dependency_digest=request.dependency_digest,
+            policy_version=evaluation.decision.policy_version,
+            expires_at=expires_at,
+        )
+        try:
+            ref = self._cache.write(cache_request)
+        except GraphArtifactResultError:
+            raise
+        except Exception as exc:
+            raise result_error(GraphArtifactResultErrorCode.CACHE_WRITE_FAILED, field="cache.write") from exc
+        try:
+            ref = reference(ref, "cache.ref")
+            stored = self._cache.read(ref)
+        except GraphArtifactResultError:
+            raise
+        except Exception as exc:
+            raise result_error(GraphArtifactResultErrorCode.CACHE_READBACK_FAILED, field="cache.read") from exc
+        _verify_candidate_payload(stored, request, error_code=GraphArtifactResultErrorCode.CACHE_READBACK_FAILED)
+        return CacheRef(
+            ref=ref,
+            tenant_id=request.binding.tenant_id,
+            content_checksum=request.candidate_checksum,
+            dependency_digest=request.dependency_digest,
+            media_type=request.media_type,
+            byte_size=request.candidate_bytes,
+            policy_version=evaluation.decision.policy_version,
+            expires_at=expires_at,
+        )
+
+    def _artifact_record(
+        self,
+        request: NodeResultRequest,
+        ref: ArtifactRef,
+        artifact_id: str,
+        artifact_type: str,
+    ) -> ArtifactRecord:
+        return ArtifactRecord(
+            ref=ref.ref,
+            artifact_id=artifact_id,
+            artifact_type=artifact_type,
+            content_checksum=request.candidate_checksum,
+            byte_size=request.candidate_bytes,
+            media_type=request.media_type,
+            artifact_class=request.artifact_class,
+            tenant_id=request.binding.tenant_id,
+            run_id=request.binding.run_id,
+            graph_id=request.binding.graph_id,
+            node_id=request.binding.node_id,
+            attempt_id=request.binding.attempt_id,
+            producer_revision=request.provenance.producer_revision,
+            sensitivity=request.sensitivity,
+            reusable=request.reusable,
+            dependency_digest=request.dependency_digest,
+            retention_class=request.retention_class,
+            expires_at=self._artifact_expiry(request),
+            required_for_replay=request.required_for_replay,
+            required_for_publication=request.required_for_publication,
+            created_at=request.created_at,
+        )
+
+    def _artifact_expiry(self, request: NodeResultRequest) -> datetime | None:
+        days = {
+            "ephemeral": self._policy.config.retention.ephemeral_days,
+            "run": self._policy.config.retention.run_days,
+            "evidence": self._policy.config.retention.evidence_days,
+            "report": self._policy.config.retention.report_days,
+            "cache": self._policy.config.retention.cache_days,
+        }[request.retention_class.value]
+        return request.created_at + timedelta(days=days) if days is not None else None
+
+    def _build_envelope(
+        self,
+        request: NodeResultRequest,
+        evaluation: PersistenceEvaluation,
+        *,
+        records: tuple[ArtifactRecord, ...] = (),
+        caches: tuple[CacheRef, ...] = (),
+    ) -> NodeResultEnvelope:
+        decision = evaluation.decision
+        projection = request.inline_projection if decision.mode is PersistenceMode.INLINE else {}
+        return NodeResultEnvelope(
+            binding=request.binding,
+            status=request.status,
+            output_schema_ref=request.output_schema_ref,
+            output_schema_digest=request.output_schema_digest,
+            candidate_checksum=request.candidate_checksum,
+            summary=request.summary,
+            inline_projection=projection,
+            materialized_refs=records,
+            cache_refs=caches,
+            provenance=request.provenance,
+            persistence_decision=decision,
+            metrics=ResultMetrics(
+                candidate_bytes=request.candidate_bytes,
+                candidate_tokens=request.candidate_tokens,
+                summary_bytes=request.summary.byte_size,
+                inline_bytes=request.inline_bytes if decision.mode is PersistenceMode.INLINE else 0,
+            ),
+            created_at=request.created_at,
+        )
+
+    def _omitted_evaluation(self, request: NodeResultRequest) -> PersistenceEvaluation:
+        return PersistenceEvaluation(
+            candidate_checksum=request.candidate_checksum,
+            candidate_bytes=request.candidate_bytes,
+            candidate_tokens=request.candidate_tokens,
+            decision=PersistenceDecision(
+                mode=PersistenceMode.OMITTED,
+                reason=PersistenceReason.QUOTA_EXCEEDED,
+                artifact_class=request.artifact_class,
+                retention_class=request.retention_class,
+                estimated_bytes=request.candidate_bytes,
+                reserved_bytes=0,
+                context_policy=request.context_policy,
+                required=False,
+                policy_version=self._policy.config.policy_version,
+            ),
+        )
+
+    def _observation(self, request: NodeResultRequest, **kwargs: Any) -> ResultMaterializationObservation:
+        return ResultMaterializationObservation(binding=request.binding, **kwargs)
+
+    def _emit(self, observation: ResultMaterializationObservation) -> None:
+        if self._observation_sink is None:
+            return
+        try:
+            self._observation_sink(observation)
+        except Exception:
+            return
+
+    def _verified_at(self, created_at: datetime) -> datetime:
+        return max(aware_datetime(self._clock(), "clock"), created_at)
+
+    def _quota_key(self, request: NodeResultRequest, evaluation: PersistenceEvaluation) -> str:
+        return _derived_key("quota", request, evaluation)
+
+    def _cache_key(self, request: NodeResultRequest, evaluation: PersistenceEvaluation) -> str:
+        return _derived_key("cache", request, evaluation)
+
+    def _artifact_id(self, request: NodeResultRequest) -> str:
+        return _derived_identifier("result", request)
+
+    def _artifact_type(self, request: NodeResultRequest) -> str:
+        return _derived_identifier("graph-result", request)
+
+    def _bound_run(self, run_id: str) -> AbstractContextManager[str]:
+        binder = getattr(self._artifact_port, "bind_run", None)
+        return binder(run_id) if callable(binder) else nullcontext(run_id)
+
+
+def _candidate_payload(request: NodeResultRequest) -> dict[str, Any]:
+    normalized = request.media_type
+    if normalized == "application/json" or normalized.endswith("+json"):
+        value = thaw_json(request.candidate)
+        encoding = "json"
+    elif normalized.startswith("text/"):
+        value = request.candidate
+        encoding = "text"
+    else:
+        value = base64.b64encode(request.candidate).decode("ascii")
+        encoding = "base64"
+    return {
+        "schema": RESULT_PAYLOAD_SCHEMA,
+        "candidate_checksum": request.candidate_checksum,
+        "candidate_bytes": request.candidate_bytes,
+        "media_type": normalized,
+        "encoding": encoding,
+        "value": value,
+    }
+
+
+def _verify_candidate_payload(
+    stored: Mapping[str, Any],
+    request: NodeResultRequest,
+    *,
+    error_code: GraphArtifactResultErrorCode,
+) -> None:
+    if not isinstance(stored, Mapping):
+        raise result_error(error_code, field="payload")
+    payload: Any = stored.get("payload", stored)
+    if not isinstance(payload, Mapping):
+        raise result_error(error_code, field="payload")
+    try:
+        payload = exact_keys(
+            payload,
+            required=frozenset({"schema", "candidate_checksum", "candidate_bytes", "media_type", "encoding", "value"}),
+            model="GraphResultPayload",
+        )
+        if (
+            payload["schema"] != RESULT_PAYLOAD_SCHEMA
+            or payload["candidate_checksum"] != request.candidate_checksum
+            or payload["candidate_bytes"] != request.candidate_bytes
+            or payload["media_type"] != request.media_type
+        ):
+            raise ValueError("payload metadata mismatch")
+        encoding = payload["encoding"]
+        if encoding == "json":
+            candidate = payload["value"]
+        elif encoding == "text":
+            candidate = payload["value"]
+        elif encoding == "base64":
+            candidate = base64.b64decode(payload["value"], validate=True)
+        else:
+            raise ValueError("payload encoding mismatch")
+        _, candidate_bytes = serialize_candidate(candidate, request.media_type)
+    except GraphArtifactResultError:
+        raise
+    except (TypeError, ValueError, base64.binascii.Error) as exc:
+        raise result_error(error_code, field="payload") from exc
+    if len(candidate_bytes) != request.candidate_bytes or sha256_checksum(candidate_bytes) != request.candidate_checksum:
+        raise result_error(error_code, field="payload.checksum")
+
+
+def _verify_scope(ref: ArtifactRef, request: NodeResultRequest) -> None:
+    metadata = ref.metadata
+    for field_name, expected in (
+        ("tenant_id", request.binding.tenant_id),
+        ("run_id", request.binding.run_id),
+        ("graph_id", request.binding.graph_id),
+        ("node_id", request.binding.node_id),
+        ("attempt_id", request.binding.attempt_id),
+    ):
+        actual = metadata.get(field_name)
+        if actual != expected:
+            raise result_error(GraphArtifactResultErrorCode.ARTIFACT_SCOPE_MISMATCH, field=f"ref.{field_name}")
+
+
+def _derived_key(prefix: str, request: NodeResultRequest, evaluation: PersistenceEvaluation) -> str:
+    payload = {
+        "tenant_id": request.binding.tenant_id,
+        "run_id": request.binding.run_id,
+        "graph_id": request.binding.graph_id,
+        "node_id": request.binding.node_id,
+        "attempt_id": request.binding.attempt_id,
+        "candidate_checksum": request.candidate_checksum,
+        "dependency_digest": request.dependency_digest,
+        "policy_version": evaluation.decision.policy_version,
+    }
+    digest = hashlib.sha256(stable_json_dumps(payload).encode("utf-8")).hexdigest()
+    return f"{prefix}://{request.binding.tenant_id}/{digest}"
+
+
+def _derived_identifier(prefix: str, request: NodeResultRequest) -> str:
+    payload = {
+        "tenant_id": request.binding.tenant_id,
+        "run_id": request.binding.run_id,
+        "graph_id": request.binding.graph_id,
+        "node_id": request.binding.node_id,
+        "attempt_id": request.binding.attempt_id,
+    }
+    digest = hashlib.sha256(stable_json_dumps(payload).encode("utf-8")).hexdigest()
+    return f"{prefix}-{digest}"
+
+
+__all__ = [
+    "MaterializationResult",
+    "RESULT_PAYLOAD_SCHEMA",
+    "ResultAttemptLedgerPort",
+    "ResultCachePort",
+    "ResultCacheWriteRequest",
+    "ResultMaterializationObservation",
+    "ResultMaterializationOutcome",
+    "ResultMaterializer",
+    "ResultQuotaPort",
+    "ResultQuotaReservation",
+]
