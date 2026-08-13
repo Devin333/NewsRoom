@@ -149,6 +149,7 @@ class FailingAttempts(RecordingAttempts):
 def _key(binding):
     return (
         binding.tenant_id,
+        binding.tenant_scope_ref,
         binding.run_id,
         binding.graph_id,
         binding.node_id,
@@ -169,6 +170,7 @@ def _request(
     return NodeResultRequest(
         binding=NodeResultBinding(
             tenant_id="tenant-1",
+            tenant_scope_ref=DIGEST,
             run_id="run-1",
             graph_id="graph-1",
             graph_version="graph-1@1",

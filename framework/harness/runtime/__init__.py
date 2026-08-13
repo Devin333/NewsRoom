@@ -55,6 +55,10 @@ from framework.harness.runtime.materializer import (
     ResultQuotaPort,
     ResultQuotaReservation,
 )
+from framework.harness.runtime.graph_result_projection import (
+    graph_result_lineage_from_envelope,
+)
+from framework.harness.runtime.graph_result_runtime import HarnessGraphResultRuntime
 
 __all__ = [
     "ArtifactClass",
@@ -77,6 +81,7 @@ __all__ = [
     "GraphArtifactRolloutMode",
     "HarnessCheckpoint",
     "HarnessDurableState",
+    "HarnessGraphResultRuntime",
     "HarnessReplayReader",
     "HarnessReplayReport",
     "HarnessTraceExporter",
@@ -105,4 +110,5 @@ __all__ = [
     "ResultSensitivity",
     "RetentionClass",
     "checkpoint_checksum",
+    "graph_result_lineage_from_envelope",
 ]

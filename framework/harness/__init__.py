@@ -356,8 +356,18 @@ from framework.harness.runtime import (
     HarnessReplayReader,
     HarnessReplayReport,
     HarnessTraceExporter,
+    HarnessGraphResultRuntime,
     InMemoryHarnessCheckpointStore,
     checkpoint_checksum,
+)
+from framework.harness.control_plane.graph_result_lineage import (
+    HARNESS_GRAPH_RESULT_LINEAGE_SCHEMA,
+    HarnessGraphArtifactRefProjection,
+    HarnessGraphCacheRefProjection,
+    HarnessGraphResultLineage,
+    HarnessGraphResultLineageStatus,
+    HarnessGraphResultPersistenceMode,
+    HarnessGraphResultSummary,
 )
 from framework.harness.side_effects import (
     CountingHarnessSideEffectHandler,
@@ -754,6 +764,14 @@ __all__ = [
     "HarnessGraphActivityResult",
     "HarnessGraphActivityResultCommit",
     "HarnessGraphActivityResultStatus",
+    "HARNESS_GRAPH_RESULT_LINEAGE_SCHEMA",
+    "HarnessGraphArtifactRefProjection",
+    "HarnessGraphCacheRefProjection",
+    "HarnessGraphResultLineage",
+    "HarnessGraphResultLineageStatus",
+    "HarnessGraphResultPersistenceMode",
+    "HarnessGraphResultRuntime",
+    "HarnessGraphResultSummary",
     "HarnessGraphAppliedDecision",
     "HarnessGraphCandidate",
     "HarnessGraphCandidateType",

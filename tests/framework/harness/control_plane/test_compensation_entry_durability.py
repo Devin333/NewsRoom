@@ -4,7 +4,7 @@ from dataclasses import dataclass
 
 import pytest
 
-from framework.events.canonical import checksum_for
+from framework.events.canonical import canonical_json_bytes, checksum_for
 from framework.harness.control_plane.errors import HarnessValidationError
 from framework.harness.control_plane.graph_application import (
     HarnessGraphDecisionApplier,
@@ -36,6 +36,22 @@ from framework.harness.control_plane.harness import (
 )
 from framework.harness.control_plane.policy import HarnessBudget
 from framework.harness.control_plane.state import HarnessRunSpec, HarnessStepStatus
+from framework.harness.runtime import (
+    ArtifactClass,
+    ArtifactRecord,
+    BoundedSummary,
+    ContextPolicy,
+    HarnessGraphResultRuntime,
+    NodeResultEnvelope,
+    NodeResultStatus,
+    PersistenceDecision,
+    PersistenceMode,
+    PersistenceReason,
+    ResultMetrics,
+    ResultProvenance,
+    ResultSensitivity,
+    RetentionClass,
+)
 from framework.harness.side_effects.fake import (
     CountingHarnessSideEffectHandler,
     InMemoryHarnessSideEffectStore,
@@ -158,6 +174,122 @@ class _FailAfterCompensationResultControlPlane(HarnessControlPlane):
         return super().accept_graph_activity_result(
             run_spec,
             result,
+            occurred_at=occurred_at,
+        )
+
+
+class _MaterializedResultControlPlane(HarnessControlPlane):
+    def accept_graph_activity_result(self, run_spec, result, *, occurred_at):
+        self._prepare_run_spec(run_spec)
+        graph_runtime = self._require_graph_runtime()
+        activity = graph_runtime.transition_port.activity_for(result.activity_id)
+        if activity is None or activity.tenant_scope_ref is None:
+            raise AssertionError("materialized compensation fixture lost activity scope")
+        graph = self._prepared_graphs[run_spec.run_id]
+        run_checksum = self._prepared_run_specs[run_spec.run_id]
+        adapter = HarnessGraphResultRuntime(graph_runtime)
+        binding = adapter.binding_for_activity(
+            activity_id=activity.activity_id,
+            graph=graph,
+            tenant_id="tenant-compensation",
+            tenant_scope_ref=activity.tenant_scope_ref,
+            attempt_id=f"physical-{activity.activity_id}",
+            run_spec_checksum=run_checksum,
+        )
+        projection = {"worker_status": result.status.value}
+        summary = BoundedSummary.from_text(
+            f"{activity.node_id} {result.status.value}"
+        )
+        candidate_bytes = 64
+        artifacts = ()
+        mode = PersistenceMode.INLINE
+        reason = PersistenceReason.BELOW_INLINE_THRESHOLD
+        artifact_class = ArtifactClass.CONTROL
+        retention_class = RetentionClass.RUN
+        reserved_bytes = 0
+        inline_projection = projection
+        if activity.node_id == "publish":
+            artifacts = (
+                ArtifactRecord(
+                    ref=(
+                        "artifact://tenant-compensation/"
+                        f"{run_spec.run_id}/{activity.activity_id}"
+                    ),
+                    artifact_id=f"result-{activity.activity_id}",
+                    artifact_type="node_result",
+                    content_checksum=result.payload_ref,
+                    byte_size=candidate_bytes,
+                    media_type="application/json",
+                    artifact_class=ArtifactClass.EVIDENCE,
+                    tenant_id=binding.tenant_id,
+                    run_id=binding.run_id,
+                    graph_id=binding.graph_id,
+                    node_id=binding.node_id,
+                    attempt_id=binding.attempt_id,
+                    producer_revision="test-worker-build@1",
+                    sensitivity=ResultSensitivity.INTERNAL,
+                    reusable=False,
+                    dependency_digest=None,
+                    retention_class=RetentionClass.EVIDENCE,
+                    expires_at=None,
+                    required_for_replay=True,
+                    required_for_publication=False,
+                    created_at=occurred_at,
+                ),
+            )
+            mode = PersistenceMode.ARTIFACT
+            reason = PersistenceReason.REQUIRED_FOR_REPLAY
+            artifact_class = ArtifactClass.EVIDENCE
+            retention_class = RetentionClass.EVIDENCE
+            reserved_bytes = candidate_bytes
+            inline_projection = {}
+        envelope = NodeResultEnvelope(
+            binding=binding,
+            status=(
+                NodeResultStatus.SUCCEEDED
+                if result.status is HarnessGraphActivityResultStatus.SUCCEEDED
+                else NodeResultStatus.FAILED
+            ),
+            output_schema_ref="compensation-result@1",
+            output_schema_digest=checksum_for("compensation-result@1"),
+            candidate_checksum=result.payload_ref,
+            summary=summary,
+            inline_projection=inline_projection,
+            materialized_refs=artifacts,
+            cache_refs=(),
+            provenance=ResultProvenance(
+                producer_ref="test-worker@1",
+                producer_revision="test-worker-build@1",
+            ),
+            persistence_decision=PersistenceDecision(
+                mode=mode,
+                reason=reason,
+                artifact_class=artifact_class,
+                retention_class=retention_class,
+                estimated_bytes=candidate_bytes,
+                reserved_bytes=reserved_bytes,
+                context_policy=ContextPolicy.SUMMARY_ONLY,
+                required=mode is PersistenceMode.ARTIFACT,
+                policy_version="graph-artifact-policy@1",
+            ),
+            metrics=ResultMetrics(
+                candidate_bytes=candidate_bytes,
+                candidate_tokens=16,
+                summary_bytes=summary.byte_size,
+                inline_bytes=(
+                    len(canonical_json_bytes(inline_projection))
+                    if mode is PersistenceMode.INLINE
+                    else 0
+                ),
+            ),
+            created_at=occurred_at,
+        )
+        return adapter.accept_materialized_result(
+            envelope,
+            expected_binding=binding,
+            activity_id=activity.activity_id,
+            graph=graph,
+            run_spec_checksum=run_checksum,
             occurred_at=occurred_at,
         )
 
@@ -577,6 +709,53 @@ def test_parallel_failure_executes_compensation_handler_through_full_lifecycle()
     )
     assert state.budgets.require("compensations").used == 1
     assert state.budgets.require("worker_calls").used == 3
+
+
+def test_compensation_lineage_preserves_original_materialized_evidence() -> None:
+    fixture = _parallel_compensation_fixture(
+        "run-materialized-compensation",
+        control_plane_type=_MaterializedResultControlPlane,
+    )
+
+    result = fixture.control_plane.run(fixture.run_spec)
+
+    assert result.graph_state is not None
+    state = result.graph_state
+    assert state.outcome is RunOutcome.COMPENSATED
+    original = next(
+        item for item in state.node_instances if item.identity.node_id == "publish"
+    )
+    entry = _only_compensation_entry(state)
+    compensation = next(
+        item
+        for item in state.node_instances
+        if item.instance_id == entry.compensation_node_instance_id
+    )
+    original_lineage = original.output_refs["activity_result_lineage"]
+    compensation_lineage = compensation.output_refs["activity_result_lineage"]
+    assert original_lineage["persistence_mode"] == "artifact"
+    assert len(original_lineage["artifact_refs"]) == 1
+    assert compensation_lineage["persistence_mode"] == "inline"
+    assert compensation_lineage["inline_projection"] == {
+        "worker_status": "succeeded"
+    }
+    assert original_lineage["lineage_checksum"] != (
+        compensation_lineage["lineage_checksum"]
+    )
+    assert original.output_refs["activity_result_lineage"] == original_lineage
+    assert original.evidence_refs
+    assert compensation.evidence_refs
+
+    recovery = fixture.event_port.recover_graph(fixture.run_spec.run_id)
+    lineage_by_node = {
+        commit.result.result_lineage.node_id: commit.result.result_lineage
+        for commit in recovery.activity_result_commits
+        if commit.result.result_lineage is not None
+    }
+    assert lineage_by_node["publish"].artifact_refs[0].ref == (
+        original_lineage["artifact_refs"][0]["ref"]
+    )
+    assert lineage_by_node["compensation:undo-publish"].artifact_refs == ()
 
 
 def test_compensation_retry_keeps_idempotency_and_advances_fencing() -> None:

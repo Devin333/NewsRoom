@@ -97,6 +97,7 @@ class ContextLoadMode(StrEnum):
 @dataclass(frozen=True, slots=True)
 class NodeResultBinding:
     tenant_id: str
+    tenant_scope_ref: str
     run_id: str
     graph_id: str
     graph_version: str
@@ -107,6 +108,11 @@ class NodeResultBinding:
     def __post_init__(self) -> None:
         for field_name in ("tenant_id", "run_id", "graph_id", "node_id", "attempt_id"):
             object.__setattr__(self, field_name, identifier(getattr(self, field_name), field_name))
+        object.__setattr__(
+            self,
+            "tenant_scope_ref",
+            checksum(self.tenant_scope_ref, "tenant_scope_ref"),
+        )
         object.__setattr__(
             self,
             "graph_version",
@@ -121,6 +127,7 @@ class NodeResultBinding:
     def to_dict(self) -> dict[str, str]:
         return {
             "tenant_id": self.tenant_id,
+            "tenant_scope_ref": self.tenant_scope_ref,
             "run_id": self.run_id,
             "graph_id": self.graph_id,
             "graph_version": self.graph_version,
@@ -137,6 +144,7 @@ class NodeResultBinding:
                 required=frozenset(
                     {
                         "tenant_id",
+                        "tenant_scope_ref",
                         "run_id",
                         "graph_id",
                         "graph_version",

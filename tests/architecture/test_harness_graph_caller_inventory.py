@@ -4,9 +4,7 @@ import json
 from pathlib import Path
 
 
-_INVENTORY = Path(
-    "openspec/changes/harness-workflow-graph-runtime/evidence/caller-migration-inventory.json"
-)
+_INVENTORY = Path("tests/architecture/fixtures/harness_graph_caller_inventory.json")
 
 
 def test_harness_graph_caller_inventory_is_complete_unique_and_classified() -> None:

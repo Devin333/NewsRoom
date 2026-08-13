@@ -573,6 +573,32 @@ class HarnessGraphDecisionApplier:
         )
         output_refs = thaw_json(node.output_refs)
         output_refs["activity_result"] = result.payload_ref
+        lineage = result.result_lineage
+        if lineage is not None:
+            metadata.update(
+                {
+                    "activity_result_attempt_id": lineage.attempt_id,
+                    "activity_result_lineage_ref": lineage.lineage_checksum,
+                    "activity_result_policy_version": lineage.policy_version,
+                }
+            )
+            lineage_refs = output_refs.get("activity_result_lineage_refs", {})
+            if not isinstance(lineage_refs, Mapping):
+                raise HarnessValidationError(
+                    "graph result lineage history must be an object",
+                    code="graph_result_lineage_state_mismatch",
+                )
+            lineage_refs = dict(lineage_refs)
+            reference_projection = lineage.reference_projection()
+            existing_lineage = lineage_refs.get(lineage.attempt_id)
+            if existing_lineage not in (None, reference_projection):
+                raise HarnessValidationError(
+                    "graph result attempt conflicts with projected lineage",
+                    code="graph_result_lineage_state_mismatch",
+                )
+            lineage_refs[lineage.attempt_id] = reference_projection
+            output_refs["activity_result_lineage"] = lineage.control_projection()
+            output_refs["activity_result_lineage_refs"] = lineage_refs
         updated_node = replace(
             node,
             output_refs=output_refs,

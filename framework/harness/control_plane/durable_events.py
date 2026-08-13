@@ -87,6 +87,9 @@ from framework.harness.control_plane.graph_runtime import (
     _validate_graph_decision_storage_identity,
     validate_graph_activity_result,
 )
+from framework.harness.control_plane.graph_result_lineage import (
+    HarnessGraphResultLineage,
+)
 from framework.harness.control_plane.graph_state import HarnessGraphState
 from framework.harness.control_plane.transition import (
     HARNESS_EVENT_SOURCE,
@@ -2075,46 +2078,62 @@ def _graph_activity_from_dict(value: Mapping[str, Any]) -> HarnessGraphActivity:
 def _graph_activity_result_from_dict(
     value: Mapping[str, Any],
 ) -> HarnessGraphActivityResult:
-    _graph_exact_keys(
-        value,
-        {
-            "schema_version",
-            "activity_id",
-            "node_instance_id",
-            "attempt",
-            "idempotency_key",
-            "fencing_generation",
-            "activity_ref",
-            "evidence_ref",
-            "payload_ref",
-            "status",
-            "termination_confirmed",
-            "tenant_scope_ref",
-            "identity_scope_ref",
-            "subject_scope_ref",
-            "result_checksum",
-        },
-        "graph activity result",
-    )
-    result = HarnessGraphActivityResult(
-        activity_id=value["activity_id"],
-        node_instance_id=value["node_instance_id"],
-        attempt=value["attempt"],
-        idempotency_key=value["idempotency_key"],
-        fencing_generation=value["fencing_generation"],
-        activity_ref=_graph_contract_reference(
-            value["activity_ref"],
-            "activity_ref",
-        ),
-        evidence_ref=value["evidence_ref"],
-        payload_ref=value["payload_ref"],
-        status=value["status"],
-        termination_confirmed=value["termination_confirmed"],
-        tenant_scope_ref=value["tenant_scope_ref"],
-        identity_scope_ref=value["identity_scope_ref"],
-        subject_scope_ref=value["subject_scope_ref"],
-        schema_version=value["schema_version"],
-    )
+    legacy_fields = {
+        "schema_version",
+        "activity_id",
+        "node_instance_id",
+        "attempt",
+        "idempotency_key",
+        "fencing_generation",
+        "activity_ref",
+        "evidence_ref",
+        "payload_ref",
+        "status",
+        "termination_confirmed",
+        "tenant_scope_ref",
+        "identity_scope_ref",
+        "subject_scope_ref",
+        "result_checksum",
+    }
+    actual_fields = set(value)
+    allowed_fields = {
+        frozenset(legacy_fields),
+        frozenset((*legacy_fields, "result_lineage")),
+    }
+    if actual_fields not in allowed_fields:
+        raise EventStoreCorruptionError("graph activity result fields are invalid")
+    try:
+        lineage = (
+            HarnessGraphResultLineage.from_dict(
+                _graph_mapping(value["result_lineage"], "result lineage")
+            )
+            if "result_lineage" in value
+            else None
+        )
+        result = HarnessGraphActivityResult(
+            activity_id=value["activity_id"],
+            node_instance_id=value["node_instance_id"],
+            attempt=value["attempt"],
+            idempotency_key=value["idempotency_key"],
+            fencing_generation=value["fencing_generation"],
+            activity_ref=_graph_contract_reference(
+                value["activity_ref"],
+                "activity_ref",
+            ),
+            evidence_ref=value["evidence_ref"],
+            payload_ref=value["payload_ref"],
+            status=value["status"],
+            termination_confirmed=value["termination_confirmed"],
+            tenant_scope_ref=value["tenant_scope_ref"],
+            identity_scope_ref=value["identity_scope_ref"],
+            subject_scope_ref=value["subject_scope_ref"],
+            result_lineage=lineage,
+            schema_version=value["schema_version"],
+        )
+    except (HarnessValidationError, TypeError, ValueError) as exc:
+        raise EventStoreCorruptionError(
+            "graph activity result violates its typed contract"
+        ) from exc
     if value["result_checksum"] != result.result_checksum:
         raise EventStoreCorruptionError("graph activity result checksum is invalid")
     return result

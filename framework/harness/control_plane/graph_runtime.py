@@ -18,6 +18,10 @@ from framework.harness.control_plane.graph_decision import (
 from framework.harness.control_plane.graph_evaluator import (
     HarnessAcceptedGraphObservation,
 )
+from framework.harness.control_plane.graph_result_lineage import (
+    HarnessGraphResultLineage,
+    HarnessGraphResultLineageStatus,
+)
 from framework.harness.control_plane.graph_state import (
     HarnessBudgetCounterState,
     HarnessGraphBudgetState,
@@ -227,6 +231,7 @@ class HarnessGraphActivityResult:
     tenant_scope_ref: str | None = None
     identity_scope_ref: str | None = None
     subject_scope_ref: str | None = None
+    result_lineage: HarnessGraphResultLineage | None = None
     schema_version: str = HARNESS_GRAPH_ACTIVITY_RESULT_SCHEMA
     termination_confirmed: bool | None = None
     result_checksum: str = field(init=False)
@@ -309,6 +314,50 @@ class HarnessGraphActivityResult:
                 field_name,
                 _optional_checksum(getattr(self, field_name), field_name),
             )
+        lineage = self.result_lineage
+        if lineage is not None:
+            if not isinstance(lineage, HarnessGraphResultLineage):
+                raise TypeError("result_lineage must be HarnessGraphResultLineage")
+            expected_statuses = {
+                HarnessGraphActivityResultStatus.SUCCEEDED: frozenset(
+                    {HarnessGraphResultLineageStatus.SUCCEEDED}
+                ),
+                HarnessGraphActivityResultStatus.FAILED: frozenset(
+                    {
+                        HarnessGraphResultLineageStatus.FAILED,
+                        HarnessGraphResultLineageStatus.HALTED,
+                    }
+                ),
+                HarnessGraphActivityResultStatus.TIMEOUT: frozenset(
+                    {
+                        HarnessGraphResultLineageStatus.FAILED,
+                        HarnessGraphResultLineageStatus.HALTED,
+                    }
+                ),
+                HarnessGraphActivityResultStatus.CANCELLED: frozenset(
+                    {
+                        HarnessGraphResultLineageStatus.SKIPPED,
+                        HarnessGraphResultLineageStatus.HALTED,
+                    }
+                ),
+                HarnessGraphActivityResultStatus.INDETERMINATE: frozenset(
+                    {HarnessGraphResultLineageStatus.HALTED}
+                ),
+            }
+            if (
+                lineage.node_instance_id != self.node_instance_id
+                or lineage.attempt != self.attempt
+                or lineage.status not in expected_statuses[self.status]
+                or self.evidence_ref != lineage.lineage_checksum
+                or self.payload_ref != lineage.envelope_checksum
+                or lineage.tenant_scope_ref != self.tenant_scope_ref
+                or lineage.identity_scope_ref != self.identity_scope_ref
+                or lineage.subject_scope_ref != self.subject_scope_ref
+            ):
+                raise HarnessValidationError(
+                    "graph activity result lineage conflicts with its attempt",
+                    code="graph_result_lineage_activity_mismatch",
+                )
         if self.schema_version != HARNESS_GRAPH_ACTIVITY_RESULT_SCHEMA:
             raise HarnessValidationError(
                 "unsupported graph activity result schema",
@@ -329,6 +378,7 @@ class HarnessGraphActivityResult:
         payload_ref: str,
         status: HarnessGraphActivityResultStatus | str,
         termination_confirmed: bool | None = None,
+        result_lineage: HarnessGraphResultLineage | None = None,
     ) -> HarnessGraphActivityResult:
         if not isinstance(activity, HarnessGraphActivity):
             raise TypeError("activity must be HarnessGraphActivity")
@@ -346,10 +396,11 @@ class HarnessGraphActivityResult:
             tenant_scope_ref=activity.tenant_scope_ref,
             identity_scope_ref=activity.identity_scope_ref,
             subject_scope_ref=activity.subject_scope_ref,
+            result_lineage=result_lineage,
         )
 
     def checksum_projection(self) -> dict[str, Any]:
-        return {
+        projection = {
             "schema_version": self.schema_version,
             "activity_id": self.activity_id,
             "node_instance_id": self.node_instance_id,
@@ -365,6 +416,9 @@ class HarnessGraphActivityResult:
             "identity_scope_ref": self.identity_scope_ref,
             "subject_scope_ref": self.subject_scope_ref,
         }
+        if self.result_lineage is not None:
+            projection["result_lineage"] = self.result_lineage.to_dict()
+        return projection
 
     def to_dict(self) -> dict[str, Any]:
         return {**self.checksum_projection(), "result_checksum": self.result_checksum}
@@ -1782,6 +1836,32 @@ def validate_graph_activity_result(
             code="graph_activity_result_identity_mismatch",
             details={"mismatches": list(mismatches)},
         )
+    lineage = result.result_lineage
+    if lineage is not None:
+        expected_graph_version = (
+            f"{activity.graph_ref.graph_id}@{activity.graph_ref.workflow_ref.version}"
+        )
+        lineage_mismatches = tuple(
+            field_name
+            for field_name, expected, actual in (
+                ("run_id", activity.run_id, lineage.run_id),
+                ("graph_id", activity.graph_ref.graph_id, lineage.graph_id),
+                ("graph_version", expected_graph_version, lineage.graph_version),
+                ("node_id", activity.node_id, lineage.node_id),
+                ("node_instance_id", activity.node_instance_id, lineage.node_instance_id),
+                ("attempt", activity.attempt, lineage.attempt),
+                ("tenant_scope_ref", activity.tenant_scope_ref, lineage.tenant_scope_ref),
+                ("identity_scope_ref", activity.identity_scope_ref, lineage.identity_scope_ref),
+                ("subject_scope_ref", activity.subject_scope_ref, lineage.subject_scope_ref),
+            )
+            if expected != actual
+        )
+        if lineage_mismatches:
+            raise HarnessValidationError(
+                "graph result lineage does not match its dispatched activity",
+                code="graph_result_lineage_activity_mismatch",
+                details={"mismatches": list(lineage_mismatches)},
+            )
 
 
 def _validate_graph_activity_binding(

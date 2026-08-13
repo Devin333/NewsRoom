@@ -35,11 +35,13 @@ NOW = datetime(2026, 8, 14, 8, 0, tzinfo=UTC)
 CHECKSUM = "sha256:" + "a" * 64
 SCHEMA_DIGEST = "sha256:" + "b" * 64
 DEPENDENCY_DIGEST = "sha256:" + "c" * 64
+TENANT_SCOPE_REF = "sha256:" + "d" * 64
 
 
 def _binding(run_id: str = "run-1") -> NodeResultBinding:
     return NodeResultBinding(
         tenant_id="tenant-1",
+        tenant_scope_ref=TENANT_SCOPE_REF,
         run_id=run_id,
         graph_id="research-graph",
         graph_version="research-graph@1",
