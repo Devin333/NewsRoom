@@ -29,6 +29,7 @@ if TYPE_CHECKING:
 
     from framework.harness.control_plane.activity import HarnessActivity
     from framework.harness.control_plane.graph_runtime import HarnessGraphActivity
+    from framework.harness.control_plane.graph_state import HarnessGraphState
     from framework.harness.workflow.graph import NormalizedHarnessGraph
 
 
@@ -133,6 +134,22 @@ class HarnessTransitionPort(HarnessEventPort, Protocol):
 
 
 @runtime_checkable
+class HarnessGraphResultCommitterPort(Protocol):
+    """Commit one recorded worker result as a verified Graph result lineage."""
+
+    def commit_result(
+        self,
+        *,
+        activity: HarnessGraphActivity,
+        graph: NormalizedHarnessGraph,
+        run_spec_checksum: str,
+        worker_result: HarnessWorkerResult,
+        occurred_at: datetime,
+    ) -> HarnessGraphState:
+        ...
+
+
+@runtime_checkable
 class HarnessWorkerPort(Protocol):
     def execute(self, task: dict[str, Any]) -> HarnessWorkerResult: ...
 
@@ -199,6 +216,7 @@ __all__ = [
     "HarnessContextPort",
     "HarnessEventPort",
     "HarnessGovernancePort",
+    "HarnessGraphResultCommitterPort",
     "HarnessLLMPort",
     "HarnessMemoryPort",
     "HarnessRAGPort",

@@ -101,6 +101,7 @@
       "tests/framework/harness/control_plane/test_durable_event_boundary.py",
       "tests/framework/harness/control_plane/test_durable_transition_port.py",
       "tests/framework/harness/control_plane/test_graph_checkpoint_replay.py",
+      "tests/framework/harness/control_plane/test_graph_result_committer.py",
       "tests/framework/harness/control_plane/test_replay_history.py",
       "tests/framework/harness/control_plane/test_side_effect_durable_recovery.py",
       "tests/framework/harness/control_plane/test_transition_projector.py",

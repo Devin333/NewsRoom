@@ -8,6 +8,9 @@ RESULT_BOUNDARY_MODULES = (
     PROJECT_ROOT / "framework" / "harness" / "runtime" / "graph_result_projection.py",
     PROJECT_ROOT / "framework" / "harness" / "runtime" / "graph_result_runtime.py",
 )
+CONTROL_PLANE_MODULE = (
+    PROJECT_ROOT / "framework" / "harness" / "control_plane" / "harness.py"
+)
 FORBIDDEN_IMPORTS = (
     "business",
     "interfaces",
@@ -40,4 +43,24 @@ def test_control_plane_lineage_does_not_import_runtime_envelope() -> None:
     assert all(
         not matches_prefix(module, ("framework.harness.runtime",))
         for module in imported_modules(lineage)
+    )
+
+
+def test_graph_result_committer_boundary_has_no_storage_or_business_imports() -> None:
+    forbidden = (
+        "business",
+        "interfaces",
+        "infrastructure",
+        "storage",
+        "framework.harness.artifacts",
+        "framework.harness.runtime",
+        "psycopg",
+        "redis",
+        "sqlalchemy",
+        "sqlite3",
+    )
+
+    assert all(
+        not matches_prefix(module, forbidden)
+        for module in imported_modules(CONTROL_PLANE_MODULE)
     )

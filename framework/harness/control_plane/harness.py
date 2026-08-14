@@ -78,6 +78,7 @@ from framework.harness.control_plane.graph_runtime import (
     HarnessGraphActivity,
     HarnessGraphActivityResult,
     HarnessGraphActivityResultStatus,
+    HarnessGraphCommitKind,
     HarnessGraphDecisionCommit,
     HarnessGraphRecovery,
     HarnessGraphTransitionPort,
@@ -190,7 +191,10 @@ from framework.harness.waits.ports import HarnessTimerWakePort
 WorkerCallable = Callable[[dict[str, Any]], HarnessWorkerResult]
 
 if TYPE_CHECKING:
-    from framework.harness.ports import HarnessTransitionPort
+    from framework.harness.ports import (
+        HarnessGraphResultCommitterPort,
+        HarnessTransitionPort,
+    )
 
 
 @dataclass(frozen=True)
@@ -576,6 +580,7 @@ class HarnessControlPlane:
         runtime_binding_authority: HarnessRuntimeBindingAuthority | None = None,
         graph_preflight: HarnessGraphPreflight | None = None,
         graph_activity_dispatcher: HarnessGraphActivityDispatcherPort | None = None,
+        graph_result_committer: HarnessGraphResultCommitterPort | None = None,
         timer_wake_port: HarnessTimerWakePort | None = None,
         side_effect_attempt_owner_id: str | None = None,
         budget_fact_resolver: DurableBudgetFactResolver | None = None,
@@ -650,6 +655,14 @@ class HarnessControlPlane:
             event_port if isinstance(event_port, HarnessGraphTransitionPort) else None
         )
         self.graph_transition_port = graph_transition_port
+        if graph_result_committer is not None and not callable(
+            getattr(graph_result_committer, "commit_result", None)
+        ):
+            raise TypeError(
+                "graph_result_committer must implement "
+                "HarnessGraphResultCommitterPort"
+            )
+        self._graph_result_committer = graph_result_committer
         self._uses_external_graph_dispatcher = graph_activity_dispatcher is not None
         self._graph_dispatch_queue = _GraphDispatchQueue(graph_activity_dispatcher)
         self._graph_runtime = (
@@ -2868,29 +2881,47 @@ class HarnessControlPlane:
             item.event_id == result_event.event_id for item in self._committed_events
         ):
             self._committed_events.append(result_event)
-        payload_ref = checksum_for(worker_result.to_dict())
-        graph_result = HarnessGraphActivityResult.for_activity(
-            activity,
-            evidence_ref=checksum_for(
-                {
-                    "activity_id": activity.activity_id,
-                    "result_event_id": result_event.event_id,
-                    "payload_ref": payload_ref,
-                }
-            ),
-            payload_ref=payload_ref,
-            status=(
-                HarnessGraphActivityResultStatus.FAILED
-                if worker_result.status is HarnessWorkerStatus.FAILED
-                else HarnessGraphActivityResultStatus.SUCCEEDED
-            ),
-            termination_confirmed=True,
-        )
-        state = self.accept_graph_activity_result(
+        graph_result_at = _graph_time(
             run_spec,
-            graph_result,
-            occurred_at=_graph_time(run_spec, activity.causal_decision_sequence + 2),
+            activity.causal_decision_sequence + 2,
         )
+        if self._graph_result_committer is None:
+            payload_ref = checksum_for(worker_result.to_dict())
+            graph_result = HarnessGraphActivityResult.for_activity(
+                activity,
+                evidence_ref=checksum_for(
+                    {
+                        "activity_id": activity.activity_id,
+                        "result_event_id": result_event.event_id,
+                        "payload_ref": payload_ref,
+                    }
+                ),
+                payload_ref=payload_ref,
+                status=(
+                    HarnessGraphActivityResultStatus.FAILED
+                    if worker_result.status is HarnessWorkerStatus.FAILED
+                    else HarnessGraphActivityResultStatus.SUCCEEDED
+                ),
+                termination_confirmed=True,
+            )
+            state = self.accept_graph_activity_result(
+                run_spec,
+                graph_result,
+                occurred_at=graph_result_at,
+            )
+        else:
+            state = self._graph_result_committer.commit_result(
+                activity=activity,
+                graph=self._prepared_graphs[run_id],
+                run_spec_checksum=self._prepared_run_specs[run_id],
+                worker_result=worker_result,
+                occurred_at=graph_result_at,
+            )
+            self._validate_materialized_graph_result_commit(
+                activity=activity,
+                graph=self._prepared_graphs[run_id],
+                state=state,
+            )
         self._graph_worker_results.setdefault(run_id, {})[activity.node_instance_id] = (
             worker_result
         )
@@ -2914,6 +2945,54 @@ class HarnessControlPlane:
             activity,
             worker_result,
         )
+
+    def _validate_materialized_graph_result_commit(
+        self,
+        *,
+        activity: HarnessGraphActivity,
+        graph: NormalizedHarnessGraph,
+        state: HarnessGraphState,
+    ) -> None:
+        if (
+            not isinstance(state, HarnessGraphState)
+            or state.run_id != activity.run_id
+            or state.graph_ref.checksum != graph.checksum
+        ):
+            raise HarnessValidationError(
+                "graph result committer returned an invalid graph state",
+                code="graph_result_committer_state_invalid",
+            )
+        recovery = self._require_graph_runtime().transition_port.recover_graph(
+            activity.run_id
+        )
+        causes = tuple(
+            item
+            for item in recovery.activity_result_commits
+            if item.result.activity_id == activity.activity_id
+        )
+        if len(causes) != 1 or causes[0].result.result_lineage is None:
+            raise HarnessValidationError(
+                "graph result committer did not persist exact materialized lineage",
+                code="graph_result_committer_lineage_missing",
+            )
+        cause = causes[0]
+        projections = tuple(
+            item
+            for item in recovery.projection_commits
+            if item.commit_kind
+            is HarnessGraphCommitKind.ACTIVITY_RESULT_PROJECTION
+            and item.cause_checksum == cause.result.result_checksum
+            and item.sequence == cause.sequence + 1
+        )
+        if (
+            len(projections) != 1
+            or projections[0].state != state
+            or recovery.state != state
+        ):
+            raise HarnessValidationError(
+                "graph result committer did not persist the adjacent projection",
+                code="graph_result_committer_projection_missing",
+            )
 
     def _record_or_validate_budget_fact(
         self,
