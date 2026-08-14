@@ -35,6 +35,11 @@ from framework.harness.artifacts.ports import (
     ArtifactWriteRequest,
     RunBoundArtifactPort,
 )
+from framework.harness.artifacts.runtime import (
+    DEFAULT_MAX_GC_OPERATIONS,
+    GraphArtifactGovernanceRuntime,
+    MAX_GC_OPERATIONS,
+)
 
 __all__ = [
     "ArtifactCatalogPort",
@@ -44,6 +49,7 @@ __all__ = [
     "ArtifactRef",
     "ArtifactWriteRequest",
     "DailyGraphArtifactCostReport",
+    "DEFAULT_MAX_GC_OPERATIONS",
     "FakeArtifactPort",
     "GraphArtifactAlert",
     "GraphArtifactAlertKind",
@@ -57,6 +63,7 @@ __all__ = [
     "GraphArtifactGcOperationIntent",
     "GraphArtifactGcOperationState",
     "GraphArtifactGovernanceLedgerPort",
+    "GraphArtifactGovernanceRuntime",
     "GraphArtifactPhysicalDeleteRequest",
     "GraphArtifactPhysicalLifecyclePort",
     "GraphArtifactQuarantineReceipt",
@@ -67,5 +74,6 @@ __all__ = [
     "GraphArtifactUsageOutcome",
     "GraphArtifactUsagePort",
     "GraphArtifactUsageReason",
+    "MAX_GC_OPERATIONS",
     "RunBoundArtifactPort",
 ]
