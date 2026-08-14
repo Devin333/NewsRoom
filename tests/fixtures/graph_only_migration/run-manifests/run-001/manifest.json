@@ -1,0 +1,153 @@
+{
+  "schema_version": "newsroom.workflow_run_manifest.v1",
+  "run_type": "workflow",
+  "run_id": "run-001",
+  "workflow_id": "legacy-paper-analysis",
+  "workflow_version": "1.4.0",
+  "profile": "research",
+  "status": "succeeded",
+  "started_at": "2026-01-02T03:04:05Z",
+  "finished_at": "2026-01-02T03:05:05Z",
+  "completed_at": "2026-01-02T03:05:05Z",
+  "path": [
+    "collect",
+    "report"
+  ],
+  "steps": {
+    "collect": {
+      "status": "succeeded"
+    },
+    "report": {
+      "status": "succeeded"
+    }
+  },
+  "artifacts": {
+    "request": "request.json",
+    "workflow_spec": "workflow_spec.json",
+    "workflow_version": "workflow_version.json",
+    "events": "events.jsonl",
+    "manifest": "manifest.json",
+    "data_buffer_snapshot": "data_buffer_snapshot.json",
+    "data_buffer_initial": "data_buffer.initial.json",
+    "data_buffer_final": "data_buffer.final.json",
+    "data_buffer_diff": "data_buffer.diff.json",
+    "step_results": "step_results.json",
+    "metrics": "metrics.json",
+    "redaction_report": "redaction_report.json",
+    "output": "output.json",
+    "report": "artifacts/report.json"
+  },
+  "artifact_metadata": {
+    "request": {
+      "checksum": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "content_type": "application/json",
+      "size_bytes": 64
+    },
+    "workflow_spec": {
+      "checksum": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "content_type": "application/json",
+      "size_bytes": 128
+    },
+    "workflow_version": {
+      "checksum": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "content_type": "application/json",
+      "size_bytes": 96
+    },
+    "events": {
+      "checksum": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "content_type": "application/x-ndjson",
+      "size_bytes": 2041
+    },
+    "manifest": {
+      "checksum": "pending",
+      "content_type": "application/json",
+      "size_bytes": 0
+    },
+    "data_buffer_snapshot": {
+      "checksum": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+      "content_type": "application/json",
+      "size_bytes": 80
+    },
+    "data_buffer_initial": {
+      "checksum": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "content_type": "application/json",
+      "size_bytes": 2
+    },
+    "data_buffer_final": {
+      "checksum": "1111111111111111111111111111111111111111111111111111111111111111",
+      "content_type": "application/json",
+      "size_bytes": 80
+    },
+    "data_buffer_diff": {
+      "checksum": "2222222222222222222222222222222222222222222222222222222222222222",
+      "content_type": "application/json",
+      "size_bytes": 96
+    },
+    "step_results": {
+      "checksum": "3333333333333333333333333333333333333333333333333333333333333333",
+      "content_type": "application/json",
+      "size_bytes": 128
+    },
+    "metrics": {
+      "checksum": "4444444444444444444444444444444444444444444444444444444444444444",
+      "content_type": "application/json",
+      "size_bytes": 72
+    },
+    "redaction_report": {
+      "checksum": "6666666666666666666666666666666666666666666666666666666666666666",
+      "content_type": "application/json",
+      "size_bytes": 64
+    },
+    "output": {
+      "checksum": "7777777777777777777777777777777777777777777777777777777777777777",
+      "content_type": "application/json",
+      "size_bytes": 144
+    },
+    "report": {
+      "checksum": "5555555555555555555555555555555555555555555555555555555555555555",
+      "content_type": "application/json",
+      "size_bytes": 128
+    }
+  },
+  "artifact_refs": [],
+  "artifact_index": [
+    {
+      "artifact_id": "report-artifact",
+      "run_id": "run-001",
+      "step_id": "report",
+      "kind": "research-report",
+      "path": "artifacts/report.json",
+      "content_type": "application/json",
+      "size_bytes": 128,
+      "checksum": "sha256:5555555555555555555555555555555555555555555555555555555555555555",
+      "required_for_replay": true,
+      "required_for_publication": false,
+      "created_at": "2026-01-02T03:05:00Z",
+      "metadata": {}
+    }
+  ],
+  "runner_versions": {},
+  "checkpoints": [
+    "cp-001"
+  ],
+  "checkpoint_refs": [],
+  "checkpoint_ref": "cp-001",
+  "latest_checkpoint_id": "cp-001",
+  "operations": [],
+  "trace_id": null,
+  "trace_ref": "events.jsonl",
+  "gate_result_ref": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+  "step_summaries": [
+    {
+      "step_id": "collect",
+      "status": "succeeded"
+    },
+    {
+      "step_id": "report",
+      "status": "succeeded"
+    }
+  ],
+  "warnings": [],
+  "errors": [],
+  "run_history_ref": "events.jsonl"
+}

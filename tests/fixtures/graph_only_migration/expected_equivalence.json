@@ -1,0 +1,51 @@
+{
+  "schema_version": "newsroom.graph-history-equivalence-snapshot/v1",
+  "run_id": "run-001",
+  "graph_id": "paper-analysis",
+  "graph_version": "2.0.0",
+  "event_sequences": [
+    1,
+    2
+  ],
+  "terminal_status": "succeeded",
+  "terminal_node_ids": [
+    "report"
+  ],
+  "gate_evidence_refs": [
+    "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+    "sha256:4444444444444444444444444444444444444444444444444444444444444444"
+  ],
+  "artifact": {
+    "artifact_id": "report-artifact",
+    "relative_path": "artifacts/report.json",
+    "content_checksum": "sha256:5555555555555555555555555555555555555555555555555555555555555555",
+    "node_id": "report",
+    "node_instance_id": "report-001"
+  },
+  "checkpoint": {
+    "checkpoint_ref": "graph://runs/run-001/checkpoints/gcp-001",
+    "last_event_sequence": 2,
+    "last_event_id": "event-002",
+    "active_node_instance_ids": [
+      "report-001"
+    ],
+    "history_only": true,
+    "resume_allowed": false,
+    "replay_validation_allowed": true,
+    "replay_execution_allowed": false,
+    "publication_allowed": false
+  },
+  "replay": {
+    "selected_node_ids": [
+      "report"
+    ],
+    "terminal_status": "succeeded",
+    "live_worker_calls": 0,
+    "live_side_effect_calls": 0,
+    "legacy_executor_calls": 0,
+    "offline_validation_allowed": true,
+    "replay_execution_allowed": false,
+    "publication_allowed": false
+  },
+  "inventory_count": 8
+}

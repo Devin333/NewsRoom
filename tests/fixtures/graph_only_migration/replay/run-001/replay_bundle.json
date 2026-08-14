@@ -1,0 +1,48 @@
+{
+  "run_dir": "run-001",
+  "manifest": {
+    "run_id": "run-001",
+    "workflow_id": "legacy-paper-analysis",
+    "workflow_version": "1.4.0",
+    "status": "succeeded",
+    "checkpoint_ref": "cp-001"
+  },
+  "events": [
+    {
+      "event_id": "event-001",
+      "run_id": "run-001",
+      "stream_sequence": 1
+    },
+    {
+      "event_id": "event-002",
+      "run_id": "run-001",
+      "stream_sequence": 2
+    }
+  ],
+  "artifacts": [
+    {
+      "artifact_id": "report-artifact"
+    }
+  ],
+  "integrity": {
+    "valid": true,
+    "errors": []
+  },
+  "routing_diagnostics": {
+    "selected_edge_id": "collect-to-report",
+    "selected_edge_ids": [
+      "collect-to-report"
+    ],
+    "target_step_ids": [
+      "report"
+    ],
+    "rejected_edge_ids": [],
+    "evaluations": [
+      {
+        "step_id": "collect",
+        "target_step_id": "report",
+        "passed": true
+      }
+    ]
+  }
+}

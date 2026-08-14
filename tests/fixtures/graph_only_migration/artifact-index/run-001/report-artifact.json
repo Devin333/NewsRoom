@@ -1,0 +1,15 @@
+{
+  "artifact_id": "report-artifact",
+  "run_id": "run-001",
+  "step_id": "report",
+  "artifact_type": "research-report",
+  "path": "artifacts/report.json",
+  "content_type": "application/json",
+  "size_bytes": 128,
+  "checksum": "sha256:5555555555555555555555555555555555555555555555555555555555555555",
+  "redacted": true,
+  "created_at": "2026-01-02T03:05:00Z",
+  "metadata": {
+    "classification": "internal"
+  }
+}

@@ -1,0 +1,44 @@
+{
+  "schema_version": "newsroom.graph-history-run-mapping/v1",
+  "run_id": "run-001",
+  "legacy_workflow_id": "legacy-paper-analysis",
+  "legacy_workflow_version": "1.4.0",
+  "tenant_id": "tenant-001",
+  "graph_ref": {
+    "graph_id": "paper-analysis",
+    "graph_version": "2.0.0",
+    "graph_schema_version": "1",
+    "compiler_version": "1.0.0",
+    "normalized_graph_checksum": "sha256:1111111111111111111111111111111111111111111111111111111111111111"
+  },
+  "node_bindings": [
+    {
+      "legacy_step_id": "collect",
+      "node_id": "collect",
+      "node_instance_id": "collect-001",
+      "attempt_id": "attempt-collect-001"
+    },
+    {
+      "legacy_step_id": "report",
+      "node_id": "report",
+      "node_instance_id": "report-001",
+      "attempt_id": "attempt-report-001"
+    }
+  ],
+  "default_artifact_step_id": "report",
+  "checkpoint_refs": {
+    "cp-001": "graph://runs/run-001/checkpoints/gcp-001"
+  },
+  "terminal_status": "succeeded",
+  "terminal_state_ref": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+  "terminal_node_ids": [
+    "report"
+  ],
+  "gate_evidence_refs": [
+    "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+    "sha256:4444444444444444444444444444444444444444444444444444444444444444"
+  ],
+  "publication_evidence": null,
+  "event_first_sequence": 1,
+  "owner": "migration-test-owner"
+}

@@ -1,0 +1,12 @@
+{
+  "conversation_id": "conversation-001",
+  "message_offset": 7,
+  "message_id": "message-007",
+  "run_id": "run-001",
+  "step_id": "report",
+  "workflow_checkpoint_id": "cp-001",
+  "updated_at": "2026-01-02T03:05:01Z",
+  "metadata": {
+    "summary": "ready"
+  }
+}

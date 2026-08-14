@@ -1,0 +1,37 @@
+{
+  "schema_version": "workflow-checkpoint/v2",
+  "checkpoint_id": "cp-001",
+  "run_id": "run-001",
+  "workflow_id": "legacy-paper-analysis",
+  "workflow_version": "1.4.0",
+  "current_step_ids": [
+    "report"
+  ],
+  "data_buffer_snapshot": {
+    "evidence": [
+      "claim-001"
+    ],
+    "report": {
+      "status": "ready"
+    }
+  },
+  "step_results": {
+    "collect": {
+      "status": "succeeded"
+    },
+    "report": {
+      "status": "succeeded"
+    }
+  },
+  "path": [
+    "collect",
+    "report"
+  ],
+  "stream_id": "run:run-001",
+  "last_durable_stream_sequence": 2,
+  "last_event_id": "event-002",
+  "manifest_hash": "sha256:6666666666666666666666666666666666666666666666666666666666666666",
+  "checksum": "9d2ee3e9f226198ec22afaeb241dfb06614d9b09c926bc1305a77073292f7e06",
+  "created_at": "2026-01-02T03:04:45Z",
+  "metadata": {}
+}

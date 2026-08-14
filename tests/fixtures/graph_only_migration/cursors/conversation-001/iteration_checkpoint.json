@@ -1,0 +1,27 @@
+{
+  "conversation_id": "conversation-001",
+  "agent_id": "research-agent",
+  "iteration": 2,
+  "status": "succeeded",
+  "stop_reason": "completed",
+  "run_id": "run-001",
+  "step_id": "report",
+  "workflow_checkpoint_id": "cp-001",
+  "message_id": "message-007",
+  "trace_summary": {
+    "llm_calls": 2
+  },
+  "diagnostics_summary": {
+    "retries": 0
+  },
+  "last_tool_observation": {
+    "status": "ok"
+  },
+  "llm_call_artifact_ids": [
+    "report-artifact"
+  ],
+  "updated_at": "2026-01-02T03:05:02Z",
+  "metadata": {
+    "summary": "complete"
+  }
+}

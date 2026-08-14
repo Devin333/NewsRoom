@@ -1,0 +1,104 @@
+{
+  "schema_version": "newsroom.graph-history-source-profile-registry/v1",
+  "profiles": [
+    {
+      "record_kind": "run_manifest",
+      "source_schema_version": "newsroom.workflow_run_manifest.v1",
+      "document_format": "json",
+      "embedded_schema_field": "schema_version",
+      "embedded_schema_optional": false,
+      "record_shape": "legacy_flat",
+      "path_layout": "segment/manifest.json"
+    },
+    {
+      "record_kind": "workflow_event",
+      "source_schema_version": "newsroom.workflow.event.v1",
+      "document_format": "jsonl",
+      "embedded_schema_field": "schema_version",
+      "embedded_schema_optional": false,
+      "record_shape": "legacy_flat",
+      "path_layout": "segment.jsonl"
+    },
+    {
+      "record_kind": "workflow_event",
+      "source_schema_version": "newsroom.workflow-event/v1",
+      "document_format": "jsonl",
+      "embedded_schema_field": "data_schema",
+      "embedded_schema_optional": false,
+      "record_shape": "canonical_stored_event",
+      "path_layout": "segment.jsonl"
+    },
+    {
+      "record_kind": "workflow_event",
+      "source_schema_version": "newsroom.harness-event/v1",
+      "document_format": "jsonl",
+      "embedded_schema_field": "data_schema",
+      "embedded_schema_optional": false,
+      "record_shape": "canonical_stored_event",
+      "path_layout": "segment.jsonl"
+    },
+    {
+      "record_kind": "workflow_checkpoint",
+      "source_schema_version": "workflow-checkpoint/v0",
+      "document_format": "json",
+      "embedded_schema_field": "schema_version",
+      "embedded_schema_optional": true,
+      "record_shape": "legacy_checkpoint",
+      "path_layout": "segment/segment.json"
+    },
+    {
+      "record_kind": "workflow_checkpoint",
+      "source_schema_version": "workflow-checkpoint/v1",
+      "document_format": "json",
+      "embedded_schema_field": "schema_version",
+      "embedded_schema_optional": false,
+      "record_shape": "legacy_checkpoint",
+      "path_layout": "segment/segment.json"
+    },
+    {
+      "record_kind": "workflow_checkpoint",
+      "source_schema_version": "workflow-checkpoint/v2",
+      "document_format": "json",
+      "embedded_schema_field": "schema_version",
+      "embedded_schema_optional": false,
+      "record_shape": "legacy_checkpoint",
+      "path_layout": "segment/segment.json"
+    },
+    {
+      "record_kind": "replay_bundle",
+      "source_schema_version": "newsroom.workflow-replay-bundle/unversioned-1",
+      "document_format": "json",
+      "embedded_schema_field": null,
+      "embedded_schema_optional": false,
+      "record_shape": "replay_bundle",
+      "path_layout": "segment/replay_bundle.json"
+    },
+    {
+      "record_kind": "artifact_index",
+      "source_schema_version": "newsroom.artifact-ref/unversioned-1",
+      "document_format": "json",
+      "embedded_schema_field": null,
+      "embedded_schema_optional": false,
+      "record_shape": "artifact_index",
+      "path_layout": "segment/segment.json"
+    },
+    {
+      "record_kind": "conversation_cursor",
+      "source_schema_version": "newsroom.conversation-cursor/unversioned-1",
+      "document_format": "json",
+      "embedded_schema_field": null,
+      "embedded_schema_optional": false,
+      "record_shape": "conversation_cursor",
+      "path_layout": "segment/cursor.json"
+    },
+    {
+      "record_kind": "iteration_checkpoint",
+      "source_schema_version": "newsroom.agent-iteration-checkpoint/unversioned-1",
+      "document_format": "json",
+      "embedded_schema_field": null,
+      "embedded_schema_optional": false,
+      "record_shape": "iteration_checkpoint",
+      "path_layout": "segment/iteration_checkpoint.json"
+    }
+  ]
+}
