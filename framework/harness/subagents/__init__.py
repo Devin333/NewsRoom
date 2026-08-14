@@ -38,7 +38,10 @@ from framework.harness.subagents.observability import (
     SubAgentTranscriptObservationSink,
 )
 from framework.harness.subagents.policy import SubAgentBudget, SubAgentMemoryPolicy, SubAgentToolPolicy
-from framework.harness.subagents.runtime import SubAgentRuntime
+from framework.harness.subagents.runtime import (
+    SubAgentRuntime,
+    subagent_attempt_identity,
+)
 from framework.harness.subagents.transcript import (
     DEFAULT_MAX_BUNDLE_BYTES,
     DEFAULT_MAX_OUTPUT_BYTES,
@@ -107,4 +110,5 @@ __all__ = [
     "SUBAGENT_TRANSCRIPT_VERIFY_FAILED",
     "fake_subagent_spec",
     "verify_handoff",
+    "subagent_attempt_identity",
 ]

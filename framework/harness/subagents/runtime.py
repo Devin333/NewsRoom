@@ -59,7 +59,7 @@ class SubAgentRuntime:
     def invoke(self, invocation: SubAgentInvocation) -> SubAgentResult:
         if not isinstance(invocation, SubAgentInvocation):
             raise TypeError("invocation must be SubAgentInvocation")
-        identity = _identity_for(invocation)
+        identity = subagent_attempt_identity(invocation)
         recovered = self._recover(identity)
         if recovered is not None:
             return recovered
@@ -177,7 +177,7 @@ class SubAgentRuntime:
 
         if not isinstance(invocation, SubAgentInvocation):
             raise TypeError("invocation must be SubAgentInvocation")
-        return self._recover(_identity_for(invocation))
+        return self._recover(subagent_attempt_identity(invocation))
 
     def _recover(self, identity: SubAgentAttemptIdentity) -> SubAgentResult | None:
         receipt = self.transcript_store.find_by_identity(identity)
@@ -251,7 +251,7 @@ class SubAgentRuntime:
         *,
         errors: tuple[str, ...] = (),
     ):
-        identity = _identity_for(invocation)
+        identity = subagent_attempt_identity(invocation)
         context = SubAgentContextEvidence(
             identity=identity,
             context_envelope_ref=f"subagent-context://v1/{identity.parent_run_id}/{identity.transcript_id}",
@@ -292,7 +292,11 @@ class SubAgentRuntime:
         return self.transcript_store.verify(receipt)
 
 
-def _identity_for(invocation: SubAgentInvocation) -> SubAgentAttemptIdentity:
+def subagent_attempt_identity(
+    invocation: SubAgentInvocation,
+) -> SubAgentAttemptIdentity:
+    if not isinstance(invocation, SubAgentInvocation):
+        raise TypeError("invocation must be SubAgentInvocation")
     return SubAgentAttemptIdentity(
         invocation_id=invocation.invocation_id,
         parent_run_id=invocation.parent_run_id,
@@ -382,4 +386,4 @@ def _call_worker(worker: Any, subagent_id: str, task: dict[str, Any]) -> Harness
     return value
 
 
-__all__ = ["SubAgentRuntime"]
+__all__ = ["SubAgentRuntime", "subagent_attempt_identity"]

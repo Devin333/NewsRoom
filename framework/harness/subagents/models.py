@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from enum import StrEnum
 from datetime import datetime
@@ -221,20 +222,87 @@ class SubAgentHandoff:
     created_at: Any = field(default_factory=utc_now)
 
     def __post_init__(self) -> None:
-        for field_name in ("handoff_id", "from_subagent_id", "to_subagent_id", "parent_run_id"):
-            if not str(getattr(self, field_name)).strip():
+        for field_name in (
+            "handoff_id",
+            "from_subagent_id",
+            "to_subagent_id",
+            "parent_run_id",
+        ):
+            value = str(getattr(self, field_name))
+            if not value.strip() or value != value.strip():
                 raise HarnessValidationError(f"{field_name} is required")
-        forbidden = sorted(FORBIDDEN_SUBAGENT_CONTEXT_KEYS.intersection(self.payload))
+            object.__setattr__(self, field_name, value)
+        for field_name in (
+            "payload",
+            "payload_schema",
+            "redaction_report",
+            "metadata",
+        ):
+            if not isinstance(getattr(self, field_name), Mapping):
+                raise HarnessValidationError(
+                    f"{field_name} must be an object",
+                    code="subagent_handoff_invalid_payload",
+                )
+        normalized_refs: dict[str, tuple[str, ...]] = {}
+        for field_name in ("input_refs", "artifact_refs"):
+            refs = getattr(self, field_name)
+            if isinstance(refs, (str, bytes)) or not isinstance(
+                refs,
+                (list, tuple),
+            ):
+                raise HarnessValidationError(
+                    f"{field_name} must be an array",
+                    code="subagent_handoff_invalid_payload",
+                )
+            if any(
+                not isinstance(ref, str)
+                or not ref.strip()
+                or ref != ref.strip()
+                for ref in refs
+            ):
+                raise HarnessValidationError(
+                    f"{field_name} must contain non-empty references",
+                    code="subagent_handoff_invalid_payload",
+                )
+            normalized_refs[field_name] = tuple(refs)
+        forbidden = sorted(
+            _find_forbidden_keys(self.payload, FORBIDDEN_SUBAGENT_CONTEXT_KEYS)
+        )
         if forbidden:
-            raise HarnessValidationError("SubAgentHandoff payload contains private fields", details={"forbidden": forbidden})
-        stable_json_dumps(self.payload)
-        stable_json_dumps(self.payload_schema)
+            raise HarnessValidationError(
+                "SubAgentHandoff payload contains private fields",
+                details={"forbidden": forbidden},
+            )
+        for field_name in (
+            "payload",
+            "payload_schema",
+            "redaction_report",
+            "metadata",
+        ):
+            stable_json_dumps(getattr(self, field_name))
+        try:
+            created_at = parse_datetime(self.created_at)
+        except (TypeError, ValueError) as exc:
+            raise HarnessValidationError(
+                "created_at must be a timezone-aware timestamp",
+                code="subagent_handoff_invalid_payload",
+            ) from exc
+        if created_at is None:
+            raise HarnessValidationError(
+                "created_at must be a timezone-aware timestamp",
+                code="subagent_handoff_invalid_payload",
+            )
         object.__setattr__(self, "payload", dict(self.payload))
         object.__setattr__(self, "payload_schema", dict(self.payload_schema))
-        object.__setattr__(self, "input_refs", tuple(str(ref) for ref in self.input_refs))
-        object.__setattr__(self, "artifact_refs", tuple(str(ref) for ref in self.artifact_refs))
+        object.__setattr__(self, "input_refs", normalized_refs["input_refs"])
+        object.__setattr__(
+            self,
+            "artifact_refs",
+            normalized_refs["artifact_refs"],
+        )
         object.__setattr__(self, "redaction_report", dict(self.redaction_report))
         object.__setattr__(self, "metadata", dict(self.metadata))
+        object.__setattr__(self, "created_at", created_at)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -250,6 +318,51 @@ class SubAgentHandoff:
             "metadata": to_jsonable(self.metadata),
             "created_at": format_datetime(self.created_at),
         }
+
+    @classmethod
+    def from_dict(cls, value: Mapping[str, Any]) -> "SubAgentHandoff":
+        if not isinstance(value, Mapping):
+            raise HarnessValidationError("SubAgentHandoff must be an object")
+        payload = dict(value)
+        expected = {
+            "handoff_id",
+            "from_subagent_id",
+            "to_subagent_id",
+            "parent_run_id",
+            "payload",
+            "payload_schema",
+            "input_refs",
+            "artifact_refs",
+            "redaction_report",
+            "metadata",
+            "created_at",
+        }
+        if set(payload) != expected:
+            raise HarnessValidationError(
+                "SubAgentHandoff fields are invalid",
+                code="subagent_handoff_invalid_payload",
+            )
+        for field_name in (
+            "payload",
+            "payload_schema",
+            "redaction_report",
+            "metadata",
+        ):
+            if not isinstance(payload[field_name], Mapping):
+                raise HarnessValidationError(
+                    f"{field_name} must be an object",
+                    code="subagent_handoff_invalid_payload",
+                )
+            payload[field_name] = dict(payload[field_name])
+        for field_name in ("input_refs", "artifact_refs"):
+            values = payload[field_name]
+            if isinstance(values, (str, bytes)) or not isinstance(values, (list, tuple)):
+                raise HarnessValidationError(
+                    f"{field_name} must be an array",
+                    code="subagent_handoff_invalid_payload",
+                )
+            payload[field_name] = tuple(values)
+        return cls(**payload)
 
 
 @dataclass(frozen=True)

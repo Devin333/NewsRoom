@@ -72,6 +72,17 @@ from framework.harness.runtime.tool_result_adapter import (
     build_harness_tool_activity_runtime,
     verify_harness_tool_side_effect_evidence,
 )
+from framework.harness.runtime.subagent_result_adapter import (
+    SUBAGENT_HANDOFF_SCHEMA,
+    SUBAGENT_MATERIALIZED_BUNDLE_SCHEMA,
+    SUBAGENT_NODE_RESULT_SCHEMA,
+    HarnessSubAgentActivityResult,
+    HarnessSubAgentActivityRuntime,
+    HarnessSubAgentMaterializationResult,
+    HarnessSubAgentResultAdapter,
+    VerifiedSubAgentMaterializedBundle,
+    verify_subagent_materialized_bundle,
+)
 
 __all__ = [
     "ArtifactClass",
@@ -100,6 +111,10 @@ __all__ = [
     "HarnessToolActivityResult",
     "HarnessToolActivityRuntime",
     "HarnessToolResultAdapter",
+    "HarnessSubAgentActivityResult",
+    "HarnessSubAgentActivityRuntime",
+    "HarnessSubAgentMaterializationResult",
+    "HarnessSubAgentResultAdapter",
     "HarnessReplayReader",
     "HarnessReplayReport",
     "HarnessTraceExporter",
@@ -127,12 +142,17 @@ __all__ = [
     "ResultQuotaReservation",
     "ResultSensitivity",
     "RetentionClass",
+    "SUBAGENT_HANDOFF_SCHEMA",
+    "SUBAGENT_MATERIALIZED_BUNDLE_SCHEMA",
+    "SUBAGENT_NODE_RESULT_SCHEMA",
     "TOOL_NODE_RESULT_SCHEMA",
     "TOOL_RESPONSE_DOCUMENT_SCHEMA",
     "TOOL_SIDE_EFFECT_EVIDENCE_SCHEMA",
     "VerifiedHarnessToolSideEffectEvidence",
+    "VerifiedSubAgentMaterializedBundle",
     "build_harness_tool_activity_runtime",
     "verify_harness_tool_side_effect_evidence",
+    "verify_subagent_materialized_bundle",
     "checkpoint_checksum",
     "graph_result_lineage_from_envelope",
 ]
