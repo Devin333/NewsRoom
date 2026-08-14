@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 from dataclasses import dataclass, field, replace
 from datetime import datetime
 from typing import Any
@@ -107,6 +108,7 @@ class ToolResult:
     span_id: str | None = None
     parent_span_id: str | None = None
     error_envelope: dict[str, Any] | None = None
+    media_type: str = "application/json"
 
     def __post_init__(self) -> None:
         status = self.status if isinstance(self.status, ToolStatus) else ToolStatus(str(self.status))
@@ -120,6 +122,10 @@ class ToolResult:
         object.__setattr__(self, "artifact_refs", [ArtifactRef.from_any(ref) for ref in artifact_refs])
         object.__setattr__(self, "artifacts", [ArtifactRef.from_any(ref) for ref in artifacts])
         object.__setattr__(self, "metadata", dict(self.metadata or {}))
+        media_type = str(self.media_type).strip().casefold()
+        if "/" not in media_type:
+            raise ValueError("tool result media_type is invalid")
+        object.__setattr__(self, "media_type", media_type)
         if self.gate_result is not None:
             object.__setattr__(self, "gate_result", dict(self.gate_result))
         object.__setattr__(
@@ -225,8 +231,13 @@ class ToolResult:
             "call_id": self.call_id,
             "tool_name": self.tool_name,
             "status": self.status.value,
-            "output": redact_sensitive_values(self.output),
-            "redacted_output": redact_sensitive_values(self.redacted_output),
+            "output": _serialized_output(self.output, self.media_type),
+            "redacted_output": _serialized_output(
+                self.redacted_output,
+                self.media_type,
+            ),
+            "output_encoding": _output_encoding(self.media_type),
+            "media_type": self.media_type,
             "error": self.error,
             "duration_ms": self.duration_ms,
             "artifact_ref": self.artifact_ref.to_dict() if self.artifact_ref else None,
@@ -274,6 +285,24 @@ def _check_to_dict(check: Any) -> dict[str, Any]:
     if isinstance(check, dict):
         return dict(check)
     return {"value": str(check)}
+
+
+def _output_encoding(media_type: str) -> str:
+    if media_type == "application/json" or media_type.endswith("+json"):
+        return "json"
+    if media_type.startswith("text/"):
+        return "text"
+    return "base64"
+
+
+def _serialized_output(value: Any, media_type: str) -> Any:
+    if value is None:
+        return None
+    if _output_encoding(media_type) == "base64":
+        if not isinstance(value, (bytes, bytearray)):
+            raise ValueError("binary tool result output must be bytes")
+        return base64.b64encode(bytes(value)).decode("ascii")
+    return redact_sensitive_values(value)
 
 
 def _error_envelope(result: ToolResult) -> dict[str, Any] | None:

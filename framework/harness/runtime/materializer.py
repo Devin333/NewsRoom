@@ -371,6 +371,30 @@ class ResultMaterializer:
             )
             raise error from exc
 
+    def recover(self, binding: NodeResultBinding) -> NodeResultEnvelope | None:
+        """Read a previously committed attempt envelope without re-running a producer."""
+
+        if not isinstance(binding, NodeResultBinding):
+            raise result_error(
+                GraphArtifactResultErrorCode.RESULT_SCHEMA_INVALID,
+                field="binding",
+            )
+        try:
+            existing = self._attempts.get(binding)
+        except GraphArtifactResultError:
+            raise
+        except Exception as exc:
+            raise result_error(
+                GraphArtifactResultErrorCode.RESULT_LEDGER_FAILED,
+                field="attempt.get",
+            ) from exc
+        if existing is not None and not isinstance(existing, NodeResultEnvelope):
+            raise result_error(
+                GraphArtifactResultErrorCode.RESULT_LEDGER_FAILED,
+                field="attempt.envelope",
+            )
+        return existing
+
     def _get_existing(self, request: NodeResultRequest) -> NodeResultEnvelope | None:
         try:
             existing = self._attempts.get(request.binding)
@@ -602,7 +626,11 @@ class ResultMaterializer:
         caches: tuple[CacheRef, ...] = (),
     ) -> NodeResultEnvelope:
         decision = evaluation.decision
-        projection = request.inline_projection if decision.mode is PersistenceMode.INLINE else {}
+        projection = (
+            request.inline_projection
+            if decision.mode is not PersistenceMode.OMITTED
+            else {}
+        )
         return NodeResultEnvelope(
             binding=request.binding,
             status=request.status,
@@ -619,7 +647,15 @@ class ResultMaterializer:
                 candidate_bytes=request.candidate_bytes,
                 candidate_tokens=request.candidate_tokens,
                 summary_bytes=request.summary.byte_size,
-                inline_bytes=request.inline_bytes if decision.mode is PersistenceMode.INLINE else 0,
+                inline_bytes=(
+                    request.inline_bytes
+                    if decision.mode is PersistenceMode.INLINE
+                    or (
+                        decision.mode is not PersistenceMode.OMITTED
+                        and bool(request.inline_projection)
+                    )
+                    else 0
+                ),
             ),
             created_at=request.created_at,
         )

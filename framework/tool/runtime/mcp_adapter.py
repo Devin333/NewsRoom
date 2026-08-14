@@ -126,13 +126,45 @@ class MCPToolAdapter:
         remote_tool_name = str(remote_tool.get("name") or "")
         if not remote_tool_name:
             raise ValueError("remote MCP tool name is required")
-        input_schema = remote_tool.get("input_schema") or remote_tool.get("inputSchema") or {}
+        input_schema = _aliased_value(
+            remote_tool,
+            "input_schema",
+            "inputSchema",
+            default={},
+        )
         if not isinstance(input_schema, dict):
             raise ValueError(f"input schema must be an object for MCP tool {remote_tool_name}")
+        output_schema = _aliased_value(
+            remote_tool,
+            "output_schema",
+            "outputSchema",
+            default=None,
+        )
+        if output_schema is not None and not isinstance(output_schema, dict):
+            raise ValueError(
+                f"output schema must be an object for MCP tool {remote_tool_name}"
+            )
+        result_persistence = _aliased_value(
+            remote_tool,
+            "result_persistence",
+            "resultPersistence",
+            default=None,
+        )
+        if result_persistence is not None and not isinstance(
+            result_persistence,
+            dict,
+        ):
+            raise ValueError(
+                "result persistence must be an object for MCP tool "
+                f"{remote_tool_name}"
+            )
         return ToolDefinition(
             name=f"mcp.{_safe_name(server.server_id)}.{_safe_name(remote_tool_name)}",
             description=str(remote_tool.get("description") or ""),
             input_schema=dict(input_schema),
+            output_schema=(
+                dict(output_schema) if output_schema is not None else None
+            ),
             side_effect=str(remote_tool.get("side_effect") or "read_only"),
             is_dangerous=bool(remote_tool.get("is_dangerous", False)),
             requires_approval=bool(remote_tool.get("requires_approval", False)),
@@ -144,6 +176,8 @@ class MCPToolAdapter:
                 "required_secret_names",
                 remote_tool_name,
             ),
+            version=str(remote_tool.get("version") or "1.0.0").strip(),
+            result_persistence=result_persistence,
             metadata={
                 "source": "mcp",
                 "server_id": server.server_id,
@@ -157,6 +191,26 @@ class MCPToolAdapter:
 def _safe_name(value: str) -> str:
     safe = re.sub(r"[^A-Za-z0-9_]+", "_", value.strip())
     return safe.strip("_") or "unnamed"
+
+
+def _aliased_value(
+    value: dict[str, Any],
+    snake_name: str,
+    camel_name: str,
+    *,
+    default: Any,
+) -> Any:
+    has_snake = snake_name in value
+    has_camel = camel_name in value
+    if has_snake and has_camel and value[snake_name] != value[camel_name]:
+        raise ValueError(
+            f"conflicting MCP tool fields: {snake_name} and {camel_name}"
+        )
+    if has_snake:
+        return value[snake_name]
+    if has_camel:
+        return value[camel_name]
+    return default
 
 
 def _string_list(value: Any, field_name: str, tool_name: str) -> list[str]:

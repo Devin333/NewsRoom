@@ -234,6 +234,8 @@ def test_inline_and_artifact_threshold_use_single_materializer_path() -> None:
     artifact_result = materializer.materialize(large)
     assert artifact_result.envelope.persistence_decision.mode is PersistenceMode.ARTIFACT
     assert len(artifact_result.envelope.materialized_refs) == 1
+    assert artifact_result.envelope.inline_projection == {"count": 0}
+    assert artifact_result.envelope.metrics.inline_bytes > 0
     assert artifact.write_count == 1
 
 
@@ -307,6 +309,7 @@ def test_cache_path_verifies_payload_and_returns_tenant_scoped_ref() -> None:
     )
     assert result.envelope.persistence_decision.mode is PersistenceMode.CACHE
     assert result.envelope.cache_refs[0].tenant_id == "tenant-1"
+    assert result.envelope.inline_projection == {"count": 0}
     assert cache.write_count == 1
 
 

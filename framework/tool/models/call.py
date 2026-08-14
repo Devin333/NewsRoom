@@ -49,5 +49,5 @@ class ToolCall:
             "arguments": redact_sensitive_values(dict(self.arguments)),
             "requested_by": self.requested_by,
             "requested_by_agent_id": self.requested_by_agent_id,
-            "metadata": dict(self.metadata),
+            "metadata": redact_sensitive_values(dict(self.metadata)),
         }

@@ -173,6 +173,7 @@ class ToolExecutor:
         approval_store: Any | None = None,
         secret_provider: SecretProvider | None = None,
         trace_context: TraceContext | W3CSpanContext | None = None,
+        defer_result_persistence: bool = False,
     ) -> None:
         self._registry = registry
         self._artifact_manager = artifact_manager
@@ -180,6 +181,9 @@ class ToolExecutor:
         self._approval_store = approval_store
         self._secret_provider = secret_provider
         self._trace_context = trace_context
+        if not isinstance(defer_result_persistence, bool):
+            raise TypeError("defer_result_persistence must be boolean")
+        self._defer_result_persistence = defer_result_persistence
         self._events: list[ToolEvent] = []
         self._metrics = ToolMetrics()
         self._records: list[ToolExecutionRecord] = []
@@ -193,6 +197,10 @@ class ToolExecutor:
 
     def list_records(self) -> list[ToolExecutionRecord]:
         return list(self._records)
+
+    @property
+    def defers_result_persistence(self) -> bool:
+        return self._defer_result_persistence
 
     def execute(self, call: ToolCall, policy: ToolPolicy | None = None) -> ToolObservation:
         parent_context = self._trace_context or current_trace_context()
@@ -225,14 +233,17 @@ class ToolExecutor:
         policy_trace = _ToolPolicyTraceBuilder(call.tool_name)
         attempts_used = 0
         last_attempt_context: AttemptContext | None = None
+        resolved_definition: Any | None = None
 
-        def record_attempt(attempt: int) -> None:
-            nonlocal attempts_used
+        def record_attempt(attempt: int, context: AttemptContext) -> None:
+            nonlocal attempts_used, last_attempt_context
             attempts_used = max(attempts_used, int(attempt))
+            last_attempt_context = context
 
         def invoke() -> ToolResult:
-            nonlocal attempts_used, last_attempt_context
+            nonlocal attempts_used, last_attempt_context, resolved_definition
             registered = self._registry.get(call.tool_name)
+            resolved_definition = registered.definition
             policy_trace.risk_level = _risk_level(registered.definition)
             policy_trace.requires_approval = _requires_approval(registered.definition, policy)
             policy_trace.add("tool.resolve", "compatibility", True, f"tool resolved: {call.tool_name}")
@@ -328,16 +339,25 @@ class ToolExecutor:
                     "retry_count": max(0, attempts_used - 1),
                 },
             )
-            safe_output = restore_redacted_booleans(
-                redact_sensitive_values(raw_output),
+            result_contract = registered.definition.result_persistence
+            result_contract.validate_output(
                 raw_output,
+                tool_name=registered.definition.name,
+                output_schema=registered.definition.output_schema,
+            )
+            safe_output = _safe_tool_output(
+                raw_output,
+                result_contract.media_type,
             )
             if contains_redacted_value(safe_output):
                 self._emit("tool_result_redacted", call, {"redacted": True})
                 policy_trace.add("tool.redaction", "safety", True, "output redacted")
             else:
                 policy_trace.add("tool.redaction", "safety", True, "output did not require redaction")
-            output_bytes = _json_size_bytes(safe_output)
+            output_bytes = _result_size_bytes(
+                safe_output,
+                result_contract.media_type,
+            )
             output_guardrail_result = self._output_size_guard(
                 call,
                 registered.definition,
@@ -363,7 +383,13 @@ class ToolExecutor:
                 metadata={"output_bytes": output_bytes},
             )
             return _copy_tool_result(
-                self._tool_result(call, safe_output, policy, output_bytes),
+                self._tool_result(
+                    call,
+                    safe_output,
+                    policy,
+                    output_bytes,
+                    media_type=result_contract.media_type,
+                ),
                 **_attempt_result_fields(last_attempt_context),
             )
 
@@ -433,6 +459,7 @@ class ToolExecutor:
                 error_message=str(exc),
                 call_id=call.call_id,
                 tool_name=call.tool_name,
+                **_attempt_result_fields(last_attempt_context),
             )
             elapsed_ms = 0.0
 
@@ -443,6 +470,34 @@ class ToolExecutor:
             trace_context=event_trace_context,
             retry_count=max(0, attempts_used - 1),
         )
+        if resolved_definition is not None:
+            metadata = {
+                **result.metadata,
+                "resolved_tool_id": resolved_definition.tool_id,
+            }
+            result_fields: dict[str, Any] = {"metadata": metadata}
+            if (
+                resolved_definition.side_effect_value.casefold()
+                not in {"", "none", "read_only"}
+                and result.status
+                not in {
+                    ToolStatus.BLOCKED,
+                    ToolStatus.DENIED,
+                    ToolStatus.APPROVAL_REQUIRED,
+                }
+                and result.idempotency_key is None
+            ):
+                logical_idempotency_key = _tool_idempotency_key(call)
+                result_fields.update(
+                    idempotency_key=logical_idempotency_key,
+                    operation_id=logical_idempotency_key,
+                    operation_kind="tool_call",
+                    termination_confirmed=True,
+                )
+            result = _copy_tool_result(
+                result,
+                **result_fields,
+            )
         observation = ToolObservation(call=call, result=result, elapsed_ms=elapsed_ms)
         self._record_observation(observation)
         self._records.append(
@@ -461,11 +516,18 @@ class ToolExecutor:
         safe_output: Any,
         policy: ToolPolicy,
         output_bytes: int | None = None,
+        *,
+        media_type: str = "application/json",
     ) -> ToolResult:
-        output_bytes = output_bytes if output_bytes is not None else _json_size_bytes(safe_output)
+        output_bytes = (
+            output_bytes
+            if output_bytes is not None
+            else _result_size_bytes(safe_output, media_type)
+        )
         artifact_spill = "inline"
         if (
-            policy.spill_large_results_to_artifact
+            not self._defer_result_persistence
+            and policy.spill_large_results_to_artifact
             and output_bytes > policy.max_result_chars_inline
         ):
             artifact_spill = "missing_context"
@@ -490,6 +552,21 @@ class ToolExecutor:
                     call_id=call.call_id,
                     tool_name=call.tool_name,
                     metadata={"artifact_spill": artifact_spill},
+                    media_type=media_type,
+                )
+            if media_type != "application/json" and not media_type.endswith("+json"):
+                return ToolResult(
+                    status=ToolStatus.FAILED,
+                    error_type="ToolRuntimeError",
+                    error_message=(
+                        "legacy ArtifactManager spill supports JSON only; "
+                        "configure Harness result materialization"
+                    ),
+                    output_bytes=output_bytes,
+                    call_id=call.call_id,
+                    tool_name=call.tool_name,
+                    metadata={"artifact_spill": "unsupported_media"},
+                    media_type=media_type,
                 )
             artifact_spill = "spilled"
             relative_path = f"tool_results/{call.call_id}.json"
@@ -516,7 +593,10 @@ class ToolExecutor:
                 call_id=call.call_id,
                 tool_name=call.tool_name,
                 metadata={"artifact_spill": artifact_spill},
+                media_type=media_type,
             )
+        if self._defer_result_persistence:
+            artifact_spill = "deferred"
         return ToolResult(
             status=ToolStatus.SUCCEEDED,
             output=safe_output,
@@ -524,6 +604,7 @@ class ToolExecutor:
             call_id=call.call_id,
             tool_name=call.tool_name,
             metadata={"artifact_spill": artifact_spill},
+            media_type=media_type,
         )
 
     def _output_size_guard(self, call: ToolCall, definition: Any, output_bytes: int) -> ToolResult | None:
@@ -562,7 +643,11 @@ class ToolExecutor:
             self._emit("tool_approval_required", observation.call, _result_event_payload(observation))
         elif observation.status == ToolStatus.TIMEOUT:
             self._emit("tool_timeout", observation.call, _result_event_payload(observation))
-        self._emit("tool_observation_created", observation.call, observation.to_dict())
+        self._emit(
+            "tool_observation_created",
+            observation.call,
+            _bounded_observation_event_payload(observation),
+        )
 
     def _emit(self, event_type: str, call: ToolCall, payload: dict[str, Any] | None = None) -> ToolEvent:
         scoped_context = current_trace_context()
@@ -616,7 +701,9 @@ def _result_event_payload(observation: ToolObservation) -> dict[str, Any]:
         "status": observation.status.value,
         "elapsed_ms": observation.elapsed_ms,
         "error_type": observation.result.error_type,
-        "error_message": observation.result.error_message,
+        "error_message": redact_sensitive_values(
+            observation.result.error_message
+        ),
         "output_bytes": observation.result.output_bytes,
         "artifact_refs": [artifact_ref.to_dict() for artifact_ref in observation.result.artifact_refs],
         "termination_confirmed": observation.result.termination_confirmed,
@@ -731,11 +818,22 @@ def _with_call(result: ToolResult, call: ToolCall) -> ToolResult:
 def _with_tool_gate(result: ToolResult, call: ToolCall) -> ToolResult:
     if result.gate_result is not None:
         return result
+    accepted_statuses = {
+        ToolStatus.SUCCEEDED,
+        ToolStatus.SKIPPED,
+        ToolStatus.APPROVAL_REQUIRED,
+    }
     checks = [
         GateCheckResult(
             check_id="tool.status",
-            dimension="safety" if result.status in {ToolStatus.BLOCKED, ToolStatus.DENIED} else "compatibility",
-            passed=result.status not in {ToolStatus.BLOCKED, ToolStatus.DENIED},
+            dimension=(
+                "safety"
+                if result.status in {ToolStatus.BLOCKED, ToolStatus.DENIED}
+                else "resource"
+                if result.status is ToolStatus.TIMEOUT
+                else "compatibility"
+            ),
+            passed=result.status in accepted_statuses,
             reason=result.error_message or "",
         )
     ]
@@ -793,6 +891,13 @@ def _standardize_tool_result(
             False,
             result.error_message or "artifact context required",
         )
+    elif artifact_spill == "deferred":
+        policy_trace.add(
+            "tool.artifact_spill",
+            "artifact",
+            True,
+            "result persistence delegated to Harness",
+        )
     else:
         policy_trace.add("tool.artifact_spill", "artifact", True, "inline output retained")
     return _copy_tool_result(
@@ -805,7 +910,7 @@ def _standardize_tool_result(
         parent_span_id=(
             trace_context.parent_span_id if trace_context is not None else None
         ),
-        redacted_output=redact_sensitive_values(result.output),
+        redacted_output=_safe_tool_output(result.output, result.media_type),
     )
 
 
@@ -844,6 +949,7 @@ def _copy_tool_result(result: ToolResult, **overrides: Any) -> ToolResult:
         "span_id": result.span_id,
         "parent_span_id": result.parent_span_id,
         "error_envelope": result.error_envelope,
+        "media_type": result.media_type,
     }
     values.update(overrides)
     return ToolResult(**values)
@@ -1057,7 +1163,7 @@ def _invoke_with_retry(
         context = _started_attempt_context(supervised, tool_name=tool_name)
         attempt = context.local_attempt_no
         if callable(attempt_callback):
-            attempt_callback(attempt)
+            attempt_callback(attempt, context)
 
         if supervised.state is AttemptState.SUCCEEDED:
             return supervised.value, attempt, context
@@ -1337,11 +1443,65 @@ def _attempt_result_fields(
         "operation_kind": context.operation_kind,
         "local_attempt_no": context.local_attempt_no,
         "retry_credit_id": context.retry_credit_id,
+        "termination_confirmed": True,
     }
 
 
-def _json_size_bytes(value: Any) -> int:
-    return len(json.dumps(to_jsonable(value), ensure_ascii=False, sort_keys=True).encode("utf-8"))
+def _result_size_bytes(value: Any, media_type: str) -> int:
+    normalized = str(media_type).strip().casefold()
+    if normalized == "application/json" or normalized.endswith("+json"):
+        return len(
+            json.dumps(
+                to_jsonable(value),
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8")
+        )
+    if normalized.startswith("text/"):
+        if not isinstance(value, str):
+            raise ToolRuntimeError("text tool result must be a string")
+        return len(value.encode("utf-8"))
+    if not isinstance(value, (bytes, bytearray)):
+        raise ToolRuntimeError("binary tool result must be bytes")
+    return len(value)
+
+
+def _safe_tool_output(value: Any, media_type: str) -> Any:
+    if value is None:
+        return None
+    normalized = str(media_type).strip().casefold()
+    if normalized == "application/json" or normalized.endswith("+json"):
+        return restore_redacted_booleans(redact_sensitive_values(value), value)
+    if normalized.startswith("text/"):
+        if not isinstance(value, str):
+            raise ToolRuntimeError("text tool result must be a string")
+        return redact_sensitive_values(value)
+    if not isinstance(value, (bytes, bytearray)):
+        raise ToolRuntimeError("binary tool result must be bytes")
+    return bytes(value)
+
+
+def _bounded_observation_event_payload(
+    observation: ToolObservation,
+) -> dict[str, Any]:
+    result = observation.result
+    return {
+        **_result_event_payload(observation),
+        "error_message": redact_sensitive_values(result.error_message),
+        "summary": redact_sensitive_values(observation.summary[:2048]),
+        "media_type": result.media_type,
+        "policy_trace": redact_sensitive_values(
+            _tool_policy_trace_to_dict(result.policy_trace)
+        ),
+        "gate_result": (
+            redact_sensitive_values(dict(result.gate_result))
+            if result.gate_result is not None
+            else None
+        ),
+        "retry_count": result.retry_count,
+        "timeout": result.timeout,
+    }
 
 
 def _write_json_artifact(artifact_manager: Any, run_id: str, relative_path: str, payload: dict[str, Any]) -> Path:

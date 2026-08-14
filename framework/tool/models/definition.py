@@ -5,6 +5,7 @@ import math
 from typing import Any
 
 from framework.tool.models.status import ToolSideEffect
+from framework.tool.models.result_persistence import ToolResultPersistenceContract
 from framework.tool.runtime.errors import ToolDefinitionError
 
 
@@ -27,6 +28,9 @@ class ToolDefinition:
     max_attempts: int | None = None
     required_secret_names: list[str] = field(default_factory=list)
     version: str = "1.0.0"
+    result_persistence: ToolResultPersistenceContract | dict[str, Any] = field(
+        default_factory=ToolResultPersistenceContract
+    )
 
     def __post_init__(self) -> None:
         if not self.name:
@@ -92,6 +96,14 @@ class ToolDefinition:
         )
         object.__setattr__(self, "metadata", dict(self.metadata))
         object.__setattr__(self, "required_secret_names", list(self.required_secret_names))
+        result_persistence = ToolResultPersistenceContract.from_any(
+            self.result_persistence
+        )
+        result_persistence.validate_definition(
+            tool_name=self.name,
+            output_schema=self.output_schema,
+        )
+        object.__setattr__(self, "result_persistence", result_persistence)
 
     @property
     def namespace(self) -> str:
@@ -137,6 +149,7 @@ class ToolDefinition:
             "concurrency_safe": self.concurrency_safe,
             "required_secret_names": list(self.required_secret_names),
             "metadata": dict(self.metadata),
+            "result_persistence": self.result_persistence.to_dict(),
         }
 
     @classmethod
@@ -165,6 +178,7 @@ class ToolDefinition:
             max_attempts=payload.get("max_attempts"),
             required_secret_names=[str(item) for item in payload.get("required_secret_names", [])],
             version=str(payload.get("version") or "1.0.0"),
+            result_persistence=payload.get("result_persistence"),
         )
 
 

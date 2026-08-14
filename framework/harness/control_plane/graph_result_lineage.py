@@ -320,6 +320,14 @@ class HarnessGraphResultLineage:
         expected_inline_bytes = (
             len(canonical_json_bytes(projection))
             if mode is HarnessGraphResultPersistenceMode.INLINE
+            or (
+                mode
+                in {
+                    HarnessGraphResultPersistenceMode.ARTIFACT,
+                    HarnessGraphResultPersistenceMode.CACHE,
+                }
+                and bool(projection)
+            )
             else 0
         )
         if self.inline_bytes != expected_inline_bytes:
@@ -386,9 +394,9 @@ class HarnessGraphResultLineage:
         if self.persistence_mode is HarnessGraphResultPersistenceMode.INLINE:
             valid = not self.artifact_refs and not self.cache_refs
         elif self.persistence_mode is HarnessGraphResultPersistenceMode.ARTIFACT:
-            valid = bool(self.artifact_refs) and not self.cache_refs and not has_inline
+            valid = bool(self.artifact_refs) and not self.cache_refs
         elif self.persistence_mode is HarnessGraphResultPersistenceMode.CACHE:
-            valid = bool(self.cache_refs) and not self.artifact_refs and not has_inline
+            valid = bool(self.cache_refs) and not self.artifact_refs
         else:
             valid = not has_inline and not self.artifact_refs and not self.cache_refs and not self.required
         if not valid:

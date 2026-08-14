@@ -6,6 +6,7 @@ from datetime import datetime
 from enum import StrEnum
 from typing import Any, Self
 
+from framework.events.canonical import canonical_json_bytes
 from framework.harness.runtime.result_canonical import (
     aware_datetime,
     boolean,
@@ -766,6 +767,20 @@ class NodeResultEnvelope:
             raise result_error(GraphArtifactResultErrorCode.RESULT_SCHEMA_INVALID, field="metrics.candidate_bytes")
         if self.metrics.summary_bytes != self.summary.byte_size:
             raise result_error(GraphArtifactResultErrorCode.RESULT_SCHEMA_INVALID, field="metrics.summary_bytes")
+        expected_inline_bytes = (
+            len(canonical_json_bytes(self.inline_projection))
+            if mode is PersistenceMode.INLINE
+            or (
+                mode in {PersistenceMode.ARTIFACT, PersistenceMode.CACHE}
+                and bool(self.inline_projection)
+            )
+            else 0
+        )
+        if self.metrics.inline_bytes != expected_inline_bytes:
+            raise result_error(
+                GraphArtifactResultErrorCode.RESULT_SCHEMA_INVALID,
+                field="metrics.inline_bytes",
+            )
 
     def to_dict(self) -> dict[str, Any]:
         return {

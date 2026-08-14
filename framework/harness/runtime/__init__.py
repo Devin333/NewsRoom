@@ -59,6 +59,19 @@ from framework.harness.runtime.graph_result_projection import (
     graph_result_lineage_from_envelope,
 )
 from framework.harness.runtime.graph_result_runtime import HarnessGraphResultRuntime
+from framework.harness.runtime.tool_result_adapter import (
+    HARNESS_BOUND_TOOL_RECEIPT_SCHEMA,
+    TOOL_NODE_RESULT_SCHEMA,
+    TOOL_RESPONSE_DOCUMENT_SCHEMA,
+    TOOL_SIDE_EFFECT_EVIDENCE_SCHEMA,
+    HarnessBoundToolSideEffectReceipt,
+    HarnessToolActivityResult,
+    HarnessToolActivityRuntime,
+    HarnessToolResultAdapter,
+    VerifiedHarnessToolSideEffectEvidence,
+    build_harness_tool_activity_runtime,
+    verify_harness_tool_side_effect_evidence,
+)
 
 __all__ = [
     "ArtifactClass",
@@ -82,6 +95,11 @@ __all__ = [
     "HarnessCheckpoint",
     "HarnessDurableState",
     "HarnessGraphResultRuntime",
+    "HARNESS_BOUND_TOOL_RECEIPT_SCHEMA",
+    "HarnessBoundToolSideEffectReceipt",
+    "HarnessToolActivityResult",
+    "HarnessToolActivityRuntime",
+    "HarnessToolResultAdapter",
     "HarnessReplayReader",
     "HarnessReplayReport",
     "HarnessTraceExporter",
@@ -109,6 +127,12 @@ __all__ = [
     "ResultQuotaReservation",
     "ResultSensitivity",
     "RetentionClass",
+    "TOOL_NODE_RESULT_SCHEMA",
+    "TOOL_RESPONSE_DOCUMENT_SCHEMA",
+    "TOOL_SIDE_EFFECT_EVIDENCE_SCHEMA",
+    "VerifiedHarnessToolSideEffectEvidence",
+    "build_harness_tool_activity_runtime",
+    "verify_harness_tool_side_effect_evidence",
     "checkpoint_checksum",
     "graph_result_lineage_from_envelope",
 ]
