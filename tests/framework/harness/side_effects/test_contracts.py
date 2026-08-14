@@ -33,6 +33,12 @@ from framework.harness.side_effects.registry import HarnessSideEffectCapabilitie
 
 IDENTITY_SCOPE_REF = checksum_for({"tenant_id": "tenant-1"})
 SUBJECT_SCOPE_REF = checksum_for({"paper_id": "paper-1"})
+_SCHEMA_REGISTRY_FIXTURE = (
+    Path(__file__).resolve().parents[3]
+    / "fixtures"
+    / "harness"
+    / "schema_version_registry_v2.json"
+)
 
 
 def _intent(
@@ -317,12 +323,7 @@ def test_in_memory_fenced_attempt_blocks_overlap_and_rejects_stale_fence() -> No
 
 
 def test_side_effect_outcome_schema_registry_covers_both_write_paths() -> None:
-    evidence = json.loads(
-        Path(
-            "openspec/changes/harness-workflow-graph-runtime/evidence/"
-            "schema-version-registry.json"
-        ).read_text(encoding="utf-8")
-    )
+    evidence = json.loads(_SCHEMA_REGISTRY_FIXTURE.read_text(encoding="utf-8"))
     retained = evidence["retained_dependency_versions"]
     assert retained["side_effect_outcome"] == (
         "newsroom.harness-side-effect-outcome/v1"

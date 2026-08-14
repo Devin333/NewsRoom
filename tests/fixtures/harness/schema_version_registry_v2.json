@@ -1,0 +1,133 @@
+{
+  "schema": "newsroom.harness-graph-schema-version-registry/v1",
+  "registry_status": "locked-for-initial-implementation",
+  "source_contract": "harness-workflow-graph-runtime:1.5",
+  "runtime_generation": "newsroom.harness-graph-runtime/v2",
+  "contract_schemas": {
+    "graph_dsl": "newsroom.harness-workflow-graph/v1",
+    "normalized_graph": "newsroom.harness-normalized-graph/v1",
+    "graph_state": "newsroom.harness-graph-state/v1",
+    "graph_decision": "newsroom.harness-graph-decision/v1",
+    "graph_checkpoint": "newsroom.harness-graph-checkpoint/v1",
+    "graph_inspection": "newsroom.harness-graph-inspection/v1"
+  },
+  "graph_events": [
+    {
+      "event_type": "harness_graph_created",
+      "data_schema": "newsroom.harness-graph-created/v1",
+      "boundary": "Pin runtime generation, compiler, Workflow version, Graph IR version/checksum, and initial projection checksum before execution."
+    },
+    {
+      "event_type": "harness_graph_decision_committed",
+      "data_schema": "newsroom.harness-graph-decision/v1",
+      "boundary": "Commit one scheduler decision with input projection checksum and exact component versions."
+    },
+    {
+      "event_type": "harness_graph_node_activated",
+      "data_schema": "newsroom.harness-graph-node-activated/v1",
+      "boundary": "Commit node instance, scope, activation ordinal, and budget reservation before dispatch."
+    },
+    {
+      "event_type": "harness_graph_node_terminal",
+      "data_schema": "newsroom.harness-graph-node-terminal/v1",
+      "boundary": "Commit terminal node outcome and exact gate, activity, and effect references."
+    },
+    {
+      "event_type": "harness_graph_choice_selected",
+      "data_schema": "newsroom.harness-graph-choice-selected/v1",
+      "boundary": "Commit condition policy and branch selection before target activation."
+    },
+    {
+      "event_type": "harness_graph_fork_opened",
+      "data_schema": "newsroom.harness-graph-fork-opened/v1",
+      "boundary": "Commit fork identity and stable branch scopes."
+    },
+    {
+      "event_type": "harness_graph_join_satisfied",
+      "data_schema": "newsroom.harness-graph-join-satisfied/v1",
+      "boundary": "Commit exact branch terminal evidence and failure policy result."
+    },
+    {
+      "event_type": "harness_graph_loop_transitioned",
+      "data_schema": "newsroom.harness-graph-loop-transition/v1",
+      "boundary": "Commit loop entry, continuation, exit, or exhaustion with iteration and budget evidence."
+    },
+    {
+      "event_type": "harness_graph_wait_transitioned",
+      "data_schema": "newsroom.harness-graph-wait-transition/v1",
+      "boundary": "Commit registration, resume, timeout, cancellation, timer wake, or approval evidence."
+    },
+    {
+      "event_type": "harness_graph_winner_selected",
+      "data_schema": "newsroom.harness-graph-winner-selected/v1",
+      "boundary": "Commit Parallel-Any winner using authoritative successful transition stream sequence."
+    },
+    {
+      "event_type": "harness_graph_cancellation_transitioned",
+      "data_schema": "newsroom.harness-graph-cancellation-transition/v1",
+      "boundary": "Commit cancellation request, termination confirmation, or indeterminate reconciliation state."
+    },
+    {
+      "event_type": "harness_graph_compensation_transitioned",
+      "data_schema": "newsroom.harness-graph-compensation-transition/v1",
+      "boundary": "Commit stack push, mode entry, action scheduling, outcome, or manual intervention."
+    },
+    {
+      "event_type": "harness_graph_budget_transitioned",
+      "data_schema": "newsroom.harness-graph-budget-transition/v1",
+      "boundary": "Atomically reserve, consume, release, or exhaust graph and run budget."
+    },
+    {
+      "event_type": "harness_graph_run_lifecycle_transitioned",
+      "data_schema": "newsroom.harness-graph-run-lifecycle-transition/v1",
+      "boundary": "Commit lifecycle separately from terminal outcome and bind the resulting projection checksum."
+    }
+  ],
+  "retained_dependency_versions": {
+    "event_envelope": "newsroom.event-envelope/v2",
+    "legacy_harness_event": "newsroom.harness-event/v1",
+    "legacy_harness_transition": "newsroom.harness-transition/v1",
+    "legacy_harness_state_projection": "newsroom.harness-state-projection/v1",
+    "legacy_harness_reducer": "newsroom.harness-state-reducer/v1",
+    "legacy_harness_control_policy": "newsroom.harness-control-policy/v1",
+    "harness_worker_activity": "newsroom.harness-worker-activity/v1",
+    "harness_activity_result": "newsroom.harness-activity-result/v1",
+    "deterministic_history": "newsroom.deterministic-history/v1",
+    "replay_activity_record": "newsroom.replay-activity-record/v1",
+    "side_effect_intent": "newsroom.harness-side-effect-intent/v1",
+    "side_effect_decision_version": "1",
+    "side_effect_attempt_lease": "newsroom.harness-side-effect-attempt-lease/v1",
+    "side_effect_outcome": "newsroom.harness-side-effect-outcome/v1",
+    "fenced_side_effect_outcome": "newsroom.harness-side-effect-outcome/v2",
+    "terminal_side_effect_policy": "newsroom.harness-terminal-side-effect-policy/v1"
+  },
+  "side_effect_outcome_version_policy": {
+    "reader_dispatch": "exact schema identity through HarnessSideEffectOutcome.from_dict",
+    "writers": [
+      {
+        "schema": "newsroom.harness-side-effect-outcome/v1",
+        "scope": "serial side-effect outcome only",
+        "fencing_fields": []
+      },
+      {
+        "schema": "newsroom.harness-side-effect-outcome/v2",
+        "scope": "fenced complete_attempt or reconcile_attempt only",
+        "fencing_fields": [
+          "attempt_id",
+          "fencing_generation"
+        ]
+      }
+    ],
+    "upcasters": [],
+    "v1_to_v2_upcast_allowed": false,
+    "upcast_reason": "A historical serial outcome contains no evidence from which an attempt identity or fencing generation can be reconstructed.",
+    "compatibility_window": {
+      "readers": "Exact v1 and v2 readers remain enabled while either schema exists in durable side-effect records.",
+      "v1_writer_scope": "Retained only for serial side-effect execution.",
+      "v2_writer_scope": "Required for every fenced side-effect completion or reconciliation.",
+      "v1_writer_retirement_gate": "Retire only after every serial side-effect caller migrates under a later explicit OpenSpec change with replay fixtures.",
+      "same_outcome_dual_write": false
+    },
+    "unknown_version_outcome": "typed side-effect outcome schema validation failure"
+  }
+}

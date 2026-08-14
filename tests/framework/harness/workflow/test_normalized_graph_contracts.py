@@ -30,6 +30,14 @@ from framework.harness.workflow.versioning import (
 )
 
 
+_SCHEMA_REGISTRY_FIXTURE = (
+    Path(__file__).resolve().parents[3]
+    / "fixtures"
+    / "harness"
+    / "schema_version_registry_v2.json"
+)
+
+
 def test_normalized_graph_round_trip_and_checksum_are_stable_under_input_permutation() -> (
     None
 ):
@@ -180,11 +188,8 @@ def test_schema_registry_reads_legacy_but_never_executes_it() -> None:
     )
 
 
-def test_code_schema_registry_matches_locked_openspec_evidence() -> None:
-    evidence_path = Path(
-        "openspec/changes/harness-workflow-graph-runtime/evidence/schema-version-registry.json"
-    )
-    evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
+def test_code_schema_registry_matches_locked_contract_fixture() -> None:
+    evidence = json.loads(_SCHEMA_REGISTRY_FIXTURE.read_text(encoding="utf-8"))
 
     assert evidence["runtime_generation"] == HARNESS_GRAPH_RUNTIME_VERSION
     assert evidence["contract_schemas"] == {
