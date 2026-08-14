@@ -706,6 +706,16 @@ def test_default_catalog_accepts_harness_safe_summary_contracts() -> None:
             payload,
         ) == payload
 
+    persistence_decision = {
+        **summaries["decision_recorded"],
+        "decision_type": "evaluate_result_persistence",
+    }
+    assert catalog.validate(
+        "decision_recorded",
+        "newsroom.harness-event/v1",
+        persistence_decision,
+    ) == persistence_decision
+
     with pytest.raises(EventSchemaValidationError) as invalid_ref:
         catalog.validate(
             "worker_called",

@@ -14,6 +14,10 @@ from business.research.application.ask_paper import AskPaperUseCase
 from business.research.application.bounded_document_rag import (
     BoundedDocumentRAGRuntime,
 )
+from business.research.application.graph_result_committer import (
+    ResearchGraphResultCommitter,
+    ResearchTaskPlanResultMaterializer,
+)
 from business.research.application.single_paper_runtime import (
     AnalyzePaperRequest,
     ResearchSinglePaperRuntime,
@@ -25,6 +29,10 @@ from business.research.document.latex_compiler import ArxivLatexDocumentCompiler
 from framework.harness import ArtifactReferenceVerifierPort, ContextAssembler
 from framework.harness.control_plane.durable_events import (
     DurableHarnessTransitionPort,
+)
+from framework.harness.runtime import (
+    GraphArtifactRolloutMode,
+    ResultMaterializer,
 )
 from infrastructure.external.sources.arxiv import (
     ArxivConnector,
@@ -48,6 +56,10 @@ from infrastructure.research.github_repository import (
 from infrastructure.research.local_chunk_store import LocalChunkPayloadStore
 from infrastructure.research.source_provider import ArxivResearchSourceProvider
 from infrastructure.storage.harness import SQLiteHarnessSideEffectStore
+from infrastructure.storage.artifacts import (
+    LocalJsonArtifactCatalog,
+    SQLiteGraphResultStore,
+)
 from interfaces.composition.research import (
     ResearchRuntimeComposition,
     ResearchRuntimeProvider,
@@ -430,6 +442,82 @@ def test_valid_settings_compose_full_durable_production_graph(
         composition.close()
         event_database.replace(moved_database)
         moved_database.replace(event_database)
+    finally:
+        composition.close()
+
+
+def test_enforce_mode_composes_real_graph_result_runtime(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    settings = ResearchRuntimeSettings.from_env(
+        {
+            "DASHSCOPE_API_KEY": "sk-explicit-test-only",
+            "NEWS_RESEARCH_GRAPH_ARTIFACT_MODE": "enforce",
+        },
+        cwd=tmp_path,
+    )
+    monkeypatch.delenv("NEWS_DATABASE_DSN", raising=False)
+    monkeypatch.setenv(
+        "NEWS_ACTIVITY_ENCRYPTION_KEY",
+        Fernet.generate_key().decode("ascii"),
+    )
+    monkeypatch.setenv("NEWS_ARTIFACT_ROOT", str(settings.artifact.root))
+    monkeypatch.setenv(settings.llm.api_key_env, "sk-composition-graph-result")
+
+    composition = build_research_runtime_composition(settings=settings)
+
+    try:
+        assert composition.available is True
+        runtime = composition.service._analyze_use_case._runtime
+        request = AnalyzePaperRequest(
+            run_id="research-graph-result-composition",
+            paper_id="2608.00001",
+            source_ref="https://arxiv.org/abs/2608.00001",
+            tenant_id="tenant-graph-result",
+            user_id="user-graph-result",
+            memory_namespace="research-graph-result",
+        )
+        event_port = runtime.event_port_factory(request.run_id)
+        committer = runtime.graph_result_committer_factory(
+            event_port=event_port,
+            request=request,
+        )
+
+        assert settings.graph_artifact_persistence.mode is (
+            GraphArtifactRolloutMode.ENFORCE
+        )
+        assert isinstance(committer, ResearchGraphResultCommitter)
+        assert runtime.graph_result_observer_factory(
+            event_port=event_port,
+            request=request,
+        ) is None
+
+        materializer = committer._materializer
+        assert isinstance(materializer, ResultMaterializer)
+        assert isinstance(materializer._catalog, LocalJsonArtifactCatalog)
+        assert materializer._catalog.root == (
+            settings.artifact.root / "_records" / "graph_artifact_catalog"
+        )
+        assert isinstance(materializer._attempts, SQLiteGraphResultStore)
+        assert materializer._quota is materializer._attempts
+        assert materializer._cache is materializer._attempts
+        assert materializer._attempts.path == (
+            settings.research_root / "graph-results.sqlite3"
+        ).resolve()
+
+        workspace = _ResearchRunWorkspace(
+            request=request,
+            context_assembler=ContextAssembler(),
+            graph_transition_port=event_port,
+        )
+        dynamic_stage = runtime.dynamic_task_plan_runner_factory(
+            workspace=workspace,
+            dependencies=object(),
+        )
+        child_verifier = dynamic_stage._runner.result_verifier
+        assert isinstance(child_verifier, ResearchTaskPlanResultMaterializer)
+        assert child_verifier._adapter._materializer is materializer
     finally:
         composition.close()
 

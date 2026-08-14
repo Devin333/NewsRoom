@@ -193,6 +193,7 @@ WorkerCallable = Callable[[dict[str, Any]], HarnessWorkerResult]
 if TYPE_CHECKING:
     from framework.harness.ports import (
         HarnessGraphResultCommitterPort,
+        HarnessGraphResultObserverPort,
         HarnessTransitionPort,
     )
 
@@ -581,6 +582,7 @@ class HarnessControlPlane:
         graph_preflight: HarnessGraphPreflight | None = None,
         graph_activity_dispatcher: HarnessGraphActivityDispatcherPort | None = None,
         graph_result_committer: HarnessGraphResultCommitterPort | None = None,
+        graph_result_observer: HarnessGraphResultObserverPort | None = None,
         timer_wake_port: HarnessTimerWakePort | None = None,
         side_effect_attempt_owner_id: str | None = None,
         budget_fact_resolver: DurableBudgetFactResolver | None = None,
@@ -663,6 +665,14 @@ class HarnessControlPlane:
                 "HarnessGraphResultCommitterPort"
             )
         self._graph_result_committer = graph_result_committer
+        if graph_result_observer is not None and not callable(
+            getattr(graph_result_observer, "observe_result", None)
+        ):
+            raise TypeError(
+                "graph_result_observer must implement "
+                "HarnessGraphResultObserverPort"
+            )
+        self._graph_result_observer = graph_result_observer
         self._uses_external_graph_dispatcher = graph_activity_dispatcher is not None
         self._graph_dispatch_queue = _GraphDispatchQueue(graph_activity_dispatcher)
         self._graph_runtime = (
@@ -2885,6 +2895,25 @@ class HarnessControlPlane:
             run_spec,
             activity.causal_decision_sequence + 2,
         )
+        if self._graph_result_observer is not None:
+            observed_event = self._graph_result_observer.observe_result(
+                activity=activity,
+                graph=self._prepared_graphs[run_id],
+                run_spec_checksum=self._prepared_run_specs[run_id],
+                worker_result=worker_result,
+                occurred_at=graph_result_at,
+            )
+            if observed_event is not None:
+                if not isinstance(observed_event, HarnessEvent):
+                    raise HarnessValidationError(
+                        "graph result observer returned an invalid event",
+                        code="graph_result_observer_event_invalid",
+                    )
+                if not any(
+                    item.event_id == observed_event.event_id
+                    for item in self._committed_events
+                ):
+                    self._committed_events.append(observed_event)
         if self._graph_result_committer is None:
             payload_ref = checksum_for(worker_result.to_dict())
             graph_result = HarnessGraphActivityResult.for_activity(

@@ -16,6 +16,7 @@ from framework.harness.runtime.result_models import (
     BoundedSummary,
     ContextPolicy,
     NodeResultBinding,
+    NodeResultEnvelope,
     NodeResultStatus,
     ResultProvenance,
     ResultSensitivity,
@@ -307,7 +308,7 @@ class HarnessSubAgentResultAdapter:
             graph=graph,
             tenant_id=tenant_id,
             tenant_scope_ref=tenant_scope_ref,
-            attempt_id=_subagent_attempt_id(identity),
+            attempt_id=subagent_result_attempt_id(identity),
             run_spec_checksum=run_spec_checksum,
         )
 
@@ -490,6 +491,37 @@ class HarnessSubAgentResultAdapter:
         created_at: datetime | None = None,
         budget: PersistenceBudgetSnapshot | None = None,
     ) -> HarnessSubAgentMaterializationResult:
+        request, bundle, result = self.request_from_committed_attempt(
+            invocation=invocation,
+            binding=binding,
+            handoff=handoff,
+            created_at=created_at,
+        )
+        materialization = self._materializer.materialize(
+            request,
+            budget=budget,
+        )
+        return HarnessSubAgentMaterializationResult(
+            result=result,
+            bundle=bundle,
+            materialization=materialization,
+            recovered=True,
+        )
+
+    def request_from_committed_attempt(
+        self,
+        *,
+        invocation: SubAgentInvocation,
+        binding: NodeResultBinding,
+        handoff: SubAgentHandoff | None = None,
+        created_at: datetime | None = None,
+    ) -> tuple[
+        NodeResultRequest,
+        VerifiedSubAgentMaterializedBundle,
+        SubAgentResult,
+    ]:
+        """Build a result request from the transcript store without live work."""
+
         identity = subagent_attempt_identity(invocation)
         receipt = self._transcript_store.find_by_identity(identity)
         if receipt is None:
@@ -498,15 +530,32 @@ class HarnessSubAgentResultAdapter:
                 code="subagent_result_recovery_missing",
             )
         result = self._result_from_receipt(receipt, identity=identity)
-        return self.materialize(
+        request, bundle = self.request_from_verified_result(
             result,
             invocation=invocation,
             binding=binding,
             handoff=handoff,
             created_at=created_at,
-            budget=budget,
-            recovered=True,
         )
+        return request, bundle, result
+
+    def require_existing_materialization(
+        self,
+        *,
+        invocation: SubAgentInvocation,
+        binding: NodeResultBinding,
+        handoff: SubAgentHandoff | None = None,
+        created_at: datetime | None = None,
+    ) -> NodeResultEnvelope:
+        """Read a compatible common result envelope without writing it."""
+
+        request, _, _ = self.request_from_committed_attempt(
+            invocation=invocation,
+            binding=binding,
+            handoff=handoff,
+            created_at=created_at,
+        )
+        return self._materializer.require_existing(request)
 
     def recover_and_accept(
         self,
@@ -746,7 +795,7 @@ def _verify_bundle_scope_and_identity(
         mismatches.append("tenant_scope_ref")
     if bundle.binding.node_id != identity.stage_id:
         mismatches.append("node_id")
-    if bundle.binding.attempt_id != _subagent_attempt_id(identity):
+    if bundle.binding.attempt_id != subagent_result_attempt_id(identity):
         mismatches.append("attempt_id")
     if context.identity != identity:
         mismatches.append("context.identity")
@@ -936,7 +985,9 @@ def _node_status(status: SubAgentStatus) -> NodeResultStatus:
     return NodeResultStatus.HALTED
 
 
-def _subagent_attempt_id(identity: SubAgentAttemptIdentity) -> str:
+def subagent_result_attempt_id(identity: SubAgentAttemptIdentity) -> str:
+    if not isinstance(identity, SubAgentAttemptIdentity):
+        raise TypeError("identity must be SubAgentAttemptIdentity")
     return f"subagent_{identity.identity_checksum.removeprefix('sha256:')}"
 
 
@@ -984,5 +1035,6 @@ __all__ = [
     "SUBAGENT_MATERIALIZED_BUNDLE_SCHEMA",
     "SUBAGENT_NODE_RESULT_SCHEMA",
     "VerifiedSubAgentMaterializedBundle",
+    "subagent_result_attempt_id",
     "verify_subagent_materialized_bundle",
 ]

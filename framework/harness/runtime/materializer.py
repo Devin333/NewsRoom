@@ -396,6 +396,44 @@ class ResultMaterializer:
             )
         return existing
 
+    def require_existing(self, request: NodeResultRequest) -> NodeResultEnvelope:
+        """Require a readable, request-compatible envelope without creating bytes."""
+
+        if not isinstance(request, NodeResultRequest):
+            raise result_error(
+                GraphArtifactResultErrorCode.RESULT_SCHEMA_INVALID,
+                field="request",
+            )
+        existing = self.recover(request.binding)
+        if existing is None:
+            raise result_error(
+                GraphArtifactResultErrorCode.RESULT_LEDGER_FAILED,
+                field="attempt.missing",
+            )
+        policy_version = self._policy.config.ensure_readable_policy_version(
+            existing.persistence_decision.policy_version
+        )
+        self._assert_existing_compatible(
+            existing,
+            request,
+            policy_version=policy_version,
+        )
+        decision = existing.persistence_decision
+        if (
+            existing.summary != request.summary
+            or existing.provenance != request.provenance
+            or existing.created_at != request.created_at
+            or decision.artifact_class is not request.artifact_class
+            or decision.retention_class is not request.retention_class
+            or decision.context_policy is not request.context_policy
+            or decision.required != request.required
+        ):
+            raise result_error(
+                GraphArtifactResultErrorCode.RESULT_IDENTITY_CONFLICT,
+                field="attempt",
+            )
+        return existing
+
     def _get_existing(self, request: NodeResultRequest) -> NodeResultEnvelope | None:
         try:
             existing = self._attempts.get(request.binding)

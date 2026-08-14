@@ -24,6 +24,11 @@ from business.research.application.single_paper_runtime import (
     ResearchSinglePaperRuntime,
     build_research_harness_run_spec,
 )
+from business.research.application.graph_result_committer import (
+    ResearchGraphResultCommitter,
+    ResearchGraphResultShadowObserver,
+    ResearchTaskPlanResultMaterializer,
+)
 from business.research.document.chunk_storage import PaperChunkStoreAdapter
 from business.research.domain import (
     research_event_tenant_id,
@@ -83,6 +88,16 @@ from framework.harness.workflow import HarnessWorkflowGraphCompiler, HarnessWork
 from framework.harness.workflow.binding_authority import HarnessWorkerBinding
 from framework.harness.workflow.graph import HarnessContractKind, HarnessContractReference
 from framework.harness.control_plane.gates import GateContext
+from framework.harness.control_plane.graph_application import (
+    HarnessGraphControlPlaneRuntime,
+)
+from framework.harness.runtime import (
+    GraphArtifactRolloutMode,
+    HarnessGraphResultRuntime,
+    HarnessSubAgentResultAdapter,
+    PersistencePolicy,
+    ResultMaterializer,
+)
 from framework.shared.time import utc_now
 from framework.harness.ports import HarnessTransitionPort
 from infrastructure.external.sources.arxiv import (
@@ -113,6 +128,10 @@ from infrastructure.research.github_repository import (
 from infrastructure.research.local_chunk_store import LocalChunkPayloadStore
 from infrastructure.research.source_provider import ArxivResearchSourceProvider
 from infrastructure.storage.events.factory import durable_event_storage_from_env
+from infrastructure.storage.artifacts import (
+    LocalJsonArtifactCatalog,
+    SQLiteGraphResultStore,
+)
 from infrastructure.storage.harness import (
     FilesystemSubAgentTranscriptStore,
     SQLiteHarnessSideEffectStore,
@@ -1197,6 +1216,44 @@ def _build_configured_composition(
                 max_write_bytes=settings.artifact.max_bytes,
             ),
         )
+        graph_result_materializer: ResultMaterializer | None = None
+        if settings.graph_artifact_persistence.mode in {
+            GraphArtifactRolloutMode.ENFORCE,
+            GraphArtifactRolloutMode.READ_ONLY,
+        }:
+            graph_result_catalog = _compose_component(
+                ResearchCapability.GRAPH_ARTIFACT_PERSISTENCE,
+                lambda: LocalJsonArtifactCatalog(
+                    settings.artifact.root
+                    / "_records"
+                    / "graph_artifact_catalog"
+                ),
+            )
+            graph_result_store = _compose_component(
+                ResearchCapability.GRAPH_ARTIFACT_PERSISTENCE,
+                lambda: SQLiteGraphResultStore(
+                    settings.research_root / "graph-results.sqlite3",
+                    max_materialized_bytes_per_run=(
+                        settings.graph_artifact_persistence.max_materialized_bytes_per_run
+                    ),
+                    max_artifacts_per_run=(
+                        settings.graph_artifact_persistence.max_artifacts_per_run
+                    ),
+                ),
+            )
+            graph_result_materializer = _compose_component(
+                ResearchCapability.GRAPH_ARTIFACT_PERSISTENCE,
+                lambda: ResultMaterializer(
+                    policy=PersistencePolicy(
+                        settings.graph_artifact_persistence
+                    ),
+                    artifact_port=artifact_port,
+                    catalog=graph_result_catalog,
+                    quota=graph_result_store,
+                    cache=graph_result_store,
+                    attempts=graph_result_store,
+                ),
+            )
         side_effect_store = _compose_component(
             ResearchCapability.ARTIFACT,
             lambda: SQLiteHarnessSideEffectStore(
@@ -1336,6 +1393,77 @@ def _build_configured_composition(
                 },
             )
 
+            if settings.graph_artifact_persistence.mode in {
+                GraphArtifactRolloutMode.ENFORCE,
+                GraphArtifactRolloutMode.READ_ONLY,
+            }:
+                transition_port = workspace.graph_transition_port
+                if not isinstance(transition_port, HarnessTransitionPort):
+                    raise TypeError(
+                        "dynamic TaskPlan requires the bound Graph transition port"
+                    )
+                if not isinstance(graph_result_materializer, ResultMaterializer):
+                    raise ResearchRuntimeUnavailableError(
+                        (ResearchCapability.GRAPH_ARTIFACT_PERSISTENCE,),
+                        retryable=False,
+                    )
+                child_adapter = HarnessSubAgentResultAdapter(
+                    materializer=graph_result_materializer,
+                    graph_result_runtime=HarnessGraphResultRuntime(
+                        HarnessGraphControlPlaneRuntime(transition_port)
+                    ),
+                    transcript_store=subagent_transcript_store,
+                )
+                actor_metadata = {
+                    "tenant_id": workspace.request.tenant_id,
+                    "user_id": workspace.request.user_id,
+                    "memory_namespace": workspace.request.memory_namespace,
+                }
+                result_tenant_id = research_event_tenant_id(actor_metadata)
+
+                def child_invocation(resolved, instance):
+                    plan = dynamic_task_plan_store.plan(
+                        instance.run_id,
+                        instance.stage_id,
+                        instance.plan_version,
+                    )
+                    if plan is None:
+                        raise RuntimeError(
+                            "dynamic TaskPlan plan artifact is unavailable"
+                        )
+                    binding = capability_registry.resolve(
+                        resolved.task.worker_capability,
+                        policy,
+                    )
+                    return subagent_adapter.build_invocation(
+                        resolved_task=resolved,
+                        binding=binding,
+                        task_instance_id=instance.task_instance_id,
+                        parent_run_id=instance.run_id,
+                        workflow_id=plan.workflow_id,
+                        stage_id=instance.stage_id,
+                        context_pack=context_pack,
+                        budget_snapshot=HarnessBudgetSnapshot.from_budget(
+                            HarnessBudget.safe_default()
+                        ),
+                        attempt=instance.attempt,
+                        observed_at=plan.accepted_at,
+                    )
+
+                result_verifier = ResearchTaskPlanResultMaterializer(
+                    verifier=result_verifier,
+                    adapter=child_adapter,
+                    config=settings.graph_artifact_persistence,
+                    tenant_id=result_tenant_id,
+                    tenant_scope_ref=checksum_for(result_tenant_id),
+                    graph_id=workflow_graph.graph_id,
+                    graph_version=(
+                        f"{workflow_graph.graph_id}@"
+                        f"{workflow_graph.workflow_version}"
+                    ),
+                    invocation_factory=child_invocation,
+                )
+
             def execute(binding, instance):
                 plan = dynamic_task_plan_store.plan(
                     instance.run_id,
@@ -1438,6 +1566,64 @@ def _build_configured_composition(
                 tenant_id=research_event_tenant_id(actor_metadata),
             )
 
+        def graph_result_committer_factory(
+            *,
+            event_port: HarnessTransitionPort,
+            request: AnalyzePaperRequest,
+        ):
+            mode = settings.graph_artifact_persistence.mode
+            if mode not in {
+                GraphArtifactRolloutMode.ENFORCE,
+                GraphArtifactRolloutMode.READ_ONLY,
+            }:
+                return None
+            if not isinstance(graph_result_materializer, ResultMaterializer):
+                raise ResearchRuntimeUnavailableError(
+                    (ResearchCapability.GRAPH_ARTIFACT_PERSISTENCE,),
+                    retryable=False,
+                )
+            actor_metadata = {
+                "tenant_id": request.tenant_id,
+                "user_id": request.user_id,
+                "memory_namespace": request.memory_namespace,
+            }
+            result_tenant_id = research_event_tenant_id(actor_metadata)
+            return ResearchGraphResultCommitter(
+                materializer=graph_result_materializer,
+                graph_result_runtime=HarnessGraphResultRuntime(
+                    HarnessGraphControlPlaneRuntime(event_port)
+                ),
+                config=settings.graph_artifact_persistence,
+                tenant_id=result_tenant_id,
+                tenant_scope_ref=checksum_for(result_tenant_id),
+            )
+
+        def graph_result_observer_factory(
+            *,
+            event_port: HarnessTransitionPort,
+            request: AnalyzePaperRequest,
+        ):
+            if (
+                settings.graph_artifact_persistence.mode
+                is not GraphArtifactRolloutMode.SHADOW
+            ):
+                return None
+            actor_metadata = {
+                "tenant_id": request.tenant_id,
+                "user_id": request.user_id,
+                "memory_namespace": request.memory_namespace,
+            }
+            result_tenant_id = research_event_tenant_id(actor_metadata)
+            return ResearchGraphResultShadowObserver(
+                graph_result_runtime=HarnessGraphResultRuntime(
+                    HarnessGraphControlPlaneRuntime(event_port)
+                ),
+                event_port=event_port,
+                config=settings.graph_artifact_persistence,
+                tenant_id=result_tenant_id,
+                tenant_scope_ref=checksum_for(result_tenant_id),
+            )
+
         def context_assembler_factory(
             _run_id: str,
             event_port: HarnessTransitionPort,
@@ -1520,6 +1706,8 @@ def _build_configured_composition(
             side_effect_store=side_effect_store,
             artifact_handler_factory=ResearchArtifactBundleHandler,
             dynamic_task_plan_runner_factory=dynamic_task_plan_runner_factory,
+            graph_result_committer_factory=graph_result_committer_factory,
+            graph_result_observer_factory=graph_result_observer_factory,
         )
         ask_use_case = AskPaperUseCase()
         rag_ask_provider = _PaperRagUseCaseProvider(ask_use_case)

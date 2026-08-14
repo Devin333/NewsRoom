@@ -150,6 +150,22 @@ class HarnessGraphResultCommitterPort(Protocol):
 
 
 @runtime_checkable
+class HarnessGraphResultObserverPort(Protocol):
+    """Observe one Graph candidate without replacing result authority."""
+
+    def observe_result(
+        self,
+        *,
+        activity: HarnessGraphActivity,
+        graph: NormalizedHarnessGraph,
+        run_spec_checksum: str,
+        worker_result: HarnessWorkerResult,
+        occurred_at: datetime,
+    ) -> HarnessEvent | None:
+        ...
+
+
+@runtime_checkable
 class HarnessWorkerPort(Protocol):
     def execute(self, task: dict[str, Any]) -> HarnessWorkerResult: ...
 
@@ -217,6 +233,7 @@ __all__ = [
     "HarnessEventPort",
     "HarnessGovernancePort",
     "HarnessGraphResultCommitterPort",
+    "HarnessGraphResultObserverPort",
     "HarnessLLMPort",
     "HarnessMemoryPort",
     "HarnessRAGPort",

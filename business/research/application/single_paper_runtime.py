@@ -21,6 +21,8 @@ from framework.harness import (
     HarnessEventType,
     HarnessGraphPreflight,
     HarnessGraphPreflightPolicy,
+    HarnessGraphResultCommitterPort,
+    HarnessGraphResultObserverPort,
     HarnessTransitionPort,
     HarnessRunSpec,
     HarnessRunStatus,
@@ -126,6 +128,7 @@ def build_research_harness_run_spec(
     """Build the canonical run specification used by execution and recovery."""
 
     actor_metadata = _request_actor_metadata(request)
+    identity_scope_ref = research_identity_scope_ref(actor_metadata)
     return HarnessRunSpec(
         run_id=request.run_id,
         workflow=(
@@ -142,7 +145,8 @@ def build_research_harness_run_spec(
         metadata={
             "research_runtime": "single_paper",
             "paper_id": request.paper_id,
-            "identity_scope_ref": research_identity_scope_ref(actor_metadata),
+            "tenant_scope_ref": identity_scope_ref,
+            "identity_scope_ref": identity_scope_ref,
             "subject_scope_ref": research_subject_scope_ref(request.paper_id),
             **actor_metadata,
         },
@@ -724,6 +728,8 @@ class ResearchSinglePaperRuntime:
         side_effect_store: HarnessSideEffectStorePort | None = None,
         artifact_handler_factory: Callable[..., Any] | None = None,
         dynamic_task_plan_runner_factory: Callable[..., Any] | None = None,
+        graph_result_committer_factory: Callable[..., Any] | None = None,
+        graph_result_observer_factory: Callable[..., Any] | None = None,
     ) -> None:
         self.source_provider = source_provider
         self.document_compiler = document_compiler
@@ -767,6 +773,16 @@ class ResearchSinglePaperRuntime:
         if dynamic_task_plan_runner_factory is not None and not callable(dynamic_task_plan_runner_factory):
             raise TypeError("dynamic_task_plan_runner_factory must be callable")
         self.dynamic_task_plan_runner_factory = dynamic_task_plan_runner_factory
+        if graph_result_committer_factory is not None and not callable(
+            graph_result_committer_factory
+        ):
+            raise TypeError("graph_result_committer_factory must be callable")
+        if graph_result_observer_factory is not None and not callable(
+            graph_result_observer_factory
+        ):
+            raise TypeError("graph_result_observer_factory must be callable")
+        self.graph_result_committer_factory = graph_result_committer_factory
+        self.graph_result_observer_factory = graph_result_observer_factory
         self.ask_use_case = AskPaperUseCase()
         self.quality_gate = quality_gate or ResearchQualityGate()
         self.evidence_builder = ResearchEvidenceBuilder()
@@ -824,6 +840,7 @@ class ResearchSinglePaperRuntime:
             context_assembler=context_assembler or ContextAssembler(),
             context_max_input_tokens=self.context_max_input_tokens,
             context_max_output_tokens=self.context_max_output_tokens,
+            graph_transition_port=event_port,
         )
         identity_scope_ref = research_identity_scope_ref(actor_metadata)
         subject_scope_ref = research_subject_scope_ref(request.paper_id)
@@ -831,6 +848,38 @@ class ResearchSinglePaperRuntime:
             request,
             created_at=_research_run_created_at(event_port, run_id),
         )
+        graph_result_committer = (
+            None
+            if self.graph_result_committer_factory is None
+            else self.graph_result_committer_factory(
+                event_port=event_port,
+                request=request,
+            )
+        )
+        if graph_result_committer is not None and not isinstance(
+            graph_result_committer,
+            HarnessGraphResultCommitterPort,
+        ):
+            raise TypeError(
+                "graph_result_committer_factory must return "
+                "HarnessGraphResultCommitterPort or None"
+            )
+        graph_result_observer = (
+            None
+            if self.graph_result_observer_factory is None
+            else self.graph_result_observer_factory(
+                event_port=event_port,
+                request=request,
+            )
+        )
+        if graph_result_observer is not None and not isinstance(
+            graph_result_observer,
+            HarnessGraphResultObserverPort,
+        ):
+            raise TypeError(
+                "graph_result_observer_factory must return "
+                "HarnessGraphResultObserverPort or None"
+            )
         terminal_payload_factory = lambda cutoff: self._terminal_artifact_payloads(
             event_port,
             workspace,
@@ -881,6 +930,8 @@ class ResearchSinglePaperRuntime:
             ),
             side_effect_registry=side_effect_registry,
             side_effect_store=self.side_effect_store,
+            graph_result_committer=graph_result_committer,
+            graph_result_observer=graph_result_observer,
         )
         # The control plane persists quarantine before this lifecycle hook
         # removes owned hidden candidates. Preserve a primary worker or
@@ -1908,6 +1959,7 @@ class _ResearchRunWorkspace:
     context_assembler: ContextAssembler
     context_max_input_tokens: int = 4_096
     context_max_output_tokens: int = 1_024
+    graph_transition_port: HarnessTransitionPort | None = None
     paper: ResearchPaper | None = None
     source_record: PaperSourceRecord | None = None
     document: ResearchDocument | None = None

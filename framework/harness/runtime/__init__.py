@@ -81,6 +81,7 @@ from framework.harness.runtime.subagent_result_adapter import (
     HarnessSubAgentMaterializationResult,
     HarnessSubAgentResultAdapter,
     VerifiedSubAgentMaterializedBundle,
+    subagent_result_attempt_id,
     verify_subagent_materialized_bundle,
 )
 
@@ -151,6 +152,7 @@ __all__ = [
     "VerifiedHarnessToolSideEffectEvidence",
     "VerifiedSubAgentMaterializedBundle",
     "build_harness_tool_activity_runtime",
+    "subagent_result_attempt_id",
     "verify_harness_tool_side_effect_evidence",
     "verify_subagent_materialized_bundle",
     "checkpoint_checksum",

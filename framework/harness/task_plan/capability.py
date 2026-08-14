@@ -351,7 +351,7 @@ class ResolvedSubAgentTaskAdapter:
         attempt: int,
         observed_at: Any,
     ) -> SubAgentResult:
-        invocation = self._build_invocation(
+        invocation = self.build_invocation(
             resolved_task=resolved_task,
             binding=binding,
             task_instance_id=task_instance_id,
@@ -379,7 +379,7 @@ class ResolvedSubAgentTaskAdapter:
         attempt: int,
         observed_at: Any,
     ) -> SubAgentResult | None:
-        invocation = self._build_invocation(
+        invocation = self.build_invocation(
             resolved_task=resolved_task,
             binding=binding,
             task_instance_id=task_instance_id,
@@ -393,7 +393,7 @@ class ResolvedSubAgentTaskAdapter:
         )
         return self._runtime.recover(invocation)
 
-    def _build_invocation(
+    def build_invocation(
         self,
         *,
         resolved_task: ResolvedTaskSpec,

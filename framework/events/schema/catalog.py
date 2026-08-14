@@ -2247,6 +2247,7 @@ def _harness_payload_schema(event_type: str) -> dict[str, Any]:
                         "start_step",
                         "plan_step",
                         "execute_step",
+                        "evaluate_result_persistence",
                         "verify_step",
                         "complete_step",
                         "retry_step",

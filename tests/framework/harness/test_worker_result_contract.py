@@ -129,3 +129,37 @@ def test_typed_intent_payload_is_opaque_candidate_data() -> None:
 def test_worker_result_rejects_multiple_intents_instead_of_coercing_a_list() -> None:
     with pytest.raises(HarnessValidationError, match="typed HarnessSideEffectIntent"):
         HarnessWorkerResult(status="succeeded", effect_intent=[])  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize(
+    "field_name",
+    (
+        "artifact_class",
+        "cache_eligible",
+        "materialization_mode",
+        "persistence",
+        "persistence_decision",
+        "persistence_mode",
+        "quota_override",
+        "required_for_publication",
+        "required_for_replay",
+        "result_persistence",
+        "result_retention",
+        "retention",
+        "retention_class",
+        "storage_tier",
+    ),
+)
+def test_worker_result_rejects_persistence_authority_fields(
+    field_name: str,
+) -> None:
+    with pytest.raises(HarnessValidationError) as captured:
+        HarnessWorkerResult(
+            status="succeeded",
+            diagnostics={"nested": {field_name: "worker-choice"}},
+        )
+
+    assert captured.value.code == "worker_decision_field_rejected"
+    assert captured.value.details["forbidden_paths"] == [
+        f"diagnostics.nested.{field_name}"
+    ]

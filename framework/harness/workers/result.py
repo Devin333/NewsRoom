@@ -131,6 +131,23 @@ FORBIDDEN_WORKER_RESULT_KEYS = frozenset(
         "skip_eval",
         "auto_promote",
         "active",
+        "artifact_class",
+        "persistence",
+        "retention_class",
+        "retention",
+        "persistence_mode",
+        "persistence_decision",
+        "materialization_mode",
+        "storage_tier",
+        "required_for_replay",
+        "required_for_publication",
+        "cache_eligible",
+        "cache_ttl",
+        "cache_ttl_seconds",
+        "quota_override",
+        "result_persistence",
+        "result_retention",
+        "persistence_policy_version",
     }
 )
 

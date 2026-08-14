@@ -20,6 +20,7 @@ from framework.harness.runtime import (
     BoundedSummary,
     ContextPolicy,
     GraphArtifactPersistenceConfig,
+    GraphArtifactRolloutMode,
     GraphArtifactResultError,
     GraphArtifactResultErrorCode,
     NodeResultBinding,
@@ -254,6 +255,89 @@ def test_inline_and_artifact_threshold_use_single_materializer_path() -> None:
     assert artifact_result.envelope.inline_projection == {"count": 0}
     assert artifact_result.envelope.metrics.inline_bytes > 0
     assert artifact.write_count == 1
+
+
+def test_require_existing_returns_matching_attempt_without_any_write() -> None:
+    attempts = RecordingAttempts()
+    artifact = RecordingArtifactPort()
+    catalog = RecordingCatalog()
+    quota = RecordingQuota()
+    cache = RecordingCache()
+    materializer = _materializer(
+        attempts=attempts,
+        artifact=artifact,
+        catalog=catalog,
+        quota=quota,
+        cache=cache,
+        config=GraphArtifactPersistenceConfig(
+            mode=GraphArtifactRolloutMode.ENFORCE
+        ),
+    )
+    request = _request(
+        candidate={"data": "x" * (32 * 1024)},
+        required_for_replay=True,
+    )
+    first = materializer.materialize(request).envelope
+    write_counts = (
+        artifact.write_count,
+        attempts.put_count,
+        len(catalog.requests),
+        len(quota.settlements),
+    )
+
+    read_only = _materializer(
+        attempts=attempts,
+        artifact=artifact,
+        catalog=catalog,
+        quota=quota,
+        cache=cache,
+        config=GraphArtifactPersistenceConfig(
+            mode=GraphArtifactRolloutMode.READ_ONLY
+        ),
+    )
+
+    assert read_only.require_existing(request) == first
+    assert (
+        artifact.write_count,
+        attempts.put_count,
+        len(catalog.requests),
+        len(quota.settlements),
+    ) == write_counts
+
+
+def test_require_existing_fails_closed_for_missing_or_conflicting_attempt() -> None:
+    attempts = RecordingAttempts()
+    artifact = RecordingArtifactPort()
+    materializer = _materializer(
+        attempts=attempts,
+        artifact=artifact,
+        config=GraphArtifactPersistenceConfig(
+            mode=GraphArtifactRolloutMode.READ_ONLY
+        ),
+    )
+    request = _request(required_for_replay=True)
+
+    with pytest.raises(GraphArtifactResultError) as missing:
+        materializer.require_existing(request)
+
+    assert missing.value.error_code is GraphArtifactResultErrorCode.RESULT_LEDGER_FAILED
+    assert artifact.write_count == 0
+    assert attempts.put_count == 0
+
+    writer = _materializer(
+        attempts=attempts,
+        artifact=artifact,
+        config=GraphArtifactPersistenceConfig(
+            mode=GraphArtifactRolloutMode.ENFORCE
+        ),
+    )
+    writer.materialize(request)
+    conflicting = replace(request, candidate={"count": 2})
+
+    with pytest.raises(GraphArtifactResultError) as conflict:
+        materializer.require_existing(conflicting)
+
+    assert conflict.value.error_code is GraphArtifactResultErrorCode.RESULT_IDENTITY_CONFLICT
 
 
 def test_artifact_readback_registers_catalog_and_settles_once() -> None:
