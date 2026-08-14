@@ -222,6 +222,7 @@ class ArtifactCatalogPort(Protocol):
         self,
         *,
         now: datetime,
+        tenant_id: str | None = None,
         physical_inventory: tuple["ArtifactVerificationReceipt", ...] | None = None,
     ) -> "ArtifactCatalogReconciliationPlan":
         ...

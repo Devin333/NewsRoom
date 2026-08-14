@@ -30,6 +30,11 @@ from interfaces.composition.research_settings import (
     ResearchRuntimeSettings,
     ResearchSourceSettings,
 )
+from interfaces.composition.research_graph_artifacts import (
+    ResearchGraphArtifactRuntimeComponents,
+    build_research_graph_artifact_governance_service,
+    compose_research_graph_artifact_runtime,
+)
 
 __all__ = [
     "LLMCacheConfigurationError",
@@ -38,6 +43,7 @@ __all__ = [
     "ResearchCapability",
     "ResearchCompositionError",
     "ResearchConfigurationError",
+    "ResearchGraphArtifactRuntimeComponents",
     "ResearchLLMSettings",
     "ResearchParserSettings",
     "ResearchRAGSettings",
@@ -49,11 +55,13 @@ __all__ = [
     "ResearchRuntimeUnavailableError",
     "ResearchSourceSettings",
     "build_research_application_service",
+    "build_research_graph_artifact_governance_service",
     "build_research_runtime_composition",
     "build_cache_aware_llm_router",
     "build_llm_cache_runtime",
     "build_llm_cache_runtime_from_env",
     "close_default_research_runtime",
+    "compose_research_graph_artifact_runtime",
     "default_research_runtime_provider",
     "reset_default_research_runtime",
 ]

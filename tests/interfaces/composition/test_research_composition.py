@@ -518,6 +518,24 @@ def test_enforce_mode_composes_real_graph_result_runtime(
         assert materializer._attempts.path == (
             settings.research_root / "graph-results.sqlite3"
         ).resolve()
+        governance_service = composition.graph_artifact_governance_service
+        assert governance_service is not None
+        governance_runtime = governance_service.runtime
+        assert governance_runtime._catalog is materializer._catalog
+        assert governance_runtime._ledger is materializer._attempts
+        assert governance_runtime._lifecycle.artifact_port is runtime.artifact_port
+        assert materializer._attempts.max_artifacts_per_tenant == (
+            settings.graph_artifact_persistence.max_artifacts_per_tenant
+        )
+        assert materializer._attempts.max_materialized_bytes_per_tenant == (
+            settings.graph_artifact_persistence.max_materialized_bytes_per_tenant
+        )
+        assert materializer._attempts.max_artifacts_per_class == (
+            settings.graph_artifact_persistence.max_artifacts_per_class
+        )
+        assert materializer._attempts.max_materialized_bytes_per_class == (
+            settings.graph_artifact_persistence.max_materialized_bytes_per_class
+        )
 
         workspace = _ResearchRunWorkspace(
             request=request,

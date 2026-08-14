@@ -218,6 +218,42 @@ def test_same_logical_identity_cannot_change_metadata_after_commit(tmp_path) -> 
     assert _state_path(tmp_path).read_bytes() == before
 
 
+def test_reconciliation_filters_physical_drift_to_explicit_tenant(tmp_path) -> None:
+    catalog = LocalJsonArtifactCatalog(tmp_path)
+    tenant_one = catalog.register(
+        _request(
+            _record(
+                tenant_id="tenant-1",
+                run_id="run-tenant-1",
+                artifact_id="artifact-tenant-1",
+                content_checksum="sha256:" + "1" * 64,
+            )
+        )
+    )
+    tenant_two = catalog.register(
+        _request(
+            _record(
+                tenant_id="tenant-2",
+                run_id="run-tenant-2",
+                artifact_id="artifact-tenant-2",
+                content_checksum="sha256:" + "2" * 64,
+            )
+        )
+    )
+
+    reconciled = catalog.reconcile(
+        now=NOW,
+        tenant_id="tenant-1",
+        physical_inventory=(),
+    )
+
+    assert reconciled.is_clean is False
+    assert {issue.entry_id for issue in reconciled.issues} == {
+        tenant_one.entry.entry_id
+    }
+    assert tenant_two.entry.entry_id not in json.dumps(reconciled.to_dict())
+
+
 def test_reference_scope_and_protected_reference_removal_guard(tmp_path) -> None:
     catalog = LocalJsonArtifactCatalog(tmp_path)
     registered = catalog.register(_request(_record()))

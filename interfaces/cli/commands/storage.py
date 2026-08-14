@@ -8,6 +8,7 @@ from typing import Any
 
 from infrastructure.storage.lifecycle import RetentionPolicy
 from interfaces.cli.commands.dispatch import CommandHandler, call_handler
+from interfaces.cli.commands.graph_artifacts import register as register_graph_artifacts
 from interfaces.services.storage_service import StorageApplicationService
 
 
@@ -122,6 +123,8 @@ def register(subparsers: argparse._SubParsersAction) -> None:
     )
     retention_apply_parser.add_argument("--json", action="store_true", help="Print machine-readable JSON")
     retention_apply_parser.set_defaults(handler=storage_retention_apply)
+
+    register_graph_artifacts(storage_subparsers)
 
 
 def storage_metrics(args: argparse.Namespace) -> int:

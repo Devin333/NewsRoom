@@ -20,6 +20,7 @@ from framework.harness.artifacts.governance import (
     GraphArtifactGovernanceLedgerPort,
     GraphArtifactPhysicalDeleteRequest,
     GraphArtifactPhysicalLifecyclePort,
+    GraphArtifactQuotaSnapshot,
     GraphArtifactUsageFact,
     GraphArtifactUsageKind,
     GraphArtifactUsageOutcome,
@@ -32,7 +33,9 @@ from framework.harness.artifacts.ports import ArtifactCatalogPort
 from framework.harness.artifacts.reporting import (
     build_daily_graph_artifact_cost_report,
     evaluate_graph_artifact_alerts,
+    evaluate_graph_artifact_reconciliation_alerts,
 )
+from framework.events.canonical import checksum_for
 from framework.harness.runtime.result_canonical import (
     aware_datetime,
     identifier,
@@ -367,6 +370,79 @@ class GraphArtifactGovernanceRuntime:
             )
         return stored
 
+    def quota_snapshots(
+        self,
+        *,
+        tenant_id: str,
+        captured_at: datetime | None = None,
+    ) -> tuple[GraphArtifactQuotaSnapshot, ...]:
+        tenant = identifier(tenant_id, "governance.tenant_id")
+        return self._ledger.quota_snapshots(
+            tenant_id=tenant,
+            captured_at=self._time(captured_at),
+        )
+
+    def reconcile_catalog(
+        self,
+        *,
+        tenant_id: str,
+        observed_at: datetime | None = None,
+    ) -> ArtifactCatalogReconciliationPlan:
+        tenant = identifier(tenant_id, "governance.tenant_id")
+        return self._catalog.reconcile(
+            now=self._time(observed_at),
+            tenant_id=tenant,
+        )
+
+    def evaluate_reconciliation_alerts(
+        self,
+        *,
+        tenant_id: str,
+        reconciliation: ArtifactCatalogReconciliationPlan,
+    ) -> tuple[GraphArtifactAlert, ...]:
+        tenant = identifier(tenant_id, "governance.tenant_id")
+        if not isinstance(reconciliation, ArtifactCatalogReconciliationPlan):
+            raise result_error(
+                GraphArtifactResultErrorCode.RESULT_SCHEMA_INVALID,
+                field="governance.reconciliation",
+            )
+        observed_at = reconciliation.generated_at
+        window_start = observed_at.replace(hour=0, minute=0, second=0, microsecond=0)
+        window_end = window_start + timedelta(days=1)
+        candidates = evaluate_graph_artifact_reconciliation_alerts(
+            tenant_id=tenant,
+            policy_version=self._config.policy_version,
+            window_start=window_start,
+            window_end=window_end,
+            reconciliation=reconciliation,
+        )
+        if self._config.mode is GraphArtifactRolloutMode.LEGACY:
+            return candidates
+        for issue in reconciliation.issues:
+            operation_id = (
+                "graph-artifact-catalog-drift://"
+                + checksum_for(
+                    {
+                        "tenant_id": tenant,
+                        "policy_version": self._config.policy_version,
+                        "window_start": window_start.isoformat(),
+                        "issue_id": issue.issue_id,
+                    }
+                ).removeprefix("sha256:")
+            )
+            self._ledger.record_usage(
+                GraphArtifactUsageFact.create(
+                    kind=GraphArtifactUsageKind.CATALOG_DRIFT,
+                    outcome=GraphArtifactUsageOutcome.FAILED,
+                    tenant_id=tenant,
+                    policy_version=self._config.policy_version,
+                    operation_id=operation_id,
+                    occurred_at=window_start,
+                    reason_code=GraphArtifactUsageReason.CATALOG_DRIFT.value,
+                )
+            )
+        return self._deliver_alerts(tenant_id=tenant, candidates=candidates)
+
     def evaluate_alerts(
         self,
         *,
@@ -400,18 +476,7 @@ class GraphArtifactGovernanceRuntime:
         )
         if self._config.mode is GraphArtifactRolloutMode.LEGACY:
             return candidates
-        delivered: list[GraphArtifactAlert] = []
-        for candidate in candidates:
-            existing = self._ledger.get_alert(
-                tenant_id=tenant,
-                alert_id=candidate.alert_id,
-            )
-            delivered.append(
-                self._ledger.put_alert(candidate)
-                if existing is None
-                else existing
-            )
-        return tuple(sorted(delivered, key=lambda alert: alert.alert_id))
+        return self._deliver_alerts(tenant_id=tenant, candidates=candidates)
 
     def list_alerts(
         self,
@@ -443,6 +508,25 @@ class GraphArtifactGovernanceRuntime:
                 "governance.acknowledged_by",
             ),
         )
+
+    def _deliver_alerts(
+        self,
+        *,
+        tenant_id: str,
+        candidates: tuple[GraphArtifactAlert, ...],
+    ) -> tuple[GraphArtifactAlert, ...]:
+        delivered: list[GraphArtifactAlert] = []
+        for candidate in candidates:
+            existing = self._ledger.get_alert(
+                tenant_id=tenant_id,
+                alert_id=candidate.alert_id,
+            )
+            delivered.append(
+                self._ledger.put_alert(candidate)
+                if existing is None
+                else existing
+            )
+        return tuple(sorted(delivered, key=lambda alert: alert.alert_id))
 
     def _coherent_plan_snapshot(
         self,

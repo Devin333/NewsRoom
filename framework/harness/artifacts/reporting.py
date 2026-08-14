@@ -395,6 +395,46 @@ def evaluate_graph_artifact_alerts(
     return tuple(sorted(alerts.values(), key=lambda alert: alert.alert_id))
 
 
+def evaluate_graph_artifact_reconciliation_alerts(
+    *,
+    tenant_id: str,
+    policy_version: str,
+    window_start: datetime,
+    window_end: datetime,
+    reconciliation: ArtifactCatalogReconciliationPlan,
+) -> tuple[GraphArtifactAlert, ...]:
+    if not isinstance(reconciliation, ArtifactCatalogReconciliationPlan):
+        raise result_error(
+            GraphArtifactResultErrorCode.RESULT_SCHEMA_INVALID,
+            field="alert.reconciliation",
+        )
+    alerts: dict[str, GraphArtifactAlert] = {}
+    for issue in reconciliation.issues:
+        alert = GraphArtifactAlert.create(
+            kind=GraphArtifactAlertKind.CATALOG_DRIFT,
+            status=GraphArtifactAlertStatus.OPEN,
+            tenant_id=tenant_id,
+            scope_ref=issue.issue_id,
+            policy_version=policy_version,
+            window_start=window_start,
+            window_end=window_end,
+            observed_value=1,
+            limit_value=0,
+            reason_code=GraphArtifactAlertReason.CATALOG_DRIFT.value,
+            created_at=window_start,
+            acknowledged_at=None,
+            acknowledged_by=None,
+        )
+        existing = alerts.get(alert.alert_id)
+        if existing is not None and existing != alert:
+            raise result_error(
+                GraphArtifactResultErrorCode.RESULT_IDENTITY_CONFLICT,
+                field="alert.identity",
+            )
+        alerts[alert.alert_id] = alert
+    return tuple(sorted(alerts.values(), key=lambda alert: alert.alert_id))
+
+
 def _add_claim(
     accumulators: dict[_DimensionKey, _CostAccumulator],
     *,
@@ -496,4 +536,5 @@ def _cache_lookup_scope(operation_id: str) -> str:
 __all__ = [
     "build_daily_graph_artifact_cost_report",
     "evaluate_graph_artifact_alerts",
+    "evaluate_graph_artifact_reconciliation_alerts",
 ]

@@ -32,6 +32,9 @@ from business.research.application.graph_result_committer import (
 from business.research.application.artifact_context import (
     ResearchGraphArtifactContextProvider,
 )
+from business.research.application.graph_artifact_governance import (
+    ResearchGraphArtifactGovernanceService,
+)
 from business.research.document.chunk_storage import PaperChunkStoreAdapter
 from business.research.domain import (
     research_event_tenant_id,
@@ -98,7 +101,6 @@ from framework.harness.runtime import (
     GraphArtifactRolloutMode,
     HarnessGraphResultRuntime,
     HarnessSubAgentResultAdapter,
-    PersistencePolicy,
     ResultMaterializer,
 )
 from framework.shared.time import utc_now
@@ -131,10 +133,6 @@ from infrastructure.research.github_repository import (
 from infrastructure.research.local_chunk_store import LocalChunkPayloadStore
 from infrastructure.research.source_provider import ArxivResearchSourceProvider
 from infrastructure.storage.events.factory import durable_event_storage_from_env
-from infrastructure.storage.artifacts import (
-    LocalJsonArtifactCatalog,
-    SQLiteGraphResultStore,
-)
 from infrastructure.storage.harness import (
     FilesystemSubAgentTranscriptStore,
     SQLiteHarnessSideEffectStore,
@@ -160,6 +158,9 @@ from interfaces.composition.research_settings import (
     ResearchParserSettings,
     ResearchRAGSettings,
     ResearchRuntimeSettings,
+)
+from interfaces.composition.research_graph_artifacts import (
+    compose_research_graph_artifact_runtime,
 )
 from interfaces.services.research_service import (
     ResearchApplicationService,
@@ -228,6 +229,7 @@ class ResearchRuntimeComposition:
         "_availability_error",
         "_close_lock",
         "_closed",
+        "_graph_artifact_governance_service",
         "_resources",
         "_service",
         "_settings",
@@ -242,6 +244,9 @@ class ResearchRuntimeComposition:
         source_runtime_provider: SourceRuntimeProvider,
         resources: Iterable[Any] = (),
         availability_error: ResearchCompositionError | None = None,
+        graph_artifact_governance_service: (
+            ResearchGraphArtifactGovernanceService | None
+        ) = None,
     ) -> None:
         if settings is not None and not isinstance(settings, ResearchRuntimeSettings):
             raise TypeError("settings must be ResearchRuntimeSettings")
@@ -256,6 +261,14 @@ class ResearchRuntimeComposition:
             raise TypeError("availability_error must be ResearchCompositionError")
         if settings is None and availability_error is None:
             raise ValueError("available Research composition requires settings")
+        if graph_artifact_governance_service is not None and not isinstance(
+            graph_artifact_governance_service,
+            ResearchGraphArtifactGovernanceService,
+        ):
+            raise TypeError(
+                "graph_artifact_governance_service must be "
+                "ResearchGraphArtifactGovernanceService"
+            )
 
         unique_resources: list[Any] = []
         seen: set[int] = set()
@@ -270,6 +283,9 @@ class ResearchRuntimeComposition:
         self._source_runtime_provider = source_runtime_provider
         self._resources = tuple(unique_resources)
         self._availability_error = availability_error
+        self._graph_artifact_governance_service = (
+            graph_artifact_governance_service
+        )
         self._close_lock = Lock()
         self._closed = False
 
@@ -292,6 +308,12 @@ class ResearchRuntimeComposition:
     @property
     def availability_error(self) -> ResearchCompositionError | None:
         return self._availability_error
+
+    @property
+    def graph_artifact_governance_service(
+        self,
+    ) -> ResearchGraphArtifactGovernanceService | None:
+        return self._graph_artifact_governance_service
 
     @property
     def available(self) -> bool:
@@ -1219,46 +1241,16 @@ def _build_configured_composition(
                 max_write_bytes=settings.artifact.max_bytes,
             ),
         )
-        graph_result_catalog: Any | None = None
-        graph_result_materializer: ResultMaterializer | None = None
-        if settings.graph_artifact_persistence.mode in {
-            GraphArtifactRolloutMode.ENFORCE,
-            GraphArtifactRolloutMode.READ_ONLY,
-        }:
-            graph_result_catalog = _compose_component(
-                ResearchCapability.GRAPH_ARTIFACT_PERSISTENCE,
-                lambda: LocalJsonArtifactCatalog(
-                    settings.artifact.root
-                    / "_records"
-                    / "graph_artifact_catalog"
-                ),
-            )
-            graph_result_store = _compose_component(
-                ResearchCapability.GRAPH_ARTIFACT_PERSISTENCE,
-                lambda: SQLiteGraphResultStore(
-                    settings.research_root / "graph-results.sqlite3",
-                    max_materialized_bytes_per_run=(
-                        settings.graph_artifact_persistence.max_materialized_bytes_per_run
-                    ),
-                    max_artifacts_per_run=(
-                        settings.graph_artifact_persistence.max_artifacts_per_run
-                    ),
-                ),
-            )
-            graph_result_materializer = _compose_component(
-                ResearchCapability.GRAPH_ARTIFACT_PERSISTENCE,
-                lambda: ResultMaterializer(
-                    policy=PersistencePolicy(
-                        settings.graph_artifact_persistence
-                    ),
-                    artifact_port=artifact_port,
-                    catalog=graph_result_catalog,
-                    quota=graph_result_store,
-                    usage=graph_result_store,
-                    cache=graph_result_store,
-                    attempts=graph_result_store,
-                ),
-            )
+        graph_artifact_components = _compose_component(
+            ResearchCapability.GRAPH_ARTIFACT_PERSISTENCE,
+            lambda: compose_research_graph_artifact_runtime(
+                settings,
+                artifact_port=artifact_port,
+            ),
+        )
+        graph_result_catalog = graph_artifact_components.catalog
+        graph_result_store = graph_artifact_components.store
+        graph_result_materializer = graph_artifact_components.materializer
         side_effect_store = _compose_component(
             ResearchCapability.ARTIFACT,
             lambda: SQLiteHarnessSideEffectStore(
@@ -1761,6 +1753,9 @@ def _build_configured_composition(
             service=service,
             source_runtime_provider=source_runtime_provider,
             resources=owned_resources,
+            graph_artifact_governance_service=(
+                graph_artifact_components.governance_service
+            ),
         )
     except BaseException:
         for resource in reversed(owned_resources):

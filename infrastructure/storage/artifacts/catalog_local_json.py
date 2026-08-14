@@ -635,13 +635,25 @@ class LocalJsonArtifactCatalog:
         self,
         *,
         now: datetime,
+        tenant_id: str | None = None,
         physical_inventory: tuple[ArtifactVerificationReceipt, ...] | None = None,
     ) -> ArtifactCatalogReconciliationPlan:
         actual_now = aware_datetime(now, "catalog.reconcile.now")
+        tenant = (
+            identifier(tenant_id, "catalog.reconcile.tenant_id")
+            if tenant_id is not None
+            else None
+        )
         state = self._read_snapshot(allow_drift=True)
         issues = list(state.issues)
         if physical_inventory is not None:
             issues.extend(_physical_inventory_issues(state, physical_inventory))
+        if tenant is not None:
+            issues = _tenant_reconciliation_issues(
+                state,
+                issues=issues,
+                tenant_id=tenant,
+            )
         return ArtifactCatalogReconciliationPlan.create(
             generated_at=actual_now,
             issues=issues,
@@ -1053,6 +1065,36 @@ def _physical_inventory_issues(
                 )
             )
     return tuple(sorted(set(issues), key=lambda item: item.issue_id))
+
+
+def _tenant_reconciliation_issues(
+    state: _CatalogState,
+    *,
+    issues: list[ArtifactCatalogReconciliationIssue],
+    tenant_id: str,
+) -> list[ArtifactCatalogReconciliationIssue]:
+    entry_ids = {
+        entry.entry_id
+        for entry in state.entries.values()
+        if entry.identity.tenant_id == tenant_id
+    }
+    subject_ids = set(entry_ids)
+    subject_ids.update(
+        claim.claim_id
+        for claim in state.claims.values()
+        if claim.tenant_id == tenant_id
+    )
+    subject_ids.update(
+        reference.reference_id
+        for reference in state.references.values()
+        if reference.tenant_id == tenant_id
+    )
+    return [
+        issue
+        for issue in issues
+        if issue.subject_id in subject_ids
+        or (issue.entry_id is not None and issue.entry_id in entry_ids)
+    ]
 
 
 def _decode_models(

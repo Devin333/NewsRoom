@@ -19,6 +19,13 @@ from business.research.application.graph_result_committer import (
     ResearchTaskPlanResultMaterializer,
     research_node_result_policy,
 )
+from business.research.application.graph_artifact_governance import (
+    ResearchGraphArtifactAlertList,
+    ResearchGraphArtifactGcApplyResult,
+    ResearchGraphArtifactGovernanceService,
+    ResearchGraphArtifactQuotaInspection,
+    ResearchGraphArtifactReconciliation,
+)
 from business.research.application.run_disposition import (
     ResearchRunDispositionDecision,
     ResearchRunDispositionReconciler,
@@ -42,6 +49,11 @@ __all__ = [
     "ResearchAnalysisResult",
     "ResearchDynamicTaskPlanUnavailableError",
     "ResearchGraphResultCommitter",
+    "ResearchGraphArtifactAlertList",
+    "ResearchGraphArtifactGcApplyResult",
+    "ResearchGraphArtifactGovernanceService",
+    "ResearchGraphArtifactQuotaInspection",
+    "ResearchGraphArtifactReconciliation",
     "ResearchGraphResultShadowObserver",
     "ResearchNodeResultPolicy",
     "ResearchTaskPlanResultMaterializer",
