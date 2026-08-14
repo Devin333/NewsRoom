@@ -57,6 +57,7 @@ _CONTEXT_REF_ONLY_ARTIFACT_TYPES = frozenset(
         "context-source-snapshot",
     }
 )
+_GRAPH_RESULT_REF_ONLY_PREFIX = "graph-result-"
 
 
 CANONICAL_ARTIFACT_SCHEME = "artifact"
@@ -860,6 +861,10 @@ class FilesystemHarnessArtifactPort:
                 manifest,
                 artifact_type=artifact_type,
                 path=path,
+            ) or _is_verified_graph_result_ref_only_artifact(
+                manifest,
+                artifact_type=artifact_type,
+                path=path,
             ):
                 continue
             artifact_types.append(artifact_type)
@@ -1409,6 +1414,46 @@ def _is_verified_context_ref_only_artifact(
     return (
         isinstance(metadata, Mapping)
         and metadata.get("context_ref_only") is True
+        and metadata.get("identity_checksum") == f"sha256:{identity_suffix}"
+    )
+
+
+def _is_verified_graph_result_ref_only_artifact(
+    manifest: Mapping[str, Any],
+    *,
+    artifact_type: Any,
+    path: Any,
+) -> bool:
+    if (
+        not isinstance(artifact_type, str)
+        or not artifact_type.startswith(_GRAPH_RESULT_REF_ONLY_PREFIX)
+        or not isinstance(path, str)
+    ):
+        return False
+    identity_suffix = artifact_type.removeprefix(_GRAPH_RESULT_REF_ONLY_PREFIX)
+    if len(identity_suffix) != 64:
+        return False
+    try:
+        int(identity_suffix, 16)
+    except ValueError:
+        return False
+    artifact_index = manifest.get("artifact_index")
+    if not isinstance(artifact_index, list):
+        return False
+    matches = [
+        item
+        for item in artifact_index
+        if isinstance(item, Mapping)
+        and item.get("artifact_id") == artifact_type
+        and item.get("kind") == artifact_type
+        and item.get("path") == path
+    ]
+    if len(matches) != 1:
+        return False
+    metadata = matches[0].get("metadata")
+    return (
+        isinstance(metadata, Mapping)
+        and metadata.get("graph_result_ref_only") is True
         and metadata.get("identity_checksum") == f"sha256:{identity_suffix}"
     )
 

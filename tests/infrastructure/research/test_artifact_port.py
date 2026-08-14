@@ -120,6 +120,39 @@ def test_artifact_ref_verifier_rejects_missing_and_cross_run_refs(tmp_path) -> N
         )
 
 
+def test_verified_graph_result_member_is_excluded_from_public_member_set(
+    tmp_path,
+) -> None:
+    port = FilesystemHarnessArtifactPort(tmp_path)
+    identity = "a" * 64
+    artifact_type = f"graph-result-{identity}"
+    with port.bind_run("run-1"):
+        port.write_artifact(
+            ArtifactWriteRequest(
+                artifact_type,
+                {"candidate_checksum": f"sha256:{identity}"},
+                metadata={
+                    "run_id": "run-1",
+                    "graph_result_ref_only": True,
+                    "identity_checksum": f"sha256:{identity}",
+                },
+            )
+        )
+        port.write_artifact(
+            ArtifactWriteRequest(
+                "research-analysis",
+                {"status": "candidate"},
+                metadata={"run_id": "run-1"},
+            )
+        )
+
+    manifest = port.manager.read_run_manifest("run-1")
+
+    assert port._v2_artifact_types(manifest, run_id="run-1") == (
+        "research-analysis",
+    )
+
+
 def test_long_artifact_type_uses_bounded_hashed_path_without_changing_ref(
     tmp_path,
 ) -> None:

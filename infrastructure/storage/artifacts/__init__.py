@@ -12,6 +12,10 @@ from infrastructure.storage.artifacts.catalog_local_json import (
     CATALOG_SCHEMA_VERSION,
     LocalJsonArtifactCatalog,
 )
+from infrastructure.storage.artifacts.result_sqlite import (
+    SQLITE_GRAPH_RESULT_STORE_SCHEMA_VERSION,
+    SQLiteGraphResultStore,
+)
 from framework.agent.artifacts.models import ArtifactRef, ArtifactWriteRequest
 
 __all__ = [
@@ -24,5 +28,7 @@ __all__ = [
     "FilesystemArtifactStore",
     "LocalJsonArtifactIndexStore",
     "LocalJsonArtifactCatalog",
+    "SQLITE_GRAPH_RESULT_STORE_SCHEMA_VERSION",
+    "SQLiteGraphResultStore",
     "artifact_index_store_from_env",
 ]

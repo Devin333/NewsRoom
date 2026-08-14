@@ -109,6 +109,14 @@ class ArtifactCatalogPort(Protocol):
     def get(self, entry_id: str) -> "ArtifactCatalogEntry":
         ...
 
+    def get_by_ref(
+        self,
+        *,
+        tenant_id: str,
+        ref: str,
+    ) -> "ArtifactCatalogEntry":
+        ...
+
     def find_by_checksum(
         self,
         *,

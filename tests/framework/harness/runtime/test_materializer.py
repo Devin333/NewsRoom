@@ -8,7 +8,12 @@ from typing import Any
 
 import pytest
 
-from framework.harness.artifacts.catalog import ArtifactCatalogRegistrationRequest
+from framework.harness.artifacts.catalog import (
+    ArtifactCatalogClaim,
+    ArtifactCatalogEntry,
+    ArtifactCatalogRegistrationRequest,
+    ArtifactCatalogRegistrationResult,
+)
 from framework.harness.artifacts.ports import ArtifactPort, ArtifactRef, ArtifactWriteRequest
 from framework.harness.runtime import (
     ArtifactClass,
@@ -81,7 +86,19 @@ class RecordingCatalog:
 
     def register(self, request: ArtifactCatalogRegistrationRequest):
         self.requests.append(request)
-        return object()
+        entry = ArtifactCatalogEntry.from_verified_record(
+            request.record,
+            request.verification,
+        )
+        return ArtifactCatalogRegistrationResult(
+            entry=entry,
+            claim=ArtifactCatalogClaim.for_record(
+                request.record,
+                entry_id=entry.entry_id,
+            ),
+            reference=request.initial_reference,
+            deduplicated=False,
+        )
 
 
 class RecordingQuota:

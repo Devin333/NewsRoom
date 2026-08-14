@@ -11,6 +11,7 @@ from typing import Any, Protocol, runtime_checkable
 
 from framework.harness.artifacts.catalog import (
     ArtifactCatalogRegistrationRequest,
+    ArtifactCatalogRegistrationResult,
     ArtifactVerificationReceipt,
 )
 from framework.harness.artifacts.ports import (
@@ -500,6 +501,8 @@ class ResultMaterializer:
                 "node_id": request.binding.node_id,
                 "attempt_id": request.binding.attempt_id,
                 "candidate_checksum": request.candidate_checksum,
+                "graph_result_ref_only": True,
+                "identity_checksum": _artifact_identity_checksum(artifact_type),
             },
         )
         try:
@@ -525,12 +528,28 @@ class ResultMaterializer:
             ).initial_reference,
         )
         try:
-            self._catalog.register(registration)
+            registered = self._catalog.register(registration)
         except GraphArtifactResultError:
             raise
         except Exception as exc:
             raise result_error(GraphArtifactResultErrorCode.ARTIFACT_WRITE_FAILED, field="catalog.register") from exc
-        return record
+        if not isinstance(registered, ArtifactCatalogRegistrationResult):
+            raise result_error(
+                GraphArtifactResultErrorCode.ARTIFACT_WRITE_FAILED,
+                field="catalog.registration",
+            )
+        canonical = registered.claim.record
+        if (
+            canonical.scope() != record.scope()
+            or canonical.content_checksum != record.content_checksum
+            or canonical.media_type != record.media_type
+            or canonical.artifact_class is not record.artifact_class
+        ):
+            raise result_error(
+                GraphArtifactResultErrorCode.ARTIFACT_SCOPE_MISMATCH,
+                field="catalog.registration",
+            )
+        return canonical
 
     def _materialize_cache(
         self,
@@ -811,6 +830,19 @@ def _derived_identifier(prefix: str, request: NodeResultRequest) -> str:
     }
     digest = hashlib.sha256(stable_json_dumps(payload).encode("utf-8")).hexdigest()
     return f"{prefix}-{digest}"
+
+
+def _artifact_identity_checksum(artifact_type: str) -> str:
+    prefix = "graph-result-"
+    if not artifact_type.startswith(prefix):
+        raise result_error(
+            GraphArtifactResultErrorCode.RESULT_SCHEMA_INVALID,
+            field="artifact_type",
+        )
+    return checksum(
+        f"sha256:{artifact_type.removeprefix(prefix)}",
+        "artifact.identity_checksum",
+    )
 
 
 __all__ = [

@@ -231,6 +231,32 @@ class LocalJsonArtifactCatalog:
                 field="catalog.entry_id",
             ) from exc
 
+    def get_by_ref(
+        self,
+        *,
+        tenant_id: str,
+        ref: str,
+    ) -> ArtifactCatalogEntry:
+        tenant = identifier(tenant_id, "catalog.tenant_id")
+        physical_ref = reference(ref, "catalog.ref")
+        matches = tuple(
+            entry
+            for entry in self._read_snapshot().entries.values()
+            if entry.identity.tenant_id == tenant
+            and entry.record.ref == physical_ref
+        )
+        if len(matches) == 1:
+            return matches[0]
+        if not matches:
+            raise result_error(
+                GraphArtifactResultErrorCode.ARTIFACT_CATALOG_NOT_FOUND,
+                field="catalog.ref",
+            )
+        raise result_error(
+            GraphArtifactResultErrorCode.ARTIFACT_CATALOG_CORRUPT,
+            field="catalog.ref",
+        )
+
     def find_by_checksum(
         self,
         *,

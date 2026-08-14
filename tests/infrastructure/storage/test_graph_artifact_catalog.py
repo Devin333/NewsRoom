@@ -102,6 +102,10 @@ def test_adapter_satisfies_port_and_deduplicates_across_runs_after_restart(tmp_p
     assert second.deduplicated is True
     assert second.entry == first.entry
     assert second.entry.record.ref == "artifact://run-1/artifact-a"
+    assert catalog.get_by_ref(
+        tenant_id="tenant-1",
+        ref="artifact://run-1/artifact-a",
+    ) == first.entry
     assert catalog.find_by_checksum(tenant_id="tenant-1", content_checksum=CHECKSUM) == (first.entry,)
     assert catalog.list_by_run(tenant_id="tenant-1", run_id="run-1") == (first.entry,)
     assert catalog.list_by_run(tenant_id="tenant-1", run_id="run-2") == (first.entry,)
@@ -114,6 +118,22 @@ def test_adapter_satisfies_port_and_deduplicates_across_runs_after_restart(tmp_p
     assert len(state["entries"]) == 1
     assert len(state["claims"]) == 2
     assert len(state["references"]) == 2
+    with pytest.raises(GraphArtifactResultError) as missing_ref:
+        catalog.get_by_ref(
+            tenant_id="tenant-1",
+            ref="artifact://run-2/artifact-b",
+        )
+    assert missing_ref.value.error_code is (
+        GraphArtifactResultErrorCode.ARTIFACT_CATALOG_NOT_FOUND
+    )
+    with pytest.raises(GraphArtifactResultError) as wrong_tenant:
+        catalog.get_by_ref(
+            tenant_id="tenant-2",
+            ref="artifact://run-1/artifact-a",
+        )
+    assert wrong_tenant.value.error_code is (
+        GraphArtifactResultErrorCode.ARTIFACT_CATALOG_NOT_FOUND
+    )
 
 
 def test_same_logical_identity_different_checksum_fails_without_mutation(tmp_path) -> None:
