@@ -27,6 +27,8 @@ from framework.harness.runtime.tool_result_adapter import (
 )
 from framework.shared.json import stable_json_dumps
 from framework.tool import (
+    MCPServerConfig,
+    MCPToolAdapter,
     ToolCall,
     ToolDefinition,
     ToolExecutor,
@@ -475,3 +477,93 @@ def test_restart_after_materialization_recovers_without_tool_reexecution() -> No
     assert artifact.write_count == 1
     assert attempts.put_count == 1
     assert port.recover_graph(fixture.activity.run_id).pending_activity_results == ()
+
+
+def test_restart_after_mcp_materialization_does_not_recall_remote_server() -> None:
+    class RemoteClient:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        @staticmethod
+        def list_tools(_server):
+            return [
+                {
+                    "name": "lookup",
+                    "inputSchema": {"type": "object", "properties": {}},
+                    "resultPersistence": {"required_for_replay": True},
+                }
+            ]
+
+        def call_tool(self, _server, remote_tool_name, arguments):
+            assert remote_tool_name == "lookup"
+            assert arguments == {}
+            self.calls += 1
+            return {"value": "durable-mcp-result"}
+
+    port = FailResultProjectionPort()
+    fixture = _dispatched("run-mcp-restart", port=port)
+    client = RemoteClient()
+    registry = ToolRegistry()
+    definition = MCPToolAdapter(client).register_tools(
+        registry,
+        MCPServerConfig(
+            server_id="remote-search",
+            name="Remote Search",
+            transport="in_memory",
+        ),
+    )[0]
+    artifact = RecordingArtifactPort()
+    attempts = RecordingAttempts()
+    cache = RecordingCache()
+    catalog = RecordingCatalog()
+    materializer = _materializer(
+        artifact=artifact,
+        attempts=attempts,
+        cache=cache,
+        catalog=catalog,
+        quota=RecordingQuota(),
+    )
+    runtime = build_harness_tool_activity_runtime(
+        registry=registry,
+        materializer=materializer,
+        graph_runtime=HarnessGraphControlPlaneRuntime(port),
+    )
+    policy = ToolPolicy(
+        allowed_tools=[definition.name],
+        allow_mcp_tools=True,
+        require_explicit_allowlist=True,
+        require_approval_for_side_effects=False,
+    )
+    port.fail_result_projection = True
+
+    with pytest.raises(RuntimeError, match="result projection unavailable"):
+        _execute(runtime, fixture, definition, policy=policy)
+
+    assert client.calls == 1
+    assert artifact.write_count == 1
+    assert attempts.put_count == 1
+
+    restarted = build_harness_tool_activity_runtime(
+        registry=registry,
+        materializer=_materializer(
+            artifact=artifact,
+            attempts=attempts,
+            cache=cache,
+            catalog=catalog,
+            quota=RecordingQuota(),
+        ),
+        graph_runtime=HarnessGraphControlPlaneRuntime(port),
+    )
+    recovered = restarted.recover_and_accept(
+        activity=fixture.activity,
+        graph=fixture.graph,
+        tenant_id=TENANT_ID,
+        tenant_scope_ref=TENANT_SCOPE_REF,
+        run_spec_checksum=fixture.run_spec_checksum,
+        occurred_at=NOW + timedelta(minutes=2),
+    )
+
+    assert recovered.recovered is True
+    assert client.calls == 1
+    assert artifact.write_count == 1
+    assert attempts.put_count == 1
