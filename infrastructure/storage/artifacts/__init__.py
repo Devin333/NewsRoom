@@ -16,16 +16,24 @@ from infrastructure.storage.artifacts.result_sqlite import (
     SQLITE_GRAPH_RESULT_STORE_SCHEMA_VERSION,
     SQLiteGraphResultStore,
 )
+from infrastructure.storage.artifacts.graph_terminal import (
+    DEFAULT_MAX_GRAPH_ARTIFACT_READ_BYTES,
+    DEFAULT_MAX_GRAPH_TERMINAL_MANIFEST_BYTES,
+    FilesystemGraphTerminalArtifactReader,
+)
 from framework.agent.artifacts.models import ArtifactRef, ArtifactWriteRequest
 
 __all__ = [
     "ArtifactChecksumMismatchError",
     "CATALOG_SCHEMA_VERSION",
+    "DEFAULT_MAX_GRAPH_ARTIFACT_READ_BYTES",
+    "DEFAULT_MAX_GRAPH_TERMINAL_MANIFEST_BYTES",
     "ArtifactIndexNotFoundError",
     "ArtifactNotFoundError",
     "ArtifactRef",
     "ArtifactWriteRequest",
     "FilesystemArtifactStore",
+    "FilesystemGraphTerminalArtifactReader",
     "LocalJsonArtifactIndexStore",
     "LocalJsonArtifactCatalog",
     "SQLITE_GRAPH_RESULT_STORE_SCHEMA_VERSION",
