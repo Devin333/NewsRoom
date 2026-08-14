@@ -399,6 +399,7 @@ class ResearchGraphResultCommitter:
         tenant_id: str,
         tenant_scope_ref: str,
         request_factory: ResearchGraphResultRequestFactory | None = None,
+        context_fingerprint_resolver: Callable[[str], str | None] | None = None,
     ) -> None:
         if not isinstance(materializer, ResultMaterializer):
             raise TypeError("materializer must be ResultMaterializer")
@@ -424,6 +425,10 @@ class ResearchGraphResultCommitter:
             raise TypeError(
                 "request_factory must be ResearchGraphResultRequestFactory"
             )
+        if context_fingerprint_resolver is not None and not callable(
+            context_fingerprint_resolver
+        ):
+            raise TypeError("context_fingerprint_resolver must be callable")
         self._materializer = materializer
         self._graph_result_runtime = graph_result_runtime
         self._config = config
@@ -432,6 +437,7 @@ class ResearchGraphResultCommitter:
         self._request_factory = (
             request_factory or ResearchGraphResultRequestFactory()
         )
+        self._context_fingerprint_resolver = context_fingerprint_resolver
 
     def commit_result(
         self,
@@ -469,6 +475,11 @@ class ResearchGraphResultCommitter:
             graph=graph,
             run_spec_checksum=run_spec_checksum,
             occurred_at=occurred_at,
+            context_fingerprint=(
+                None
+                if self._context_fingerprint_resolver is None
+                else self._context_fingerprint_resolver(activity.node_id)
+            ),
         )
 
 

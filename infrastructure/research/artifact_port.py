@@ -310,6 +310,58 @@ class FilesystemHarnessArtifactPort:
             run_id=run_id,
         )
 
+    def read_graph_result_artifact(
+        self,
+        ref: str,
+        *,
+        expected_run_id: str,
+    ) -> dict[str, Any]:
+        """Read only a verified internal graph-result ref-only artifact."""
+
+        run_id: str | None = None
+        try:
+            run_id, artifact_type = self._parse_ref(ref)
+            expected = validate_artifact_path_segment(
+                expected_run_id,
+                field="expected graph result run_id",
+            )
+            if run_id != expected:
+                raise ArtifactRunBindingError(
+                    "graph result ref run_id does not match the expected run"
+                )
+            manifest = self.manager.read_run_manifest(run_id)
+            relative_path = self._canonical_path(artifact_type)
+            if not _is_verified_graph_result_ref_only_artifact(
+                manifest,
+                artifact_type=artifact_type,
+                path=relative_path,
+            ):
+                raise ArtifactStoreMetadataError(
+                    "artifact is not a verified graph-result ref-only object"
+                )
+            result = self._read_artifact_payload(
+                manifest,
+                run_id=run_id,
+                artifact_type=artifact_type,
+            )
+        except Exception as exc:
+            emit_research_persistence_diagnostic(
+                component="artifact_store",
+                operation="graph_result_artifact_read",
+                outcome="failed",
+                reason=_artifact_failure_reason(exc),
+                run_id=run_id,
+            )
+            raise
+        emit_research_persistence_diagnostic(
+            component="artifact_store",
+            operation="graph_result_artifact_read",
+            outcome="succeeded",
+            reason="completed",
+            run_id=run_id,
+        )
+        return result
+
     def read_diagnostic_artifact(
         self,
         ref: str,

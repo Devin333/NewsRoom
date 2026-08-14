@@ -8,6 +8,18 @@ from framework.harness.runtime.context_replay import (
     ContextCompactionReplayReport,
     ContextSnapshotReplayReader,
 )
+from framework.harness.runtime.artifact_context import (
+    APPROVED_ARTIFACT_LOAD_PLAN_SCHEMA,
+    ARTIFACT_CONTEXT_LOAD_RESULT_SCHEMA,
+    ARTIFACT_CONTEXT_PROJECTION_SCHEMA,
+    ApprovedArtifactLoadItem,
+    ApprovedArtifactLoadPlan,
+    ArtifactContextItem,
+    ArtifactContextLoadResult,
+    ArtifactContextLoader,
+    ArtifactContextLoadPlanner,
+    ArtifactContextProviderPort,
+)
 from framework.harness.runtime.durable_state import HarnessDurableState
 from framework.harness.runtime.replay import HarnessReplayReader, HarnessReplayReport, HarnessTraceExporter
 from framework.harness.runtime.result_errors import (
@@ -22,6 +34,7 @@ from framework.harness.runtime.result_models import (
     ContextAssemblyRequest,
     ContextLoadMode,
     ContextPolicy,
+    ContextPurpose,
     NodeResultBinding,
     NodeResultEnvelope,
     NodeResultStatus,
@@ -86,7 +99,17 @@ from framework.harness.runtime.subagent_result_adapter import (
 )
 
 __all__ = [
+    "APPROVED_ARTIFACT_LOAD_PLAN_SCHEMA",
+    "ARTIFACT_CONTEXT_LOAD_RESULT_SCHEMA",
+    "ARTIFACT_CONTEXT_PROJECTION_SCHEMA",
+    "ApprovedArtifactLoadItem",
+    "ApprovedArtifactLoadPlan",
     "ArtifactClass",
+    "ArtifactContextItem",
+    "ArtifactContextLoadResult",
+    "ArtifactContextLoader",
+    "ArtifactContextLoadPlanner",
+    "ArtifactContextProviderPort",
     "ArtifactRecord",
     "BoundedSummary",
     "CacheRef",
@@ -96,6 +119,7 @@ __all__ = [
     "ContextCompactionReplayReport",
     "ContextLoadMode",
     "ContextPolicy",
+    "ContextPurpose",
     "ContextSnapshotReplayReader",
     "DEFAULT_GRAPH_ARTIFACT_POLICY_VERSION",
     "GraphArtifactDedupScope",

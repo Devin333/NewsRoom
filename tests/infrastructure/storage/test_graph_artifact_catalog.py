@@ -413,6 +413,11 @@ def test_dedup_claim_preserves_logical_record_with_canonical_ref(tmp_path) -> No
 
     claims = catalog.list_claims_by_run(tenant_id="tenant-1", run_id="run-2")
     assert len(claims) == 1
+    assert catalog.get_claim(
+        tenant_id="tenant-1",
+        run_id="run-2",
+        artifact_id="artifact-2",
+    ) == claims[0]
     assert claims[0].record.run_id == "run-2"
     assert claims[0].record.artifact_class is ArtifactClass.REPORT
     assert claims[0].record.required_for_publication is True

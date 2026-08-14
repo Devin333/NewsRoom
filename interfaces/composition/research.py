@@ -29,6 +29,9 @@ from business.research.application.graph_result_committer import (
     ResearchGraphResultShadowObserver,
     ResearchTaskPlanResultMaterializer,
 )
+from business.research.application.artifact_context import (
+    ResearchGraphArtifactContextProvider,
+)
 from business.research.document.chunk_storage import PaperChunkStoreAdapter
 from business.research.domain import (
     research_event_tenant_id,
@@ -1216,6 +1219,7 @@ def _build_configured_composition(
                 max_write_bytes=settings.artifact.max_bytes,
             ),
         )
+        graph_result_catalog: Any | None = None
         graph_result_materializer: ResultMaterializer | None = None
         if settings.graph_artifact_persistence.mode in {
             GraphArtifactRolloutMode.ENFORCE,
@@ -1570,6 +1574,7 @@ def _build_configured_composition(
             *,
             event_port: HarnessTransitionPort,
             request: AnalyzePaperRequest,
+            workspace: Any | None = None,
         ):
             mode = settings.graph_artifact_persistence.mode
             if mode not in {
@@ -1596,6 +1601,14 @@ def _build_configured_composition(
                 config=settings.graph_artifact_persistence,
                 tenant_id=result_tenant_id,
                 tenant_scope_ref=checksum_for(result_tenant_id),
+                context_fingerprint_resolver=(
+                    None
+                    if workspace is None
+                    else lambda node_id: _research_context_fingerprint(
+                        workspace,
+                        node_id=node_id,
+                    )
+                ),
             )
 
         def graph_result_observer_factory(
@@ -1628,6 +1641,22 @@ def _build_configured_composition(
             _run_id: str,
             event_port: HarnessTransitionPort,
         ) -> ContextAssembler:
+            artifact_context_provider = None
+            if settings.graph_artifact_persistence.mode in {
+                GraphArtifactRolloutMode.ENFORCE,
+                GraphArtifactRolloutMode.READ_ONLY,
+            }:
+                if graph_result_catalog is None:
+                    raise ResearchRuntimeUnavailableError(
+                        (ResearchCapability.GRAPH_ARTIFACT_PERSISTENCE,),
+                        retryable=False,
+                    )
+                artifact_context_provider = ResearchGraphArtifactContextProvider(
+                    event_port=event_port,
+                    catalog=graph_result_catalog,
+                    reader=artifact_port,
+                    config=settings.graph_artifact_persistence,
+                )
             return build_research_context_assembler(
                 artifact_port=artifact_port,
                 event_port=event_port,
@@ -1635,6 +1664,7 @@ def _build_configured_composition(
                 model=settings.llm.model,
                 max_input_tokens=settings.llm.max_input_tokens,
                 max_output_tokens=settings.llm.max_output_tokens,
+                artifact_context_provider=artifact_context_provider,
             )
 
         def rag_context_assembler_factory(spec: RAGSessionSpec) -> ContextAssembler:
@@ -1643,9 +1673,13 @@ def _build_configured_composition(
                 for key in ("tenant_id", "user_id", "memory_namespace")
                 if spec.source_policy.get(key)
             }
-            return context_assembler_factory(
-                spec.run_id,
-                scoped_event_port_factory(spec.run_id, actor_metadata),
+            return build_research_context_assembler(
+                artifact_port=artifact_port,
+                event_port=scoped_event_port_factory(spec.run_id, actor_metadata),
+                provider=settings.llm.provider,
+                model=settings.llm.model,
+                max_input_tokens=settings.llm.max_input_tokens,
+                max_output_tokens=settings.llm.max_output_tokens,
             )
 
         rag_runtime = BoundedDocumentRAGRuntime(
@@ -1895,6 +1929,58 @@ def _research_result_field(result: Any, name: str) -> Any:
     if isinstance(result, Mapping):
         return result.get(name)
     return getattr(result, name, None)
+
+
+def _research_context_fingerprint(
+    workspace: Any,
+    *,
+    node_id: str,
+) -> str | None:
+    if node_id != "publish_artifacts":
+        return None
+    envelope = getattr(workspace, "context_envelope", None)
+    if envelope is None:
+        assembler = getattr(workspace, "context_assembler", None)
+        provider = getattr(assembler, "artifact_context_provider", None)
+        load_artifact_context = getattr(provider, "load_artifact_context", None)
+        request = getattr(workspace, "request", None)
+        if not callable(load_artifact_context) or not isinstance(
+            request,
+            AnalyzePaperRequest,
+        ):
+            raise HarnessValidationError(
+                "Research publication result requires approved artifact context",
+                code="research_artifact_context_fingerprint_missing",
+            )
+        actor_metadata = {"memory_namespace": str(request.memory_namespace)}
+        if request.tenant_id:
+            actor_metadata["tenant_id"] = request.tenant_id
+        if request.user_id:
+            actor_metadata["user_id"] = request.user_id
+        loaded = load_artifact_context(
+            {
+                "run_id": request.run_id,
+                "step_id": node_id,
+                "metadata": actor_metadata,
+            }
+        )
+        fingerprint = getattr(loaded, "context_fingerprint", None)
+    elif isinstance(envelope, ContextEnvelope):
+        fingerprint = envelope.metadata.get("artifact_context_fingerprint")
+    else:
+        raise HarnessValidationError(
+            "Research publication result requires approved artifact context",
+            code="research_artifact_context_fingerprint_missing",
+        )
+    if (
+        not isinstance(fingerprint, str)
+        or re.fullmatch(r"sha256:[0-9a-f]{64}", fingerprint) is None
+    ):
+        raise HarnessValidationError(
+            "Research publication context fingerprint is invalid",
+            code="research_artifact_context_fingerprint_missing",
+        )
+    return fingerprint
 
 
 def _research_run_store_schema_version(version: str) -> str:

@@ -34,6 +34,10 @@ _MAX_SUMMARY_BYTES = 8 * 1024
 _MAX_SUMMARY_TOKENS = 2_048
 _MAX_REFS = 64
 _MAX_LINEAGE_BYTES = 48 * 1024
+_ARTIFACT_SENSITIVITIES = frozenset({"public", "internal", "restricted", "secret"})
+_CONTEXT_POLICIES = frozenset(
+    {"summary_only", "sample_allowed", "ref_load_allowed"}
+)
 _RESERVED_INLINE_FIELDS = frozenset(
     {
         "candidate",
@@ -141,6 +145,8 @@ class HarnessGraphArtifactRefProjection:
     graph_id: str
     node_id: str
     attempt_id: str
+    sensitivity: str
+    context_policy: str
     required_for_replay: bool
     required_for_publication: bool
 
@@ -153,6 +159,15 @@ class HarnessGraphArtifactRefProjection:
         object.__setattr__(self, "media_type", _media_type(self.media_type, "artifact.media_type"))
         object.__setattr__(self, "artifact_class", required_text(self.artifact_class, "artifact.artifact_class"))
         object.__setattr__(self, "retention_class", required_text(self.retention_class, "artifact.retention_class"))
+        sensitivity = required_text(self.sensitivity, "artifact.sensitivity")
+        context_policy = required_text(self.context_policy, "artifact.context_policy")
+        if sensitivity not in _ARTIFACT_SENSITIVITIES or context_policy not in _CONTEXT_POLICIES:
+            raise HarnessValidationError(
+                "graph artifact ref policy projection is invalid",
+                code="graph_result_lineage_ref_invalid",
+            )
+        object.__setattr__(self, "sensitivity", sensitivity)
+        object.__setattr__(self, "context_policy", context_policy)
         for field_name in ("tenant_id", "run_id", "graph_id", "node_id", "attempt_id"):
             object.__setattr__(self, field_name, _identifier(getattr(self, field_name), f"artifact.{field_name}"))
         for field_name in ("required_for_replay", "required_for_publication"):
@@ -177,6 +192,8 @@ class HarnessGraphArtifactRefProjection:
             "graph_id": self.graph_id,
             "node_id": self.node_id,
             "attempt_id": self.attempt_id,
+            "sensitivity": self.sensitivity,
+            "context_policy": self.context_policy,
             "required_for_replay": self.required_for_replay,
             "required_for_publication": self.required_for_publication,
         }
@@ -197,6 +214,8 @@ class HarnessGraphArtifactRefProjection:
             "graph_id",
             "node_id",
             "attempt_id",
+            "sensitivity",
+            "context_policy",
             "required_for_replay",
             "required_for_publication",
         }

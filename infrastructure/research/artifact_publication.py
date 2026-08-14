@@ -61,6 +61,7 @@ from infrastructure.research.artifact_port import (
     ArtifactWriteConflictError,
     FilesystemHarnessArtifactPort,
     _is_verified_context_ref_only_artifact,
+    _is_verified_graph_result_ref_only_artifact,
 )
 
 
@@ -769,6 +770,11 @@ class ResearchArtifactBundleHandler:
                     for artifact_type, path in existing_artifacts.items()
                     if artifact_type != "manifest"
                     and not _is_verified_context_ref_only_artifact(
+                        manifest,
+                        artifact_type=artifact_type,
+                        path=path,
+                    )
+                    and not _is_verified_graph_result_ref_only_artifact(
                         manifest,
                         artifact_type=artifact_type,
                         path=path,

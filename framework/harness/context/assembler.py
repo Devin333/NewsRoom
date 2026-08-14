@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import replace
 from typing import Any, Callable, Mapping, Protocol, runtime_checkable
 
+from framework.events.canonical import canonical_json_bytes
 from framework.harness.context.budget import ContextBudgetEstimator
 from framework.harness.context.cache import ContextCachePolicyBuilder
 from framework.harness.context.compaction_models import (
@@ -24,6 +25,15 @@ from framework.harness.context.models import (
 )
 from framework.harness.context.snapshot import ContextSnapshotStore
 from framework.harness.control_plane.errors import HarnessValidationError
+from framework.harness.runtime.artifact_context import (
+    ArtifactContextLoadResult,
+    ArtifactContextProviderPort,
+)
+from framework.harness.runtime.result_errors import (
+    GraphArtifactResultErrorCode,
+    result_error,
+)
+from framework.harness.runtime.result_canonical import estimated_tokens
 
 
 @runtime_checkable
@@ -48,6 +58,7 @@ class ContextAssembler:
         deployment_id: str | None = None,
         physical_profile_revision: str | None = None,
         compaction_policy: ContextCompactionPolicy | None = None,
+        artifact_context_provider: ArtifactContextProviderPort | None = None,
     ) -> None:
         if compaction_runtime is not None and not isinstance(
             compaction_runtime, _ContextCompactionRuntimePort
@@ -69,6 +80,13 @@ class ContextAssembler:
             raise HarnessValidationError(
                 "compaction_policy must be ContextCompactionPolicy"
             )
+        if artifact_context_provider is not None and not isinstance(
+            artifact_context_provider,
+            ArtifactContextProviderPort,
+        ):
+            raise HarnessValidationError(
+                "artifact_context_provider must implement ArtifactContextProviderPort"
+            )
         self.snapshot_store = snapshot_store or ContextSnapshotStore()
         self.cache_policy_builder = cache_policy_builder or ContextCachePolicyBuilder()
         self.budget_estimator = budget_estimator or ContextBudgetEstimator()
@@ -80,9 +98,11 @@ class ContextAssembler:
             "physical_profile_revision",
         )
         self.compaction_policy = compaction_policy
+        self.artifact_context_provider = artifact_context_provider
         self.events: list[dict[str, Any]] = []
 
     def assemble(self, request: dict[str, Any]) -> ContextEnvelope:
+        request = self._approved_artifact_context(request)
         self._event("context_assembly_started", request)
         budget = _budget_from_request(request)
         segments = self._collect_segments(request)
@@ -126,6 +146,61 @@ class ContextAssembler:
         self._event("context_snapshot_written", snapshot.to_dict())
         self._event("context_envelope_returned", {"envelope_id": envelope.envelope_id})
         return envelope
+
+    @property
+    def requires_approved_artifact_context(self) -> bool:
+        return self.artifact_context_provider is not None
+
+    def _approved_artifact_context(
+        self,
+        request: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        if not isinstance(request, Mapping):
+            raise HarnessValidationError("context request must be a mapping")
+        normalized = dict(request)
+        provider = self.artifact_context_provider
+        if provider is None:
+            return normalized
+        raw_refs = tuple(normalized.get("artifact_refs", ()))
+        if raw_refs:
+            raise result_error(
+                GraphArtifactResultErrorCode.ARTIFACT_SCOPE_MISMATCH,
+                field="context.artifact_refs",
+            )
+        result = provider.load_artifact_context(normalized)
+        if not isinstance(result, ArtifactContextLoadResult):
+            raise result_error(
+                GraphArtifactResultErrorCode.RESULT_SCHEMA_INVALID,
+                field="context.artifact_result",
+            )
+        normalized["artifact_refs"] = tuple(item.ref for item in result.items)
+        context_projection = result.to_context_projection()
+        normalized["artifact_context"] = context_projection
+        normalized["artifact_context_loaded_tokens"] = estimated_tokens(
+            len(canonical_json_bytes(context_projection))
+        )
+        normalized["metadata"] = {
+            **dict(normalized.get("metadata", {})),
+            "artifact_context_plan_checksum": result.plan_checksum,
+            "artifact_context_result_checksum": result.result_checksum,
+            "artifact_context_fingerprint": result.context_fingerprint,
+            "artifact_context_load_mode": result.load_mode.value,
+            "artifact_context_purpose": result.purpose.value,
+        }
+        self._event(
+            "artifact_context_loaded",
+            {
+                "plan_checksum": result.plan_checksum,
+                "result_checksum": result.result_checksum,
+                "context_fingerprint": result.context_fingerprint,
+                "load_mode": result.load_mode.value,
+                "purpose": result.purpose.value,
+                "artifact_refs": [item.ref for item in result.items],
+                "total_loaded_bytes": result.total_loaded_bytes,
+                "total_loaded_tokens": result.total_loaded_tokens,
+            },
+        )
+        return normalized
 
     def _verify_or_reject_context(
         self,
@@ -287,7 +362,7 @@ class ContextAssembler:
                 _segment("workflow", ContextSegmentType.WORKFLOW, str(request.get("workflow_ref", "workflow://current")), "Workflow route table, current phase, step budget, and explicit gates.", 80, ContextCacheScope.STABLE_PREFIX, (str(request.get("workflow_ref", "workflow://current")),), {"route_table": request.get("allowed_routes", []), "budget": request.get("budget", {})}),
                 _segment("worker-contract", ContextSegmentType.WORKER_CONTRACT, str(request.get("worker_contract_ref", "worker://contract")), "Worker input schema, output schema, tool allowlist, memory namespace policy, and forbidden fields.", 80, ContextCacheScope.STABLE_PREFIX, (str(request.get("worker_contract_ref", "worker://contract")),), {"input_schema": request.get("input_schema", {}), "output_schema": request.get("output_schema", {}), "tool_allowlist": request.get("allowed_tools", ()), "memory_namespace_policy": request.get("allowed_memory_namespaces", ())}),
                 _segment("run-state", ContextSegmentType.RUN_STATE, str(request.get("run_state_ref", "run-state://current")), "Completed steps, failures, budget usage, checkpoint refs, and accepted artifact refs.", 120, ContextCacheScope.DYNAMIC_TAIL, tuple(request.get("run_state_refs", ("checkpoint://current",))), {"budget": request.get("budget", {})}),
-                _segment("evidence-memory", ContextSegmentType.EVIDENCE_MEMORY, str(request.get("evidence_memory_ref", "evidence-memory://current")), "Accepted evidence, rejected evidence, memory hits, source refs, gap report, and retrieval rationale.", int(request.get("evidence_memory_tokens", 120)), ContextCacheScope.DYNAMIC_TAIL, tuple(request.get("source_refs", ("source://approved",))), {"source_refs": list(request.get("source_refs", ("source://approved",))), "artifact_refs": list(request.get("artifact_refs", ())), "content_markers": ["rag_result", "memory_hit"]}),
+                _segment("evidence-memory", ContextSegmentType.EVIDENCE_MEMORY, str(request.get("evidence_memory_ref", "evidence-memory://current")), "Accepted evidence, rejected evidence, memory hits, source refs, gap report, and retrieval rationale.", int(request.get("evidence_memory_tokens", 120)) + int(request.get("artifact_context_loaded_tokens", 0)), ContextCacheScope.DYNAMIC_TAIL, tuple(request.get("source_refs", ("source://approved",))), {"source_refs": list(request.get("source_refs", ("source://approved",))), "artifact_refs": list(request.get("artifact_refs", ())), "artifact_context": request.get("artifact_context"), "content_markers": ["rag_result", "memory_hit"]}),
                 _segment("current-task", ContextSegmentType.CURRENT_TASK, str(request.get("current_task_ref", "task://current")), str(request.get("current_instruction", "Produce structured candidate output for the current Harness step.")), int(request.get("current_task_tokens", 80)), ContextCacheScope.DYNAMIC_TAIL, tuple(request.get("input_refs", ("input://current",))), {}),
             )
         ordered_types = tuple(segment.segment_type for segment in segments)

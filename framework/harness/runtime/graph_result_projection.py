@@ -61,6 +61,8 @@ def graph_result_lineage_from_envelope(
                 graph_id=item.graph_id,
                 node_id=item.node_id,
                 attempt_id=item.attempt_id,
+                sensitivity=item.sensitivity.value,
+                context_policy=decision.context_policy.value,
                 required_for_replay=item.required_for_replay,
                 required_for_publication=item.required_for_publication,
             )

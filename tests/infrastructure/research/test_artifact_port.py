@@ -153,6 +153,53 @@ def test_verified_graph_result_member_is_excluded_from_public_member_set(
     )
 
 
+def test_graph_result_internal_reader_allows_only_verified_ref_only_objects(
+    tmp_path,
+) -> None:
+    publication_calls: list[object] = []
+    port = FilesystemHarnessArtifactPort(
+        tmp_path,
+        accepted_run_resolver=lambda claim: (publication_calls.append(claim) or False),
+    )
+    identity = "a" * 64
+    artifact_type = f"graph-result-{identity}"
+    with port.bind_run("run-1"):
+        graph_ref = port.write_artifact(
+            ArtifactWriteRequest(
+                artifact_type,
+                {"candidate_checksum": f"sha256:{identity}"},
+                metadata={
+                    "run_id": "run-1",
+                    "graph_result_ref_only": True,
+                    "identity_checksum": f"sha256:{identity}",
+                },
+            )
+        )
+        public_ref = port.write_artifact(
+            ArtifactWriteRequest(
+                "research-analysis",
+                {"status": "candidate"},
+                metadata={"run_id": "run-1"},
+            )
+        )
+
+    assert port.read_graph_result_artifact(
+        graph_ref.ref,
+        expected_run_id="run-1",
+    )["payload"] == {"candidate_checksum": f"sha256:{identity}"}
+    assert publication_calls == []
+    with pytest.raises(ArtifactStoreMetadataError, match="ref-only"):
+        port.read_graph_result_artifact(
+            public_ref.ref,
+            expected_run_id="run-1",
+        )
+    with pytest.raises(ArtifactRunBindingError, match="expected run"):
+        port.read_graph_result_artifact(
+            graph_ref.ref,
+            expected_run_id="run-2",
+        )
+
+
 def test_long_artifact_type_uses_bounded_hashed_path_without_changing_ref(
     tmp_path,
 ) -> None:

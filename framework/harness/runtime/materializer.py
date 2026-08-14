@@ -548,7 +548,19 @@ class ResultMaterializer:
                 ref = self._artifact_port.write_artifact(write_request)
                 if not isinstance(ref, ArtifactRef):
                     raise result_error(GraphArtifactResultErrorCode.ARTIFACT_WRITE_FAILED, field="artifact.ref")
-                stored = self._artifact_port.read_artifact(ref.ref)
+                internal_reader = getattr(
+                    self._artifact_port,
+                    "read_graph_result_artifact",
+                    None,
+                )
+                stored = (
+                    internal_reader(
+                        ref.ref,
+                        expected_run_id=request.binding.run_id,
+                    )
+                    if callable(internal_reader)
+                    else self._artifact_port.read_artifact(ref.ref)
+                )
         except GraphArtifactResultError:
             raise
         except Exception as exc:

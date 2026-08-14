@@ -854,6 +854,7 @@ class ResearchSinglePaperRuntime:
             else self.graph_result_committer_factory(
                 event_port=event_port,
                 request=request,
+                workspace=workspace,
             )
         )
         if graph_result_committer is not None and not isinstance(
@@ -1901,7 +1902,11 @@ class ResearchSinglePaperRuntime:
                 "current_task_ref": "task://publish_artifacts",
                 "current_instruction": "Publish verified Research artifacts only after deterministic gates pass.",
                 "source_refs": source_refs,
-                "artifact_refs": tuple(workspace.planned_artifact_refs.values()),
+                "artifact_refs": (
+                    ()
+                    if workspace.context_assembler.requires_approved_artifact_context
+                    else tuple(workspace.planned_artifact_refs.values())
+                ),
                 "evidence_refs": tuple(workspace.evidence_pack.evidence_ids if workspace.evidence_pack else ()),
                 "allowed_tools": ("retrieval.search", "retrieval.read_source"),
                 "allowed_memory_namespaces": (

@@ -6,6 +6,7 @@ from framework.harness.task_plan import __all__ as _TASK_PLAN_EXPORTS
 from framework.harness.artifacts import (
     ArtifactPort,
     ArtifactReferenceVerifierPort,
+    GraphResultArtifactReadPort,
     ArtifactRef,
     ArtifactWriteRequest,
     FakeArtifactPort,
@@ -597,6 +598,7 @@ from framework.harness.workflow import (
 __all__ = [
     "ArtifactPort",
     "ArtifactReferenceVerifierPort",
+    "GraphResultArtifactReadPort",
     "ArtifactRef",
     "ArtifactWriteRequest",
     "AnswerClaim",

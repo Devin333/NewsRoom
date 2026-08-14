@@ -16,6 +16,7 @@ from framework.harness import (
     HarnessEventPort,
     HarnessValidationError,
 )
+from framework.harness.runtime.artifact_context import ArtifactContextProviderPort
 from framework.llm.context import (
     OPENAI_CHAT_NORMALIZER_REVISION,
     LLMRequestPreparer,
@@ -138,6 +139,7 @@ def build_research_context_assembler(
     model: str,
     max_input_tokens: int,
     max_output_tokens: int,
+    artifact_context_provider: ArtifactContextProviderPort | None = None,
 ) -> ContextAssembler:
     profile = _research_context_profile(
         provider=provider,
@@ -176,6 +178,7 @@ def build_research_context_assembler(
         compaction_runtime_factory=runtime_factory,
         deployment_id=profile.deployment_id,
         physical_profile_revision=profile.profile_revision,
+        artifact_context_provider=artifact_context_provider,
     )
 
 

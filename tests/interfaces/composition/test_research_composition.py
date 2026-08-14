@@ -4,6 +4,7 @@ import inspect
 import json
 from pathlib import Path
 from threading import Event, Thread
+from types import SimpleNamespace
 
 import pytest
 from cryptography.fernet import Fernet
@@ -17,6 +18,9 @@ from business.research.application.bounded_document_rag import (
 from business.research.application.graph_result_committer import (
     ResearchGraphResultCommitter,
     ResearchTaskPlanResultMaterializer,
+)
+from business.research.application.artifact_context import (
+    ResearchGraphArtifactContextProvider,
 )
 from business.research.application.single_paper_runtime import (
     AnalyzePaperRequest,
@@ -488,6 +492,15 @@ def test_enforce_mode_composes_real_graph_result_runtime(
             GraphArtifactRolloutMode.ENFORCE
         )
         assert isinstance(committer, ResearchGraphResultCommitter)
+        context_assembler = runtime.context_assembler_factory(
+            request.run_id,
+            event_port,
+        )
+        assert context_assembler.requires_approved_artifact_context is True
+        assert isinstance(
+            context_assembler.artifact_context_provider,
+            ResearchGraphArtifactContextProvider,
+        )
         assert runtime.graph_result_observer_factory(
             event_port=event_port,
             request=request,
@@ -520,6 +533,49 @@ def test_enforce_mode_composes_real_graph_result_runtime(
         assert child_verifier._adapter._materializer is materializer
     finally:
         composition.close()
+
+
+def test_publish_fingerprint_rebuilds_from_provider_after_partial_restart() -> None:
+    fingerprint = "sha256:" + "f" * 64
+    calls: list[dict[str, object]] = []
+
+    class RestartArtifactContextProvider:
+        def load_artifact_context(self, request):
+            calls.append(dict(request))
+            return SimpleNamespace(context_fingerprint=fingerprint)
+
+    request = AnalyzePaperRequest(
+        run_id="research-context-restart",
+        paper_id="2608.00002",
+        source_ref="https://arxiv.org/abs/2608.00002",
+        tenant_id="tenant-restart",
+        user_id="user-restart",
+        memory_namespace="context-restart",
+    )
+    workspace = _ResearchRunWorkspace(
+        request=request,
+        context_assembler=ContextAssembler(
+            artifact_context_provider=RestartArtifactContextProvider()
+        ),
+    )
+
+    resolved = research_composition._research_context_fingerprint(
+        workspace,
+        node_id="publish_artifacts",
+    )
+
+    assert resolved == fingerprint
+    assert calls == [
+        {
+            "run_id": request.run_id,
+            "step_id": "publish_artifacts",
+            "metadata": {
+                "memory_namespace": "context-restart",
+                "tenant_id": "tenant-restart",
+                "user_id": "user-restart",
+            },
+        }
+    ]
 
 
 def test_default_provider_is_lazy_and_reset_does_not_load_live_settings() -> None:

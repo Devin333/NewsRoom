@@ -91,6 +91,19 @@ class ArtifactReferenceVerifierPort(Protocol):
 
 
 @runtime_checkable
+class GraphResultArtifactReadPort(Protocol):
+    """Read an unpublished graph-result body through its ref-only boundary."""
+
+    def read_graph_result_artifact(
+        self,
+        ref: str,
+        *,
+        expected_run_id: str,
+    ) -> dict[str, Any]:
+        ...
+
+
+@runtime_checkable
 class RunBoundArtifactPort(ArtifactPort, Protocol):
     def bind_run(self, run_id: str) -> AbstractContextManager[str]:
         ...
@@ -115,6 +128,15 @@ class ArtifactCatalogPort(Protocol):
         tenant_id: str,
         ref: str,
     ) -> "ArtifactCatalogEntry":
+        ...
+
+    def get_claim(
+        self,
+        *,
+        tenant_id: str,
+        run_id: str,
+        artifact_id: str,
+    ) -> "ArtifactCatalogClaim":
         ...
 
     def find_by_checksum(
@@ -179,6 +201,7 @@ __all__ = [
     "ArtifactPort",
     "ArtifactCatalogPort",
     "ArtifactReferenceVerifierPort",
+    "GraphResultArtifactReadPort",
     "ArtifactRef",
     "ArtifactWriteRequest",
     "RunBoundArtifactPort",

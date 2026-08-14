@@ -324,6 +324,21 @@ class ArtifactCatalogClaim:
             )
 
     @classmethod
+    def claim_id_for(
+        cls,
+        *,
+        tenant_id: str,
+        run_id: str,
+        artifact_id: str,
+    ) -> str:
+        identity = {
+            "tenant_id": identifier(tenant_id, "catalog_claim.tenant_id"),
+            "run_id": identifier(run_id, "catalog_claim.run_id"),
+            "artifact_id": identifier(artifact_id, "catalog_claim.artifact_id"),
+        }
+        return _derived_reference("catalog-claim", identity)
+
+    @classmethod
     def for_record(
         cls,
         record: ArtifactRecord,
@@ -337,13 +352,12 @@ class ArtifactCatalogClaim:
             if canonical_ref is not None
             else record
         )
-        identity = {
-            "tenant_id": record.tenant_id,
-            "run_id": record.run_id,
-            "artifact_id": record.artifact_id,
-        }
         return cls(
-            claim_id=_derived_reference("catalog-claim", identity),
+            claim_id=cls.claim_id_for(
+                tenant_id=record.tenant_id,
+                run_id=record.run_id,
+                artifact_id=record.artifact_id,
+            ),
             entry_id=entry_id,
             tenant_id=record.tenant_id,
             run_id=record.run_id,

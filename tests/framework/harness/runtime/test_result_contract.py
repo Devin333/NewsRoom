@@ -14,6 +14,7 @@ from framework.harness.runtime import (
     ContextAssemblyRequest,
     ContextLoadMode,
     ContextPolicy,
+    ContextPurpose,
     GraphArtifactResultError,
     GraphArtifactResultErrorCode,
     NodeResultBinding,
@@ -203,21 +204,23 @@ def test_cache_ref_requires_complete_dependency_identity() -> None:
     assert exc_info.value.error_code is GraphArtifactResultErrorCode.CACHE_IDENTITY_INVALID
 
 
-def test_context_request_deduplicates_identity_by_rejecting_duplicates_and_budget() -> None:
-    with pytest.raises(GraphArtifactResultError) as duplicate:
-        ContextAssemblyRequest(
-            tenant_id="tenant-1",
-            run_id="run-1",
-            graph_id="graph-1",
-            node_id="node-1",
-            allowed_artifact_classes=(ArtifactClass.EVIDENCE,),
-            artifact_refs=("artifact://one", "artifact://one"),
-            max_refs=2,
-            max_bytes=1024,
-            max_tokens=256,
-            load_mode=ContextLoadMode.SUMMARY_ONLY,
-        )
-    assert duplicate.value.error_code is GraphArtifactResultErrorCode.RESULT_SCHEMA_INVALID
+def test_context_request_deduplicates_refs_and_enforces_budget() -> None:
+    request = ContextAssemblyRequest(
+        tenant_id="tenant-1",
+        run_id="run-1",
+        graph_id="graph-1",
+        node_id="node-1",
+        purpose=ContextPurpose.VERIFY,
+        allowed_artifact_classes=(ArtifactClass.EVIDENCE,),
+        allowed_sensitivities=(ResultSensitivity.INTERNAL,),
+        artifact_refs=("artifact://one", "artifact://one"),
+        max_refs=2,
+        max_bytes=1024,
+        max_tokens=256,
+        load_mode=ContextLoadMode.SUMMARY_ONLY,
+    )
+    assert request.artifact_refs == ("artifact://one",)
+    assert ContextAssemblyRequest.from_dict(request.to_dict()) == request
 
     with pytest.raises(GraphArtifactResultError) as over_budget:
         ContextAssemblyRequest(
@@ -225,7 +228,9 @@ def test_context_request_deduplicates_identity_by_rejecting_duplicates_and_budge
             run_id="run-1",
             graph_id="graph-1",
             node_id="node-1",
+            purpose=ContextPurpose.VERIFY,
             allowed_artifact_classes=(ArtifactClass.EVIDENCE,),
+            allowed_sensitivities=(ResultSensitivity.INTERNAL,),
             artifact_refs=("artifact://one", "artifact://two"),
             max_refs=1,
             max_bytes=1024,

@@ -95,6 +95,14 @@ class ContextLoadMode(StrEnum):
     FULL = "full"
 
 
+class ContextPurpose(StrEnum):
+    PLAN = "plan"
+    EXECUTE = "execute"
+    VERIFY = "verify"
+    REPAIR = "repair"
+    REPLAY = "replay"
+
+
 @dataclass(frozen=True, slots=True)
 class NodeResultBinding:
     tenant_id: str
@@ -595,7 +603,9 @@ class ContextAssemblyRequest:
     run_id: str
     graph_id: str
     node_id: str
+    purpose: ContextPurpose
     allowed_artifact_classes: tuple[ArtifactClass, ...]
+    allowed_sensitivities: tuple[ResultSensitivity, ...]
     artifact_refs: tuple[str, ...]
     max_refs: int
     max_bytes: int
@@ -616,7 +626,54 @@ class ContextAssemblyRequest:
         if not classes or len(classes) != len(set(classes)):
             raise result_error(GraphArtifactResultErrorCode.RESULT_SCHEMA_INVALID, field="context.allowed_artifact_classes")
         object.__setattr__(self, "allowed_artifact_classes", classes)
-        refs = stable_tuple(self.artifact_refs, "context.artifact_refs", normalize=reference)
+        if isinstance(self.allowed_sensitivities, str) or not isinstance(
+            self.allowed_sensitivities,
+            Sequence,
+        ):
+            raise result_error(
+                GraphArtifactResultErrorCode.RESULT_SCHEMA_INVALID,
+                field="context.allowed_sensitivities",
+            )
+        sensitivities = tuple(
+            sorted(
+                (
+                    enum_value(
+                        ResultSensitivity,
+                        item,
+                        "context.allowed_sensitivities",
+                    )
+                    for item in self.allowed_sensitivities
+                ),
+                key=lambda item: item.value,
+            )
+        )
+        if not sensitivities or len(sensitivities) != len(set(sensitivities)):
+            raise result_error(
+                GraphArtifactResultErrorCode.RESULT_SCHEMA_INVALID,
+                field="context.allowed_sensitivities",
+            )
+        object.__setattr__(self, "allowed_sensitivities", sensitivities)
+        object.__setattr__(
+            self,
+            "purpose",
+            enum_value(ContextPurpose, self.purpose, "context.purpose"),
+        )
+        if isinstance(self.artifact_refs, (str, bytes, bytearray)) or not isinstance(
+            self.artifact_refs,
+            Sequence,
+        ):
+            raise result_error(
+                GraphArtifactResultErrorCode.RESULT_SCHEMA_INVALID,
+                field="context.artifact_refs",
+            )
+        refs = tuple(
+            sorted(
+                {
+                    reference(item, "context.artifact_refs")
+                    for item in self.artifact_refs
+                }
+            )
+        )
         object.__setattr__(self, "artifact_refs", refs)
         for field_name in ("max_refs", "max_bytes", "max_tokens"):
             object.__setattr__(self, field_name, non_negative_int(getattr(self, field_name), f"context.{field_name}"))
@@ -635,7 +692,11 @@ class ContextAssemblyRequest:
             "run_id": self.run_id,
             "graph_id": self.graph_id,
             "node_id": self.node_id,
+            "purpose": self.purpose.value,
             "allowed_artifact_classes": [item.value for item in self.allowed_artifact_classes],
+            "allowed_sensitivities": [
+                item.value for item in self.allowed_sensitivities
+            ],
             "artifact_refs": list(self.artifact_refs),
             "max_refs": self.max_refs,
             "max_bytes": self.max_bytes,
@@ -653,7 +714,9 @@ class ContextAssemblyRequest:
                     "run_id",
                     "graph_id",
                     "node_id",
+                    "purpose",
                     "allowed_artifact_classes",
+                    "allowed_sensitivities",
                     "artifact_refs",
                     "max_refs",
                     "max_bytes",
@@ -664,6 +727,7 @@ class ContextAssemblyRequest:
             model=cls.__name__,
         )
         payload["allowed_artifact_classes"] = tuple(payload["allowed_artifact_classes"])
+        payload["allowed_sensitivities"] = tuple(payload["allowed_sensitivities"])
         payload["artifact_refs"] = tuple(payload["artifact_refs"])
         return cls(**payload)
 
@@ -850,6 +914,7 @@ __all__ = [
     "ContextAssemblyRequest",
     "ContextLoadMode",
     "ContextPolicy",
+    "ContextPurpose",
     "NodeResultBinding",
     "NodeResultEnvelope",
     "NodeResultStatus",

@@ -257,6 +257,27 @@ class LocalJsonArtifactCatalog:
             field="catalog.ref",
         )
 
+    def get_claim(
+        self,
+        *,
+        tenant_id: str,
+        run_id: str,
+        artifact_id: str,
+    ) -> ArtifactCatalogClaim:
+        claim_id = ArtifactCatalogClaim.claim_id_for(
+            tenant_id=tenant_id,
+            run_id=run_id,
+            artifact_id=artifact_id,
+        )
+        state = self._read_snapshot()
+        try:
+            return state.claims[claim_id]
+        except KeyError as exc:
+            raise result_error(
+                GraphArtifactResultErrorCode.ARTIFACT_CATALOG_NOT_FOUND,
+                field="catalog.claim_id",
+            ) from exc
+
     def find_by_checksum(
         self,
         *,
