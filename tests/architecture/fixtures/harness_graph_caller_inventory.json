@@ -178,7 +178,9 @@
       "tests/infrastructure/storage/test_checkpoint_store.py"
     ]
   },
-  "audit_self_exclusions": [],
+  "audit_self_exclusions": [
+    "tests/architecture/_graph_only_freeze.py"
+  ],
   "migration_rules": [
     "A callers adopt versioned Graph contracts without changing runtime authority.",
     "B callers move Step lifecycle and Sequence/Choice decisions behind the single HarnessScheduler facade.",
