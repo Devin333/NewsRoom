@@ -7,7 +7,15 @@ from enum import StrEnum
 from typing import Any, Protocol, Self, runtime_checkable
 
 from framework.events.canonical import checksum_for
-from framework.harness.artifacts.catalog import ArtifactCatalogGcDetachReceipt
+from framework.harness.artifacts.catalog import (
+    ArtifactCatalogClaim,
+    ArtifactCatalogEntry,
+    ArtifactCatalogGcAction,
+    ArtifactCatalogGcDecision,
+    ArtifactCatalogGcDetachReceipt,
+    ArtifactCatalogGcPlan,
+    ArtifactLogicalReference,
+)
 from framework.harness.runtime.result_canonical import (
     aware_datetime,
     boolean,
@@ -100,6 +108,14 @@ class GraphArtifactAlertKind(StrEnum):
 class GraphArtifactAlertStatus(StrEnum):
     OPEN = "open"
     ACKNOWLEDGED = "acknowledged"
+
+
+class GraphArtifactAlertReason(StrEnum):
+    QUOTA_WARNING_THRESHOLD = "quota_warning_threshold"
+    GC_BACKLOG_THRESHOLD = "gc_backlog_threshold"
+    READBACK_FAILURE = "readback_failure"
+    CATALOG_DRIFT = "catalog_drift"
+    CACHE_STAMPEDE = "cache_stampede"
 
 
 @dataclass(frozen=True, slots=True)
@@ -413,10 +429,182 @@ class GraphArtifactQuotaSnapshot:
 
 
 @dataclass(frozen=True, slots=True)
+class GraphArtifactGcOperationIntent:
+    operation_id: str
+    tenant_id: str
+    plan_checksum: str
+    catalog_snapshot_checksum: str
+    policy_version: str
+    decision: ArtifactCatalogGcDecision
+    entry: ArtifactCatalogEntry
+    claims: tuple[ArtifactCatalogClaim, ...]
+    references: tuple[ArtifactLogicalReference, ...]
+    prepared_at: datetime
+    intent_checksum: str
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "tenant_id",
+            identifier(self.tenant_id, "gc_intent.tenant_id"),
+        )
+        object.__setattr__(
+            self,
+            "plan_checksum",
+            checksum(self.plan_checksum, "gc_intent.plan_checksum"),
+        )
+        object.__setattr__(
+            self,
+            "catalog_snapshot_checksum",
+            checksum(
+                self.catalog_snapshot_checksum,
+                "gc_intent.catalog_snapshot_checksum",
+            ),
+        )
+        object.__setattr__(
+            self,
+            "policy_version",
+            exact_reference(self.policy_version, "gc_intent.policy_version"),
+        )
+        if (
+            not isinstance(self.decision, ArtifactCatalogGcDecision)
+            or self.decision.action is not ArtifactCatalogGcAction.DELETE_CANDIDATE
+            or self.decision.tenant_id != self.tenant_id
+        ):
+            raise _schema_error("gc_intent.decision")
+        if (
+            not isinstance(self.entry, ArtifactCatalogEntry)
+            or self.entry.entry_id != self.decision.entry_id
+            or self.entry.identity.tenant_id != self.tenant_id
+            or self.entry.record.ref != self.decision.ref
+            or self.entry.record.byte_size != self.decision.byte_size
+        ):
+            raise _schema_error("gc_intent.entry")
+        claims = tuple(
+            sorted(
+                _typed_tuple(
+                    self.claims,
+                    ArtifactCatalogClaim,
+                    "gc_intent.claims",
+                ),
+                key=lambda item: item.claim_id,
+            )
+        )
+        references = tuple(
+            sorted(
+                _typed_tuple(
+                    self.references,
+                    ArtifactLogicalReference,
+                    "gc_intent.references",
+                ),
+                key=lambda item: item.reference_id,
+            )
+        )
+        if (
+            tuple(item.claim_id for item in claims) != self.decision.claim_ids
+            or tuple(item.reference_id for item in references)
+            != self.decision.reference_ids
+            or any(
+                item.entry_id != self.entry.entry_id
+                or item.tenant_id != self.tenant_id
+                for item in (*claims, *references)
+            )
+        ):
+            raise _schema_error("gc_intent.evidence")
+        object.__setattr__(self, "claims", claims)
+        object.__setattr__(self, "references", references)
+        object.__setattr__(
+            self,
+            "prepared_at",
+            aware_datetime(self.prepared_at, "gc_intent.prepared_at"),
+        )
+        expected_id = _derived_ref(
+            "graph-artifact-gc",
+            self.identity_projection(),
+        )
+        if reference(self.operation_id, "gc_intent.operation_id") != expected_id:
+            raise _identity_error("gc_intent.operation_id")
+        expected_checksum = checksum_for(self.checksum_projection())
+        if (
+            checksum(self.intent_checksum, "gc_intent.intent_checksum")
+            != expected_checksum
+        ):
+            raise _identity_error("gc_intent.intent_checksum")
+        object.__setattr__(self, "operation_id", expected_id)
+        object.__setattr__(self, "intent_checksum", expected_checksum)
+
+    @classmethod
+    def create(cls, **values: Any) -> Self:
+        operation_id = _derived_ref(
+            "graph-artifact-gc",
+            _gc_intent_identity(values),
+        )
+        projection = _gc_intent_projection(
+            {**values, "operation_id": operation_id}
+        )
+        return cls(
+            **values,
+            operation_id=operation_id,
+            intent_checksum=checksum_for(projection),
+        )
+
+    def identity_projection(self) -> dict[str, Any]:
+        return _gc_intent_identity(_dataclass_values(self))
+
+    def checksum_projection(self) -> dict[str, Any]:
+        return _gc_intent_projection(_dataclass_values(self))
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            **self.checksum_projection(),
+            "intent_checksum": self.intent_checksum,
+        }
+
+    @classmethod
+    def from_dict(cls, value: Mapping[str, Any]) -> Self:
+        payload = exact_keys(
+            value,
+            required=frozenset(
+                {
+                    "operation_id",
+                    "tenant_id",
+                    "plan_checksum",
+                    "catalog_snapshot_checksum",
+                    "policy_version",
+                    "decision",
+                    "entry",
+                    "claims",
+                    "references",
+                    "prepared_at",
+                    "intent_checksum",
+                }
+            ),
+            model=cls.__name__,
+        )
+        payload["decision"] = ArtifactCatalogGcDecision.from_dict(
+            payload["decision"]
+        )
+        payload["entry"] = ArtifactCatalogEntry.from_dict(payload["entry"])
+        payload["claims"] = tuple(
+            ArtifactCatalogClaim.from_dict(item) for item in payload["claims"]
+        )
+        payload["references"] = tuple(
+            ArtifactLogicalReference.from_dict(item)
+            for item in payload["references"]
+        )
+        payload["prepared_at"] = datetime_from_json(
+            payload["prepared_at"],
+            "gc_intent.prepared_at",
+        )
+        return cls(**payload)
+
+
+@dataclass(frozen=True, slots=True)
 class GraphArtifactPhysicalDeleteRequest:
     operation_id: str
     plan_checksum: str
     decision_checksum: str
+    intent_checksum: str
     record: ArtifactRecord
     detach_receipt: ArtifactCatalogGcDetachReceipt
     requested_at: datetime
@@ -426,6 +614,11 @@ class GraphArtifactPhysicalDeleteRequest:
         object.__setattr__(self, "operation_id", reference(self.operation_id, "gc_delete.operation_id"))
         object.__setattr__(self, "plan_checksum", checksum(self.plan_checksum, "gc_delete.plan_checksum"))
         object.__setattr__(self, "decision_checksum", checksum(self.decision_checksum, "gc_delete.decision_checksum"))
+        object.__setattr__(
+            self,
+            "intent_checksum",
+            checksum(self.intent_checksum, "gc_delete.intent_checksum"),
+        )
         if not isinstance(self.record, ArtifactRecord):
             raise _schema_error("gc_delete.record")
         if (
@@ -449,6 +642,7 @@ class GraphArtifactPhysicalDeleteRequest:
                 "operation_id": self.operation_id,
                 "plan_checksum": self.plan_checksum,
                 "decision_checksum": self.decision_checksum,
+                "intent_checksum": self.intent_checksum,
                 "record": self.record,
                 "detach_receipt": self.detach_receipt,
                 "requested_at": self.requested_at,
@@ -467,6 +661,7 @@ class GraphArtifactPhysicalDeleteRequest:
                     "operation_id",
                     "plan_checksum",
                     "decision_checksum",
+                    "intent_checksum",
                     "record",
                     "detach_receipt",
                     "requested_at",
@@ -587,7 +782,8 @@ class GraphArtifactDeletionReceipt:
 class GraphArtifactGcOperation:
     operation_id: str
     state: GraphArtifactGcOperationState
-    request: GraphArtifactPhysicalDeleteRequest
+    intent: GraphArtifactGcOperationIntent
+    request: GraphArtifactPhysicalDeleteRequest | None
     quarantine: GraphArtifactQuarantineReceipt | None
     deletion: GraphArtifactDeletionReceipt | None
     error_code: GraphArtifactResultErrorCode | None
@@ -598,14 +794,29 @@ class GraphArtifactGcOperation:
         object.__setattr__(self, "operation_id", reference(self.operation_id, "gc_operation.operation_id"))
         state = enum_value(GraphArtifactGcOperationState, self.state, "gc_operation.state")
         object.__setattr__(self, "state", state)
-        if not isinstance(self.request, GraphArtifactPhysicalDeleteRequest) or self.request.operation_id != self.operation_id:
+        if (
+            not isinstance(self.intent, GraphArtifactGcOperationIntent)
+            or self.intent.operation_id != self.operation_id
+        ):
+            raise _schema_error("gc_operation.intent")
+        request = self.request
+        if request is not None and (
+            not isinstance(request, GraphArtifactPhysicalDeleteRequest)
+            or request.operation_id != self.operation_id
+            or request.plan_checksum != self.intent.plan_checksum
+            or request.decision_checksum != self.intent.decision.decision_checksum
+            or request.intent_checksum != self.intent.intent_checksum
+            or request.record != self.intent.entry.record
+        ):
             raise _schema_error("gc_operation.request")
         if self.quarantine is not None and (
             not isinstance(self.quarantine, GraphArtifactQuarantineReceipt)
             or self.quarantine.operation_id != self.operation_id
-            or self.quarantine.ref != self.request.record.ref
-            or self.quarantine.content_checksum != self.request.record.content_checksum
-            or self.quarantine.byte_size != self.request.record.byte_size
+            or request is None
+            or self.quarantine.ref != request.record.ref
+            or self.quarantine.content_checksum != request.record.content_checksum
+            or self.quarantine.byte_size != request.record.byte_size
+            or self.quarantine.quarantined_at < request.requested_at
         ):
             raise _schema_error("gc_operation.quarantine")
         if self.deletion is not None and (
@@ -617,8 +828,23 @@ class GraphArtifactGcOperation:
             or self.deletion.ref != self.quarantine.ref
             or self.deletion.content_checksum != self.quarantine.content_checksum
             or self.deletion.byte_size != self.quarantine.byte_size
+            or self.deletion.deleted_at < self.quarantine.quarantined_at
         ):
             raise _schema_error("gc_operation.deletion")
+        if state in {
+            GraphArtifactGcOperationState.CATALOG_DETACHED,
+            GraphArtifactGcOperationState.QUARANTINED,
+            GraphArtifactGcOperationState.PURGED,
+            GraphArtifactGcOperationState.COMPLETED,
+        } and request is None:
+            raise _schema_error("gc_operation.request")
+        if state in {
+            GraphArtifactGcOperationState.PREPARED,
+            GraphArtifactGcOperationState.STALE,
+        } and any(
+            item is not None for item in (request, self.quarantine, self.deletion)
+        ):
+            raise _schema_error("gc_operation.state")
         if state in {GraphArtifactGcOperationState.QUARANTINED, GraphArtifactGcOperationState.PURGED, GraphArtifactGcOperationState.COMPLETED} and self.quarantine is None:
             raise _schema_error("gc_operation.quarantine")
         if state in {GraphArtifactGcOperationState.PURGED, GraphArtifactGcOperationState.COMPLETED} and self.deletion is None:
@@ -629,7 +855,17 @@ class GraphArtifactGcOperation:
         if state is not GraphArtifactGcOperationState.RETRYABLE_FAILURE and error_code is not None:
             raise _schema_error("gc_operation.error_code")
         object.__setattr__(self, "error_code", error_code)
-        object.__setattr__(self, "updated_at", aware_datetime(self.updated_at, "gc_operation.updated_at"))
+        updated_at = aware_datetime(self.updated_at, "gc_operation.updated_at")
+        latest = self.intent.prepared_at
+        if request is not None:
+            latest = max(latest, request.requested_at)
+        if self.quarantine is not None:
+            latest = max(latest, self.quarantine.quarantined_at)
+        if self.deletion is not None:
+            latest = max(latest, self.deletion.deleted_at)
+        if updated_at < latest:
+            raise _schema_error("gc_operation.updated_at")
+        object.__setattr__(self, "updated_at", updated_at)
         expected = checksum_for(self.checksum_projection())
         if checksum(self.operation_checksum, "gc_operation.operation_checksum") != expected:
             raise _identity_error("gc_operation.operation_checksum")
@@ -651,11 +887,16 @@ class GraphArtifactGcOperation:
         payload = exact_keys(
             value,
             required=frozenset(
-                {"operation_id", "state", "request", "quarantine", "deletion", "error_code", "updated_at", "operation_checksum"}
+                {"operation_id", "state", "intent", "request", "quarantine", "deletion", "error_code", "updated_at", "operation_checksum"}
             ),
             model=cls.__name__,
         )
-        payload["request"] = GraphArtifactPhysicalDeleteRequest.from_dict(payload["request"])
+        payload["intent"] = GraphArtifactGcOperationIntent.from_dict(payload["intent"])
+        payload["request"] = (
+            GraphArtifactPhysicalDeleteRequest.from_dict(payload["request"])
+            if payload["request"] is not None
+            else None
+        )
         payload["quarantine"] = (
             GraphArtifactQuarantineReceipt.from_dict(payload["quarantine"])
             if payload["quarantine"] is not None
@@ -667,6 +908,150 @@ class GraphArtifactGcOperation:
             else None
         )
         payload["updated_at"] = datetime_from_json(payload["updated_at"], "gc_operation.updated_at")
+        return cls(**payload)
+
+
+@dataclass(frozen=True, slots=True)
+class GraphArtifactDeletionTombstone:
+    tombstone_id: str
+    operation_id: str
+    tenant_id: str
+    entry_id: str
+    ref: str
+    content_checksum: str
+    byte_size: int
+    policy_version: str
+    deletion_receipt_checksum: str
+    completed_at: datetime
+    tombstone_checksum: str
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "operation_id",
+            reference(self.operation_id, "gc_tombstone.operation_id"),
+        )
+        object.__setattr__(
+            self,
+            "tenant_id",
+            identifier(self.tenant_id, "gc_tombstone.tenant_id"),
+        )
+        object.__setattr__(
+            self,
+            "entry_id",
+            reference(self.entry_id, "gc_tombstone.entry_id"),
+        )
+        object.__setattr__(self, "ref", reference(self.ref, "gc_tombstone.ref"))
+        object.__setattr__(
+            self,
+            "content_checksum",
+            checksum(self.content_checksum, "gc_tombstone.content_checksum"),
+        )
+        object.__setattr__(
+            self,
+            "byte_size",
+            non_negative_int(self.byte_size, "gc_tombstone.byte_size"),
+        )
+        object.__setattr__(
+            self,
+            "policy_version",
+            exact_reference(self.policy_version, "gc_tombstone.policy_version"),
+        )
+        object.__setattr__(
+            self,
+            "deletion_receipt_checksum",
+            checksum(
+                self.deletion_receipt_checksum,
+                "gc_tombstone.deletion_receipt_checksum",
+            ),
+        )
+        object.__setattr__(
+            self,
+            "completed_at",
+            aware_datetime(self.completed_at, "gc_tombstone.completed_at"),
+        )
+        expected_id = _derived_ref(
+            "graph-artifact-tombstone",
+            {"operation_id": self.operation_id},
+        )
+        if reference(self.tombstone_id, "gc_tombstone.tombstone_id") != expected_id:
+            raise _identity_error("gc_tombstone.tombstone_id")
+        expected_checksum = checksum_for(self.checksum_projection())
+        if (
+            checksum(self.tombstone_checksum, "gc_tombstone.tombstone_checksum")
+            != expected_checksum
+        ):
+            raise _identity_error("gc_tombstone.tombstone_checksum")
+        object.__setattr__(self, "tombstone_id", expected_id)
+        object.__setattr__(self, "tombstone_checksum", expected_checksum)
+
+    @classmethod
+    def from_completed_operation(cls, operation: GraphArtifactGcOperation) -> Self:
+        if (
+            not isinstance(operation, GraphArtifactGcOperation)
+            or operation.state is not GraphArtifactGcOperationState.COMPLETED
+            or operation.deletion is None
+        ):
+            raise _schema_error("gc_tombstone.operation")
+        values = {
+            "operation_id": operation.operation_id,
+            "tenant_id": operation.intent.tenant_id,
+            "entry_id": operation.intent.entry.entry_id,
+            "ref": operation.intent.entry.record.ref,
+            "content_checksum": operation.intent.entry.record.content_checksum,
+            "byte_size": operation.intent.entry.record.byte_size,
+            "policy_version": operation.intent.policy_version,
+            "deletion_receipt_checksum": operation.deletion.receipt_checksum,
+            "completed_at": operation.updated_at,
+        }
+        tombstone_id = _derived_ref(
+            "graph-artifact-tombstone",
+            {"operation_id": operation.operation_id},
+        )
+        return cls(
+            **values,
+            tombstone_id=tombstone_id,
+            tombstone_checksum=checksum_for(
+                _gc_tombstone_projection(
+                    {**values, "tombstone_id": tombstone_id}
+                )
+            ),
+        )
+
+    def checksum_projection(self) -> dict[str, Any]:
+        return _gc_tombstone_projection(_dataclass_values(self))
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            **self.checksum_projection(),
+            "tombstone_checksum": self.tombstone_checksum,
+        }
+
+    @classmethod
+    def from_dict(cls, value: Mapping[str, Any]) -> Self:
+        payload = exact_keys(
+            value,
+            required=frozenset(
+                {
+                    "tombstone_id",
+                    "operation_id",
+                    "tenant_id",
+                    "entry_id",
+                    "ref",
+                    "content_checksum",
+                    "byte_size",
+                    "policy_version",
+                    "deletion_receipt_checksum",
+                    "completed_at",
+                    "tombstone_checksum",
+                }
+            ),
+            model=cls.__name__,
+        )
+        payload["completed_at"] = datetime_from_json(
+            payload["completed_at"],
+            "gc_tombstone.completed_at",
+        )
         return cls(**payload)
 
 
@@ -965,9 +1350,10 @@ class GraphArtifactAlert:
         object.__setattr__(self, "window_end", end)
         object.__setattr__(self, "observed_value", non_negative_int(self.observed_value, "alert.observed_value"))
         object.__setattr__(self, "limit_value", non_negative_int(self.limit_value, "alert.limit_value"))
-        reason = optional_text(self.reason_code, "alert.reason_code", max_length=128)
-        if reason is None:
-            raise _schema_error("alert.reason_code")
+        try:
+            reason = GraphArtifactAlertReason(self.reason_code).value
+        except (TypeError, ValueError) as exc:
+            raise _schema_error("alert.reason_code") from exc
         object.__setattr__(self, "reason_code", reason)
         created = aware_datetime(self.created_at, "alert.created_at")
         object.__setattr__(self, "created_at", created)
@@ -1007,6 +1393,31 @@ class GraphArtifactAlert:
 
     def to_dict(self) -> dict[str, Any]:
         return {**self.checksum_projection(), "alert_checksum": self.alert_checksum}
+
+    def acknowledge(
+        self,
+        *,
+        acknowledged_at: datetime,
+        acknowledged_by: str,
+    ) -> Self:
+        if self.status is GraphArtifactAlertStatus.ACKNOWLEDGED:
+            if (
+                self.acknowledged_at == acknowledged_at
+                and self.acknowledged_by == acknowledged_by
+            ):
+                return self
+            raise _identity_error("alert.acknowledgement")
+        values = _dataclass_values(self)
+        values.pop("alert_id")
+        values.pop("alert_checksum")
+        values.update(
+            {
+                "status": GraphArtifactAlertStatus.ACKNOWLEDGED,
+                "acknowledged_at": acknowledged_at,
+                "acknowledged_by": acknowledged_by,
+            }
+        )
+        return type(self).create(**values)
 
     @classmethod
     def from_dict(cls, value: Mapping[str, Any]) -> Self:
@@ -1055,6 +1466,9 @@ class GraphArtifactUsagePort(Protocol):
     ) -> tuple[GraphArtifactUsageFact, ...]:
         ...
 
+    def usage_watermark(self, *, tenant_id: str) -> int:
+        ...
+
 
 @runtime_checkable
 class GraphArtifactPhysicalLifecyclePort(Protocol):
@@ -1073,13 +1487,64 @@ class GraphArtifactPhysicalLifecyclePort(Protocol):
 
 @runtime_checkable
 class GraphArtifactGovernanceLedgerPort(GraphArtifactUsagePort, Protocol):
+    def put_gc_plan(
+        self,
+        *,
+        tenant_id: str,
+        plan: ArtifactCatalogGcPlan,
+    ) -> ArtifactCatalogGcPlan:
+        ...
+
+    def get_gc_plan(
+        self,
+        *,
+        tenant_id: str,
+        plan_checksum: str,
+    ) -> ArtifactCatalogGcPlan | None:
+        ...
+
     def put_gc_operation(
         self,
         operation: GraphArtifactGcOperation,
     ) -> GraphArtifactGcOperation:
         ...
 
-    def get_gc_operation(self, operation_id: str) -> GraphArtifactGcOperation | None:
+    def get_gc_operation(
+        self,
+        *,
+        tenant_id: str,
+        operation_id: str,
+    ) -> GraphArtifactGcOperation | None:
+        ...
+
+    def compare_and_set_gc_operation(
+        self,
+        operation: GraphArtifactGcOperation,
+        *,
+        expected_checksum: str,
+    ) -> GraphArtifactGcOperation:
+        ...
+
+    def list_gc_operations(
+        self,
+        *,
+        tenant_id: str,
+        include_completed: bool = False,
+    ) -> tuple[GraphArtifactGcOperation, ...]:
+        ...
+
+    def put_gc_tombstone(
+        self,
+        tombstone: GraphArtifactDeletionTombstone,
+    ) -> GraphArtifactDeletionTombstone:
+        ...
+
+    def get_gc_tombstone(
+        self,
+        *,
+        tenant_id: str,
+        operation_id: str,
+    ) -> GraphArtifactDeletionTombstone | None:
         ...
 
     def put_cost_report(
@@ -1088,10 +1553,51 @@ class GraphArtifactGovernanceLedgerPort(GraphArtifactUsagePort, Protocol):
     ) -> DailyGraphArtifactCostReport:
         ...
 
+    def get_cost_report(
+        self,
+        *,
+        tenant_id: str,
+        report_id: str,
+    ) -> DailyGraphArtifactCostReport | None:
+        ...
+
+    def list_cost_reports(
+        self,
+        *,
+        tenant_id: str,
+        window_start: datetime,
+        window_end: datetime,
+    ) -> tuple[DailyGraphArtifactCostReport, ...]:
+        ...
+
     def put_alert(self, alert: GraphArtifactAlert) -> GraphArtifactAlert:
         ...
 
-    def get_alert(self, alert_id: str) -> GraphArtifactAlert | None:
+    def get_alert(
+        self,
+        *,
+        tenant_id: str,
+        alert_id: str,
+    ) -> GraphArtifactAlert | None:
+        ...
+
+    def list_alerts(
+        self,
+        *,
+        tenant_id: str,
+        status: GraphArtifactAlertStatus | None = None,
+    ) -> tuple[GraphArtifactAlert, ...]:
+        ...
+
+    def acknowledge_alert(
+        self,
+        *,
+        tenant_id: str,
+        alert_id: str,
+        expected_checksum: str,
+        acknowledged_at: datetime,
+        acknowledged_by: str,
+    ) -> GraphArtifactAlert:
         ...
 
 
@@ -1134,6 +1640,51 @@ def _quota_projection(values: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
+def _gc_intent_identity(values: Mapping[str, Any]) -> dict[str, Any]:
+    decision = values["decision"]
+    decision_checksum = (
+        decision.decision_checksum
+        if isinstance(decision, ArtifactCatalogGcDecision)
+        else decision["decision_checksum"]
+    )
+    return {
+        "tenant_id": values["tenant_id"],
+        "plan_checksum": values["plan_checksum"],
+        "decision_checksum": decision_checksum,
+    }
+
+
+def _gc_intent_projection(values: Mapping[str, Any]) -> dict[str, Any]:
+    decision = values["decision"]
+    entry = values["entry"]
+    claims = tuple(sorted(values["claims"], key=lambda item: item.claim_id))
+    references = tuple(
+        sorted(values["references"], key=lambda item: item.reference_id)
+    )
+    return {
+        "operation_id": values["operation_id"],
+        "tenant_id": values["tenant_id"],
+        "plan_checksum": values["plan_checksum"],
+        "catalog_snapshot_checksum": values["catalog_snapshot_checksum"],
+        "policy_version": values["policy_version"],
+        "decision": (
+            decision.to_dict()
+            if isinstance(decision, ArtifactCatalogGcDecision)
+            else decision
+        ),
+        "entry": entry.to_dict() if isinstance(entry, ArtifactCatalogEntry) else entry,
+        "claims": [
+            item.to_dict() if isinstance(item, ArtifactCatalogClaim) else item
+            for item in claims
+        ],
+        "references": [
+            item.to_dict() if isinstance(item, ArtifactLogicalReference) else item
+            for item in references
+        ],
+        "prepared_at": datetime_to_json(values["prepared_at"]),
+    }
+
+
 def _delete_request_projection(values: Mapping[str, Any]) -> dict[str, Any]:
     record = values["record"]
     detach_receipt = values["detach_receipt"]
@@ -1141,6 +1692,7 @@ def _delete_request_projection(values: Mapping[str, Any]) -> dict[str, Any]:
         "operation_id": values["operation_id"],
         "plan_checksum": values["plan_checksum"],
         "decision_checksum": values["decision_checksum"],
+        "intent_checksum": values["intent_checksum"],
         "record": record.to_dict() if isinstance(record, ArtifactRecord) else record,
         "detach_receipt": (
             detach_receipt.to_dict()
@@ -1173,17 +1725,38 @@ def _deletion_projection(values: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def _gc_operation_projection(values: Mapping[str, Any]) -> dict[str, Any]:
+    intent = values["intent"]
     request_value = values["request"]
     quarantine = values.get("quarantine")
     deletion = values.get("deletion")
     return {
         "operation_id": values["operation_id"],
         "state": _enum_text(values["state"]),
+        "intent": (
+            intent.to_dict()
+            if isinstance(intent, GraphArtifactGcOperationIntent)
+            else intent
+        ),
         "request": request_value.to_dict() if isinstance(request_value, GraphArtifactPhysicalDeleteRequest) else request_value,
         "quarantine": quarantine.to_dict() if isinstance(quarantine, GraphArtifactQuarantineReceipt) else quarantine,
         "deletion": deletion.to_dict() if isinstance(deletion, GraphArtifactDeletionReceipt) else deletion,
         "error_code": _optional_enum_text(values.get("error_code")),
         "updated_at": datetime_to_json(values["updated_at"]),
+    }
+
+
+def _gc_tombstone_projection(values: Mapping[str, Any]) -> dict[str, Any]:
+    return {
+        "tombstone_id": values["tombstone_id"],
+        "operation_id": values["operation_id"],
+        "tenant_id": values["tenant_id"],
+        "entry_id": values["entry_id"],
+        "ref": values["ref"],
+        "content_checksum": values["content_checksum"],
+        "byte_size": values["byte_size"],
+        "policy_version": values["policy_version"],
+        "deletion_receipt_checksum": values["deletion_receipt_checksum"],
+        "completed_at": datetime_to_json(values["completed_at"]),
     }
 
 
@@ -1252,6 +1825,18 @@ def _dataclass_values(value: Any) -> dict[str, Any]:
     return {name: getattr(value, name) for name in value.__dataclass_fields__}
 
 
+def _typed_tuple(value: Any, expected: type[Any], field: str) -> tuple[Any, ...]:
+    if isinstance(value, (str, bytes, bytearray)):
+        raise _schema_error(field)
+    try:
+        items = tuple(value)
+    except TypeError as exc:
+        raise _schema_error(field) from exc
+    if not all(isinstance(item, expected) for item in items):
+        raise _schema_error(field)
+    return items
+
+
 def _derived_ref(scheme: str, value: Mapping[str, Any]) -> str:
     return f"{scheme}://{checksum_for(dict(value)).removeprefix('sha256:')}"
 
@@ -1294,13 +1879,16 @@ def _identity_error(field: str) -> Exception:
 
 __all__ = [
     "DailyGraphArtifactCostReport",
+    "GraphArtifactDeletionTombstone",
     "GraphArtifactAlert",
     "GraphArtifactAlertKind",
+    "GraphArtifactAlertReason",
     "GraphArtifactAlertStatus",
     "GraphArtifactCostAggregate",
     "GraphArtifactCostDimension",
     "GraphArtifactDeletionReceipt",
     "GraphArtifactGcOperation",
+    "GraphArtifactGcOperationIntent",
     "GraphArtifactGcOperationState",
     "GraphArtifactGovernanceLedgerPort",
     "GraphArtifactPhysicalDeleteRequest",

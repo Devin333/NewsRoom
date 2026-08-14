@@ -7,8 +7,9 @@ from contextlib import AbstractContextManager, nullcontext
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from enum import StrEnum
-from typing import Any, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, Protocol, Self, runtime_checkable
 
+from framework.events.canonical import checksum_for
 from framework.harness.artifacts.catalog import (
     ArtifactCatalogRegistrationRequest,
     ArtifactCatalogRegistrationResult,
@@ -23,6 +24,8 @@ from framework.harness.artifacts.ports import (
 from framework.harness.runtime.result_canonical import (
     aware_datetime,
     checksum,
+    datetime_from_json,
+    datetime_to_json,
     exact_keys,
     exact_reference,
     identifier,
@@ -38,6 +41,7 @@ from framework.harness.runtime.result_errors import (
     result_error,
 )
 from framework.harness.runtime.result_models import (
+    ArtifactClass,
     ArtifactRecord,
     CacheRef,
     NodeResultBinding,
@@ -46,6 +50,7 @@ from framework.harness.runtime.result_models import (
     PersistenceMode,
     PersistenceReason,
     ResultMetrics,
+    RetentionClass,
 )
 from framework.harness.runtime.result_policy import (
     NodeResultRequest,
@@ -56,6 +61,9 @@ from framework.harness.runtime.result_policy import (
 from framework.harness.workflow.canonical import thaw_json
 from framework.shared.json import stable_json_dumps
 from framework.shared.time import utc_now
+
+if TYPE_CHECKING:
+    from framework.harness.artifacts.governance import GraphArtifactQuotaSnapshot
 
 
 RESULT_PAYLOAD_SCHEMA = "newsroom.graph-result-payload@1"
@@ -72,7 +80,13 @@ class ResultQuotaReservation:
     reservation_id: str
     tenant_id: str
     run_id: str
+    graph_id: str
+    node_id: str
+    artifact_class: ArtifactClass
+    retention_class: RetentionClass
+    policy_version: str
     reservation_key: str
+    generation: int
     reserved_bytes: int
     object_count: int
 
@@ -80,11 +94,183 @@ class ResultQuotaReservation:
         object.__setattr__(self, "reservation_id", reference(self.reservation_id, "reservation.id"))
         object.__setattr__(self, "tenant_id", identifier(self.tenant_id, "reservation.tenant_id"))
         object.__setattr__(self, "run_id", identifier(self.run_id, "reservation.run_id"))
+        object.__setattr__(self, "graph_id", identifier(self.graph_id, "reservation.graph_id"))
+        object.__setattr__(self, "node_id", identifier(self.node_id, "reservation.node_id"))
+        try:
+            artifact_class = ArtifactClass(self.artifact_class)
+            retention_class = RetentionClass(self.retention_class)
+        except (TypeError, ValueError) as exc:
+            raise result_error(
+                GraphArtifactResultErrorCode.RESULT_SCHEMA_INVALID,
+                field="reservation.class",
+            ) from exc
+        object.__setattr__(self, "artifact_class", artifact_class)
+        object.__setattr__(self, "retention_class", retention_class)
+        object.__setattr__(
+            self,
+            "policy_version",
+            exact_reference(self.policy_version, "reservation.policy_version"),
+        )
         object.__setattr__(self, "reservation_key", reference(self.reservation_key, "reservation.key"))
+        generation = non_negative_int(self.generation, "reservation.generation")
+        if generation < 1:
+            raise result_error(
+                GraphArtifactResultErrorCode.RESULT_SCHEMA_INVALID,
+                field="reservation.generation",
+            )
+        object.__setattr__(self, "generation", generation)
         object.__setattr__(self, "reserved_bytes", non_negative_int(self.reserved_bytes, "reservation.bytes"))
         object.__setattr__(self, "object_count", non_negative_int(self.object_count, "reservation.object_count"))
         if self.object_count < 1:
             raise result_error(GraphArtifactResultErrorCode.RESULT_SCHEMA_INVALID, field="reservation.object_count")
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "reservation_id": self.reservation_id,
+            "tenant_id": self.tenant_id,
+            "run_id": self.run_id,
+            "graph_id": self.graph_id,
+            "node_id": self.node_id,
+            "artifact_class": self.artifact_class.value,
+            "retention_class": self.retention_class.value,
+            "policy_version": self.policy_version,
+            "reservation_key": self.reservation_key,
+            "generation": self.generation,
+            "reserved_bytes": self.reserved_bytes,
+            "object_count": self.object_count,
+        }
+
+    @classmethod
+    def from_dict(cls, value: Mapping[str, Any]) -> Self:
+        return cls(
+            **exact_keys(
+                value,
+                required=frozenset(
+                    {
+                        "reservation_id",
+                        "tenant_id",
+                        "run_id",
+                        "graph_id",
+                        "node_id",
+                        "artifact_class",
+                        "retention_class",
+                        "policy_version",
+                        "reservation_key",
+                        "generation",
+                        "reserved_bytes",
+                        "object_count",
+                    }
+                ),
+                model=cls.__name__,
+            )
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class ResultQuotaReconciliationEvidence:
+    reservation_id: str
+    attempt_committed: bool
+    catalog_claim_committed: bool
+    cache_entry_committed: bool
+    physical_operation_committed: bool
+    evidence_refs: tuple[str, ...]
+    observed_at: datetime
+    evidence_checksum: str
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "reservation_id",
+            reference(self.reservation_id, "quota_reconciliation.reservation_id"),
+        )
+        for name in (
+            "attempt_committed",
+            "catalog_claim_committed",
+            "cache_entry_committed",
+            "physical_operation_committed",
+        ):
+            value = getattr(self, name)
+            if not isinstance(value, bool):
+                raise result_error(
+                    GraphArtifactResultErrorCode.RESULT_SCHEMA_INVALID,
+                    field=f"quota_reconciliation.{name}",
+                )
+        refs = tuple(reference(item, "quota_reconciliation.evidence_refs") for item in self.evidence_refs)
+        if refs != tuple(sorted(set(refs))) or not refs:
+            raise result_error(
+                GraphArtifactResultErrorCode.RESULT_SCHEMA_INVALID,
+                field="quota_reconciliation.evidence_refs",
+            )
+        object.__setattr__(self, "evidence_refs", refs)
+        object.__setattr__(
+            self,
+            "observed_at",
+            aware_datetime(self.observed_at, "quota_reconciliation.observed_at"),
+        )
+        expected = checksum_for(self.checksum_projection())
+        if checksum(self.evidence_checksum, "quota_reconciliation.evidence_checksum") != expected:
+            raise result_error(
+                GraphArtifactResultErrorCode.RESULT_IDENTITY_CONFLICT,
+                field="quota_reconciliation.evidence_checksum",
+            )
+        object.__setattr__(self, "evidence_checksum", expected)
+
+    @property
+    def proves_absence(self) -> bool:
+        return not any(
+            (
+                self.attempt_committed,
+                self.catalog_claim_committed,
+                self.cache_entry_committed,
+                self.physical_operation_committed,
+            )
+        )
+
+    @classmethod
+    def create(cls, **values: Any) -> Self:
+        projection = _quota_reconciliation_projection(values)
+        return cls(**values, evidence_checksum=checksum_for(projection))
+
+    def checksum_projection(self) -> dict[str, Any]:
+        return _quota_reconciliation_projection(
+            {
+                "reservation_id": self.reservation_id,
+                "attempt_committed": self.attempt_committed,
+                "catalog_claim_committed": self.catalog_claim_committed,
+                "cache_entry_committed": self.cache_entry_committed,
+                "physical_operation_committed": self.physical_operation_committed,
+                "evidence_refs": self.evidence_refs,
+                "observed_at": self.observed_at,
+            }
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {**self.checksum_projection(), "evidence_checksum": self.evidence_checksum}
+
+    @classmethod
+    def from_dict(cls, value: Mapping[str, Any]) -> Self:
+        payload = exact_keys(
+            value,
+            required=frozenset(
+                {
+                    "reservation_id",
+                    "attempt_committed",
+                    "catalog_claim_committed",
+                    "cache_entry_committed",
+                    "physical_operation_committed",
+                    "evidence_refs",
+                    "observed_at",
+                    "evidence_checksum",
+                }
+            ),
+            model=cls.__name__,
+        )
+        payload["evidence_refs"] = tuple(payload["evidence_refs"])
+        payload["observed_at"] = datetime_from_json(
+            payload["observed_at"],
+            "quota_reconciliation.observed_at",
+        )
+        return cls(**payload)
 
 
 @runtime_checkable
@@ -96,6 +282,11 @@ class ResultQuotaPort(Protocol):
         *,
         tenant_id: str,
         run_id: str,
+        graph_id: str,
+        node_id: str,
+        artifact_class: ArtifactClass,
+        retention_class: RetentionClass,
+        policy_version: str,
         reservation_key: str,
         requested_bytes: int,
         object_count: int,
@@ -110,6 +301,20 @@ class ResultQuotaPort(Protocol):
         object_count: int,
         outcome: ResultMaterializationOutcome,
     ) -> None:
+        ...
+
+    def reconcile_pending(
+        self,
+        evidence: ResultQuotaReconciliationEvidence,
+    ) -> ResultQuotaReservation:
+        ...
+
+    def quota_snapshots(
+        self,
+        *,
+        tenant_id: str,
+        captured_at: datetime,
+    ) -> tuple["GraphArtifactQuotaSnapshot", ...]:
         ...
 
 
@@ -482,6 +687,11 @@ class ResultMaterializer:
             reservation = self._quota.reserve(
                 tenant_id=request.binding.tenant_id,
                 run_id=request.binding.run_id,
+                graph_id=request.binding.graph_id,
+                node_id=request.binding.node_id,
+                artifact_class=evaluation.decision.artifact_class,
+                retention_class=evaluation.decision.retention_class,
+                policy_version=evaluation.decision.policy_version,
                 reservation_key=self._quota_key(request, evaluation),
                 requested_bytes=evaluation.decision.reserved_bytes,
                 object_count=1,
@@ -495,6 +705,11 @@ class ResultMaterializer:
         if reservation is not None and (
             reservation.tenant_id != request.binding.tenant_id
             or reservation.run_id != request.binding.run_id
+            or reservation.graph_id != request.binding.graph_id
+            or reservation.node_id != request.binding.node_id
+            or reservation.artifact_class is not evaluation.decision.artifact_class
+            or reservation.retention_class is not evaluation.decision.retention_class
+            or reservation.policy_version != evaluation.decision.policy_version
             or reservation.reserved_bytes != evaluation.decision.reserved_bytes
         ):
             raise result_error(GraphArtifactResultErrorCode.ARTIFACT_SCOPE_MISMATCH, field="quota.reservation")
@@ -870,6 +1085,18 @@ def _derived_key(prefix: str, request: NodeResultRequest, evaluation: Persistenc
     return f"{prefix}://{request.binding.tenant_id}/{digest}"
 
 
+def _quota_reconciliation_projection(values: Mapping[str, Any]) -> dict[str, Any]:
+    return {
+        "reservation_id": values["reservation_id"],
+        "attempt_committed": values["attempt_committed"],
+        "catalog_claim_committed": values["catalog_claim_committed"],
+        "cache_entry_committed": values["cache_entry_committed"],
+        "physical_operation_committed": values["physical_operation_committed"],
+        "evidence_refs": list(values["evidence_refs"]),
+        "observed_at": datetime_to_json(values["observed_at"]),
+    }
+
+
 def _derived_identifier(prefix: str, request: NodeResultRequest) -> str:
     payload = {
         "tenant_id": request.binding.tenant_id,
@@ -905,5 +1132,6 @@ __all__ = [
     "ResultMaterializationOutcome",
     "ResultMaterializer",
     "ResultQuotaPort",
+    "ResultQuotaReconciliationEvidence",
     "ResultQuotaReservation",
 ]

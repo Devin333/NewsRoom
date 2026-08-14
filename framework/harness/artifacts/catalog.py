@@ -675,6 +675,7 @@ class ArtifactCatalogRegistrationResult:
 @dataclass(frozen=True, slots=True)
 class ArtifactCatalogGcDecision:
     entry_id: str
+    tenant_id: str
     ref: str
     action: ArtifactCatalogGcAction
     reason: ArtifactCatalogGcReason
@@ -686,6 +687,11 @@ class ArtifactCatalogGcDecision:
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "entry_id", reference(self.entry_id, "gc_decision.entry_id"))
+        object.__setattr__(
+            self,
+            "tenant_id",
+            identifier(self.tenant_id, "gc_decision.tenant_id"),
+        )
         object.__setattr__(self, "ref", reference(self.ref, "gc_decision.ref"))
         object.__setattr__(self, "action", enum_value(ArtifactCatalogGcAction, self.action, "gc_decision.action"))
         object.__setattr__(self, "reason", enum_value(ArtifactCatalogGcReason, self.reason, "gc_decision.reason"))
@@ -722,6 +728,7 @@ class ArtifactCatalogGcDecision:
     def checksum_projection(self) -> dict[str, Any]:
         return {
             "entry_id": self.entry_id,
+            "tenant_id": self.tenant_id,
             "ref": self.ref,
             "action": self.action.value,
             "reason": self.reason.value,
@@ -742,6 +749,7 @@ class ArtifactCatalogGcDecision:
                 required=frozenset(
                     {
                         "entry_id",
+                        "tenant_id",
                         "ref",
                         "action",
                         "reason",

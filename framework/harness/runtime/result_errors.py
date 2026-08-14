@@ -34,6 +34,7 @@ class GraphArtifactResultErrorCode(StrEnum):
     LIFECYCLE_AUTHORIZATION_INVALID = "lifecycle_authorization_invalid"
     COST_REPORT_FAILED = "cost_report_failed"
     ALERT_LEDGER_FAILED = "alert_ledger_failed"
+    GOVERNANCE_RECORD_NOT_FOUND = "governance_record_not_found"
 
 
 _MESSAGES: Mapping[GraphArtifactResultErrorCode, str] = {
@@ -111,6 +112,9 @@ _MESSAGES: Mapping[GraphArtifactResultErrorCode, str] = {
     ),
     GraphArtifactResultErrorCode.ALERT_LEDGER_FAILED: (
         "graph artifact alert state could not be committed"
+    ),
+    GraphArtifactResultErrorCode.GOVERNANCE_RECORD_NOT_FOUND: (
+        "graph artifact governance record was not found"
     ),
 }
 

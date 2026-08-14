@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import sqlite3
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
@@ -31,14 +32,17 @@ from framework.harness.runtime import (
     ResultMetrics,
     ResultProvenance,
     ResultQuotaPort,
+    ResultQuotaReconciliationEvidence,
     ResultSensitivity,
     RetentionClass,
 )
 from infrastructure.research.artifact_port import FilesystemHarnessArtifactPort
 from infrastructure.storage.artifacts import (
     LocalJsonArtifactCatalog,
+    SQLITE_GRAPH_RESULT_STORE_SCHEMA_VERSION,
     SQLiteGraphResultStore,
 )
+from framework.shared.json import stable_json_dumps
 
 
 NOW = datetime(2026, 8, 14, 8, 0, tzinfo=UTC)
@@ -105,6 +109,7 @@ def test_quota_is_transactional_bounded_and_settlement_is_exactly_once(
     first = store.reserve(
         tenant_id="tenant-1",
         run_id="run-1",
+        **_quota_dimensions(),
         reservation_key="quota://tenant-1/first",
         requested_bytes=60,
         object_count=1,
@@ -113,6 +118,7 @@ def test_quota_is_transactional_bounded_and_settlement_is_exactly_once(
     assert store.reserve(
         tenant_id="tenant-1",
         run_id="run-1",
+        **_quota_dimensions(),
         reservation_key="quota://tenant-1/first",
         requested_bytes=60,
         object_count=1,
@@ -124,6 +130,7 @@ def test_quota_is_transactional_bounded_and_settlement_is_exactly_once(
     assert store.reserve(
         tenant_id="tenant-1",
         run_id="run-1",
+        **_quota_dimensions(),
         reservation_key="quota://tenant-1/too-large",
         requested_bytes=50,
         object_count=1,
@@ -154,6 +161,7 @@ def test_quota_is_transactional_bounded_and_settlement_is_exactly_once(
     second = restarted.reserve(
         tenant_id="tenant-1",
         run_id="run-1",
+        **_quota_dimensions(),
         reservation_key="quota://tenant-1/second",
         requested_bytes=50,
         object_count=1,
@@ -162,6 +170,7 @@ def test_quota_is_transactional_bounded_and_settlement_is_exactly_once(
     assert restarted.reserve(
         tenant_id="tenant-1",
         run_id="run-1",
+        **_quota_dimensions(),
         reservation_key="quota://tenant-1/count-limit",
         requested_bytes=0,
         object_count=1,
@@ -229,6 +238,199 @@ def test_pending_quota_reservation_survives_restart_without_double_charge(
         tenant_id="tenant-1",
         run_id="run-1",
     ).to_dict() == {"materialized_bytes": 42, "artifact_count": 1}
+
+
+def test_pending_quota_reconciliation_requires_durable_absence_evidence(
+    tmp_path,
+) -> None:
+    database = tmp_path / "graph-results.sqlite3"
+    store = SQLiteGraphResultStore(database, clock=lambda: NOW)
+    reservation = _reserve(store, key="reconcile", requested_bytes=42)
+    present = ResultQuotaReconciliationEvidence.create(
+        reservation_id=reservation.reservation_id,
+        attempt_committed=True,
+        catalog_claim_committed=False,
+        cache_entry_committed=False,
+        physical_operation_committed=False,
+        evidence_refs=("attempt://run-1/analyze/attempt-1",),
+        observed_at=NOW,
+    )
+    absent = ResultQuotaReconciliationEvidence.create(
+        reservation_id=reservation.reservation_id,
+        attempt_committed=False,
+        catalog_claim_committed=False,
+        cache_entry_committed=False,
+        physical_operation_committed=False,
+        evidence_refs=(CHECKSUM_A, CHECKSUM_B),
+        observed_at=NOW + timedelta(seconds=1),
+    )
+
+    assert store.reconcile_pending(present) == reservation
+    assert store.budget_snapshot(
+        tenant_id="tenant-1",
+        run_id="run-1",
+    ).materialized_bytes == 42
+    assert store.reconcile_pending(absent) == reservation
+    assert store.reconcile_pending(absent) == reservation
+    assert SQLiteGraphResultStore(database, clock=lambda: NOW).budget_snapshot(
+        tenant_id="tenant-1",
+        run_id="run-1",
+    ).materialized_bytes == 0
+    with sqlite3.connect(database) as connection:
+        assert connection.execute(
+            "SELECT COUNT(*) FROM graph_result_quota_reconciliations"
+        ).fetchone()[0] == 2
+
+
+def test_tenant_and_artifact_class_quota_are_enforced_across_runs(tmp_path) -> None:
+    store = SQLiteGraphResultStore(
+        tmp_path / "graph-results.sqlite3",
+        max_materialized_bytes_per_run=100,
+        max_artifacts_per_run=10,
+        max_materialized_bytes_per_tenant=150,
+        max_artifacts_per_tenant=20,
+        max_materialized_bytes_per_class=100,
+        max_artifacts_per_class=10,
+        clock=lambda: NOW,
+    )
+
+    assert _reserve_dimensions(
+        store,
+        tenant_id="tenant-1",
+        run_id="run-1",
+        key="evidence-1",
+        requested_bytes=80,
+        artifact_class=ArtifactClass.EVIDENCE,
+    ) is not None
+    assert _reserve_dimensions(
+        store,
+        tenant_id="tenant-1",
+        run_id="run-2",
+        key="evidence-2",
+        requested_bytes=30,
+        artifact_class=ArtifactClass.EVIDENCE,
+    ) is None
+    assert _reserve_dimensions(
+        store,
+        tenant_id="tenant-1",
+        run_id="run-2",
+        key="report-1",
+        requested_bytes=60,
+        artifact_class=ArtifactClass.REPORT,
+    ) is not None
+    assert _reserve_dimensions(
+        store,
+        tenant_id="tenant-1",
+        run_id="run-3",
+        key="report-2",
+        requested_bytes=20,
+        artifact_class=ArtifactClass.REPORT,
+    ) is None
+    assert _reserve_dimensions(
+        store,
+        tenant_id="tenant-2",
+        run_id="run-1",
+        key="evidence-tenant-2",
+        requested_bytes=100,
+        artifact_class=ArtifactClass.EVIDENCE,
+    ) is not None
+    snapshots = store.quota_snapshots(tenant_id="tenant-1", captured_at=NOW)
+    by_dimension = {
+        (item.scope.value, item.run_id, item.artifact_class): item
+        for item in snapshots
+    }
+    assert by_dimension[("tenant", None, None)].pending_bytes == 140
+    assert by_dimension[("run", "run-1", None)].pending_bytes == 80
+    assert by_dimension[("run", "run-2", None)].pending_bytes == 60
+    assert by_dimension[("artifact_class", None, ArtifactClass.EVIDENCE)].pending_bytes == 80
+    assert by_dimension[("artifact_class", None, ArtifactClass.REPORT)].pending_bytes == 60
+
+
+def test_concurrent_runs_cannot_overbook_one_tenant(tmp_path) -> None:
+    store = SQLiteGraphResultStore(
+        tmp_path / "graph-results.sqlite3",
+        max_materialized_bytes_per_run=100,
+        max_materialized_bytes_per_tenant=100,
+        max_materialized_bytes_per_class=100,
+        clock=lambda: NOW,
+    )
+
+    def reserve(index: int):
+        return _reserve_dimensions(
+            store,
+            tenant_id="tenant-1",
+            run_id=f"run-{index}",
+            key=f"concurrent-{index}",
+            requested_bytes=80,
+            artifact_class=ArtifactClass.EVIDENCE,
+        )
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        results = tuple(executor.map(reserve, (1, 2)))
+
+    assert sum(item is not None for item in results) == 1
+
+
+def test_v1_database_migrates_transactionally_without_rewriting_attempts(
+    tmp_path,
+) -> None:
+    database = tmp_path / "graph-results.sqlite3"
+    envelope = _envelope(_binding())
+    _create_v1_database(database, envelope=envelope)
+    with sqlite3.connect(database) as connection:
+        before = connection.execute(
+            "SELECT binding_checksum, envelope_checksum "
+            "FROM graph_result_attempts"
+        ).fetchone()
+
+    store = SQLiteGraphResultStore(database, clock=lambda: NOW)
+
+    assert store.get(envelope.binding) == envelope
+    assert store.budget_snapshot(
+        tenant_id="tenant-1",
+        run_id="run-1",
+    ).to_dict() == {"materialized_bytes": 42, "artifact_count": 1}
+    with sqlite3.connect(database) as connection:
+        after = connection.execute(
+            "SELECT binding_checksum, envelope_checksum "
+            "FROM graph_result_attempts"
+        ).fetchone()
+        version = connection.execute(
+            "SELECT schema_version FROM graph_result_store_metadata"
+        ).fetchone()[0]
+        dimensions = connection.execute(
+            "SELECT graph_id, node_id, artifact_class, retention_class, "
+            "policy_version FROM graph_result_quota_reservations"
+        ).fetchone()
+    assert after == before
+    assert version == SQLITE_GRAPH_RESULT_STORE_SCHEMA_VERSION
+    assert dimensions == (
+        "legacy-graph",
+        "legacy-node",
+        "intermediate",
+        "run",
+        "graph-artifact-policy@1",
+    )
+
+
+def test_partial_v1_migration_is_rejected_without_advancing_version(tmp_path) -> None:
+    database = tmp_path / "graph-results.sqlite3"
+    _create_v1_database(database, envelope=_envelope(_binding()))
+    with sqlite3.connect(database) as connection:
+        connection.execute(
+            "ALTER TABLE graph_result_quota_reservations "
+            "ADD COLUMN graph_id TEXT"
+        )
+        connection.commit()
+
+    with pytest.raises(GraphArtifactResultError) as partial:
+        SQLiteGraphResultStore(database, clock=lambda: NOW)
+
+    assert partial.value.error_code is GraphArtifactResultErrorCode.RESULT_LEDGER_FAILED
+    with sqlite3.connect(database) as connection:
+        assert connection.execute(
+            "SELECT schema_version FROM graph_result_store_metadata"
+        ).fetchone()[0] == 1
 
 
 def test_cache_is_tenant_scoped_restart_safe_conflict_checked_and_expiring(
@@ -308,7 +510,7 @@ def test_restart_rejects_unsupported_schema_version(tmp_path) -> None:
     SQLiteGraphResultStore(database, clock=lambda: NOW)
     with sqlite3.connect(database) as connection:
         connection.execute(
-            "UPDATE graph_result_store_metadata SET schema_version = 2"
+            "UPDATE graph_result_store_metadata SET schema_version = 999"
         )
         connection.commit()
 
@@ -453,12 +655,168 @@ def _reserve(store, *, key: str, requested_bytes: int):
     reservation = store.reserve(
         tenant_id="tenant-1",
         run_id="run-1",
+        **_quota_dimensions(),
         reservation_key=f"quota://tenant-1/{key}",
         requested_bytes=requested_bytes,
         object_count=1,
     )
     assert reservation is not None
     return reservation
+
+
+def _reserve_dimensions(
+    store,
+    *,
+    tenant_id: str,
+    run_id: str,
+    key: str,
+    requested_bytes: int,
+    artifact_class: ArtifactClass,
+):
+    return store.reserve(
+        tenant_id=tenant_id,
+        run_id=run_id,
+        graph_id="graph-1",
+        node_id="analyze",
+        artifact_class=artifact_class,
+        retention_class=RetentionClass.RUN,
+        policy_version="graph-artifact-policy@1",
+        reservation_key=f"quota://{tenant_id}/{key}",
+        requested_bytes=requested_bytes,
+        object_count=1,
+    )
+
+
+def _quota_dimensions() -> dict:
+    return {
+        "graph_id": "graph-1",
+        "node_id": "analyze",
+        "artifact_class": ArtifactClass.INTERMEDIATE,
+        "retention_class": RetentionClass.RUN,
+        "policy_version": "graph-artifact-policy@1",
+    }
+
+
+def _create_v1_database(database, *, envelope: NodeResultEnvelope) -> None:
+    binding_payload = envelope.binding.to_dict()
+    envelope_payload = envelope.to_dict()
+    reservation_key = "quota://tenant-1/v1-pending"
+    generation = 1
+    reservation_id = _v1_reservation_id(
+        tenant_id="tenant-1",
+        run_id="run-1",
+        reservation_key=reservation_key,
+        generation=generation,
+    )
+    reservation_payload = {
+        "reservation_id": reservation_id,
+        "tenant_id": "tenant-1",
+        "run_id": "run-1",
+        "reservation_key": reservation_key,
+        "reserved_bytes": 42,
+        "object_count": 1,
+    }
+    with sqlite3.connect(database) as connection:
+        connection.executescript(
+            """
+            CREATE TABLE graph_result_store_metadata (
+                singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+                schema_version INTEGER NOT NULL,
+                created_at TEXT NOT NULL
+            );
+            CREATE TABLE graph_result_attempts (
+                binding_key TEXT PRIMARY KEY,
+                tenant_id TEXT NOT NULL,
+                run_id TEXT NOT NULL,
+                binding_json TEXT NOT NULL,
+                binding_checksum TEXT NOT NULL,
+                envelope_json TEXT NOT NULL,
+                envelope_checksum TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            );
+            CREATE TABLE graph_result_quota_reservations (
+                reservation_id TEXT PRIMARY KEY,
+                tenant_id TEXT NOT NULL,
+                run_id TEXT NOT NULL,
+                reservation_key TEXT NOT NULL,
+                generation INTEGER NOT NULL CHECK (generation >= 1),
+                reserved_bytes INTEGER NOT NULL CHECK (reserved_bytes >= 0),
+                reserved_objects INTEGER NOT NULL CHECK (reserved_objects >= 1),
+                reservation_checksum TEXT NOT NULL,
+                actual_bytes INTEGER,
+                actual_objects INTEGER,
+                outcome TEXT,
+                settlement_checksum TEXT,
+                created_at TEXT NOT NULL,
+                settled_at TEXT,
+                UNIQUE (tenant_id, run_id, reservation_key, generation)
+            );
+            """
+        )
+        connection.execute(
+            "INSERT INTO graph_result_store_metadata "
+            "(singleton, schema_version, created_at) VALUES (1, 1, ?)",
+            ("2026-08-14T08:00:00Z",),
+        )
+        connection.execute(
+            """
+            INSERT INTO graph_result_attempts (
+                binding_key, tenant_id, run_id, binding_json,
+                binding_checksum, envelope_json, envelope_checksum, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                checksum_for(binding_payload),
+                envelope.binding.tenant_id,
+                envelope.binding.run_id,
+                stable_json_dumps(binding_payload),
+                checksum_for(binding_payload),
+                stable_json_dumps(envelope_payload),
+                checksum_for(envelope_payload),
+                "2026-08-14T08:00:00Z",
+            ),
+        )
+        connection.execute(
+            """
+            INSERT INTO graph_result_quota_reservations (
+                reservation_id, tenant_id, run_id, reservation_key,
+                generation, reserved_bytes, reserved_objects,
+                reservation_checksum, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                reservation_id,
+                "tenant-1",
+                "run-1",
+                reservation_key,
+                generation,
+                42,
+                1,
+                checksum_for(reservation_payload),
+                "2026-08-14T08:00:00Z",
+            ),
+        )
+        connection.commit()
+
+
+def _v1_reservation_id(
+    *,
+    tenant_id: str,
+    run_id: str,
+    reservation_key: str,
+    generation: int,
+) -> str:
+    digest = hashlib.sha256(
+        stable_json_dumps(
+            {
+                "tenant_id": tenant_id,
+                "run_id": run_id,
+                "reservation_key": reservation_key,
+                "generation": generation,
+            }
+        ).encode("utf-8")
+    ).hexdigest()
+    return f"quota-reservation://{tenant_id}/{digest}/{generation}"
 
 
 def _cache_request() -> ResultCacheWriteRequest:

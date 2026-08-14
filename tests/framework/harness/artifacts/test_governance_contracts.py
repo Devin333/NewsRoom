@@ -25,7 +25,9 @@ from framework.harness.artifacts.governance import (
     GraphArtifactCostAggregate,
     GraphArtifactCostDimension,
     GraphArtifactDeletionReceipt,
+    GraphArtifactDeletionTombstone,
     GraphArtifactGcOperation,
+    GraphArtifactGcOperationIntent,
     GraphArtifactGcOperationState,
     GraphArtifactPhysicalDeleteRequest,
     GraphArtifactQuarantineReceipt,
@@ -101,10 +103,14 @@ def _catalog_models() -> tuple[
     return entry, claim, logical_reference
 
 
-def _delete_request() -> GraphArtifactPhysicalDeleteRequest:
+def _delete_request() -> tuple[
+    GraphArtifactGcOperationIntent,
+    GraphArtifactPhysicalDeleteRequest,
+]:
     entry, claim, logical_reference = _catalog_models()
     decision = ArtifactCatalogGcDecision(
         entry_id=entry.entry_id,
+        tenant_id=entry.identity.tenant_id,
         ref=entry.record.ref,
         action=ArtifactCatalogGcAction.DELETE_CANDIDATE,
         reason=ArtifactCatalogGcReason.EXPIRED_UNREFERENCED,
@@ -120,14 +126,27 @@ def _delete_request() -> GraphArtifactPhysicalDeleteRequest:
         references=(logical_reference,),
         detached_at=NOW,
     )
-    return GraphArtifactPhysicalDeleteRequest.create(
-        operation_id="graph-artifact-gc://operation-1",
+    intent = GraphArtifactGcOperationIntent.create(
+        tenant_id=entry.identity.tenant_id,
+        plan_checksum=PLAN_CHECKSUM,
+        catalog_snapshot_checksum=CHECKSUM,
+        policy_version="graph-artifact-policy@1",
+        decision=decision,
+        entry=entry,
+        claims=(claim,),
+        references=(logical_reference,),
+        prepared_at=NOW - timedelta(seconds=1),
+    )
+    request = GraphArtifactPhysicalDeleteRequest.create(
+        operation_id=intent.operation_id,
         plan_checksum=PLAN_CHECKSUM,
         decision_checksum=decision.decision_checksum,
+        intent_checksum=intent.intent_checksum,
         record=entry.record,
         detach_receipt=detach,
         requested_at=NOW,
     )
+    return intent, request
 
 
 def test_usage_fact_is_deterministic_exact_sanitized_and_round_trips() -> None:
@@ -216,7 +235,7 @@ def test_quota_snapshots_are_dimensioned_and_round_trip(
 
 
 def test_physical_gc_contracts_bind_every_receipt_to_one_operation() -> None:
-    request = _delete_request()
+    intent, request = _delete_request()
     quarantine = GraphArtifactQuarantineReceipt.create(
         operation_id=request.operation_id,
         ref=request.record.ref,
@@ -235,6 +254,7 @@ def test_physical_gc_contracts_bind_every_receipt_to_one_operation() -> None:
     operation = GraphArtifactGcOperation.create(
         operation_id=request.operation_id,
         state=GraphArtifactGcOperationState.COMPLETED,
+        intent=intent,
         request=request,
         quarantine=quarantine,
         deletion=deletion,
@@ -244,6 +264,8 @@ def test_physical_gc_contracts_bind_every_receipt_to_one_operation() -> None:
 
     assert GraphArtifactPhysicalDeleteRequest.from_dict(request.to_dict()) == request
     assert GraphArtifactGcOperation.from_dict(operation.to_dict()) == operation
+    tombstone = GraphArtifactDeletionTombstone.from_completed_operation(operation)
+    assert GraphArtifactDeletionTombstone.from_dict(tombstone.to_dict()) == tombstone
     with pytest.raises(GraphArtifactResultError):
         replace(operation, quarantine=replace(quarantine, byte_size=18))
 

@@ -108,14 +108,33 @@ class RecordingQuota:
         self.reservations: list[ResultQuotaReservation] = []
         self.settlements: list[tuple[ResultQuotaReservation, int, int, ResultMaterializationOutcome]] = []
 
-    def reserve(self, *, tenant_id, run_id, reservation_key, requested_bytes, object_count):
+    def reserve(
+        self,
+        *,
+        tenant_id,
+        run_id,
+        graph_id,
+        node_id,
+        artifact_class,
+        retention_class,
+        policy_version,
+        reservation_key,
+        requested_bytes,
+        object_count,
+    ):
         if not self.allow:
             return None
         reservation = ResultQuotaReservation(
             reservation_id=f"quota://{len(self.reservations) + 1}",
             tenant_id=tenant_id,
             run_id=run_id,
+            graph_id=graph_id,
+            node_id=node_id,
+            artifact_class=artifact_class,
+            retention_class=retention_class,
+            policy_version=policy_version,
             reservation_key=reservation_key,
+            generation=1,
             reserved_bytes=requested_bytes,
             object_count=object_count,
         )

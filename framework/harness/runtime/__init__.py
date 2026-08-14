@@ -66,6 +66,7 @@ from framework.harness.runtime.materializer import (
     ResultMaterializationOutcome,
     ResultMaterializer,
     ResultQuotaPort,
+    ResultQuotaReconciliationEvidence,
     ResultQuotaReservation,
 )
 from framework.harness.runtime.graph_result_projection import (
@@ -164,6 +165,7 @@ __all__ = [
     "ResultMetrics",
     "ResultProvenance",
     "ResultQuotaPort",
+    "ResultQuotaReconciliationEvidence",
     "ResultQuotaReservation",
     "ResultSensitivity",
     "RetentionClass",

@@ -938,6 +938,7 @@ def _gc_decision(
         reason = ArtifactCatalogGcReason.EXPIRED_UNREFERENCED
     return ArtifactCatalogGcDecision(
         entry_id=entry.entry_id,
+        tenant_id=entry.identity.tenant_id,
         ref=entry.record.ref,
         action=action,
         reason=reason,

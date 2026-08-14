@@ -218,6 +218,7 @@ def test_gc_and_reconciliation_plans_are_deterministic_exact_contracts() -> None
     )
     decision = ArtifactCatalogGcDecision(
         entry_id=entry.entry_id,
+        tenant_id=entry.identity.tenant_id,
         ref=entry.record.ref,
         action=ArtifactCatalogGcAction.KEEP,
         reason=ArtifactCatalogGcReason.RETENTION_ACTIVE,
@@ -255,6 +256,7 @@ def test_catalog_snapshot_and_gc_detach_contracts_preserve_exact_evidence() -> N
     )
     decision = ArtifactCatalogGcDecision(
         entry_id=entry.entry_id,
+        tenant_id=entry.identity.tenant_id,
         ref=entry.record.ref,
         action=ArtifactCatalogGcAction.DELETE_CANDIDATE,
         reason=ArtifactCatalogGcReason.EXPIRED_UNREFERENCED,
