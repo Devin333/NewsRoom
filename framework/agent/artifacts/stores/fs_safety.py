@@ -3,12 +3,17 @@ from __future__ import annotations
 import os
 import stat
 import tempfile
+import threading
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 
 from framework.agent.artifacts.stores.errors import ArtifactStoreMetadataError
 
 
 _REPARSE_POINT_FLAG = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x0400)
+_FILE_LOCKS_GUARD = threading.Lock()
+_FILE_LOCKS: dict[Path, threading.RLock] = {}
 
 
 def is_link_or_reparse_point(info: os.stat_result) -> bool:
@@ -16,6 +21,107 @@ def is_link_or_reparse_point(info: os.stat_result) -> bool:
 
     attributes = int(getattr(info, "st_file_attributes", 0) or 0)
     return stat.S_ISLNK(info.st_mode) or bool(attributes & _REPARSE_POINT_FLAG)
+
+
+@contextmanager
+def verified_exclusive_file_lock(
+    path: Path,
+    *,
+    root: Path,
+    identity: str,
+) -> Iterator[None]:
+    """Serialize one filesystem lifecycle operation without following links."""
+
+    canonical_root = root.resolve(strict=False)
+    path = _lexical_descendant(path, root=canonical_root, identity=identity)
+    _ensure_directory_chain(path.parent, root=canonical_root, identity=identity)
+    thread_lock = _file_lock(path)
+    with thread_lock:
+        reject_link_chain(
+            path,
+            root=canonical_root,
+            identity=identity,
+            role="artifact lock",
+        )
+        existing = _regular_file_or_missing(path, identity=identity)
+        flags = os.O_RDWR | os.O_CREAT
+        if hasattr(os, "O_BINARY"):
+            flags |= os.O_BINARY
+        if hasattr(os, "O_NOFOLLOW"):
+            flags |= os.O_NOFOLLOW
+        try:
+            descriptor = os.open(path, flags, 0o600)
+        except OSError as exc:
+            raise ArtifactStoreMetadataError(
+                f"artifact lock could not be opened: {identity}"
+            ) from exc
+        try:
+            opened = os.fstat(descriptor)
+            _require_regular(opened, identity=identity, role="artifact lock")
+            committed = os.lstat(path)
+            _require_regular(committed, identity=identity, role="artifact lock")
+            if is_link_or_reparse_point(committed) or not os.path.samestat(
+                opened,
+                committed,
+            ):
+                raise ArtifactStoreMetadataError(
+                    f"artifact lock identity changed: {identity}"
+                )
+            if existing is not None and not os.path.samestat(existing, opened):
+                raise ArtifactStoreMetadataError(
+                    f"artifact lock target changed: {identity}"
+                )
+            _lock_descriptor(descriptor)
+            try:
+                yield
+            finally:
+                _unlock_descriptor(descriptor)
+        finally:
+            os.close(descriptor)
+
+
+def _file_lock(path: Path) -> threading.RLock:
+    key = path.resolve(strict=False)
+    with _FILE_LOCKS_GUARD:
+        lock = _FILE_LOCKS.get(key)
+        if lock is None:
+            lock = threading.RLock()
+            _FILE_LOCKS[key] = lock
+        return lock
+
+
+def _lock_descriptor(descriptor: int) -> None:
+    try:
+        if os.name == "nt":
+            import msvcrt
+
+            info = os.fstat(descriptor)
+            if info.st_size == 0:
+                os.write(descriptor, b"\0")
+                os.fsync(descriptor)
+            os.lseek(descriptor, 0, os.SEEK_SET)
+            msvcrt.locking(descriptor, msvcrt.LK_LOCK, 1)
+        else:
+            import fcntl
+
+            fcntl.flock(descriptor, fcntl.LOCK_EX)
+    except OSError as exc:
+        raise ArtifactStoreMetadataError("artifact lock acquisition failed") from exc
+
+
+def _unlock_descriptor(descriptor: int) -> None:
+    try:
+        if os.name == "nt":
+            import msvcrt
+
+            os.lseek(descriptor, 0, os.SEEK_SET)
+            msvcrt.locking(descriptor, msvcrt.LK_UNLCK, 1)
+        else:
+            import fcntl
+
+            fcntl.flock(descriptor, fcntl.LOCK_UN)
+    except OSError:
+        pass
 
 
 def verified_atomic_write(
@@ -421,4 +527,5 @@ __all__ = [
     "reject_link_chain",
     "verified_atomic_create",
     "verified_atomic_write",
+    "verified_exclusive_file_lock",
 ]

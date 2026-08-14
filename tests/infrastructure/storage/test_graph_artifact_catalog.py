@@ -14,7 +14,9 @@ import pytest
 from framework.events.canonical import checksum_for
 from framework.harness.artifacts import ArtifactCatalogPort
 from framework.harness.artifacts.catalog import (
+    ArtifactCatalogGcAction,
     ArtifactCatalogGcDetachRequest,
+    ArtifactCatalogGcReason,
     ArtifactCatalogIdentity,
     ArtifactCatalogRegistrationRequest,
     ArtifactLifecycleAuthorization,
@@ -351,6 +353,207 @@ def test_gc_detach_rejects_a_reference_added_after_planning(tmp_path) -> None:
     assert stale.value.error_code is GraphArtifactResultErrorCode.GC_PLAN_STALE
     assert catalog.get(registered.entry.entry_id) == registered.entry
     assert catalog.list_references(registered.entry.entry_id) == (late_reference,)
+
+
+def test_tenant_scoped_snapshot_and_gc_plan_exclude_other_tenants(tmp_path) -> None:
+    catalog = LocalJsonArtifactCatalog(tmp_path)
+    tenant_one = catalog.register(_request(_record()))
+    tenant_two = catalog.register(
+        _request(
+            _record(
+                tenant_id="tenant-2",
+                run_id="run-2",
+                artifact_id="artifact-2",
+            )
+        )
+    )
+
+    aggregate = catalog.snapshot(captured_at=NOW)
+    scoped = catalog.snapshot(captured_at=NOW, tenant_id="tenant-1")
+    plan = catalog.plan_gc(now=NOW, tenant_id="tenant-1")
+
+    assert {entry.entry_id for entry in aggregate.entries} == {
+        tenant_one.entry.entry_id,
+        tenant_two.entry.entry_id,
+    }
+    assert scoped.entries == (tenant_one.entry,)
+    assert scoped.claims == (tenant_one.claim,)
+    assert scoped.references == (tenant_one.reference,)
+    assert plan.catalog_snapshot_checksum == scoped.snapshot_checksum
+    assert tuple(decision.tenant_id for decision in plan.decisions) == ("tenant-1",)
+
+
+def test_gc_detach_ignores_unrelated_tenant_catalog_changes(tmp_path) -> None:
+    catalog = LocalJsonArtifactCatalog(tmp_path)
+    registered = catalog.register(
+        _request(_record(expires_at=NOW + timedelta(days=1)))
+    )
+    retirement_time = NOW + timedelta(days=2)
+    catalog.retire_reference(
+        _retirement_request(registered.reference, requested_at=retirement_time)
+    )
+    plan = catalog.plan_gc(now=retirement_time, tenant_id="tenant-1")
+    decision = plan.decisions[0]
+
+    unrelated = catalog.register(
+        _request(
+            _record(
+                tenant_id="tenant-2",
+                run_id="run-2",
+                artifact_id="artifact-2",
+            )
+        )
+    )
+    request = ArtifactCatalogGcDetachRequest.create(
+        plan_checksum=plan.plan_checksum,
+        catalog_snapshot_checksum=plan.catalog_snapshot_checksum,
+        decision=decision,
+        requested_at=retirement_time,
+    )
+
+    receipt = catalog.detach_gc_candidate(request)
+
+    assert receipt.entry == registered.entry
+    assert receipt.claims == (registered.claim,)
+    assert receipt.references == ()
+    assert catalog.get(unrelated.entry.entry_id) == unrelated.entry
+    with pytest.raises(GraphArtifactResultError) as missing:
+        catalog.get(registered.entry.entry_id)
+    assert missing.value.error_code is (
+        GraphArtifactResultErrorCode.ARTIFACT_CATALOG_NOT_FOUND
+    )
+
+
+def test_retention_and_expiring_reference_ttl_boundaries_are_exact(tmp_path) -> None:
+    catalog = LocalJsonArtifactCatalog(tmp_path)
+    expiry = NOW + timedelta(days=1)
+    registered = catalog.register(_request(_record(expires_at=expiry)))
+
+    with pytest.raises(GraphArtifactResultError) as early_retirement:
+        catalog.retire_reference(
+            _retirement_request(
+                registered.reference,
+                requested_at=expiry - timedelta(microseconds=1),
+            )
+        )
+    assert early_retirement.value.error_code is (
+        GraphArtifactResultErrorCode.LIFECYCLE_AUTHORIZATION_INVALID
+    )
+
+    catalog.retire_reference(
+        _retirement_request(registered.reference, requested_at=expiry)
+    )
+    ephemeral = ArtifactLogicalReference.create(
+        entry_id=registered.entry.entry_id,
+        tenant_id="tenant-1",
+        owner_run_id="run-1",
+        owner_id="ttl-boundary",
+        kind=ArtifactReferenceKind.EPHEMERAL,
+        created_at=NOW + timedelta(seconds=2),
+        expires_at=expiry,
+    )
+    catalog.add_reference(ephemeral)
+
+    before = catalog.plan_gc(now=expiry - timedelta(microseconds=1))
+    at_boundary = catalog.plan_gc(now=expiry)
+
+    assert before.decisions[0].action is ArtifactCatalogGcAction.KEEP
+    assert before.decisions[0].reason is ArtifactCatalogGcReason.REFERENCE_PROTECTED
+    assert at_boundary.decisions[0].action is ArtifactCatalogGcAction.DELETE_CANDIDATE
+    assert at_boundary.decisions[0].reason is (
+        ArtifactCatalogGcReason.EXPIRED_UNREFERENCED
+    )
+
+
+@pytest.mark.parametrize(
+    ("kind", "reason"),
+    [
+        (ArtifactReferenceKind.RUN, ArtifactCatalogGcReason.REFERENCE_PROTECTED),
+        (ArtifactReferenceKind.REPORT, ArtifactCatalogGcReason.REFERENCE_PROTECTED),
+        (ArtifactReferenceKind.EVIDENCE, ArtifactCatalogGcReason.REFERENCE_PROTECTED),
+        (ArtifactReferenceKind.REPLAY, ArtifactCatalogGcReason.REPLAY_REQUIRED),
+        (
+            ArtifactReferenceKind.PUBLICATION,
+            ArtifactCatalogGcReason.PUBLICATION_REQUIRED,
+        ),
+    ],
+)
+def test_gc_plan_preserves_each_active_protected_reference_kind(
+    tmp_path,
+    kind: ArtifactReferenceKind,
+    reason: ArtifactCatalogGcReason,
+) -> None:
+    catalog = LocalJsonArtifactCatalog(tmp_path)
+    expiry = NOW + timedelta(days=1)
+    registered = catalog.register(_request(_record(expires_at=expiry)))
+    observation_time = expiry + timedelta(days=1)
+    catalog.retire_reference(
+        _retirement_request(
+            registered.reference,
+            requested_at=observation_time,
+        )
+    )
+    protected = ArtifactLogicalReference.create(
+        entry_id=registered.entry.entry_id,
+        tenant_id="tenant-1",
+        owner_run_id="run-1",
+        owner_id=f"protected-{kind.value}",
+        kind=kind,
+        created_at=NOW + timedelta(seconds=2),
+    )
+    catalog.add_reference(protected)
+
+    decision = catalog.plan_gc(now=observation_time).decisions[0]
+
+    assert decision.action is ArtifactCatalogGcAction.KEEP
+    assert decision.reason is reason
+    assert decision.active_reference_ids == (protected.reference_id,)
+
+
+def test_concurrent_gc_detach_has_one_receipt_and_one_stale_result(tmp_path) -> None:
+    catalog = LocalJsonArtifactCatalog(tmp_path)
+    registered = catalog.register(
+        _request(_record(expires_at=NOW + timedelta(days=1)))
+    )
+    retirement_time = NOW + timedelta(days=2)
+    catalog.retire_reference(
+        _retirement_request(registered.reference, requested_at=retirement_time)
+    )
+    plan = catalog.plan_gc(now=retirement_time, tenant_id="tenant-1")
+    request = ArtifactCatalogGcDetachRequest.create(
+        plan_checksum=plan.plan_checksum,
+        catalog_snapshot_checksum=plan.catalog_snapshot_checksum,
+        decision=plan.decisions[0],
+        requested_at=retirement_time,
+    )
+
+    def detach(_index: int):
+        try:
+            return catalog.detach_gc_candidate(request)
+        except GraphArtifactResultError as exc:
+            return exc
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        outcomes = tuple(executor.map(detach, range(2)))
+
+    receipts = tuple(
+        outcome
+        for outcome in outcomes
+        if not isinstance(outcome, GraphArtifactResultError)
+    )
+    failures = tuple(
+        outcome
+        for outcome in outcomes
+        if isinstance(outcome, GraphArtifactResultError)
+    )
+    assert len(receipts) == 1
+    assert receipts[0].entry == registered.entry
+    assert len(failures) == 1
+    assert failures[0].error_code is GraphArtifactResultErrorCode.GC_PLAN_STALE
+    state = _read_state(tmp_path)
+    assert state["entries"] == []
+    assert state["claims"] == []
+    assert state["references"] == []
 
 
 def test_parallel_registration_has_one_entry_and_no_lost_references(tmp_path) -> None:

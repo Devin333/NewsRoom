@@ -190,7 +190,12 @@ class ArtifactCatalogPort(Protocol):
     ) -> bool:
         ...
 
-    def snapshot(self, *, captured_at: datetime) -> "ArtifactCatalogSnapshot":
+    def snapshot(
+        self,
+        *,
+        captured_at: datetime,
+        tenant_id: str | None = None,
+    ) -> "ArtifactCatalogSnapshot":
         ...
 
     def retire_reference(
@@ -205,7 +210,12 @@ class ArtifactCatalogPort(Protocol):
     ) -> "ArtifactCatalogGcDetachReceipt":
         ...
 
-    def plan_gc(self, *, now: datetime) -> "ArtifactCatalogGcPlan":
+    def plan_gc(
+        self,
+        *,
+        now: datetime,
+        tenant_id: str | None = None,
+    ) -> "ArtifactCatalogGcPlan":
         ...
 
     def reconcile(

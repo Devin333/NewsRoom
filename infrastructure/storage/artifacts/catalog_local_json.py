@@ -468,9 +468,23 @@ class LocalJsonArtifactCatalog:
 
         return self._mutate(mutate)
 
-    def snapshot(self, *, captured_at: datetime) -> ArtifactCatalogSnapshot:
+    def snapshot(
+        self,
+        *,
+        captured_at: datetime,
+        tenant_id: str | None = None,
+    ) -> ArtifactCatalogSnapshot:
         actual_time = aware_datetime(captured_at, "catalog.snapshot.captured_at")
-        return _catalog_snapshot(self._read_snapshot(), captured_at=actual_time)
+        tenant = (
+            identifier(tenant_id, "catalog.snapshot.tenant_id")
+            if tenant_id is not None
+            else None
+        )
+        return _catalog_snapshot(
+            self._read_snapshot(),
+            captured_at=actual_time,
+            tenant_id=tenant,
+        )
 
     def retire_reference(
         self,
@@ -530,6 +544,7 @@ class LocalJsonArtifactCatalog:
             current_snapshot = _catalog_snapshot(
                 state,
                 captured_at=request.requested_at,
+                tenant_id=request.decision.tenant_id,
             )
             if current_snapshot.snapshot_checksum != request.catalog_snapshot_checksum:
                 raise result_error(
@@ -582,10 +597,24 @@ class LocalJsonArtifactCatalog:
 
         return self._mutate(mutate)
 
-    def plan_gc(self, *, now: datetime) -> ArtifactCatalogGcPlan:
+    def plan_gc(
+        self,
+        *,
+        now: datetime,
+        tenant_id: str | None = None,
+    ) -> ArtifactCatalogGcPlan:
         actual_now = aware_datetime(now, "catalog.gc.now")
+        tenant = (
+            identifier(tenant_id, "catalog.gc.tenant_id")
+            if tenant_id is not None
+            else None
+        )
         state = self._read_snapshot()
-        snapshot = _catalog_snapshot(state, captured_at=actual_now)
+        snapshot = _catalog_snapshot(
+            state,
+            captured_at=actual_now,
+            tenant_id=tenant,
+        )
         decisions = tuple(
             _gc_decision(
                 entry,
@@ -594,6 +623,7 @@ class LocalJsonArtifactCatalog:
                 now=actual_now,
             )
             for entry in state.entries.values()
+            if tenant is None or entry.identity.tenant_id == tenant
         )
         return ArtifactCatalogGcPlan.create(
             generated_at=actual_now,
@@ -833,12 +863,30 @@ def _catalog_snapshot(
     state: _CatalogState,
     *,
     captured_at: datetime,
+    tenant_id: str | None = None,
 ) -> ArtifactCatalogSnapshot:
+    entry_ids = {
+        entry.entry_id
+        for entry in state.entries.values()
+        if tenant_id is None or entry.identity.tenant_id == tenant_id
+    }
     return ArtifactCatalogSnapshot.create(
         captured_at=captured_at,
-        entries=tuple(state.entries.values()),
-        claims=tuple(state.claims.values()),
-        references=tuple(state.references.values()),
+        entries=tuple(
+            entry
+            for entry in state.entries.values()
+            if entry.entry_id in entry_ids
+        ),
+        claims=tuple(
+            claim
+            for claim in state.claims.values()
+            if claim.entry_id in entry_ids
+        ),
+        references=tuple(
+            logical_reference
+            for logical_reference in state.references.values()
+            if logical_reference.entry_id in entry_ids
+        ),
     )
 
 

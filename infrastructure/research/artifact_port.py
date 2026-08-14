@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import contextvars
+import hashlib
 import inspect
 import json
 import math
@@ -23,6 +24,7 @@ from framework.agent.artifacts import (
     validate_artifact_path_segment,
 )
 from framework.agent.artifacts.stores.integrity import validate_sha256_checksum
+from framework.agent.artifacts.stores.fs_safety import verified_exclusive_file_lock
 from framework.harness import (
     ArtifactRef as HarnessArtifactRef,
     ArtifactWriteRequest,
@@ -162,6 +164,27 @@ class FilesystemHarnessArtifactPort:
         finally:
             self._run_binding.reset(token)
 
+    @contextmanager
+    def lock_run(self, run_id: str) -> Iterator[str]:
+        """Serialize manifest membership changes for one canonical run."""
+
+        validated = validate_artifact_path_segment(run_id, field="run_id")
+        digest = hashlib.sha256(validated.encode("utf-8")).hexdigest()
+        root = self.root.resolve(strict=False)
+        lock_path = (
+            root
+            / "_records"
+            / "graph_artifact_lifecycle"
+            / "run_locks"
+            / f"{digest}.lock"
+        )
+        with verified_exclusive_file_lock(
+            lock_path,
+            root=root,
+            identity=f"graph-artifact-run:{validated}",
+        ):
+            yield validated
+
     def write_artifact(self, request: ArtifactWriteRequest) -> HarnessArtifactRef:
         run_id = self.current_run_id
         try:
@@ -210,32 +233,33 @@ class FilesystemHarnessArtifactPort:
         relative_path = self._canonical_path(artifact_type)
         checksum = compute_checksum(content)
         with self._manifest_lock:
-            self._ensure_run_manifest(run_id)
-            existing = self._existing_artifact_result(
-                run_id=run_id,
-                artifact_type=artifact_type,
-                request=request,
-                content=content,
-                checksum=checksum,
-            )
-            if existing is not None:
-                return existing
-            self.manager.write_bytes(run_id, relative_path, content)
-            self.manager.append_manifest_artifact(
-                run_id,
-                artifact_key=artifact_type,
-                relative_path=relative_path,
-                artifact_ref=ArtifactReference(
-                    artifact_id=artifact_type,
+            with self.lock_run(run_id):
+                self._ensure_run_manifest(run_id)
+                existing = self._existing_artifact_result(
                     run_id=run_id,
-                    kind=artifact_type,
-                    uri=relative_path,
-                    content_type=request.media_type,
+                    artifact_type=artifact_type,
+                    request=request,
+                    content=content,
                     checksum=checksum,
-                    size_bytes=len(content),
-                    metadata=dict(request.metadata),
-                ),
-            )
+                )
+                if existing is not None:
+                    return existing
+                self.manager.write_bytes(run_id, relative_path, content)
+                self.manager.append_manifest_artifact(
+                    run_id,
+                    artifact_key=artifact_type,
+                    relative_path=relative_path,
+                    artifact_ref=ArtifactReference(
+                        artifact_id=artifact_type,
+                        run_id=run_id,
+                        kind=artifact_type,
+                        uri=relative_path,
+                        content_type=request.media_type,
+                        checksum=checksum,
+                        size_bytes=len(content),
+                        metadata=dict(request.metadata),
+                    ),
+                )
         return HarnessArtifactRef(
             ref=self._canonical_ref(run_id, artifact_type),
             artifact_type=artifact_type,

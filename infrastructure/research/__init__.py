@@ -35,6 +35,12 @@ from infrastructure.research.github_repository import (
     GithubResearchRepositoryAdapter,
     parse_github_repository_url,
 )
+from infrastructure.research.graph_artifact_lifecycle import (
+    DEFAULT_MAX_GRAPH_ARTIFACT_LIFECYCLE_STATE_BYTES,
+    DEFAULT_MAX_GRAPH_ARTIFACT_PHYSICAL_BYTES,
+    GRAPH_ARTIFACT_LIFECYCLE_SCHEMA_VERSION,
+    FilesystemGraphArtifactLifecycle,
+)
 from infrastructure.research.filesystem_run_store import (
     DEFAULT_RESEARCH_RUN_RECORD_MAX_BYTES,
     RESEARCH_RUN_LATEST_INDEX_SCHEMA_VERSION,
@@ -59,9 +65,13 @@ __all__ = [
     "ArxivResearchSourceProvider",
     "CANDIDATE_TASK_SCHEMAS",
     "DEFAULT_RESEARCH_RUN_RECORD_MAX_BYTES",
+    "DEFAULT_MAX_GRAPH_ARTIFACT_LIFECYCLE_STATE_BYTES",
+    "DEFAULT_MAX_GRAPH_ARTIFACT_PHYSICAL_BYTES",
     "FilesystemResearchRunStore",
     "GithubResearchRepositoryAdapter",
     "FilesystemHarnessArtifactPort",
+    "FilesystemGraphArtifactLifecycle",
+    "GRAPH_ARTIFACT_LIFECYCLE_SCHEMA_VERSION",
     "ResearchAdapterError",
     "ResearchArtifactBundleHandler",
     "ResearchCandidateContractError",
