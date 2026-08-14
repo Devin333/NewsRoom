@@ -38,6 +38,16 @@ class ArtifactReferenceKind(StrEnum):
     EPHEMERAL = "ephemeral"
 
 
+class ArtifactLifecycleAuthorityKind(StrEnum):
+    TERMINAL_RUN = "terminal_run"
+    PUBLICATION_RETIRED = "publication_retired"
+
+
+class ArtifactReferenceRetirementReason(StrEnum):
+    RETENTION_EXPIRED = "retention_expired"
+    PUBLICATION_RETIRED = "publication_retired"
+
+
 class ArtifactCatalogGcAction(StrEnum):
     KEEP = "keep"
     DELETE_CANDIDATE = "delete_candidate"
@@ -670,6 +680,9 @@ class ArtifactCatalogGcDecision:
     reason: ArtifactCatalogGcReason
     active_reference_ids: tuple[str, ...]
     byte_size: int
+    claim_ids: tuple[str, ...] = ()
+    reference_ids: tuple[str, ...] = ()
+    decision_checksum: str | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "entry_id", reference(self.entry_id, "gc_decision.entry_id"))
@@ -679,13 +692,34 @@ class ArtifactCatalogGcDecision:
         refs = _reference_tuple(self.active_reference_ids, "gc_decision.active_reference_ids")
         object.__setattr__(self, "active_reference_ids", refs)
         object.__setattr__(self, "byte_size", non_negative_int(self.byte_size, "gc_decision.byte_size"))
+        claims = _reference_tuple(self.claim_ids, "gc_decision.claim_ids")
+        all_refs = _reference_tuple(self.reference_ids, "gc_decision.reference_ids")
+        if not set(refs).issubset(all_refs):
+            raise result_error(
+                GraphArtifactResultErrorCode.RESULT_SCHEMA_INVALID,
+                field="gc_decision.reference_ids",
+            )
+        object.__setattr__(self, "claim_ids", claims)
+        object.__setattr__(self, "reference_ids", all_refs)
         if self.action is ArtifactCatalogGcAction.DELETE_CANDIDATE and refs:
             raise result_error(
                 GraphArtifactResultErrorCode.RESULT_SCHEMA_INVALID,
                 field="gc_decision.active_reference_ids",
             )
+        expected = checksum_for(self.checksum_projection())
+        actual = (
+            expected
+            if self.decision_checksum is None
+            else checksum(self.decision_checksum, "gc_decision.decision_checksum")
+        )
+        if actual != expected:
+            raise result_error(
+                GraphArtifactResultErrorCode.RESULT_IDENTITY_CONFLICT,
+                field="gc_decision.decision_checksum",
+            )
+        object.__setattr__(self, "decision_checksum", expected)
 
-    def to_dict(self) -> dict[str, Any]:
+    def checksum_projection(self) -> dict[str, Any]:
         return {
             "entry_id": self.entry_id,
             "ref": self.ref,
@@ -693,7 +727,12 @@ class ArtifactCatalogGcDecision:
             "reason": self.reason.value,
             "active_reference_ids": list(self.active_reference_ids),
             "byte_size": self.byte_size,
+            "claim_ids": list(self.claim_ids),
+            "reference_ids": list(self.reference_ids),
         }
+
+    def to_dict(self) -> dict[str, Any]:
+        return {**self.checksum_projection(), "decision_checksum": self.decision_checksum}
 
     @classmethod
     def from_dict(cls, value: Mapping[str, Any]) -> Self:
@@ -701,7 +740,17 @@ class ArtifactCatalogGcDecision:
             **exact_keys(
                 value,
                 required=frozenset(
-                    {"entry_id", "ref", "action", "reason", "active_reference_ids", "byte_size"}
+                    {
+                        "entry_id",
+                        "ref",
+                        "action",
+                        "reason",
+                        "active_reference_ids",
+                        "byte_size",
+                        "claim_ids",
+                        "reference_ids",
+                        "decision_checksum",
+                    }
                 ),
                 model=cls.__name__,
             )
@@ -713,15 +762,24 @@ class ArtifactCatalogGcPlan:
     generated_at: datetime
     decisions: tuple[ArtifactCatalogGcDecision, ...]
     plan_checksum: str
+    catalog_snapshot_checksum: str = "sha256:" + "0" * 64
+    policy_version: str = "graph-artifact-policy@1"
 
     def __post_init__(self) -> None:
         generated_at = aware_datetime(self.generated_at, "gc_plan.generated_at")
         decisions = _model_tuple(self.decisions, ArtifactCatalogGcDecision, "gc_plan.decisions")
         decisions = tuple(sorted(decisions, key=lambda item: item.entry_id))
+        snapshot_checksum = checksum(
+            self.catalog_snapshot_checksum,
+            "gc_plan.catalog_snapshot_checksum",
+        )
+        policy_version = exact_reference(self.policy_version, "gc_plan.policy_version")
         expected = checksum_for(
             {
                 "generated_at": datetime_to_json(generated_at),
                 "decisions": [item.to_dict() for item in decisions],
+                "catalog_snapshot_checksum": snapshot_checksum,
+                "policy_version": policy_version,
             }
         )
         actual = checksum(self.plan_checksum, "gc_plan.plan_checksum")
@@ -733,6 +791,8 @@ class ArtifactCatalogGcPlan:
         object.__setattr__(self, "generated_at", generated_at)
         object.__setattr__(self, "decisions", decisions)
         object.__setattr__(self, "plan_checksum", actual)
+        object.__setattr__(self, "catalog_snapshot_checksum", snapshot_checksum)
+        object.__setattr__(self, "policy_version", policy_version)
 
     @classmethod
     def create(
@@ -740,16 +800,25 @@ class ArtifactCatalogGcPlan:
         *,
         generated_at: datetime,
         decisions: Sequence[ArtifactCatalogGcDecision],
+        catalog_snapshot_checksum: str | None = None,
+        policy_version: str = "graph-artifact-policy@1",
     ) -> Self:
         ordered = tuple(sorted(decisions, key=lambda item: item.entry_id))
+        snapshot_checksum = catalog_snapshot_checksum or checksum_for(
+            {"decisions": [item.to_dict() for item in ordered]}
+        )
         payload = {
             "generated_at": datetime_to_json(aware_datetime(generated_at, "gc_plan.generated_at")),
             "decisions": [item.to_dict() for item in ordered],
+            "catalog_snapshot_checksum": snapshot_checksum,
+            "policy_version": policy_version,
         }
         return cls(
             generated_at=generated_at,
             decisions=ordered,
             plan_checksum=checksum_for(payload),
+            catalog_snapshot_checksum=snapshot_checksum,
+            policy_version=policy_version,
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -757,13 +826,23 @@ class ArtifactCatalogGcPlan:
             "generated_at": datetime_to_json(self.generated_at),
             "decisions": [item.to_dict() for item in self.decisions],
             "plan_checksum": self.plan_checksum,
+            "catalog_snapshot_checksum": self.catalog_snapshot_checksum,
+            "policy_version": self.policy_version,
         }
 
     @classmethod
     def from_dict(cls, value: Mapping[str, Any]) -> Self:
         payload = exact_keys(
             value,
-            required=frozenset({"generated_at", "decisions", "plan_checksum"}),
+            required=frozenset(
+                {
+                    "generated_at",
+                    "decisions",
+                    "plan_checksum",
+                    "catalog_snapshot_checksum",
+                    "policy_version",
+                }
+            ),
             model=cls.__name__,
         )
         return cls(
@@ -773,7 +852,637 @@ class ArtifactCatalogGcPlan:
                 for item in _mapping_sequence(payload["decisions"], "gc_plan.decisions")
             ),
             plan_checksum=payload["plan_checksum"],
+            catalog_snapshot_checksum=payload["catalog_snapshot_checksum"],
+            policy_version=payload["policy_version"],
         )
+
+
+@dataclass(frozen=True, slots=True)
+class ArtifactCatalogSnapshot:
+    captured_at: datetime
+    entries: tuple[ArtifactCatalogEntry, ...]
+    claims: tuple[ArtifactCatalogClaim, ...]
+    references: tuple[ArtifactLogicalReference, ...]
+    snapshot_checksum: str
+
+    def __post_init__(self) -> None:
+        captured_at = aware_datetime(self.captured_at, "catalog_snapshot.captured_at")
+        entries = tuple(
+            sorted(
+                _model_tuple(self.entries, ArtifactCatalogEntry, "catalog_snapshot.entries"),
+                key=lambda item: item.entry_id,
+            )
+        )
+        claims = tuple(
+            sorted(
+                _model_tuple(self.claims, ArtifactCatalogClaim, "catalog_snapshot.claims"),
+                key=lambda item: item.claim_id,
+            )
+        )
+        references = tuple(
+            sorted(
+                _model_tuple(
+                    self.references,
+                    ArtifactLogicalReference,
+                    "catalog_snapshot.references",
+                ),
+                key=lambda item: item.reference_id,
+            )
+        )
+        entry_ids = {item.entry_id for item in entries}
+        if any(item.entry_id not in entry_ids for item in (*claims, *references)):
+            raise result_error(
+                GraphArtifactResultErrorCode.ARTIFACT_CATALOG_CORRUPT,
+                field="catalog_snapshot.ownership",
+            )
+        expected = checksum_for(
+            {
+                "entries": [item.to_dict() for item in entries],
+                "claims": [item.to_dict() for item in claims],
+                "references": [item.to_dict() for item in references],
+            }
+        )
+        if checksum(self.snapshot_checksum, "catalog_snapshot.snapshot_checksum") != expected:
+            raise result_error(
+                GraphArtifactResultErrorCode.RESULT_IDENTITY_CONFLICT,
+                field="catalog_snapshot.snapshot_checksum",
+            )
+        object.__setattr__(self, "captured_at", captured_at)
+        object.__setattr__(self, "entries", entries)
+        object.__setattr__(self, "claims", claims)
+        object.__setattr__(self, "references", references)
+        object.__setattr__(self, "snapshot_checksum", expected)
+
+    @classmethod
+    def create(
+        cls,
+        *,
+        captured_at: datetime,
+        entries: Sequence[ArtifactCatalogEntry],
+        claims: Sequence[ArtifactCatalogClaim],
+        references: Sequence[ArtifactLogicalReference],
+    ) -> Self:
+        ordered_entries = tuple(sorted(entries, key=lambda item: item.entry_id))
+        ordered_claims = tuple(sorted(claims, key=lambda item: item.claim_id))
+        ordered_references = tuple(
+            sorted(references, key=lambda item: item.reference_id)
+        )
+        return cls(
+            captured_at=captured_at,
+            entries=ordered_entries,
+            claims=ordered_claims,
+            references=ordered_references,
+            snapshot_checksum=checksum_for(
+                {
+                    "entries": [item.to_dict() for item in ordered_entries],
+                    "claims": [item.to_dict() for item in ordered_claims],
+                    "references": [item.to_dict() for item in ordered_references],
+                }
+            ),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "captured_at": datetime_to_json(self.captured_at),
+            "entries": [item.to_dict() for item in self.entries],
+            "claims": [item.to_dict() for item in self.claims],
+            "references": [item.to_dict() for item in self.references],
+            "snapshot_checksum": self.snapshot_checksum,
+        }
+
+    @classmethod
+    def from_dict(cls, value: Mapping[str, Any]) -> Self:
+        payload = exact_keys(
+            value,
+            required=frozenset(
+                {"captured_at", "entries", "claims", "references", "snapshot_checksum"}
+            ),
+            model=cls.__name__,
+        )
+        return cls(
+            captured_at=datetime_from_json(
+                payload["captured_at"],
+                "catalog_snapshot.captured_at",
+            ),
+            entries=tuple(
+                ArtifactCatalogEntry.from_dict(item)
+                for item in _mapping_sequence(payload["entries"], "catalog_snapshot.entries")
+            ),
+            claims=tuple(
+                ArtifactCatalogClaim.from_dict(item)
+                for item in _mapping_sequence(payload["claims"], "catalog_snapshot.claims")
+            ),
+            references=tuple(
+                ArtifactLogicalReference.from_dict(item)
+                for item in _mapping_sequence(
+                    payload["references"],
+                    "catalog_snapshot.references",
+                )
+            ),
+            snapshot_checksum=payload["snapshot_checksum"],
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class ArtifactLifecycleAuthorization:
+    authorization_id: str
+    kind: ArtifactLifecycleAuthorityKind
+    tenant_id: str
+    owner_run_id: str
+    owner_id: str
+    lifecycle_ref: str
+    observed_at: datetime
+    policy_version: str
+    authorization_checksum: str
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "kind",
+            enum_value(ArtifactLifecycleAuthorityKind, self.kind, "lifecycle.kind"),
+        )
+        for field_name in ("tenant_id", "owner_run_id", "owner_id"):
+            object.__setattr__(
+                self,
+                field_name,
+                identifier(getattr(self, field_name), f"lifecycle.{field_name}"),
+            )
+        object.__setattr__(
+            self,
+            "lifecycle_ref",
+            reference(self.lifecycle_ref, "lifecycle.lifecycle_ref"),
+        )
+        object.__setattr__(
+            self,
+            "observed_at",
+            aware_datetime(self.observed_at, "lifecycle.observed_at"),
+        )
+        object.__setattr__(
+            self,
+            "policy_version",
+            exact_reference(self.policy_version, "lifecycle.policy_version"),
+        )
+        projection = self.identity_projection()
+        expected_id = _derived_reference("catalog-lifecycle", projection)
+        if reference(self.authorization_id, "lifecycle.authorization_id") != expected_id:
+            raise result_error(
+                GraphArtifactResultErrorCode.RESULT_IDENTITY_CONFLICT,
+                field="lifecycle.authorization_id",
+            )
+        expected_checksum = checksum_for(
+            {"authorization_id": expected_id, **projection}
+        )
+        if checksum(
+            self.authorization_checksum,
+            "lifecycle.authorization_checksum",
+        ) != expected_checksum:
+            raise result_error(
+                GraphArtifactResultErrorCode.RESULT_IDENTITY_CONFLICT,
+                field="lifecycle.authorization_checksum",
+            )
+        object.__setattr__(self, "authorization_id", expected_id)
+        object.__setattr__(self, "authorization_checksum", expected_checksum)
+
+    @classmethod
+    def create(cls, **values: Any) -> Self:
+        projection = _lifecycle_authorization_projection(values)
+        authorization_id = _derived_reference("catalog-lifecycle", projection)
+        return cls(
+            **values,
+            authorization_id=authorization_id,
+            authorization_checksum=checksum_for(
+                {"authorization_id": authorization_id, **projection}
+            ),
+        )
+
+    def identity_projection(self) -> dict[str, Any]:
+        return _lifecycle_authorization_projection(
+            {
+                "kind": self.kind,
+                "tenant_id": self.tenant_id,
+                "owner_run_id": self.owner_run_id,
+                "owner_id": self.owner_id,
+                "lifecycle_ref": self.lifecycle_ref,
+                "observed_at": self.observed_at,
+                "policy_version": self.policy_version,
+            }
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "authorization_id": self.authorization_id,
+            **self.identity_projection(),
+            "authorization_checksum": self.authorization_checksum,
+        }
+
+    @classmethod
+    def from_dict(cls, value: Mapping[str, Any]) -> Self:
+        payload = exact_keys(
+            value,
+            required=frozenset(
+                {
+                    "authorization_id",
+                    "kind",
+                    "tenant_id",
+                    "owner_run_id",
+                    "owner_id",
+                    "lifecycle_ref",
+                    "observed_at",
+                    "policy_version",
+                    "authorization_checksum",
+                }
+            ),
+            model=cls.__name__,
+        )
+        payload["observed_at"] = datetime_from_json(
+            payload["observed_at"],
+            "lifecycle.observed_at",
+        )
+        return cls(**payload)
+
+
+@dataclass(frozen=True, slots=True)
+class ArtifactReferenceRetirementRequest:
+    reference: ArtifactLogicalReference
+    authorization: ArtifactLifecycleAuthorization
+    reason: ArtifactReferenceRetirementReason
+    requested_at: datetime
+    request_checksum: str
+
+    def __post_init__(self) -> None:
+        _require_type(self.reference, ArtifactLogicalReference, "retirement.reference")
+        _require_type(
+            self.authorization,
+            ArtifactLifecycleAuthorization,
+            "retirement.authorization",
+        )
+        object.__setattr__(
+            self,
+            "reason",
+            enum_value(ArtifactReferenceRetirementReason, self.reason, "retirement.reason"),
+        )
+        object.__setattr__(
+            self,
+            "requested_at",
+            aware_datetime(self.requested_at, "retirement.requested_at"),
+        )
+        if (
+            self.reference.tenant_id != self.authorization.tenant_id
+            or self.reference.owner_run_id != self.authorization.owner_run_id
+            or self.reference.owner_id != self.authorization.owner_id
+            or self.requested_at < self.authorization.observed_at
+        ):
+            raise result_error(
+                GraphArtifactResultErrorCode.ARTIFACT_SCOPE_MISMATCH,
+                field="retirement.authorization",
+            )
+        if (
+            self.authorization.kind is ArtifactLifecycleAuthorityKind.TERMINAL_RUN
+            and self.reference.kind
+            not in {
+                ArtifactReferenceKind.RUN,
+                ArtifactReferenceKind.EVIDENCE,
+                ArtifactReferenceKind.REPLAY,
+            }
+        ) or (
+            self.authorization.kind
+            is ArtifactLifecycleAuthorityKind.PUBLICATION_RETIRED
+            and self.reference.kind
+            not in {ArtifactReferenceKind.REPORT, ArtifactReferenceKind.PUBLICATION}
+        ):
+            raise result_error(
+                GraphArtifactResultErrorCode.ARTIFACT_REFERENCE_CONFLICT,
+                field="retirement.reference.kind",
+            )
+        expected_reason = (
+            ArtifactReferenceRetirementReason.RETENTION_EXPIRED
+            if self.authorization.kind is ArtifactLifecycleAuthorityKind.TERMINAL_RUN
+            else ArtifactReferenceRetirementReason.PUBLICATION_RETIRED
+        )
+        if self.reason is not expected_reason:
+            raise result_error(
+                GraphArtifactResultErrorCode.ARTIFACT_REFERENCE_CONFLICT,
+                field="retirement.reason",
+            )
+        expected = checksum_for(self.checksum_projection())
+        if checksum(self.request_checksum, "retirement.request_checksum") != expected:
+            raise result_error(
+                GraphArtifactResultErrorCode.RESULT_IDENTITY_CONFLICT,
+                field="retirement.request_checksum",
+            )
+        object.__setattr__(self, "request_checksum", expected)
+
+    @classmethod
+    def create(cls, **values: Any) -> Self:
+        return cls(
+            **values,
+            request_checksum=checksum_for(_retirement_request_projection(values)),
+        )
+
+    def checksum_projection(self) -> dict[str, Any]:
+        return _retirement_request_projection(
+            {
+                "reference": self.reference,
+                "authorization": self.authorization,
+                "reason": self.reason,
+                "requested_at": self.requested_at,
+            }
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {**self.checksum_projection(), "request_checksum": self.request_checksum}
+
+    @classmethod
+    def from_dict(cls, value: Mapping[str, Any]) -> Self:
+        payload = exact_keys(
+            value,
+            required=frozenset(
+                {"reference", "authorization", "reason", "requested_at", "request_checksum"}
+            ),
+            model=cls.__name__,
+        )
+        payload["reference"] = ArtifactLogicalReference.from_dict(payload["reference"])
+        payload["authorization"] = ArtifactLifecycleAuthorization.from_dict(
+            payload["authorization"]
+        )
+        payload["requested_at"] = datetime_from_json(
+            payload["requested_at"],
+            "retirement.requested_at",
+        )
+        return cls(**payload)
+
+
+@dataclass(frozen=True, slots=True)
+class ArtifactReferenceRetirementReceipt:
+    request_checksum: str
+    reference: ArtifactLogicalReference
+    authorization_id: str
+    reason: ArtifactReferenceRetirementReason
+    retired_at: datetime
+    receipt_checksum: str
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "request_checksum",
+            checksum(self.request_checksum, "retirement_receipt.request_checksum"),
+        )
+        _require_type(self.reference, ArtifactLogicalReference, "retirement_receipt.reference")
+        object.__setattr__(
+            self,
+            "authorization_id",
+            reference(self.authorization_id, "retirement_receipt.authorization_id"),
+        )
+        object.__setattr__(
+            self,
+            "reason",
+            enum_value(
+                ArtifactReferenceRetirementReason,
+                self.reason,
+                "retirement_receipt.reason",
+            ),
+        )
+        object.__setattr__(
+            self,
+            "retired_at",
+            aware_datetime(self.retired_at, "retirement_receipt.retired_at"),
+        )
+        expected = checksum_for(self.checksum_projection())
+        if checksum(self.receipt_checksum, "retirement_receipt.receipt_checksum") != expected:
+            raise result_error(
+                GraphArtifactResultErrorCode.RESULT_IDENTITY_CONFLICT,
+                field="retirement_receipt.receipt_checksum",
+            )
+        object.__setattr__(self, "receipt_checksum", expected)
+
+    @classmethod
+    def create(cls, **values: Any) -> Self:
+        return cls(
+            **values,
+            receipt_checksum=checksum_for(_retirement_receipt_projection(values)),
+        )
+
+    def checksum_projection(self) -> dict[str, Any]:
+        return _retirement_receipt_projection(
+            {
+                "request_checksum": self.request_checksum,
+                "reference": self.reference,
+                "authorization_id": self.authorization_id,
+                "reason": self.reason,
+                "retired_at": self.retired_at,
+            }
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {**self.checksum_projection(), "receipt_checksum": self.receipt_checksum}
+
+    @classmethod
+    def from_dict(cls, value: Mapping[str, Any]) -> Self:
+        payload = exact_keys(
+            value,
+            required=frozenset(
+                {
+                    "request_checksum",
+                    "reference",
+                    "authorization_id",
+                    "reason",
+                    "retired_at",
+                    "receipt_checksum",
+                }
+            ),
+            model=cls.__name__,
+        )
+        payload["reference"] = ArtifactLogicalReference.from_dict(payload["reference"])
+        payload["retired_at"] = datetime_from_json(
+            payload["retired_at"],
+            "retirement_receipt.retired_at",
+        )
+        return cls(**payload)
+
+
+@dataclass(frozen=True, slots=True)
+class ArtifactCatalogGcDetachRequest:
+    plan_checksum: str
+    catalog_snapshot_checksum: str
+    decision: ArtifactCatalogGcDecision
+    requested_at: datetime
+    request_checksum: str
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "plan_checksum", checksum(self.plan_checksum, "gc_detach.plan_checksum"))
+        object.__setattr__(
+            self,
+            "catalog_snapshot_checksum",
+            checksum(self.catalog_snapshot_checksum, "gc_detach.catalog_snapshot_checksum"),
+        )
+        _require_type(self.decision, ArtifactCatalogGcDecision, "gc_detach.decision")
+        if self.decision.action is not ArtifactCatalogGcAction.DELETE_CANDIDATE:
+            raise result_error(
+                GraphArtifactResultErrorCode.RESULT_SCHEMA_INVALID,
+                field="gc_detach.decision.action",
+            )
+        object.__setattr__(
+            self,
+            "requested_at",
+            aware_datetime(self.requested_at, "gc_detach.requested_at"),
+        )
+        expected = checksum_for(self.checksum_projection())
+        if checksum(self.request_checksum, "gc_detach.request_checksum") != expected:
+            raise result_error(
+                GraphArtifactResultErrorCode.RESULT_IDENTITY_CONFLICT,
+                field="gc_detach.request_checksum",
+            )
+        object.__setattr__(self, "request_checksum", expected)
+
+    @classmethod
+    def create(cls, **values: Any) -> Self:
+        return cls(
+            **values,
+            request_checksum=checksum_for(_gc_detach_request_projection(values)),
+        )
+
+    def checksum_projection(self) -> dict[str, Any]:
+        return _gc_detach_request_projection(
+            {
+                "plan_checksum": self.plan_checksum,
+                "catalog_snapshot_checksum": self.catalog_snapshot_checksum,
+                "decision": self.decision,
+                "requested_at": self.requested_at,
+            }
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {**self.checksum_projection(), "request_checksum": self.request_checksum}
+
+    @classmethod
+    def from_dict(cls, value: Mapping[str, Any]) -> Self:
+        payload = exact_keys(
+            value,
+            required=frozenset(
+                {
+                    "plan_checksum",
+                    "catalog_snapshot_checksum",
+                    "decision",
+                    "requested_at",
+                    "request_checksum",
+                }
+            ),
+            model=cls.__name__,
+        )
+        payload["decision"] = ArtifactCatalogGcDecision.from_dict(payload["decision"])
+        payload["requested_at"] = datetime_from_json(
+            payload["requested_at"],
+            "gc_detach.requested_at",
+        )
+        return cls(**payload)
+
+
+@dataclass(frozen=True, slots=True)
+class ArtifactCatalogGcDetachReceipt:
+    request_checksum: str
+    entry: ArtifactCatalogEntry
+    claims: tuple[ArtifactCatalogClaim, ...]
+    references: tuple[ArtifactLogicalReference, ...]
+    detached_at: datetime
+    receipt_checksum: str
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "request_checksum",
+            checksum(self.request_checksum, "gc_detach_receipt.request_checksum"),
+        )
+        _require_type(self.entry, ArtifactCatalogEntry, "gc_detach_receipt.entry")
+        claims = tuple(
+            sorted(
+                _model_tuple(self.claims, ArtifactCatalogClaim, "gc_detach_receipt.claims"),
+                key=lambda item: item.claim_id,
+            )
+        )
+        references = tuple(
+            sorted(
+                _model_tuple(
+                    self.references,
+                    ArtifactLogicalReference,
+                    "gc_detach_receipt.references",
+                ),
+                key=lambda item: item.reference_id,
+            )
+        )
+        if any(item.entry_id != self.entry.entry_id for item in (*claims, *references)):
+            raise result_error(
+                GraphArtifactResultErrorCode.ARTIFACT_SCOPE_MISMATCH,
+                field="gc_detach_receipt.ownership",
+            )
+        object.__setattr__(self, "claims", claims)
+        object.__setattr__(self, "references", references)
+        object.__setattr__(
+            self,
+            "detached_at",
+            aware_datetime(self.detached_at, "gc_detach_receipt.detached_at"),
+        )
+        expected = checksum_for(self.checksum_projection())
+        if checksum(self.receipt_checksum, "gc_detach_receipt.receipt_checksum") != expected:
+            raise result_error(
+                GraphArtifactResultErrorCode.RESULT_IDENTITY_CONFLICT,
+                field="gc_detach_receipt.receipt_checksum",
+            )
+        object.__setattr__(self, "receipt_checksum", expected)
+
+    @classmethod
+    def create(cls, **values: Any) -> Self:
+        return cls(
+            **values,
+            receipt_checksum=checksum_for(_gc_detach_receipt_projection(values)),
+        )
+
+    def checksum_projection(self) -> dict[str, Any]:
+        return _gc_detach_receipt_projection(
+            {
+                "request_checksum": self.request_checksum,
+                "entry": self.entry,
+                "claims": self.claims,
+                "references": self.references,
+                "detached_at": self.detached_at,
+            }
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {**self.checksum_projection(), "receipt_checksum": self.receipt_checksum}
+
+    @classmethod
+    def from_dict(cls, value: Mapping[str, Any]) -> Self:
+        payload = exact_keys(
+            value,
+            required=frozenset(
+                {
+                    "request_checksum",
+                    "entry",
+                    "claims",
+                    "references",
+                    "detached_at",
+                    "receipt_checksum",
+                }
+            ),
+            model=cls.__name__,
+        )
+        payload["entry"] = ArtifactCatalogEntry.from_dict(payload["entry"])
+        payload["claims"] = tuple(
+            ArtifactCatalogClaim.from_dict(item)
+            for item in _mapping_sequence(payload["claims"], "gc_detach_receipt.claims")
+        )
+        payload["references"] = tuple(
+            ArtifactLogicalReference.from_dict(item)
+            for item in _mapping_sequence(
+                payload["references"],
+                "gc_detach_receipt.references",
+            )
+        )
+        payload["detached_at"] = datetime_from_json(
+            payload["detached_at"],
+            "gc_detach_receipt.detached_at",
+        )
+        return cls(**payload)
 
 
 @dataclass(frozen=True, slots=True)
@@ -910,6 +1619,87 @@ class ArtifactCatalogReconciliationPlan:
         )
 
 
+def _lifecycle_authorization_projection(values: Mapping[str, Any]) -> dict[str, Any]:
+    return {
+        "kind": ArtifactLifecycleAuthorityKind(values["kind"]).value,
+        "tenant_id": values["tenant_id"],
+        "owner_run_id": values["owner_run_id"],
+        "owner_id": values["owner_id"],
+        "lifecycle_ref": values["lifecycle_ref"],
+        "observed_at": datetime_to_json(values["observed_at"]),
+        "policy_version": values["policy_version"],
+    }
+
+
+def _retirement_request_projection(values: Mapping[str, Any]) -> dict[str, Any]:
+    logical_reference = values["reference"]
+    authorization = values["authorization"]
+    return {
+        "reference": (
+            logical_reference.to_dict()
+            if isinstance(logical_reference, ArtifactLogicalReference)
+            else logical_reference
+        ),
+        "authorization": (
+            authorization.to_dict()
+            if isinstance(authorization, ArtifactLifecycleAuthorization)
+            else authorization
+        ),
+        "reason": ArtifactReferenceRetirementReason(values["reason"]).value,
+        "requested_at": datetime_to_json(values["requested_at"]),
+    }
+
+
+def _retirement_receipt_projection(values: Mapping[str, Any]) -> dict[str, Any]:
+    logical_reference = values["reference"]
+    return {
+        "request_checksum": values["request_checksum"],
+        "reference": (
+            logical_reference.to_dict()
+            if isinstance(logical_reference, ArtifactLogicalReference)
+            else logical_reference
+        ),
+        "authorization_id": values["authorization_id"],
+        "reason": ArtifactReferenceRetirementReason(values["reason"]).value,
+        "retired_at": datetime_to_json(values["retired_at"]),
+    }
+
+
+def _gc_detach_request_projection(values: Mapping[str, Any]) -> dict[str, Any]:
+    decision = values["decision"]
+    return {
+        "plan_checksum": values["plan_checksum"],
+        "catalog_snapshot_checksum": values["catalog_snapshot_checksum"],
+        "decision": (
+            decision.to_dict()
+            if isinstance(decision, ArtifactCatalogGcDecision)
+            else decision
+        ),
+        "requested_at": datetime_to_json(values["requested_at"]),
+    }
+
+
+def _gc_detach_receipt_projection(values: Mapping[str, Any]) -> dict[str, Any]:
+    entry = values["entry"]
+    claims = tuple(sorted(values["claims"], key=lambda item: item.claim_id))
+    references = tuple(
+        sorted(values["references"], key=lambda item: item.reference_id)
+    )
+    return {
+        "request_checksum": values["request_checksum"],
+        "entry": entry.to_dict() if isinstance(entry, ArtifactCatalogEntry) else entry,
+        "claims": [
+            item.to_dict() if isinstance(item, ArtifactCatalogClaim) else item
+            for item in claims
+        ],
+        "references": [
+            item.to_dict() if isinstance(item, ArtifactLogicalReference) else item
+            for item in references
+        ],
+        "detached_at": datetime_to_json(values["detached_at"]),
+    }
+
+
 def _derived_reference(scheme: str, value: Mapping[str, Any]) -> str:
     digest = checksum_for(dict(value)).removeprefix("sha256:")
     return f"{scheme}://{digest}"
@@ -972,13 +1762,21 @@ __all__ = [
     "ArtifactCatalogGcDecision",
     "ArtifactCatalogGcPlan",
     "ArtifactCatalogGcReason",
+    "ArtifactCatalogGcDetachReceipt",
+    "ArtifactCatalogGcDetachRequest",
     "ArtifactCatalogIdentity",
     "ArtifactCatalogReconciliationIssue",
     "ArtifactCatalogReconciliationIssueKind",
     "ArtifactCatalogReconciliationPlan",
     "ArtifactCatalogRegistrationRequest",
     "ArtifactCatalogRegistrationResult",
+    "ArtifactCatalogSnapshot",
+    "ArtifactLifecycleAuthorization",
+    "ArtifactLifecycleAuthorityKind",
     "ArtifactLogicalReference",
     "ArtifactReferenceKind",
+    "ArtifactReferenceRetirementReason",
+    "ArtifactReferenceRetirementReceipt",
+    "ArtifactReferenceRetirementRequest",
     "ArtifactVerificationReceipt",
 ]

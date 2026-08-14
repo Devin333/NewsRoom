@@ -187,11 +187,18 @@ def test_from_env_normalizes_explicit_graph_artifact_persistence_snapshot(
             "NEWS_RESEARCH_GRAPH_ARTIFACT_MAX_BYTES": "10485760",
             "NEWS_RESEARCH_GRAPH_ARTIFACT_MAX_PER_RUN": "25",
             "NEWS_RESEARCH_GRAPH_ARTIFACT_MAX_MATERIALIZED_BYTES_PER_RUN": "20971520",
+            "NEWS_RESEARCH_GRAPH_ARTIFACT_MAX_PER_TENANT": "2500",
+            "NEWS_RESEARCH_GRAPH_ARTIFACT_MAX_MATERIALIZED_BYTES_PER_TENANT": "209715200",
+            "NEWS_RESEARCH_GRAPH_ARTIFACT_MAX_PER_CLASS": "1000",
+            "NEWS_RESEARCH_GRAPH_ARTIFACT_MAX_MATERIALIZED_BYTES_PER_CLASS": "104857600",
             "NEWS_RESEARCH_GRAPH_ARTIFACT_MAX_CONTEXT_REFS": "4",
             "NEWS_RESEARCH_GRAPH_ARTIFACT_MAX_CONTEXT_LOADED_BYTES": "1048576",
             "NEWS_RESEARCH_GRAPH_ARTIFACT_MAX_CONTEXT_LOADED_TOKENS": "262144",
             "NEWS_RESEARCH_GRAPH_ARTIFACT_DEDUP_SCOPE": "TENANT_CHECKSUM_MEDIA_TYPE",
             "NEWS_RESEARCH_GRAPH_ARTIFACT_CACHE_TTL_SECONDS": "3600",
+            "NEWS_RESEARCH_GRAPH_ARTIFACT_QUOTA_ALERT_BASIS_POINTS": "7500",
+            "NEWS_RESEARCH_GRAPH_ARTIFACT_GC_BACKLOG_ALERT_BYTES": "104857600",
+            "NEWS_RESEARCH_GRAPH_ARTIFACT_CACHE_STAMPEDE_MISS_THRESHOLD": "12",
             "NEWS_RESEARCH_GRAPH_ARTIFACT_RETENTION_EPHEMERAL_DAYS": "2",
             "NEWS_RESEARCH_GRAPH_ARTIFACT_RETENTION_RUN_DAYS": "45",
             "NEWS_RESEARCH_GRAPH_ARTIFACT_RETENTION_EVIDENCE_DAYS": "365",
@@ -211,6 +218,11 @@ def test_from_env_normalizes_explicit_graph_artifact_persistence_snapshot(
     assert config.inline_max_bytes == 4096
     assert config.max_artifact_bytes == 10 * 1024 * 1024
     assert config.max_materialized_bytes_per_run == 20 * 1024 * 1024
+    assert config.max_materialized_bytes_per_tenant == 200 * 1024 * 1024
+    assert config.max_materialized_bytes_per_class == 100 * 1024 * 1024
+    assert config.quota_alert_threshold_basis_points == 7500
+    assert config.gc_backlog_alert_bytes == 100 * 1024 * 1024
+    assert config.cache_stampede_miss_threshold == 12
     assert config.retention.report_days == 3650
 
 

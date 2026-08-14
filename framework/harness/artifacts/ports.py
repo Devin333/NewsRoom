@@ -9,11 +9,16 @@ if TYPE_CHECKING:
     from framework.harness.artifacts.catalog import (
         ArtifactCatalogClaim,
         ArtifactCatalogEntry,
+        ArtifactCatalogGcDetachReceipt,
+        ArtifactCatalogGcDetachRequest,
         ArtifactCatalogGcPlan,
         ArtifactCatalogReconciliationPlan,
         ArtifactCatalogRegistrationRequest,
         ArtifactCatalogRegistrationResult,
+        ArtifactCatalogSnapshot,
         ArtifactLogicalReference,
+        ArtifactReferenceRetirementReceipt,
+        ArtifactReferenceRetirementRequest,
         ArtifactVerificationReceipt,
     )
 
@@ -183,6 +188,21 @@ class ArtifactCatalogPort(Protocol):
         tenant_id: str,
         reference_id: str,
     ) -> bool:
+        ...
+
+    def snapshot(self, *, captured_at: datetime) -> "ArtifactCatalogSnapshot":
+        ...
+
+    def retire_reference(
+        self,
+        request: "ArtifactReferenceRetirementRequest",
+    ) -> "ArtifactReferenceRetirementReceipt":
+        ...
+
+    def detach_gc_candidate(
+        self,
+        request: "ArtifactCatalogGcDetachRequest",
+    ) -> "ArtifactCatalogGcDetachReceipt":
         ...
 
     def plan_gc(self, *, now: datetime) -> "ArtifactCatalogGcPlan":

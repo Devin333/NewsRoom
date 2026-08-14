@@ -693,6 +693,30 @@ def _graph_artifact_persistence_from_env(
                 500 * 1024 * 1024,
                 capability=capability,
             ),
+            max_artifacts_per_tenant=_env_int(
+                values,
+                "NEWS_RESEARCH_GRAPH_ARTIFACT_MAX_PER_TENANT",
+                20_000,
+                capability=capability,
+            ),
+            max_materialized_bytes_per_tenant=_env_int(
+                values,
+                "NEWS_RESEARCH_GRAPH_ARTIFACT_MAX_MATERIALIZED_BYTES_PER_TENANT",
+                50 * 1024 * 1024 * 1024,
+                capability=capability,
+            ),
+            max_artifacts_per_class=_env_int(
+                values,
+                "NEWS_RESEARCH_GRAPH_ARTIFACT_MAX_PER_CLASS",
+                10_000,
+                capability=capability,
+            ),
+            max_materialized_bytes_per_class=_env_int(
+                values,
+                "NEWS_RESEARCH_GRAPH_ARTIFACT_MAX_MATERIALIZED_BYTES_PER_CLASS",
+                20 * 1024 * 1024 * 1024,
+                capability=capability,
+            ),
             max_context_artifact_refs=_env_int(
                 values,
                 "NEWS_RESEARCH_GRAPH_ARTIFACT_MAX_CONTEXT_REFS",
@@ -720,6 +744,24 @@ def _graph_artifact_persistence_from_env(
                 values,
                 "NEWS_RESEARCH_GRAPH_ARTIFACT_CACHE_TTL_SECONDS",
                 86_400,
+                capability=capability,
+            ),
+            quota_alert_threshold_basis_points=_env_int(
+                values,
+                "NEWS_RESEARCH_GRAPH_ARTIFACT_QUOTA_ALERT_BASIS_POINTS",
+                8_000,
+                capability=capability,
+            ),
+            gc_backlog_alert_bytes=_env_int(
+                values,
+                "NEWS_RESEARCH_GRAPH_ARTIFACT_GC_BACKLOG_ALERT_BYTES",
+                1024 * 1024 * 1024,
+                capability=capability,
+            ),
+            cache_stampede_miss_threshold=_env_int(
+                values,
+                "NEWS_RESEARCH_GRAPH_ARTIFACT_CACHE_STAMPEDE_MISS_THRESHOLD",
+                25,
                 capability=capability,
             ),
             retention=GraphArtifactRetentionSettings(

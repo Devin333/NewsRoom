@@ -24,6 +24,8 @@ from framework.harness.artifacts.catalog import (
     ArtifactCatalogEntry,
     ArtifactCatalogGcAction,
     ArtifactCatalogGcDecision,
+    ArtifactCatalogGcDetachReceipt,
+    ArtifactCatalogGcDetachRequest,
     ArtifactCatalogGcPlan,
     ArtifactCatalogGcReason,
     ArtifactCatalogReconciliationIssue,
@@ -31,8 +33,12 @@ from framework.harness.artifacts.catalog import (
     ArtifactCatalogReconciliationPlan,
     ArtifactCatalogRegistrationRequest,
     ArtifactCatalogRegistrationResult,
+    ArtifactCatalogSnapshot,
+    ArtifactLifecycleAuthorityKind,
     ArtifactLogicalReference,
     ArtifactReferenceKind,
+    ArtifactReferenceRetirementReceipt,
+    ArtifactReferenceRetirementRequest,
     ArtifactVerificationReceipt,
 )
 from framework.harness.runtime.result_canonical import (
@@ -441,6 +447,14 @@ class LocalJsonArtifactCatalog:
                     GraphArtifactResultErrorCode.ARTIFACT_SCOPE_MISMATCH,
                     field="catalog.reference.tenant_id",
                 )
+            if existing.kind not in {
+                ArtifactReferenceKind.CACHE,
+                ArtifactReferenceKind.EPHEMERAL,
+            }:
+                raise result_error(
+                    GraphArtifactResultErrorCode.LIFECYCLE_AUTHORIZATION_INVALID,
+                    field="catalog.reference.kind",
+                )
             references = dict(state.references)
             del references[normalized]
             return (
@@ -454,16 +468,129 @@ class LocalJsonArtifactCatalog:
 
         return self._mutate(mutate)
 
+    def snapshot(self, *, captured_at: datetime) -> ArtifactCatalogSnapshot:
+        actual_time = aware_datetime(captured_at, "catalog.snapshot.captured_at")
+        return _catalog_snapshot(self._read_snapshot(), captured_at=actual_time)
+
+    def retire_reference(
+        self,
+        request: ArtifactReferenceRetirementRequest,
+    ) -> ArtifactReferenceRetirementReceipt:
+        if not isinstance(request, ArtifactReferenceRetirementRequest):
+            raise result_error(
+                GraphArtifactResultErrorCode.RESULT_SCHEMA_INVALID,
+                field="catalog.retirement",
+            )
+
+        def mutate(
+            state: _CatalogState,
+        ) -> tuple[_CatalogState, ArtifactReferenceRetirementReceipt]:
+            existing = state.references.get(request.reference.reference_id)
+            receipt = ArtifactReferenceRetirementReceipt.create(
+                request_checksum=request.request_checksum,
+                reference=request.reference,
+                authorization_id=request.authorization.authorization_id,
+                reason=request.reason,
+                retired_at=request.requested_at,
+            )
+            if existing is None:
+                return state, receipt
+            if existing != request.reference:
+                raise result_error(
+                    GraphArtifactResultErrorCode.ARTIFACT_REFERENCE_CONFLICT,
+                    field="catalog.retirement.reference",
+                )
+            _validate_reference_retirement(state, request)
+            references = dict(state.references)
+            del references[existing.reference_id]
+            return (
+                _CatalogState(
+                    entries=dict(state.entries),
+                    claims=dict(state.claims),
+                    references=references,
+                ),
+                receipt,
+            )
+
+        return self._mutate(mutate)
+
+    def detach_gc_candidate(
+        self,
+        request: ArtifactCatalogGcDetachRequest,
+    ) -> ArtifactCatalogGcDetachReceipt:
+        if not isinstance(request, ArtifactCatalogGcDetachRequest):
+            raise result_error(
+                GraphArtifactResultErrorCode.RESULT_SCHEMA_INVALID,
+                field="catalog.gc_detach",
+            )
+
+        def mutate(
+            state: _CatalogState,
+        ) -> tuple[_CatalogState, ArtifactCatalogGcDetachReceipt]:
+            current_snapshot = _catalog_snapshot(
+                state,
+                captured_at=request.requested_at,
+            )
+            if current_snapshot.snapshot_checksum != request.catalog_snapshot_checksum:
+                raise result_error(
+                    GraphArtifactResultErrorCode.GC_PLAN_STALE,
+                    field="catalog.gc_detach.snapshot",
+                )
+            entry = state.entries.get(request.decision.entry_id)
+            if entry is None:
+                raise result_error(
+                    GraphArtifactResultErrorCode.GC_PLAN_STALE,
+                    field="catalog.gc_detach.entry",
+                )
+            claims = _claims_for_entry(state, entry.entry_id)
+            references = _references_for_entry(state, entry.entry_id)
+            current_decision = _gc_decision(
+                entry,
+                claims,
+                references,
+                now=request.requested_at,
+            )
+            if current_decision != request.decision:
+                raise result_error(
+                    GraphArtifactResultErrorCode.GC_PLAN_STALE,
+                    field="catalog.gc_detach.decision",
+                )
+
+            entries = dict(state.entries)
+            del entries[entry.entry_id]
+            claim_values = dict(state.claims)
+            for claim in claims:
+                del claim_values[claim.claim_id]
+            reference_values = dict(state.references)
+            for logical_reference in references:
+                del reference_values[logical_reference.reference_id]
+            receipt = ArtifactCatalogGcDetachReceipt.create(
+                request_checksum=request.request_checksum,
+                entry=entry,
+                claims=claims,
+                references=references,
+                detached_at=request.requested_at,
+            )
+            return (
+                _CatalogState(
+                    entries=entries,
+                    claims=claim_values,
+                    references=reference_values,
+                ),
+                receipt,
+            )
+
+        return self._mutate(mutate)
+
     def plan_gc(self, *, now: datetime) -> ArtifactCatalogGcPlan:
         actual_now = aware_datetime(now, "catalog.gc.now")
         state = self._read_snapshot()
-        references_by_entry: dict[str, list[ArtifactLogicalReference]] = {}
-        for item in state.references.values():
-            references_by_entry.setdefault(item.entry_id, []).append(item)
+        snapshot = _catalog_snapshot(state, captured_at=actual_now)
         decisions = tuple(
             _gc_decision(
                 entry,
-                tuple(references_by_entry.get(entry.entry_id, ())),
+                _claims_for_entry(state, entry.entry_id),
+                _references_for_entry(state, entry.entry_id),
                 now=actual_now,
             )
             for entry in state.entries.values()
@@ -471,6 +598,7 @@ class LocalJsonArtifactCatalog:
         return ArtifactCatalogGcPlan.create(
             generated_at=actual_now,
             decisions=decisions,
+            catalog_snapshot_checksum=snapshot.snapshot_checksum,
         )
 
     def reconcile(
@@ -701,8 +829,80 @@ def _validate_dedup_candidate(
         )
 
 
+def _catalog_snapshot(
+    state: _CatalogState,
+    *,
+    captured_at: datetime,
+) -> ArtifactCatalogSnapshot:
+    return ArtifactCatalogSnapshot.create(
+        captured_at=captured_at,
+        entries=tuple(state.entries.values()),
+        claims=tuple(state.claims.values()),
+        references=tuple(state.references.values()),
+    )
+
+
+def _claims_for_entry(
+    state: _CatalogState,
+    entry_id: str,
+) -> tuple[ArtifactCatalogClaim, ...]:
+    return tuple(
+        sorted(
+            (item for item in state.claims.values() if item.entry_id == entry_id),
+            key=lambda item: item.claim_id,
+        )
+    )
+
+
+def _references_for_entry(
+    state: _CatalogState,
+    entry_id: str,
+) -> tuple[ArtifactLogicalReference, ...]:
+    return tuple(
+        sorted(
+            (
+                item
+                for item in state.references.values()
+                if item.entry_id == entry_id
+            ),
+            key=lambda item: item.reference_id,
+        )
+    )
+
+
+def _validate_reference_retirement(
+    state: _CatalogState,
+    request: ArtifactReferenceRetirementRequest,
+) -> None:
+    logical_reference = request.reference
+    authorization = request.authorization
+    if authorization.policy_version != "graph-artifact-policy@1":
+        raise result_error(
+            GraphArtifactResultErrorCode.POLICY_VERSION_UNSUPPORTED,
+            field="catalog.retirement.policy_version",
+        )
+    if authorization.kind is ArtifactLifecycleAuthorityKind.PUBLICATION_RETIRED:
+        return
+    claims = tuple(
+        claim
+        for claim in _claims_for_entry(state, logical_reference.entry_id)
+        if claim.tenant_id == logical_reference.tenant_id
+        and claim.run_id == logical_reference.owner_run_id
+    )
+    if not claims or any(
+        claim.record.expires_at is None
+        or claim.record.expires_at > request.requested_at
+        for claim in claims
+    ):
+        raise result_error(
+            GraphArtifactResultErrorCode.LIFECYCLE_AUTHORIZATION_INVALID,
+            field="catalog.retirement.retention",
+        )
+
+
 def _gc_decision(
     entry: ArtifactCatalogEntry,
+    claims: tuple[ArtifactCatalogClaim, ...],
     references: tuple[ArtifactLogicalReference, ...],
     *,
     now: datetime,
@@ -743,6 +943,8 @@ def _gc_decision(
         reason=reason,
         active_reference_ids=active_ids,
         byte_size=entry.record.byte_size,
+        claim_ids=tuple(sorted(item.claim_id for item in claims)),
+        reference_ids=tuple(sorted(item.reference_id for item in references)),
     )
 
 

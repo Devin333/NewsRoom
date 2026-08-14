@@ -14,10 +14,15 @@ import pytest
 from framework.events.canonical import checksum_for
 from framework.harness.artifacts import ArtifactCatalogPort
 from framework.harness.artifacts.catalog import (
+    ArtifactCatalogGcDetachRequest,
     ArtifactCatalogIdentity,
     ArtifactCatalogRegistrationRequest,
+    ArtifactLifecycleAuthorization,
+    ArtifactLifecycleAuthorityKind,
     ArtifactLogicalReference,
     ArtifactReferenceKind,
+    ArtifactReferenceRetirementReason,
+    ArtifactReferenceRetirementRequest,
     ArtifactVerificationReceipt,
 )
 from framework.harness.runtime import (
@@ -80,6 +85,28 @@ def _request(record: ArtifactRecord) -> ArtifactCatalogRegistrationRequest:
 
 def _state_path(root: Path) -> Path:
     return root / "catalog.json"
+
+
+def _retirement_request(
+    logical_reference: ArtifactLogicalReference,
+    *,
+    requested_at: datetime,
+) -> ArtifactReferenceRetirementRequest:
+    authorization = ArtifactLifecycleAuthorization.create(
+        kind=ArtifactLifecycleAuthorityKind.TERMINAL_RUN,
+        tenant_id=logical_reference.tenant_id,
+        owner_run_id=logical_reference.owner_run_id,
+        owner_id=logical_reference.owner_id,
+        lifecycle_ref=f"run-lifecycle://{logical_reference.owner_run_id}/terminal",
+        observed_at=requested_at - timedelta(seconds=1),
+        policy_version="graph-artifact-policy@1",
+    )
+    return ArtifactReferenceRetirementRequest.create(
+        reference=logical_reference,
+        authorization=authorization,
+        reason=ArtifactReferenceRetirementReason.RETENTION_EXPIRED,
+        requested_at=requested_at,
+    )
 
 
 def _read_state(root: Path) -> dict:
@@ -189,7 +216,7 @@ def test_same_logical_identity_cannot_change_metadata_after_commit(tmp_path) -> 
     assert _state_path(tmp_path).read_bytes() == before
 
 
-def test_reference_scope_idempotency_removal_and_cross_run_listing(tmp_path) -> None:
+def test_reference_scope_and_protected_reference_removal_guard(tmp_path) -> None:
     catalog = LocalJsonArtifactCatalog(tmp_path)
     registered = catalog.register(_request(_record()))
     evidence_ref = ArtifactLogicalReference.create(
@@ -213,8 +240,38 @@ def test_reference_scope_idempotency_removal_and_cross_run_listing(tmp_path) -> 
             reference_id=evidence_ref.reference_id,
         )
     assert remove_scope.value.error_code is GraphArtifactResultErrorCode.ARTIFACT_SCOPE_MISMATCH
-    assert catalog.remove_reference(tenant_id="tenant-1", reference_id=evidence_ref.reference_id) is True
-    assert catalog.remove_reference(tenant_id="tenant-1", reference_id=evidence_ref.reference_id) is False
+    with pytest.raises(GraphArtifactResultError) as lifecycle:
+        catalog.remove_reference(
+            tenant_id="tenant-1",
+            reference_id=evidence_ref.reference_id,
+        )
+    assert lifecycle.value.error_code is (
+        GraphArtifactResultErrorCode.LIFECYCLE_AUTHORIZATION_INVALID
+    )
+
+
+def test_expiring_reference_can_be_removed_idempotently(tmp_path) -> None:
+    catalog = LocalJsonArtifactCatalog(tmp_path)
+    registered = catalog.register(_request(_record()))
+    ephemeral = ArtifactLogicalReference.create(
+        entry_id=registered.entry.entry_id,
+        tenant_id="tenant-1",
+        owner_run_id="run-1",
+        owner_id="temporary-1",
+        kind=ArtifactReferenceKind.EPHEMERAL,
+        created_at=NOW + timedelta(seconds=2),
+        expires_at=NOW + timedelta(minutes=1),
+    )
+    catalog.add_reference(ephemeral)
+
+    assert catalog.remove_reference(
+        tenant_id="tenant-1",
+        reference_id=ephemeral.reference_id,
+    ) is True
+    assert catalog.remove_reference(
+        tenant_id="tenant-1",
+        reference_id=ephemeral.reference_id,
+    ) is False
 
 
 def test_gc_plan_protects_replay_then_marks_expired_unreferenced_entry(tmp_path) -> None:
@@ -225,29 +282,75 @@ def test_gc_plan_protects_replay_then_marks_expired_unreferenced_entry(tmp_path)
     replay_ref = ArtifactLogicalReference.create(
         entry_id=registered.entry.entry_id,
         tenant_id="tenant-1",
-        owner_run_id="run-2",
-        owner_id="replay-bundle-1",
+        owner_run_id="run-1",
+        owner_id="artifact-1",
         kind=ArtifactReferenceKind.REPLAY,
         created_at=NOW + timedelta(seconds=2),
     )
     catalog.add_reference(replay_ref)
-    catalog.remove_reference(
-        tenant_id="tenant-1",
-        reference_id=registered.reference.reference_id,
-    )
 
     protected = catalog.plan_gc(now=NOW + timedelta(days=2))
     assert protected.decisions[0].action.value == "keep"
     assert protected.decisions[0].reason.value == "replay_required"
     assert catalog.get(registered.entry.entry_id) == registered.entry
 
-    catalog.remove_reference(tenant_id="tenant-1", reference_id=replay_ref.reference_id)
+    retirement_time = NOW + timedelta(days=2)
+    first = catalog.retire_reference(
+        _retirement_request(
+            registered.reference,
+            requested_at=retirement_time,
+        )
+    )
+    assert catalog.retire_reference(
+        _retirement_request(
+            registered.reference,
+            requested_at=retirement_time,
+        )
+    ) == first
+    catalog.retire_reference(
+        _retirement_request(replay_ref, requested_at=retirement_time)
+    )
     deletable = catalog.plan_gc(now=NOW + timedelta(days=2))
     repeated = catalog.plan_gc(now=NOW + timedelta(days=2))
     assert deletable == repeated
     assert deletable.decisions[0].action.value == "delete_candidate"
     assert deletable.decisions[0].reason.value == "expired_unreferenced"
     assert catalog.get(registered.entry.entry_id) == registered.entry
+
+
+def test_gc_detach_rejects_a_reference_added_after_planning(tmp_path) -> None:
+    catalog = LocalJsonArtifactCatalog(tmp_path)
+    registered = catalog.register(
+        _request(_record(expires_at=NOW + timedelta(days=1)))
+    )
+    retirement_time = NOW + timedelta(days=2)
+    catalog.retire_reference(
+        _retirement_request(registered.reference, requested_at=retirement_time)
+    )
+    plan = catalog.plan_gc(now=retirement_time)
+    decision = plan.decisions[0]
+    late_reference = ArtifactLogicalReference.create(
+        entry_id=registered.entry.entry_id,
+        tenant_id="tenant-1",
+        owner_run_id="run-1",
+        owner_id="late-replay",
+        kind=ArtifactReferenceKind.REPLAY,
+        created_at=retirement_time,
+    )
+    catalog.add_reference(late_reference)
+    request = ArtifactCatalogGcDetachRequest.create(
+        plan_checksum=plan.plan_checksum,
+        catalog_snapshot_checksum=plan.catalog_snapshot_checksum,
+        decision=decision,
+        requested_at=retirement_time,
+    )
+
+    with pytest.raises(GraphArtifactResultError) as stale:
+        catalog.detach_gc_candidate(request)
+
+    assert stale.value.error_code is GraphArtifactResultErrorCode.GC_PLAN_STALE
+    assert catalog.get(registered.entry.entry_id) == registered.entry
+    assert catalog.list_references(registered.entry.entry_id) == (late_reference,)
 
 
 def test_parallel_registration_has_one_entry_and_no_lost_references(tmp_path) -> None:

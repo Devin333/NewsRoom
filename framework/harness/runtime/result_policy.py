@@ -142,6 +142,10 @@ class GraphArtifactPersistenceConfig:
     max_artifact_bytes: int = 512 * MIB
     max_artifacts_per_run: int = 200
     max_materialized_bytes_per_run: int = 500 * MIB
+    max_artifacts_per_tenant: int = 20_000
+    max_materialized_bytes_per_tenant: int = 50 * 1024 * MIB
+    max_artifacts_per_class: int = 10_000
+    max_materialized_bytes_per_class: int = 20 * 1024 * MIB
     max_context_artifact_refs: int = 12
     max_context_loaded_bytes: int = 4 * MIB
     max_context_loaded_tokens: int = 1_048_576
@@ -149,6 +153,9 @@ class GraphArtifactPersistenceConfig:
         GraphArtifactDedupScope.TENANT_CHECKSUM_MEDIA_TYPE
     )
     cache_default_ttl_seconds: int = 86_400
+    quota_alert_threshold_basis_points: int = 8_000
+    gc_backlog_alert_bytes: int = 1024 * MIB
+    cache_stampede_miss_threshold: int = 25
     retention: GraphArtifactRetentionSettings = field(
         default_factory=GraphArtifactRetentionSettings
     )
@@ -183,10 +190,17 @@ class GraphArtifactPersistenceConfig:
             ("max_artifact_bytes", 1_024, 512 * MIB),
             ("max_artifacts_per_run", 1, 100_000),
             ("max_materialized_bytes_per_run", 1_024, 100 * 1024 * MIB),
+            ("max_artifacts_per_tenant", 1, 10_000_000),
+            ("max_materialized_bytes_per_tenant", 1_024, 10 * 1024 * 1024 * MIB),
+            ("max_artifacts_per_class", 1, 10_000_000),
+            ("max_materialized_bytes_per_class", 1_024, 10 * 1024 * 1024 * MIB),
             ("max_context_artifact_refs", 1, 1_024),
             ("max_context_loaded_bytes", 1, 512 * MIB),
             ("max_context_loaded_tokens", 1, 134_217_728),
             ("cache_default_ttl_seconds", 60, 2_592_000),
+            ("quota_alert_threshold_basis_points", 1, 10_000),
+            ("gc_backlog_alert_bytes", 1, 10 * 1024 * 1024 * MIB),
+            ("cache_stampede_miss_threshold", 2, 1_000_000),
         )
         for field_name, minimum, maximum in bounds:
             object.__setattr__(
@@ -208,6 +222,18 @@ class GraphArtifactPersistenceConfig:
             raise result_error(
                 GraphArtifactResultErrorCode.RESULT_SCHEMA_INVALID,
                 field="config.sample_max_bytes",
+            )
+        if (
+            self.max_artifacts_per_run > self.max_artifacts_per_tenant
+            or self.max_artifacts_per_class > self.max_artifacts_per_tenant
+            or self.max_materialized_bytes_per_run
+            > self.max_materialized_bytes_per_tenant
+            or self.max_materialized_bytes_per_class
+            > self.max_materialized_bytes_per_tenant
+        ):
+            raise result_error(
+                GraphArtifactResultErrorCode.RESULT_SCHEMA_INVALID,
+                field="config.aggregate_quota",
             )
         object.__setattr__(
             self,
@@ -247,11 +273,18 @@ class GraphArtifactPersistenceConfig:
             "max_artifact_bytes": self.max_artifact_bytes,
             "max_artifacts_per_run": self.max_artifacts_per_run,
             "max_materialized_bytes_per_run": self.max_materialized_bytes_per_run,
+            "max_artifacts_per_tenant": self.max_artifacts_per_tenant,
+            "max_materialized_bytes_per_tenant": self.max_materialized_bytes_per_tenant,
+            "max_artifacts_per_class": self.max_artifacts_per_class,
+            "max_materialized_bytes_per_class": self.max_materialized_bytes_per_class,
             "max_context_artifact_refs": self.max_context_artifact_refs,
             "max_context_loaded_bytes": self.max_context_loaded_bytes,
             "max_context_loaded_tokens": self.max_context_loaded_tokens,
             "dedup_scope": self.dedup_scope.value,
             "cache_default_ttl_seconds": self.cache_default_ttl_seconds,
+            "quota_alert_threshold_basis_points": self.quota_alert_threshold_basis_points,
+            "gc_backlog_alert_bytes": self.gc_backlog_alert_bytes,
+            "cache_stampede_miss_threshold": self.cache_stampede_miss_threshold,
             "retention": self.retention.to_dict(),
         }
 
@@ -273,11 +306,18 @@ class GraphArtifactPersistenceConfig:
                     "max_artifact_bytes",
                     "max_artifacts_per_run",
                     "max_materialized_bytes_per_run",
+                    "max_artifacts_per_tenant",
+                    "max_materialized_bytes_per_tenant",
+                    "max_artifacts_per_class",
+                    "max_materialized_bytes_per_class",
                     "max_context_artifact_refs",
                     "max_context_loaded_bytes",
                     "max_context_loaded_tokens",
                     "dedup_scope",
                     "cache_default_ttl_seconds",
+                    "quota_alert_threshold_basis_points",
+                    "gc_backlog_alert_bytes",
+                    "cache_stampede_miss_threshold",
                     "retention",
                 }
             ),

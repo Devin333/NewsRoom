@@ -94,6 +94,9 @@ def test_default_config_matches_prd_and_round_trips() -> None:
     assert config.summary_max_bytes == 8 * 1024
     assert config.max_artifact_bytes == 512 * 1024 * 1024
     assert config.max_materialized_bytes_per_run == 500 * 1024 * 1024
+    assert config.max_materialized_bytes_per_tenant == 50 * 1024 * 1024 * 1024
+    assert config.max_materialized_bytes_per_class == 20 * 1024 * 1024 * 1024
+    assert config.quota_alert_threshold_basis_points == 8_000
     assert GraphArtifactPersistenceConfig.from_dict(config.to_dict()) == config
 
 
@@ -105,12 +108,40 @@ def test_default_config_matches_prd_and_round_trips() -> None:
         ("summary_max_bytes", 2 * 1024 * 1024),
         ("max_artifact_bytes", 513 * 1024 * 1024),
         ("max_artifacts_per_run", 0),
+        ("max_artifacts_per_tenant", 0),
+        ("max_materialized_bytes_per_class", 0),
+        ("quota_alert_threshold_basis_points", 10_001),
+        ("cache_stampede_miss_threshold", 1),
         ("cache_default_ttl_seconds", 59),
     ],
 )
 def test_config_rejects_out_of_range_values(field: str, value: int) -> None:
     with pytest.raises(GraphArtifactResultError) as exc_info:
         replace(GraphArtifactPersistenceConfig(), **{field: value})
+
+    assert exc_info.value.error_code is GraphArtifactResultErrorCode.RESULT_SCHEMA_INVALID
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"max_artifacts_per_run": 3, "max_artifacts_per_tenant": 2},
+        {"max_artifacts_per_class": 3, "max_artifacts_per_tenant": 2},
+        {
+            "max_materialized_bytes_per_run": 2_048,
+            "max_materialized_bytes_per_tenant": 1_024,
+        },
+        {
+            "max_materialized_bytes_per_class": 2_048,
+            "max_materialized_bytes_per_tenant": 1_024,
+        },
+    ],
+)
+def test_config_rejects_inconsistent_aggregate_quota(
+    overrides: dict[str, int],
+) -> None:
+    with pytest.raises(GraphArtifactResultError) as exc_info:
+        replace(GraphArtifactPersistenceConfig(), **overrides)
 
     assert exc_info.value.error_code is GraphArtifactResultErrorCode.RESULT_SCHEMA_INVALID
 

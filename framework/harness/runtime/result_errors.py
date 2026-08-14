@@ -28,6 +28,12 @@ class GraphArtifactResultErrorCode(StrEnum):
     POLICY_VERSION_UNSUPPORTED = "policy_version_unsupported"
     RESULT_IDENTITY_CONFLICT = "result_identity_conflict"
     RESULT_LEDGER_FAILED = "result_ledger_failed"
+    GOVERNANCE_LEDGER_FAILED = "governance_ledger_failed"
+    GC_PLAN_STALE = "gc_plan_stale"
+    GC_OPERATION_FAILED = "gc_operation_failed"
+    LIFECYCLE_AUTHORIZATION_INVALID = "lifecycle_authorization_invalid"
+    COST_REPORT_FAILED = "cost_report_failed"
+    ALERT_LEDGER_FAILED = "alert_ledger_failed"
 
 
 _MESSAGES: Mapping[GraphArtifactResultErrorCode, str] = {
@@ -88,6 +94,24 @@ _MESSAGES: Mapping[GraphArtifactResultErrorCode, str] = {
     GraphArtifactResultErrorCode.RESULT_LEDGER_FAILED: (
         "graph artifact result attempt identity could not be committed"
     ),
+    GraphArtifactResultErrorCode.GOVERNANCE_LEDGER_FAILED: (
+        "graph artifact governance state could not be committed"
+    ),
+    GraphArtifactResultErrorCode.GC_PLAN_STALE: (
+        "graph artifact garbage-collection plan no longer matches catalog state"
+    ),
+    GraphArtifactResultErrorCode.GC_OPERATION_FAILED: (
+        "graph artifact garbage-collection operation could not be completed"
+    ),
+    GraphArtifactResultErrorCode.LIFECYCLE_AUTHORIZATION_INVALID: (
+        "graph artifact lifecycle authorization is invalid"
+    ),
+    GraphArtifactResultErrorCode.COST_REPORT_FAILED: (
+        "graph artifact cost report could not be generated"
+    ),
+    GraphArtifactResultErrorCode.ALERT_LEDGER_FAILED: (
+        "graph artifact alert state could not be committed"
+    ),
 }
 
 _RETRYABLE = frozenset(
@@ -99,6 +123,10 @@ _RETRYABLE = frozenset(
         GraphArtifactResultErrorCode.CACHE_WRITE_FAILED,
         GraphArtifactResultErrorCode.CACHE_READBACK_FAILED,
         GraphArtifactResultErrorCode.RESULT_LEDGER_FAILED,
+        GraphArtifactResultErrorCode.GOVERNANCE_LEDGER_FAILED,
+        GraphArtifactResultErrorCode.GC_OPERATION_FAILED,
+        GraphArtifactResultErrorCode.COST_REPORT_FAILED,
+        GraphArtifactResultErrorCode.ALERT_LEDGER_FAILED,
         GraphArtifactResultErrorCode.CONTEXT_BUDGET_EXCEEDED,
     }
 )

@@ -10,6 +10,8 @@ from framework.harness.artifacts.catalog import (
     ArtifactCatalogEntry,
     ArtifactCatalogGcAction,
     ArtifactCatalogGcDecision,
+    ArtifactCatalogGcDetachReceipt,
+    ArtifactCatalogGcDetachRequest,
     ArtifactCatalogGcPlan,
     ArtifactCatalogGcReason,
     ArtifactCatalogIdentity,
@@ -18,8 +20,14 @@ from framework.harness.artifacts.catalog import (
     ArtifactCatalogReconciliationPlan,
     ArtifactCatalogRegistrationRequest,
     ArtifactCatalogRegistrationResult,
+    ArtifactCatalogSnapshot,
+    ArtifactLifecycleAuthorization,
+    ArtifactLifecycleAuthorityKind,
     ArtifactLogicalReference,
     ArtifactReferenceKind,
+    ArtifactReferenceRetirementReason,
+    ArtifactReferenceRetirementReceipt,
+    ArtifactReferenceRetirementRequest,
     ArtifactVerificationReceipt,
 )
 from framework.harness.runtime import (
@@ -232,3 +240,88 @@ def test_gc_and_reconciliation_plans_are_deterministic_exact_contracts() -> None
     assert ArtifactCatalogGcPlan.from_dict(first.to_dict()) == first
     assert ArtifactCatalogReconciliationPlan.from_dict(reconciliation.to_dict()) == reconciliation
     assert reconciliation.is_clean is False
+
+
+def test_catalog_snapshot_and_gc_detach_contracts_preserve_exact_evidence() -> None:
+    request = _request()
+    entry = ArtifactCatalogEntry.from_verified_record(request.record, request.verification)
+    claim = ArtifactCatalogClaim.for_record(request.record, entry_id=entry.entry_id)
+    logical_reference = request.initial_reference
+    snapshot = ArtifactCatalogSnapshot.create(
+        captured_at=NOW,
+        entries=(entry,),
+        claims=(claim,),
+        references=(logical_reference,),
+    )
+    decision = ArtifactCatalogGcDecision(
+        entry_id=entry.entry_id,
+        ref=entry.record.ref,
+        action=ArtifactCatalogGcAction.DELETE_CANDIDATE,
+        reason=ArtifactCatalogGcReason.EXPIRED_UNREFERENCED,
+        active_reference_ids=(),
+        byte_size=entry.record.byte_size,
+        claim_ids=(claim.claim_id,),
+        reference_ids=(logical_reference.reference_id,),
+    )
+    plan = ArtifactCatalogGcPlan.create(
+        generated_at=NOW,
+        decisions=(decision,),
+        catalog_snapshot_checksum=snapshot.snapshot_checksum,
+    )
+    detach_request = ArtifactCatalogGcDetachRequest.create(
+        plan_checksum=plan.plan_checksum,
+        catalog_snapshot_checksum=snapshot.snapshot_checksum,
+        decision=decision,
+        requested_at=NOW,
+    )
+    receipt = ArtifactCatalogGcDetachReceipt.create(
+        request_checksum=detach_request.request_checksum,
+        entry=entry,
+        claims=(claim,),
+        references=(logical_reference,),
+        detached_at=NOW,
+    )
+
+    assert ArtifactCatalogSnapshot.from_dict(snapshot.to_dict()) == snapshot
+    assert ArtifactCatalogGcDetachRequest.from_dict(detach_request.to_dict()) == detach_request
+    assert ArtifactCatalogGcDetachReceipt.from_dict(receipt.to_dict()) == receipt
+    assert decision.decision_checksum is not None
+    assert plan.catalog_snapshot_checksum == snapshot.snapshot_checksum
+
+
+def test_lifecycle_authorization_and_retirement_are_scoped_exact_contracts() -> None:
+    logical_reference = _request().initial_reference
+    authorization = ArtifactLifecycleAuthorization.create(
+        kind=ArtifactLifecycleAuthorityKind.TERMINAL_RUN,
+        tenant_id=logical_reference.tenant_id,
+        owner_run_id=logical_reference.owner_run_id,
+        owner_id=logical_reference.owner_id,
+        lifecycle_ref="run-lifecycle://run-1/terminal",
+        observed_at=NOW,
+        policy_version="graph-artifact-policy@1",
+    )
+    request = ArtifactReferenceRetirementRequest.create(
+        reference=logical_reference,
+        authorization=authorization,
+        reason=ArtifactReferenceRetirementReason.RETENTION_EXPIRED,
+        requested_at=NOW + timedelta(seconds=1),
+    )
+    receipt = ArtifactReferenceRetirementReceipt.create(
+        request_checksum=request.request_checksum,
+        reference=logical_reference,
+        authorization_id=authorization.authorization_id,
+        reason=request.reason,
+        retired_at=NOW + timedelta(seconds=1),
+    )
+
+    assert ArtifactLifecycleAuthorization.from_dict(authorization.to_dict()) == authorization
+    assert ArtifactReferenceRetirementRequest.from_dict(request.to_dict()) == request
+    assert ArtifactReferenceRetirementReceipt.from_dict(receipt.to_dict()) == receipt
+    with pytest.raises(GraphArtifactResultError) as wrong_scope:
+        ArtifactReferenceRetirementRequest.create(
+            reference=logical_reference,
+            authorization=replace(authorization, tenant_id="tenant-2"),
+            reason=ArtifactReferenceRetirementReason.RETENTION_EXPIRED,
+            requested_at=NOW + timedelta(seconds=1),
+        )
+    assert wrong_scope.value.error_code is GraphArtifactResultErrorCode.RESULT_IDENTITY_CONFLICT
