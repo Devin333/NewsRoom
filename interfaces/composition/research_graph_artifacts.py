@@ -38,6 +38,8 @@ class ResearchGraphArtifactRuntimeComponents:
     def __post_init__(self) -> None:
         if self.lifecycle.artifact_port is not self.artifact_port:
             raise ValueError("graph artifact lifecycle must share artifact_port")
+        if self.lifecycle.terminal_store is not self.artifact_port.terminal_store:
+            raise ValueError("graph artifact lifecycle must share terminal_store")
         if self.materializer._artifact_port is not self.artifact_port:
             raise ValueError("graph artifact materializer must share artifact_port")
         if self.materializer._catalog is not self.catalog:
@@ -93,6 +95,7 @@ def compose_research_graph_artifact_runtime(
         lifecycle = FilesystemGraphArtifactLifecycle(
             settings.artifact.root,
             artifact_port=actual_artifact_port,
+            terminal_store=actual_artifact_port.terminal_store,
             max_physical_bytes=config.max_artifact_bytes,
         )
         materializer = ResultMaterializer(

@@ -12,6 +12,7 @@ import pytest
 from framework.harness.artifacts import (
     ArtifactWriteRequest,
     GraphArtifactPhysicalLifecyclePort,
+    GraphTerminalManifest,
 )
 from framework.harness.artifacts.catalog import (
     ArtifactCatalogClaim,
@@ -44,7 +45,6 @@ from framework.harness.runtime.result_models import (
     ResultSensitivity,
     RetentionClass,
 )
-from framework.workflow.runtime.manifest import manifest_hash
 from infrastructure.research import (
     FilesystemGraphArtifactLifecycle,
     FilesystemHarnessArtifactPort,
@@ -84,6 +84,8 @@ def _write_graph_result(
         "candidate_checksum": candidate_checksum,
         "graph_result_ref_only": True,
         "identity_checksum": "sha256:" + "a" * 64,
+        "required_for_replay": required_for_replay,
+        "required_for_publication": required_for_publication,
     }
     with port.bind_run("run-1"):
         ref = port.write_artifact(
@@ -100,6 +102,26 @@ def _write_graph_result(
                 metadata=metadata,
             )
         )
+    staged = port.list_staged_artifacts("run-1")
+    port.write_terminal_manifest(
+        GraphTerminalManifest(
+            tenant_id="tenant-1",
+            run_id="run-1",
+            graph_id="research-graph",
+            graph_version="1.0.0",
+            graph_schema_version="1.0.0",
+            compiler_version="1.0.0",
+            normalized_graph_checksum="sha256:" + "d" * 64,
+            status="succeeded",
+            started_at=NOW,
+            completed_at=NOW + timedelta(seconds=2),
+            terminal_state_ref="sha256:" + "e" * 64,
+            checkpoint_ref="graph-state://run-1/terminal",
+            terminal_node_ids=("collect-evidence",),
+            gate_evidence_refs=("sha256:" + "f" * 64,),
+            artifacts=staged,
+        )
+    )
     record = ArtifactRecord(
         ref=ref.ref,
         artifact_id="result-" + "b" * 64,
@@ -223,8 +245,10 @@ def _fabricated_request(record: ArtifactRecord, *, suffix: str) -> GraphArtifact
 
 
 def _source_path(port: FilesystemHarnessArtifactPort) -> Path:
-    manifest = port.manager.read_run_manifest("run-1")
-    return port.root / "run-1" / manifest["artifacts"][ARTIFACT_TYPE]
+    manifest = port.read_terminal_manifest("run-1")
+    artifact = manifest.artifact(ARTIFACT_TYPE)
+    assert artifact is not None
+    return port.root / "run-1" / artifact.relative_path
 
 
 def _state_path(root: Path) -> Path:
@@ -252,11 +276,8 @@ def test_lifecycle_quarantines_and_purges_idempotently_after_restart(tmp_path) -
     assert quarantine.ref == record.ref
     assert quarantine.content_checksum == record.content_checksum
     assert source.exists() is False
-    manifest = port.manager.read_run_manifest("run-1")
-    assert ARTIFACT_TYPE not in manifest["artifacts"]
-    assert ARTIFACT_TYPE not in manifest["artifact_metadata"]
-    assert all(item["artifact_id"] != ARTIFACT_TYPE for item in manifest["artifact_refs"])
-    assert all(item["artifact_id"] != ARTIFACT_TYPE for item in manifest["artifact_index"])
+    manifest = port.read_terminal_manifest("run-1")
+    assert manifest.artifact(ARTIFACT_TYPE) is None
     state_text = _state_path(root).read_text(encoding="utf-8")
     assert "verified graph result" not in state_text
     assert str(root) not in state_text
@@ -307,22 +328,26 @@ def test_lifecycle_rejects_tampered_physical_evidence_without_detach(
     if target == "payload":
         source.write_bytes(source.read_bytes() + b" ")
     else:
-        manifest = port.manager.read_run_manifest("run-1")
-        indexed = next(
-            item
-            for item in manifest["artifact_index"]
-            if item["artifact_id"] == ARTIFACT_TYPE
+        manifest = port.read_terminal_manifest("run-1")
+        artifact = manifest.artifact(ARTIFACT_TYPE)
+        assert artifact is not None
+        tampered_artifact = replace(
+            artifact,
+            content_checksum="sha256:" + "d" * 64,
         )
-        indexed["checksum"] = "d" * 64
-        manifest["manifest_hash"] = manifest_hash(manifest)
-        port.manager.write_json("run-1", "manifest.json", manifest)
+        tampered = replace(
+            manifest,
+            artifacts=(tampered_artifact,),
+            manifest_hash=None,
+        )
+        port.manager.write_json("run-1", "manifest.json", tampered.to_dict())
 
     with pytest.raises(GraphArtifactResultError) as failure:
         FilesystemGraphArtifactLifecycle(root).quarantine(request)
 
     assert failure.value.error_code is GraphArtifactResultErrorCode.GC_OPERATION_FAILED
     assert source.exists()
-    assert ARTIFACT_TYPE in port.manager.read_run_manifest("run-1")["artifacts"]
+    assert port.read_terminal_manifest("run-1").artifact(ARTIFACT_TYPE) is not None
     assert tuple(root.rglob("state.json")) == ()
 
 
@@ -432,7 +457,7 @@ def test_restart_recovers_after_manifest_detach_before_move(tmp_path, monkeypatc
         lifecycle.quarantine(request)
 
     assert source.exists()
-    assert ARTIFACT_TYPE not in port.manager.read_run_manifest("run-1")["artifacts"]
+    assert port.read_terminal_manifest("run-1").artifact(ARTIFACT_TYPE) is None
     restarted = FilesystemGraphArtifactLifecycle(root, clock=lambda: NOW + timedelta(days=2))
     assert restarted.quarantine(request).ref == record.ref
 

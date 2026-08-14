@@ -507,8 +507,7 @@ def test_service_diagnostic_artifact_read_is_quarantine_and_scope_bound(
                 metadata={"run_id": run_id},
             )
         ).ref
-    manifest_path = artifact_port.root / run_id / "manifest.json"
-    original_manifest = manifest_path.read_bytes()
+    staged_before = artifact_port.list_staged_artifacts(run_id)
 
     result = make_research_result(
         run_id=run_id,
@@ -550,14 +549,14 @@ def test_service_diagnostic_artifact_read_is_quarantine_and_scope_bound(
 
     with pytest.raises(ArtifactPublicationVisibilityError) as hidden:
         artifact_port.read_artifact(artifact_ref)
-    assert hidden.value.disposition == "legacy_quarantined"
+    assert hidden.value.disposition == "staging_only"
     payload = service.read_diagnostic_artifact(
         run_id,
         artifact_ref,
         actor=actor,
     )
     assert payload["payload"] == {"status": "failed", "paper_id": paper_id}
-    assert manifest_path.read_bytes() == original_manifest
+    assert artifact_port.list_staged_artifacts(run_id) == staged_before
 
     with pytest.raises(ResearchServiceError) as foreign_scope:
         service.read_diagnostic_artifact(

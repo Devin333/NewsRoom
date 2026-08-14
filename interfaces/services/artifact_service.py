@@ -5,13 +5,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from framework.agent.artifacts.paths import (
-    resolve_artifact_descendant,
-    validate_artifact_path_segment,
-    validate_relative_artifact_path,
+from framework.harness.artifacts import (
+    GraphArtifactStrictContentReader,
+    GraphTerminalArtifact,
 )
-from framework.workflow.inspection import read_strict_workflow_artifact_content
-from interfaces.services.run_inspection_service import RunInspectionService
+from infrastructure.storage.artifacts import FilesystemGraphTerminalArtifactReader
 
 
 @dataclass(frozen=True)
@@ -64,85 +62,56 @@ class ArtifactDetail:
 
 
 class ArtifactInspectionService:
-    def __init__(self, artifact_root: str | Path = ".newsroom/runs") -> None:
+    def __init__(
+        self,
+        artifact_root: str | Path = ".newsroom/runs",
+        *,
+        terminal_reader: FilesystemGraphTerminalArtifactReader | None = None,
+    ) -> None:
         self.artifact_root = Path(artifact_root)
-        self.run_inspection = RunInspectionService(self.artifact_root)
+        self.terminal_reader = terminal_reader or FilesystemGraphTerminalArtifactReader(
+            self.artifact_root
+        )
+        if self.terminal_reader.root.resolve(strict=False) != self.artifact_root.resolve(
+            strict=False
+        ):
+            raise ValueError("terminal_reader root does not match artifact_root")
+        self.content_reader = GraphArtifactStrictContentReader(self.terminal_reader)
 
     def list_artifacts(self, run_id: str) -> ArtifactListResult:
-        manifest = self.run_inspection.get_run(run_id).manifest
+        manifest = self.terminal_reader.read_terminal_manifest(run_id)
         artifacts = [
-            self._summary(run_id, key, relative_path)
-            for key, relative_path in sorted((manifest.get("artifacts") or {}).items())
+            self._summary(artifact)
+            for artifact in sorted(
+                manifest.artifacts,
+                key=lambda item: item.artifact_key,
+            )
         ]
-        return ArtifactListResult(run_id=run_id, artifacts=artifacts)
+        return ArtifactListResult(run_id=manifest.run_id, artifacts=artifacts)
 
     def get_artifact(self, run_id: str, artifact_key: str) -> ArtifactDetail:
-        run = self.run_inspection.get_run(run_id)
-        run_dir = (
-            Path(run.artifact_dir)
-            if run.artifact_dir
-            else self._run_dir(run_id)
-        )
-        record = read_strict_workflow_artifact_content(
-            run_dir,
-            run.manifest,
-            artifact_key,
-            redact=True,
-        )
+        manifest = self.terminal_reader.read_terminal_manifest(run_id)
+        record = self.content_reader.read(manifest, artifact_key, redact=True)
         content = record.content
-        if record.content_type == "application/x-ndjson" and isinstance(content, list):
+        if record.media_type == "application/x-ndjson" and isinstance(content, list):
             content = _jsonl_values_to_text(content)
         return ArtifactDetail(
-            run_id=run_id,
+            run_id=manifest.run_id,
             artifact_key=artifact_key,
             relative_path=record.relative_path,
-            content_type=record.content_type,
-            size_bytes=record.size_bytes,
+            content_type=record.media_type,
+            size_bytes=record.byte_size,
             content=content,
         )
 
-    def _summary(self, run_id: str, artifact_key: str, relative_path: str) -> ArtifactSummary:
-        path = self._artifact_path(run_id, relative_path)
+    @staticmethod
+    def _summary(artifact: GraphTerminalArtifact) -> ArtifactSummary:
         return ArtifactSummary(
-            artifact_key=artifact_key,
-            relative_path=relative_path,
-            content_type=_content_type(path),
-            size_bytes=path.stat().st_size if path.exists() else None,
+            artifact_key=artifact.artifact_key,
+            relative_path=artifact.relative_path,
+            content_type=artifact.media_type,
+            size_bytes=artifact.byte_size,
         )
-
-    def _artifact_path(self, run_id: str, relative_path: str) -> Path:
-        run_dir = self._run_dir(run_id)
-        safe_relative_path = validate_relative_artifact_path(
-            relative_path,
-            field="artifact path",
-        )
-        path = resolve_artifact_descendant(
-            run_dir,
-            safe_relative_path,
-            field="artifact path",
-        )
-        if not path.exists():
-            raise FileNotFoundError(f"artifact file not found: {relative_path}")
-        return path
-
-    def _run_dir(self, run_id: str) -> Path:
-        safe_run_id = validate_artifact_path_segment(run_id, field="run_id")
-        return resolve_artifact_descendant(
-            self.artifact_root,
-            safe_run_id,
-            field="run_id",
-        )
-
-
-def _content_type(path: Path) -> str:
-    suffix = path.suffix.lower()
-    if suffix == ".json":
-        return "application/json"
-    if suffix == ".jsonl":
-        return "application/x-ndjson"
-    if suffix == ".md":
-        return "text/markdown"
-    return "text/plain"
 
 
 def _jsonl_values_to_text(values: list[Any]) -> str:

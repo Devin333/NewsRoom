@@ -14,7 +14,6 @@ from typing import Any, Callable
 
 from framework.agent.artifacts import (
     ArtifactChecksumMismatchError,
-    ArtifactReference,
     ArtifactManager,
     ArtifactRef as StorageArtifactRef,
     ArtifactNotFoundError,
@@ -31,11 +30,16 @@ from framework.harness import (
     HarnessSideEffectDisposition,
     HarnessSideEffectOutcome,
 )
+from framework.harness.artifacts import (
+    GraphTerminalArtifact,
+    GraphTerminalManifest,
+    GraphTerminalManifestCommitRequest,
+)
 from framework.harness.control_plane.errors import HarnessValidationError
 from framework.shared.hashing import hash_text
 from framework.shared.json import stable_json_dumps
-from framework.shared.time import format_datetime, utc_now
 from infrastructure.research.diagnostics import emit_research_persistence_diagnostic
+from infrastructure.storage.artifacts import FilesystemGraphTerminalArtifactStore
 from business.research.ports.artifact_publication import (
     RESEARCH_ARTIFACT_LEGACY_MANIFEST_VERSION,
     RESEARCH_ARTIFACT_MANIFEST_VERSION,
@@ -95,6 +99,7 @@ class FilesystemHarnessArtifactPort:
         accepted_run_resolver: Callable[..., bool] | None = None,
         diagnostic_run_resolver: Callable[..., bool] | None = None,
         legacy_identity_scope_ref: str | None = None,
+        terminal_store: FilesystemGraphTerminalArtifactStore | None = None,
     ) -> None:
         if max_write_bytes is not None and max_write_bytes < 0:
             raise ValueError("max_write_bytes must be non-negative")
@@ -109,6 +114,14 @@ class FilesystemHarnessArtifactPort:
             max_write_bytes=max_write_bytes,
         )
         self.store = artifact_store or FilesystemArtifactStore(self.root)
+        if terminal_store is not None and (
+            terminal_store.root.resolve(strict=False)
+            != self.root.resolve(strict=False)
+        ):
+            raise ValueError("terminal_store root does not match root")
+        self.terminal_store = terminal_store or FilesystemGraphTerminalArtifactStore(
+            self.root
+        )
         self.max_write_bytes = (
             max_write_bytes
             if max_write_bytes is not None
@@ -234,7 +247,6 @@ class FilesystemHarnessArtifactPort:
         checksum = compute_checksum(content)
         with self._manifest_lock:
             with self.lock_run(run_id):
-                self._ensure_run_manifest(run_id)
                 existing = self._existing_artifact_result(
                     run_id=run_id,
                     artifact_type=artifact_type,
@@ -245,19 +257,15 @@ class FilesystemHarnessArtifactPort:
                 if existing is not None:
                     return existing
                 self.manager.write_bytes(run_id, relative_path, content)
-                self.manager.append_manifest_artifact(
-                    run_id,
-                    artifact_key=artifact_type,
-                    relative_path=relative_path,
-                    artifact_ref=ArtifactReference(
-                        artifact_id=artifact_type,
+                self.terminal_store.stage_artifact(
+                    run_id=run_id,
+                    artifact=_terminal_artifact_from_request(
                         run_id=run_id,
-                        kind=artifact_type,
-                        uri=relative_path,
-                        content_type=request.media_type,
+                        artifact_type=artifact_type,
+                        relative_path=relative_path,
                         checksum=checksum,
                         size_bytes=len(content),
-                        metadata=dict(request.metadata),
+                        request=request,
                     ),
                 )
         return HarnessArtifactRef(
@@ -311,7 +319,7 @@ class FilesystemHarnessArtifactPort:
                 raise ArtifactRunBindingError(
                     "artifact ref run_id does not match the expected parent run"
                 )
-            manifest = self.manager.read_run_manifest(run_id)
+            manifest = self._artifact_metadata_projection(run_id)
             self._read_artifact_payload(
                 manifest,
                 run_id=run_id,
@@ -353,7 +361,7 @@ class FilesystemHarnessArtifactPort:
                 raise ArtifactRunBindingError(
                     "graph result ref run_id does not match the expected run"
                 )
-            manifest = self.manager.read_run_manifest(run_id)
+            manifest = self._artifact_metadata_projection(run_id)
             relative_path = self._canonical_path(artifact_type)
             if not _is_verified_graph_result_ref_only_artifact(
                 manifest,
@@ -404,7 +412,7 @@ class FilesystemHarnessArtifactPort:
         run_id: str | None = None
         try:
             run_id, artifact_type = self._parse_ref(ref)
-            manifest = self.manager.read_run_manifest(run_id)
+            manifest = self._artifact_metadata_projection(run_id)
             schema_version = self._publication_schema_version(manifest)
             disposition = (
                 "quarantine"
@@ -463,7 +471,29 @@ class FilesystemHarnessArtifactPort:
         return result
 
     def _read_artifact(self, run_id: str, artifact_type: str) -> dict[str, Any]:
-        manifest = self.manager.read_run_manifest(run_id)
+        try:
+            terminal = self.terminal_store.read_terminal_manifest(run_id)
+        except ArtifactNotFoundError:
+            staged = self.terminal_store.read_staged_artifact(
+                run_id=run_id,
+                artifact_key=artifact_type,
+            )
+            if not is_verified_internal_staged_artifact(staged):
+                raise ArtifactPublicationVisibilityError(
+                    "Research artifact is not terminally published",
+                    disposition="staging_only",
+                )
+            return self._read_artifact_payload(
+                _artifact_projection(run_id, (staged,), staging_only=True),
+                run_id=run_id,
+                artifact_type=artifact_type,
+            )
+        if terminal.publication is None:
+            raise ArtifactPublicationVisibilityError(
+                "Research artifact has no terminal publication authority",
+                disposition="quarantine",
+            )
+        manifest = _terminal_manifest_projection(terminal)
         schema_version = self._publication_schema_version(manifest)
         if schema_version == RESEARCH_ARTIFACT_MANIFEST_VERSION:
             claim = self._validated_v2_publication_claim(manifest, run_id=run_id)
@@ -518,7 +548,11 @@ class FilesystemHarnessArtifactPort:
         artifact_type: str,
         allow_legacy_diagnostic: bool = False,
     ) -> dict[str, Any]:
-        if not isinstance(manifest.get("manifest_hash"), str) and not allow_legacy_diagnostic:
+        if (
+            not isinstance(manifest.get("manifest_hash"), str)
+            and manifest.get("authority_mode") != "staging_only"
+            and not allow_legacy_diagnostic
+        ):
             raise ArtifactStoreMetadataError(
                 f"artifact manifest hash is missing: {run_id}"
             )
@@ -1160,9 +1194,20 @@ class FilesystemHarnessArtifactPort:
         content: bytes,
         checksum: str,
     ) -> HarnessArtifactRef | None:
-        manifest = self.manager.read_run_manifest(run_id)
+        try:
+            manifest = self._artifact_metadata_projection(run_id)
+        except ArtifactNotFoundError:
+            return None
         artifacts = manifest.get("artifacts")
-        if not isinstance(artifacts, dict) or artifact_type not in artifacts:
+        if not isinstance(artifacts, dict):
+            raise ArtifactStoreMetadataError(
+                f"artifact metadata projection is invalid: {run_id}"
+            )
+        if artifact_type not in artifacts:
+            if manifest.get("authority_mode") == "terminal":
+                raise ArtifactWriteConflictError(
+                    f"Graph terminal manifest already exists: {run_id}"
+                )
             return None
         existing_path = artifacts.get(artifact_type)
         expected_path = self._canonical_path(artifact_type)
@@ -1191,7 +1236,11 @@ class FilesystemHarnessArtifactPort:
             raise ArtifactWriteConflictError(
                 f"immutable artifact already exists with different content: {artifact_type}"
             )
-        existing_payload = self._read_artifact(run_id, artifact_type)
+        existing_payload = self._read_artifact_payload(
+            manifest,
+            run_id=run_id,
+            artifact_type=artifact_type,
+        )
         if stable_json_dumps(existing_payload) != stable_json_dumps(request.to_dict()):
             raise ArtifactWriteConflictError(
                 f"immutable artifact metadata conflicts: {artifact_type}"
@@ -1210,22 +1259,50 @@ class FilesystemHarnessArtifactPort:
             raise ArtifactRunBindingError("artifact write requires a bound run")
         return run_id
 
-    def _ensure_run_manifest(self, run_id: str) -> None:
-        try:
-            self.manager.read_run_manifest(run_id)
-            return
-        except ArtifactNotFoundError:
-            pass
-        started_at = format_datetime(utc_now()) or ""
-        self.manager.create_run_manifest(
-            run_id=run_id,
-            workflow_id="research.paper_analysis",
-            workflow_version="1",
-            profile="research",
-            status="running",
-            started_at=started_at,
-            run_type="research",
+    def read_terminal_manifest(self, run_id: str) -> GraphTerminalManifest:
+        return self.terminal_store.read_terminal_manifest(run_id)
+
+    def write_terminal_manifest(
+        self,
+        manifest: GraphTerminalManifest,
+    ) -> GraphTerminalManifest:
+        return self.terminal_store.write_terminal_manifest(manifest)
+
+    def commit_unpublished_terminal_manifest(
+        self,
+        request: GraphTerminalManifestCommitRequest,
+    ) -> GraphTerminalManifest:
+        if not isinstance(request, GraphTerminalManifestCommitRequest):
+            raise TypeError("request must be GraphTerminalManifestCommitRequest")
+        staged = self.terminal_store.list_staged_artifacts(request.run_id)
+        invalid = tuple(
+            artifact.artifact_key
+            for artifact in staged
+            if not is_verified_internal_staged_artifact(artifact)
         )
+        if invalid:
+            raise ArtifactWriteConflictError(
+                "unpublished Graph terminal commit found non-internal staged artifacts"
+            )
+        return self.terminal_store.write_terminal_manifest(
+            request.to_manifest(artifacts=staged)
+        )
+
+    def list_staged_artifacts(
+        self,
+        run_id: str,
+    ) -> tuple[GraphTerminalArtifact, ...]:
+        return self.terminal_store.list_staged_artifacts(run_id)
+
+    def _artifact_metadata_projection(self, run_id: str) -> dict[str, Any]:
+        try:
+            manifest = self.terminal_store.read_terminal_manifest(run_id)
+        except ArtifactNotFoundError:
+            staged = self.terminal_store.list_staged_artifacts(run_id)
+            if not staged:
+                raise
+            return _artifact_projection(run_id, staged, staging_only=True)
+        return _terminal_manifest_projection(manifest)
 
     def _manifest_metadata(
         self,
@@ -1346,6 +1423,136 @@ def _find_manifest_entry(entries: Any, artifact_id: str) -> dict[str, Any] | Non
         if isinstance(item, dict) and item.get("artifact_id") == artifact_id:
             return item
     return None
+
+
+def _terminal_artifact_from_request(
+    *,
+    run_id: str,
+    artifact_type: str,
+    relative_path: str,
+    checksum: str,
+    size_bytes: int,
+    request: ArtifactWriteRequest,
+) -> GraphTerminalArtifact:
+    metadata = dict(request.metadata)
+    node_id = metadata.get("node_id")
+    attempt_id = metadata.get("attempt_id")
+    if not isinstance(node_id, str) or not node_id.strip():
+        node_id = "context" if metadata.get("context_ref_only") is True else "artifact"
+    if not isinstance(attempt_id, str) or not attempt_id.strip():
+        attempt_id = (
+            "context-1" if metadata.get("context_ref_only") is True else "staging-1"
+        )
+    required_for_replay = metadata.get("required_for_replay")
+    if required_for_replay is None:
+        required_for_replay = metadata.get("context_ref_only") is True
+    required_for_publication = metadata.get("required_for_publication", False)
+    if not isinstance(required_for_replay, bool) or not isinstance(
+        required_for_publication,
+        bool,
+    ):
+        raise ArtifactStoreMetadataError(
+            f"invalid Graph artifact lifecycle flags: {artifact_type}"
+        )
+    return GraphTerminalArtifact(
+        artifact_key=artifact_type,
+        artifact_id=artifact_type,
+        ref=FilesystemHarnessArtifactPort._canonical_ref(run_id, artifact_type),
+        relative_path=relative_path,
+        content_checksum=f"sha256:{checksum}",
+        byte_size=size_bytes,
+        media_type=request.media_type,
+        node_id=node_id,
+        attempt_id=attempt_id,
+        required_for_replay=required_for_replay,
+        required_for_publication=required_for_publication,
+        metadata=metadata,
+    )
+
+
+def _artifact_projection(
+    run_id: str,
+    artifacts: tuple[GraphTerminalArtifact, ...],
+    *,
+    staging_only: bool,
+) -> dict[str, Any]:
+    paths: dict[str, str] = {}
+    metadata: dict[str, dict[str, Any]] = {}
+    references: list[dict[str, Any]] = []
+    for artifact in artifacts:
+        paths[artifact.artifact_key] = artifact.relative_path
+        entry = {
+            "artifact_id": artifact.artifact_id,
+            "run_id": run_id,
+            "kind": artifact.artifact_key,
+            "artifact_type": artifact.artifact_key,
+            "path": artifact.relative_path,
+            "uri": artifact.relative_path,
+            "content_type": artifact.media_type,
+            "media_type": artifact.media_type,
+            "size_bytes": artifact.byte_size,
+            "checksum": artifact.content_checksum.removeprefix("sha256:"),
+            "metadata": dict(artifact.metadata),
+            **dict(artifact.metadata),
+        }
+        metadata[artifact.artifact_key] = dict(entry)
+        references.append(entry)
+    return {
+        "run_id": run_id,
+        "artifacts": paths,
+        "artifact_metadata": metadata,
+        "artifact_refs": list(references),
+        "artifact_index": list(references),
+        "manifest_hash": None,
+        "authority_mode": "staging_only" if staging_only else "terminal",
+    }
+
+
+def _terminal_manifest_projection(
+    manifest: GraphTerminalManifest,
+) -> dict[str, Any]:
+    projection = _artifact_projection(
+        manifest.run_id,
+        manifest.artifacts,
+        staging_only=False,
+    )
+    projection.update(
+        {
+            "schema_version": manifest.schema_version,
+            "publication_schema_version": RESEARCH_ARTIFACT_MANIFEST_VERSION,
+            "status": manifest.status.value,
+            "manifest_hash": manifest.manifest_hash,
+        }
+    )
+    publication = manifest.publication
+    if publication is None:
+        return projection
+    publication_metadata = publication.to_dict()["metadata"]
+    projection.update(
+        {
+            "identity_scope_ref": publication.identity_scope_ref,
+            "subject_scope_ref": publication.subject_scope_ref,
+            "publication_authority_ref": publication.publication_authority_ref,
+            "terminal_publication_authority_ref": (
+                publication.publication_authority_ref
+            ),
+            "terminal_side_effect_outcome_ref": (
+                publication.terminal_side_effect_outcome_ref
+            ),
+            "artifact_evidence_ref": publication.artifact_evidence_ref,
+            "artifact_member_evidence_ref": (
+                publication.artifact_member_evidence_ref
+            ),
+            "artifact_member_evidence": publication_metadata.get(
+                "artifact_member_evidence"
+            ),
+            "terminal_side_effect_outcome": publication_metadata.get(
+                "terminal_side_effect_outcome"
+            ),
+            "publication_committed_at": publication.committed_at,
+        }
+    )
+    return projection
 
 
 def _is_research_manifest(manifest: Mapping[str, Any]) -> bool:
@@ -1534,6 +1741,38 @@ def _is_verified_graph_result_ref_only_artifact(
     )
 
 
+def is_verified_internal_staged_artifact(
+    artifact: GraphTerminalArtifact,
+) -> bool:
+    """Return whether a staged descriptor is an approved internal Graph member."""
+
+    if not isinstance(artifact, GraphTerminalArtifact):
+        return False
+    metadata = artifact.metadata
+    context_only = metadata.get("context_ref_only") is True
+    graph_result_only = metadata.get("graph_result_ref_only") is True
+    if context_only == graph_result_only:
+        return False
+    identity_suffix: str | None = None
+    if context_only:
+        for allowed_type in _CONTEXT_REF_ONLY_ARTIFACT_TYPES:
+            prefix = f"{allowed_type}-"
+            if artifact.artifact_key.startswith(prefix):
+                identity_suffix = artifact.artifact_key.removeprefix(prefix)
+                break
+    elif artifact.artifact_key.startswith(_GRAPH_RESULT_REF_ONLY_PREFIX):
+        identity_suffix = artifact.artifact_key.removeprefix(
+            _GRAPH_RESULT_REF_ONLY_PREFIX
+        )
+    if identity_suffix is None or len(identity_suffix) != 64:
+        return False
+    try:
+        int(identity_suffix, 16)
+    except ValueError:
+        return False
+    return metadata.get("identity_checksum") == f"sha256:{identity_suffix}"
+
+
 __all__ = [
     "ArtifactRunBindingError",
     "ArtifactPublicationVisibilityError",
@@ -1541,4 +1780,5 @@ __all__ = [
     "CANONICAL_ARTIFACT_DIRECTORY",
     "CANONICAL_ARTIFACT_SCHEME",
     "FilesystemHarnessArtifactPort",
+    "is_verified_internal_staged_artifact",
 ]

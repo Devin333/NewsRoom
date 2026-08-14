@@ -135,9 +135,10 @@ def test_enforced_source_to_report_reopens_without_external_producers(
                 == artifact_ref.content_checksum
             )
 
-    manifest = first.artifact_port.manager.read_run_manifest(request.run_id)
-    assert manifest["status"] == "succeeded"
-    assert manifest["publication_authority_ref"] == result.diagnostics[
+    manifest = first.artifact_port.read_terminal_manifest(request.run_id)
+    assert manifest.status == "succeeded"
+    assert manifest.publication is not None
+    assert manifest.publication.publication_authority_ref == result.diagnostics[
         "publication_authority_ref"
     ]
     assert all(
@@ -254,9 +255,8 @@ def test_enforced_quality_gate_failure_retains_internal_results_without_publicat
     assert gate_observation.payload["input_ref"].startswith("sha256:")
     assert gate_observation.payload["result_ref"].startswith("sha256:")
 
-    manifest = bundle.artifact_port.manager.read_run_manifest(request.run_id)
-    assert manifest.get("publication_authority_ref") is None
-    assert manifest.get("terminal_side_effect_outcome_ref") is None
+    manifest = bundle.artifact_port.read_terminal_manifest(request.run_id)
+    assert manifest.publication is None
 
 
 def test_enforced_accepted_and_gate_failed_runs_produce_reproducible_cost_report(

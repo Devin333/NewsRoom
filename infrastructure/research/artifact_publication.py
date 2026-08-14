@@ -17,7 +17,6 @@ from typing import Any
 
 from framework.agent.artifacts import (
     ArtifactNotFoundError,
-    ArtifactReference,
     ArtifactStoreMetadataError,
     compute_checksum,
     validate_artifact_path_segment,
@@ -34,17 +33,15 @@ from framework.harness import (
     HarnessSideEffectStorePort,
 )
 from framework.harness.control_plane.errors import HarnessValidationError
+from framework.harness.artifacts import (
+    GraphTerminalArtifact,
+    GraphTerminalManifest,
+    GraphTerminalManifestContext,
+    GraphTerminalPublicationEvidence,
+)
 from framework.shared.hashing import hash_text
 from framework.shared.json import stable_json_dumps
-from framework.shared.time import format_datetime, utc_now
-from framework.workflow.runtime.manifest import (
-    RUN_MANIFEST_SCHEMA_VERSION,
-    append_manifest_artifact_index,
-    manifest_hash,
-    normalize_legacy_run_manifest,
-    register_manifest_artifact,
-    register_manifest_artifact_ref,
-)
+from framework.shared.time import utc_now
 
 from business.research.ports.artifact_publication import (
     RESEARCH_ARTIFACT_EFFECT_KIND,
@@ -60,8 +57,7 @@ from business.research.ports.artifact_publication import (
 from infrastructure.research.artifact_port import (
     ArtifactWriteConflictError,
     FilesystemHarnessArtifactPort,
-    _is_verified_context_ref_only_artifact,
-    _is_verified_graph_result_ref_only_artifact,
+    is_verified_internal_staged_artifact,
 )
 
 
@@ -165,6 +161,10 @@ class ResearchArtifactBundleHandler:
                         "size_bytes": len(content),
                         "content_type": request.media_type,
                         "metadata": dict(request.metadata),
+                        "node_id": intent.step_id,
+                        "attempt_id": f"attempt-{intent.attempt}",
+                        "required_for_replay": True,
+                        "required_for_publication": True,
                     }
                 )
             candidate_refs = tuple(record["candidate_ref"] for record in records)
@@ -272,6 +272,10 @@ class ResearchArtifactBundleHandler:
                     "candidate_path": None,
                     "canonical_path": f"artifacts/{request.artifact_type}.json",
                     "candidate_ref": None,
+                    "node_id": "terminal",
+                    "attempt_id": "terminal-1",
+                    "required_for_replay": True,
+                    "required_for_publication": True,
                 }
             )
             existing_types.add(request.artifact_type)
@@ -398,11 +402,7 @@ class ResearchArtifactBundleHandler:
             # This is the sole visibility write.  Every member has already
             # been checksum-verified, and the manager uses temp-write + flush
             # + atomic replace for manifest.json.
-            self.artifact_port.manager.write_json(
-                intent.run_id,
-                "manifest.json",
-                manifest,
-            )
+            self.artifact_port.write_terminal_manifest(manifest)
             manifest_committed = True
             # Cleanup is intentionally best-effort after the atomic visibility
             # commit.  A filesystem cleanup failure retains hidden bytes under
@@ -413,14 +413,15 @@ class ResearchArtifactBundleHandler:
         except BaseException:
             if not manifest_committed:
                 try:
-                    persisted_manifest = self.artifact_port.manager.read_run_manifest(
+                    persisted_manifest = self.artifact_port.read_terminal_manifest(
                         intent.run_id
                     )
                 except Exception:
                     persisted_manifest = None
                 if (
-                    isinstance(persisted_manifest, Mapping)
-                    and persisted_manifest.get("terminal_side_effect_outcome_ref")
+                    isinstance(persisted_manifest, GraphTerminalManifest)
+                    and persisted_manifest.publication is not None
+                    and persisted_manifest.publication.terminal_side_effect_outcome_ref
                     == outcome.checksum
                 ):
                     manifest_committed = True
@@ -476,12 +477,16 @@ class ResearchArtifactBundleHandler:
                     ref for ref in refs if isinstance(ref, str) and ref
                 )
         try:
-            manifest = self.artifact_port.manager.read_run_manifest(validated_run_id)
+            manifest = self.artifact_port.read_terminal_manifest(validated_run_id)
             self.artifact_port._validated_v2_publication_claim(
-                manifest,
+                self.artifact_port._artifact_metadata_projection(validated_run_id),
                 run_id=validated_run_id,
             )
-            terminal_payload = manifest.get("terminal_side_effect_outcome")
+            terminal_payload = (
+                None
+                if manifest.publication is None
+                else manifest.publication.metadata.get("terminal_side_effect_outcome")
+            )
             terminal_outcome = (
                 HarnessSideEffectOutcome.from_dict(terminal_payload)
                 if isinstance(terminal_payload, Mapping)
@@ -690,10 +695,13 @@ class ResearchArtifactBundleHandler:
         authorization: HarnessSideEffectDecision,
     ) -> HarnessSideEffectOutcome | None:
         try:
-            manifest = self.artifact_port.manager.read_run_manifest(intent.run_id)
+            terminal_manifest = self.artifact_port.read_terminal_manifest(intent.run_id)
         except ArtifactNotFoundError:
             return None
-        payload = manifest.get("terminal_side_effect_outcome")
+        publication = terminal_manifest.publication
+        if publication is None:
+            return None
+        payload = publication.metadata.get("terminal_side_effect_outcome")
         if not isinstance(payload, Mapping):
             return None
         try:
@@ -713,7 +721,7 @@ class ResearchArtifactBundleHandler:
             )
         try:
             claim = self.artifact_port._validated_v2_publication_claim(
-                manifest,
+                self.artifact_port._artifact_metadata_projection(intent.run_id),
                 run_id=intent.run_id,
             )
         except ArtifactStoreMetadataError as exc:
@@ -741,53 +749,31 @@ class ResearchArtifactBundleHandler:
         members: list[dict[str, Any]],
         *,
         committed_at: datetime,
-    ) -> dict[str, Any]:
-        try:
-            manifest = self.artifact_port.manager.read_run_manifest(intent.run_id)
-        except ArtifactNotFoundError:
-            manifest = normalize_legacy_run_manifest(
-                {
-                    "schema_version": RUN_MANIFEST_SCHEMA_VERSION,
-                    "run_type": "research",
-                    "run_id": intent.run_id,
-                    "workflow_id": "research.paper_analysis",
-                    "workflow_version": "1",
-                    "profile": "research",
-                    "status": "succeeded",
-                    "started_at": format_datetime(committed_at) or "",
-                    "finished_at": format_datetime(committed_at),
-                    "completed_at": format_datetime(committed_at),
-                    "path": [],
-                    "steps": {},
-                    "artifacts": {"manifest": "manifest.json"},
-                }
+    ) -> GraphTerminalManifest:
+        context_value = intent.payload.get("graph_terminal_manifest_context")
+        if not isinstance(context_value, Mapping):
+            raise HarnessValidationError(
+                "Research terminal publication requires pinned Graph manifest context",
+                code="research_graph_manifest_context_missing",
             )
-        else:
-            existing_artifacts = manifest.get("artifacts")
-            if isinstance(existing_artifacts, dict):
-                preexisting = {
-                    artifact_type
-                    for artifact_type, path in existing_artifacts.items()
-                    if artifact_type != "manifest"
-                    and not _is_verified_context_ref_only_artifact(
-                        manifest,
-                        artifact_type=artifact_type,
-                        path=path,
-                    )
-                    and not _is_verified_graph_result_ref_only_artifact(
-                        manifest,
-                        artifact_type=artifact_type,
-                        path=path,
-                    )
-                }
-                if preexisting:
-                    raise ArtifactWriteConflictError(
-                        "Research terminal publication found pre-existing canonical artifacts"
-                    )
-            else:
-                raise ArtifactStoreMetadataError(
-                    "Research terminal publication manifest artifacts are invalid"
-                )
+        try:
+            context = GraphTerminalManifestContext.from_dict(context_value)
+        except (TypeError, ValueError) as exc:
+            raise HarnessValidationError(
+                "Research terminal publication Graph manifest context is invalid",
+                code="research_graph_manifest_context_invalid",
+            ) from exc
+
+        staged = self.artifact_port.list_staged_artifacts(intent.run_id)
+        invalid_staged = tuple(
+            artifact.artifact_key
+            for artifact in staged
+            if not is_verified_internal_staged_artifact(artifact)
+        )
+        if invalid_staged:
+            raise ArtifactWriteConflictError(
+                "Research terminal publication found non-internal staged artifacts"
+            )
         artifact_ref_map = {
             member["artifact_type"]: _canonical_ref(
                 intent.run_id,
@@ -809,70 +795,75 @@ class ResearchArtifactBundleHandler:
                 "Research terminal outcome evidence does not match publication members",
                 code="research_artifact_evidence_mismatch",
             )
-        manifest.update(
-            {
-                "status": "succeeded",
-                "finished_at": manifest.get("finished_at")
-                or format_datetime(committed_at),
-                "completed_at": manifest.get("completed_at")
-                or format_datetime(committed_at),
-                "publication_schema_version": RESEARCH_ARTIFACT_MANIFEST_VERSION,
-                "identity_scope_ref": intent.identity_scope_ref,
-                "subject_scope_ref": intent.subject_scope_ref,
-                "publication_authority_ref": authorization.checksum,
-                "terminal_publication_authority_ref": authorization.checksum,
-                "terminal_side_effect_outcome_ref": outcome.checksum,
-                "artifact_evidence_ref": artifact_evidence,
-                "artifact_member_evidence_ref": member_evidence_checksum,
-                "artifact_member_evidence": member_evidence,
-                "publication_committed_at": format_datetime(committed_at),
-                "terminal_side_effect_outcome": outcome.to_dict(),
-            }
-        )
-        for member in members:
-            artifact_type = member["artifact_type"]
-            relative_path = member["canonical_path"]
-            checksum = member["checksum"]
-            content_type = member["content_type"]
-            size_bytes = member["size_bytes"]
-            register_manifest_artifact(manifest, artifact_type, relative_path)
-            ref = ArtifactReference(
-                artifact_id=artifact_type,
-                run_id=intent.run_id,
-                kind=artifact_type,
-                uri=relative_path,
-                content_type=content_type,
-                checksum=checksum,
-                size_bytes=size_bytes,
-                metadata={
-                    **dict(member.get("metadata") or {}),
-                    "identity_scope_ref": intent.identity_scope_ref,
-                    "subject_scope_ref": intent.subject_scope_ref,
-                    "publication_authority_ref": authorization.checksum,
-                    "artifact_evidence_ref": artifact_evidence,
-                },
+        published = tuple(
+            _graph_terminal_artifact(
+                intent,
+                authorization,
+                member,
+                artifact_evidence=artifact_evidence,
             )
-            register_manifest_artifact_ref(manifest, ref)
-            # register_manifest_artifact_ref already appends an index entry;
-            # this call is intentionally idempotent for legacy manifests whose
-            # helper implementation omitted the index in older versions.
-            append_manifest_artifact_index(manifest, ref.to_dict())
-            metadata = manifest.setdefault("artifact_metadata", {})
-            metadata[artifact_type] = {
-                "artifact_id": artifact_type,
-                "run_id": intent.run_id,
-                "kind": artifact_type,
-                "path": relative_path,
-                "content_type": content_type,
-                "size_bytes": size_bytes,
-                "checksum": checksum,
-                "identity_scope_ref": intent.identity_scope_ref,
-                "subject_scope_ref": intent.subject_scope_ref,
-                "publication_authority_ref": authorization.checksum,
-                "artifact_evidence_ref": artifact_evidence,
-            }
-        manifest["manifest_hash"] = manifest_hash(manifest)
-        return manifest
+            for member in members
+        )
+        all_artifacts = (*staged, *published)
+        artifact_keys = tuple(artifact.artifact_key for artifact in all_artifacts)
+        if len(artifact_keys) != len(set(artifact_keys)):
+            raise ArtifactWriteConflictError(
+                "Research terminal publication artifact identity conflicts with staging"
+            )
+        gate_evidence_refs = tuple(
+            value
+            for value in (
+                *authorization.gate_result_refs,
+                authorization.aggregate_verdict_ref,
+            )
+            if isinstance(value, str)
+        )
+        if not gate_evidence_refs:
+            raise HarnessValidationError(
+                "Research terminal publication requires deterministic gate evidence",
+                code="research_graph_gate_evidence_missing",
+            )
+        if intent.state_checksum is None or outcome.checksum is None:
+            raise HarnessValidationError(
+                "Research terminal publication identity is incomplete",
+                code="research_graph_terminal_identity_missing",
+            )
+        publication = GraphTerminalPublicationEvidence(
+            identity_scope_ref=intent.identity_scope_ref,
+            subject_scope_ref=intent.subject_scope_ref,
+            publication_authority_ref=authorization.checksum,
+            terminal_side_effect_outcome_ref=outcome.checksum,
+            artifact_evidence_ref=artifact_evidence,
+            artifact_member_evidence_ref=member_evidence_checksum,
+            committed_at=committed_at,
+            metadata={
+                "handler_ref": str(authorization.handler),
+                "history_cutoff": _history_cutoff(intent),
+                "artifact_member_evidence": member_evidence,
+                "terminal_side_effect_outcome": outcome.to_dict(),
+            },
+        )
+        return GraphTerminalManifest(
+            tenant_id=context.tenant_id,
+            run_id=intent.run_id,
+            graph_id=context.graph_id,
+            graph_version=context.graph_version,
+            graph_schema_version=context.graph_schema_version,
+            compiler_version=context.compiler_version,
+            normalized_graph_checksum=context.normalized_graph_checksum,
+            status="succeeded",
+            started_at=context.started_at,
+            completed_at=committed_at,
+            terminal_state_ref=intent.state_checksum,
+            checkpoint_ref=(
+                f"graph-state://{intent.run_id}/"
+                f"{intent.state_checksum.removeprefix('sha256:')}"
+            ),
+            terminal_node_ids=context.terminal_node_ids,
+            gate_evidence_refs=gate_evidence_refs,
+            artifacts=all_artifacts,
+            publication=publication,
+        )
 
 
     def _read_candidate_member(
@@ -1121,6 +1112,39 @@ def _public_member_projection(member: Mapping[str, Any]) -> dict[str, Any]:
         "canonical_path": member["canonical_path"],
         "candidate_ref": member.get("candidate_ref"),
     }
+
+
+def _graph_terminal_artifact(
+    intent: HarnessSideEffectIntent,
+    authorization: HarnessSideEffectDecision,
+    member: Mapping[str, Any],
+    *,
+    artifact_evidence: str,
+) -> GraphTerminalArtifact:
+    artifact_type = str(member["artifact_type"])
+    checksum = str(member["checksum"])
+    if not checksum.startswith("sha256:"):
+        checksum = f"sha256:{checksum}"
+    return GraphTerminalArtifact(
+        artifact_key=artifact_type,
+        artifact_id=artifact_type,
+        ref=_canonical_ref(intent.run_id, artifact_type),
+        relative_path=str(member["canonical_path"]),
+        content_checksum=checksum,
+        byte_size=int(member["size_bytes"]),
+        media_type=str(member["content_type"]),
+        node_id=str(member["node_id"]),
+        attempt_id=str(member["attempt_id"]),
+        required_for_replay=bool(member["required_for_replay"]),
+        required_for_publication=bool(member["required_for_publication"]),
+        metadata={
+            **dict(member.get("metadata") or {}),
+            "identity_scope_ref": intent.identity_scope_ref,
+            "subject_scope_ref": intent.subject_scope_ref,
+            "publication_authority_ref": authorization.checksum,
+            "artifact_evidence_ref": artifact_evidence,
+        },
+    )
 
 
 def _member_evidence_projection(

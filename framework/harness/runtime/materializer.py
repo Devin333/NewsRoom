@@ -1019,6 +1019,8 @@ class ResultMaterializer:
                 "candidate_checksum": request.candidate_checksum,
                 "graph_result_ref_only": True,
                 "identity_checksum": _artifact_identity_checksum(artifact_type),
+                "required_for_replay": request.required_for_replay,
+                "required_for_publication": request.required_for_publication,
             },
         )
         try:

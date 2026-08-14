@@ -627,14 +627,14 @@ def test_materializer_uses_durable_store_catalog_lookup_and_internal_artifacts(
     assert catalog.get_by_ref(tenant_id="tenant-1", ref=record.ref).record.ref == (
         record.ref
     )
-    manifest = artifact_port.manager.read_run_manifest("run-1")
+    staged = artifact_port.list_staged_artifacts("run-1")
     indexed = next(
         item
-        for item in manifest["artifact_index"]
-        if item["artifact_id"] == record.artifact_type
+        for item in staged
+        if item.artifact_id == record.artifact_type
     )
-    assert indexed["metadata"]["graph_result_ref_only"] is True
-    assert indexed["metadata"]["identity_checksum"] == (
+    assert indexed.metadata["graph_result_ref_only"] is True
+    assert indexed.metadata["identity_checksum"] == (
         "sha256:" + record.artifact_type.removeprefix("graph-result-")
     )
     restarted = SQLiteGraphResultStore(database, clock=lambda: NOW)

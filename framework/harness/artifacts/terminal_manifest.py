@@ -77,6 +77,97 @@ class GraphTerminalStatus(StrEnum):
     BLOCKED = "blocked"
 
 
+@dataclass(frozen=True, slots=True)
+class GraphTerminalManifestContext:
+    """Pinned Graph identity required before terminal publication can commit."""
+
+    tenant_id: str
+    graph_id: str
+    graph_version: str
+    graph_schema_version: str
+    compiler_version: str
+    normalized_graph_checksum: str
+    started_at: datetime
+    terminal_node_ids: tuple[str, ...]
+
+    def __post_init__(self) -> None:
+        for field_name in ("tenant_id", "graph_id"):
+            object.__setattr__(
+                self,
+                field_name,
+                _identifier(getattr(self, field_name), f"context.{field_name}"),
+            )
+        for field_name in (
+            "graph_version",
+            "graph_schema_version",
+            "compiler_version",
+        ):
+            object.__setattr__(
+                self,
+                field_name,
+                _exact_version(getattr(self, field_name), f"context.{field_name}"),
+            )
+        object.__setattr__(
+            self,
+            "normalized_graph_checksum",
+            _checksum(
+                self.normalized_graph_checksum,
+                "context.normalized_graph_checksum",
+            ),
+        )
+        object.__setattr__(
+            self,
+            "started_at",
+            _aware_datetime(self.started_at, "context.started_at"),
+        )
+        object.__setattr__(
+            self,
+            "terminal_node_ids",
+            _stable_tuple(
+                self.terminal_node_ids,
+                "context.terminal_node_ids",
+                normalize=_identifier,
+                allow_empty=False,
+            ),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "tenant_id": self.tenant_id,
+            "graph_id": self.graph_id,
+            "graph_version": self.graph_version,
+            "graph_schema_version": self.graph_schema_version,
+            "compiler_version": self.compiler_version,
+            "normalized_graph_checksum": self.normalized_graph_checksum,
+            "started_at": format_datetime(self.started_at),
+            "terminal_node_ids": list(self.terminal_node_ids),
+        }
+
+    @classmethod
+    def from_dict(cls, value: Mapping[str, Any]) -> Self:
+        payload = _exact_keys(
+            value,
+            required=frozenset(
+                {
+                    "tenant_id",
+                    "graph_id",
+                    "graph_version",
+                    "graph_schema_version",
+                    "compiler_version",
+                    "normalized_graph_checksum",
+                    "started_at",
+                    "terminal_node_ids",
+                }
+            ),
+            model=cls.__name__,
+        )
+        payload["started_at"] = _datetime_from_json(
+            payload["started_at"],
+            "context.started_at",
+        )
+        return cls(**payload)
+
+
 class GraphTerminalManifestErrorCode(StrEnum):
     SCHEMA_INVALID = "graph_terminal_manifest_schema_invalid"
     SCHEMA_UNSUPPORTED = "graph_terminal_manifest_schema_unsupported"
@@ -570,6 +661,76 @@ class GraphTerminalManifest:
         return manifest
 
 
+@dataclass(frozen=True, slots=True)
+class GraphTerminalManifestCommitRequest:
+    """Harness-decided terminal state ready for one artifact visibility commit."""
+
+    context: GraphTerminalManifestContext
+    run_id: str
+    status: GraphTerminalStatus | str
+    completed_at: datetime
+    terminal_state_ref: str
+    gate_evidence_refs: tuple[str, ...]
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.context, GraphTerminalManifestContext):
+            raise TypeError("context must be GraphTerminalManifestContext")
+        object.__setattr__(self, "run_id", _identifier(self.run_id, "run_id"))
+        try:
+            status = GraphTerminalStatus(self.status)
+        except (TypeError, ValueError) as exc:
+            raise _schema_error("status") from exc
+        if status is GraphTerminalStatus.SUCCEEDED:
+            raise _schema_error("status")
+        object.__setattr__(self, "status", status)
+        completed_at = _aware_datetime(self.completed_at, "completed_at")
+        if completed_at < self.context.started_at:
+            raise _schema_error("completed_at")
+        object.__setattr__(self, "completed_at", completed_at)
+        object.__setattr__(
+            self,
+            "terminal_state_ref",
+            _checksum(self.terminal_state_ref, "terminal_state_ref"),
+        )
+        object.__setattr__(
+            self,
+            "gate_evidence_refs",
+            _stable_tuple(
+                self.gate_evidence_refs,
+                "gate_evidence_refs",
+                normalize=_checksum,
+                allow_empty=False,
+            ),
+        )
+
+    def to_manifest(
+        self,
+        *,
+        artifacts: tuple[GraphTerminalArtifact, ...],
+    ) -> GraphTerminalManifest:
+        return GraphTerminalManifest(
+            tenant_id=self.context.tenant_id,
+            run_id=self.run_id,
+            graph_id=self.context.graph_id,
+            graph_version=self.context.graph_version,
+            graph_schema_version=self.context.graph_schema_version,
+            compiler_version=self.context.compiler_version,
+            normalized_graph_checksum=self.context.normalized_graph_checksum,
+            status=self.status,
+            started_at=self.context.started_at,
+            completed_at=self.completed_at,
+            terminal_state_ref=self.terminal_state_ref,
+            checkpoint_ref=(
+                f"graph-state://{self.run_id}/"
+                f"{self.terminal_state_ref.removeprefix('sha256:')}"
+            ),
+            terminal_node_ids=self.context.terminal_node_ids,
+            gate_evidence_refs=self.gate_evidence_refs,
+            artifacts=artifacts,
+            publication=None,
+        )
+
+
 def parse_graph_terminal_manifest(
     value: Mapping[str, Any],
     *,
@@ -611,6 +772,63 @@ class GraphArtifactContentPort(Protocol):
     """Physical reader that enforces the shared artifact path boundary."""
 
     def read_artifact_content(self, *, run_id: str, relative_path: str) -> bytes:
+        ...
+
+
+@runtime_checkable
+class GraphTerminalManifestPort(Protocol):
+    """Atomic owner port for canonical Graph terminal manifest authority."""
+
+    def read_terminal_manifest(self, run_id: str) -> GraphTerminalManifest:
+        ...
+
+    def write_terminal_manifest(
+        self,
+        manifest: GraphTerminalManifest,
+    ) -> GraphTerminalManifest:
+        ...
+
+    def replace_terminal_manifest(
+        self,
+        manifest: GraphTerminalManifest,
+        *,
+        expected_manifest_hash: str,
+    ) -> GraphTerminalManifest:
+        ...
+
+
+@runtime_checkable
+class GraphTerminalManifestRecorderPort(Protocol):
+    """Commit an unpublished terminal record after Harness reaches failure."""
+
+    def commit_unpublished_terminal_manifest(
+        self,
+        request: GraphTerminalManifestCommitRequest,
+    ) -> GraphTerminalManifest:
+        ...
+
+
+@runtime_checkable
+class GraphArtifactStagingPort(Protocol):
+    """Non-authoritative metadata used before one terminal visibility commit."""
+
+    def stage_artifact(
+        self,
+        *,
+        run_id: str,
+        artifact: GraphTerminalArtifact,
+    ) -> GraphTerminalArtifact:
+        ...
+
+    def read_staged_artifact(
+        self,
+        *,
+        run_id: str,
+        artifact_key: str,
+    ) -> GraphTerminalArtifact:
+        ...
+
+    def list_staged_artifacts(self, run_id: str) -> tuple[GraphTerminalArtifact, ...]:
         ...
 
 
@@ -968,13 +1186,18 @@ __all__ = [
     "GRAPH_TERMINAL_MANIFEST_SCHEMA",
     "GraphArtifactContentPort",
     "GraphArtifactContentRecord",
+    "GraphArtifactStagingPort",
     "GraphArtifactStrictContentReader",
     "GraphManifestHistoryDiagnostic",
     "GraphTerminalArtifact",
     "GraphTerminalManifest",
+    "GraphTerminalManifestCommitRequest",
+    "GraphTerminalManifestContext",
     "GraphTerminalManifestError",
     "GraphTerminalManifestErrorCode",
     "GraphTerminalManifestHistoryError",
+    "GraphTerminalManifestPort",
+    "GraphTerminalManifestRecorderPort",
     "GraphTerminalPublicationEvidence",
     "GraphTerminalStatus",
     "graph_terminal_manifest_hash",

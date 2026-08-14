@@ -97,6 +97,7 @@ from framework.harness.control_plane.gates import GateContext
 from framework.harness.control_plane.graph_application import (
     HarnessGraphControlPlaneRuntime,
 )
+from framework.harness.artifacts import GraphTerminalManifest
 from framework.harness.runtime import (
     GraphArtifactRolloutMode,
     HarnessGraphResultRuntime,
@@ -679,7 +680,7 @@ class _DurableResearchRunRecoverySource:
         if not callable(scoped_event_port_factory):
             raise TypeError("scoped_event_port_factory must be callable")
         self._artifact_root = Path(artifact_port.root)
-        self._manifest_reader = artifact_port.manager.read_run_manifest
+        self._manifest_reader = artifact_port.read_terminal_manifest
         self._run_store = run_store
         self._side_effect_store = side_effect_store
         self._scoped_event_port_factory = scoped_event_port_factory
@@ -690,6 +691,7 @@ class _DurableResearchRunRecoverySource:
             artifact_port.root,
             artifact_manager=artifact_port.manager,
             artifact_store=artifact_port.store,
+            terminal_store=artifact_port.terminal_store,
             max_write_bytes=artifact_port.max_write_bytes,
             accepted_run_resolver=lambda *_args: True,
         )
@@ -722,27 +724,15 @@ class _DurableResearchRunRecoverySource:
         if not _is_recoverable_research_manifest(manifest):
             return None
 
-        identity_scope_ref = _required_checksum(
-            manifest.get("identity_scope_ref"),
-            "manifest identity scope",
-        )
-        subject_scope_ref = _required_checksum(
-            manifest.get("subject_scope_ref"),
-            "manifest subject scope",
-        )
-        authority_ref = _required_checksum(
-            manifest.get("publication_authority_ref"),
-            "manifest publication authority",
-        )
-        artifact_evidence_ref = _required_checksum(
-            manifest.get("artifact_evidence_ref"),
-            "manifest artifact evidence",
-        )
-        outcome_ref = _required_checksum(
-            manifest.get("terminal_side_effect_outcome_ref"),
-            "manifest terminal outcome",
-        )
-        raw_outcome = manifest.get("terminal_side_effect_outcome")
+        publication = manifest.publication
+        if publication is None:
+            raise ValueError("Research recovery manifest has no publication evidence")
+        identity_scope_ref = publication.identity_scope_ref
+        subject_scope_ref = publication.subject_scope_ref
+        authority_ref = publication.publication_authority_ref
+        artifact_evidence_ref = publication.artifact_evidence_ref
+        outcome_ref = publication.terminal_side_effect_outcome_ref
+        raw_outcome = publication.metadata.get("terminal_side_effect_outcome")
         if not isinstance(raw_outcome, Mapping):
             raise ValueError("Research recovery manifest has no terminal outcome")
         outcome = HarnessSideEffectOutcome.from_dict(raw_outcome)
@@ -1992,13 +1982,11 @@ def _research_run_store_schema_version(version: str) -> str:
     )
 
 
-def _is_recoverable_research_manifest(manifest: Mapping[str, Any]) -> bool:
+def _is_recoverable_research_manifest(manifest: GraphTerminalManifest) -> bool:
     return (
-        isinstance(manifest, Mapping)
-        and manifest.get("run_type") == "research"
-        and manifest.get("publication_schema_version")
-        == "newsroom.research-artifact-manifest/v2"
-        and isinstance(manifest.get("run_id"), str)
+        isinstance(manifest, GraphTerminalManifest)
+        and manifest.graph_id.startswith("research.")
+        and manifest.publication is not None
     )
 
 

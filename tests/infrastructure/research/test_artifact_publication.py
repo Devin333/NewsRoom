@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 from datetime import timedelta
 
@@ -14,14 +15,13 @@ from framework.harness import (
     HarnessSideEffectOrigin,
     InMemoryHarnessSideEffectStore,
 )
+from framework.harness.artifacts import GraphTerminalManifestHistoryError
 from framework.shared.time import utc_now
-from framework.workflow.runtime.manifest import manifest_hash
 
 from business.research.ports.artifact_publication import (
     RESEARCH_ARTIFACT_EFFECT_KIND,
     RESEARCH_ARTIFACT_HANDLER_REF,
     RESEARCH_ARTIFACT_SCHEMA_VERSION,
-    ResearchArtifactReadResolution,
 )
 from infrastructure.research.artifact_port import (
     ArtifactPublicationVisibilityError,
@@ -62,10 +62,11 @@ def test_prepare_is_hidden_until_controller_terminal_publication(tmp_path: Path)
         "harness-trace",
         "harness-transcript",
     }
-    manifest = port.manager.read_run_manifest(intent.run_id)
-    assert manifest["publication_authority_ref"] == terminal_decision.checksum
-    assert manifest["terminal_side_effect_outcome_ref"] == published.checksum
-    assert manifest["status"] == "succeeded"
+    manifest = port.read_terminal_manifest(intent.run_id)
+    assert manifest.publication is not None
+    assert manifest.publication.publication_authority_ref == terminal_decision.checksum
+    assert manifest.publication.terminal_side_effect_outcome_ref == published.checksum
+    assert manifest.status.value == "succeeded"
     port.set_accepted_run_resolver(None)
     with pytest.raises(Exception, match="accepted run disposition"):
         port.read_artifact(f"artifact://{intent.run_id}/research-analysis")
@@ -103,9 +104,9 @@ def test_terminal_publication_preserves_verified_context_ref_only_artifact(
         published = handler.commit(terminal_intent, terminal_decision)
 
     assert published.disposition is HarnessSideEffectDisposition.ACCEPTED
-    manifest = port.manager.read_run_manifest(intent.run_id)
-    assert artifact_type in manifest["artifacts"]
-    assert "research-analysis" in manifest["artifacts"]
+    manifest = port.read_terminal_manifest(intent.run_id)
+    assert manifest.artifact(artifact_type) is not None
+    assert manifest.artifact("research-analysis") is not None
 
 
 def test_terminal_publication_rejects_spoofed_context_ref_only_artifact(
@@ -133,7 +134,7 @@ def test_terminal_publication_rejects_spoofed_context_ref_only_artifact(
         )
         terminal_intent, terminal_decision = _terminal_authority(prepared)
         store.put_decision(terminal_decision)
-        with pytest.raises(ArtifactWriteConflictError, match="pre-existing"):
+        with pytest.raises(ArtifactWriteConflictError, match="non-internal"):
             handler.commit(terminal_intent, terminal_decision)
 
 
@@ -164,9 +165,9 @@ def test_terminal_publication_preserves_verified_graph_result_artifact(
         store.put_decision(terminal_decision)
         published = handler.commit(terminal_intent, terminal_decision)
 
-    manifest = port.manager.read_run_manifest(intent.run_id)
+    manifest = port.read_terminal_manifest(intent.run_id)
     assert published.disposition is HarnessSideEffectDisposition.ACCEPTED
-    assert manifest["artifacts"][artifact_type]
+    assert manifest.artifact(artifact_type) is not None
     assert port.read_graph_result_artifact(
         graph_ref.ref,
         expected_run_id=intent.run_id,
@@ -245,24 +246,32 @@ def test_terminal_manifest_write_crash_keeps_visibility_for_idempotent_recovery(
         store.put_outcome(prepared)
         terminal_intent, terminal_decision = _terminal_authority(prepared)
         store.put_decision(terminal_decision)
-        original_write_json = port.manager.write_json
+        original_write_manifest = port.terminal_store._write_manifest_unlocked
         raised = False
 
-        def write_then_crash(*args, **kwargs):
+        def write_then_crash(manifest):
             nonlocal raised
-            result = original_write_json(*args, **kwargs)
-            if not raised and args[1] == "manifest.json":
+            result = original_write_manifest(manifest)
+            if not raised:
                 raised = True
                 raise OSError("crash after manifest replace")
             return result
 
-        monkeypatch.setattr(port.manager, "write_json", write_then_crash)
+        monkeypatch.setattr(
+            port.terminal_store,
+            "_write_manifest_unlocked",
+            write_then_crash,
+        )
         with pytest.raises(OSError, match="crash after manifest"):
             handler.commit(terminal_intent, terminal_decision)
         assert (tmp_path / intent.run_id / "manifest.json").is_file()
         assert list((tmp_path / intent.run_id / "artifacts").glob("*.json"))
 
-        monkeypatch.setattr(port.manager, "write_json", original_write_json)
+        monkeypatch.setattr(
+            port.terminal_store,
+            "_write_manifest_unlocked",
+            original_write_manifest,
+        )
         recovered = handler.commit(terminal_intent, terminal_decision)
 
     assert recovered.disposition is HarnessSideEffectDisposition.ACCEPTED
@@ -390,16 +399,19 @@ def test_v2_reader_claim_round_trip_binds_all_publication_evidence(
         claim_outcome,
         claim_members,
     ) = claims[0]
-    manifest = port.manager.read_run_manifest(intent.run_id)
+    manifest = port.read_terminal_manifest(intent.run_id)
+    assert manifest.publication is not None
     assert claim_run_id == intent.run_id
     assert claim_identity == intent.identity_scope_ref
     assert claim_subject == intent.subject_scope_ref
     assert claim_authority == terminal_decision.checksum
-    assert claim_artifact_evidence == manifest["artifact_evidence_ref"]
+    assert claim_artifact_evidence == manifest.publication.artifact_evidence_ref
     assert claim_outcome == published.checksum
     assert dict(claim_members) == {
-        key: f"sha256:{item['checksum']}"
-        for key, item in manifest["artifact_metadata"].items()
+        artifact.artifact_key: artifact.content_checksum
+        for artifact in manifest.artifacts
+        if not artifact.metadata.get("context_ref_only")
+        and not artifact.metadata.get("graph_result_ref_only")
     }
 
 
@@ -425,11 +437,11 @@ def test_v2_reader_rejects_rehashed_manifest_tampering(
         store.put_decision(terminal_decision)
         handler.commit(terminal_intent, terminal_decision)
 
-    manifest_path = tmp_path / intent.run_id / "manifest.json"
-    manifest = port.manager.read_run_manifest(intent.run_id)
-    manifest[field] = value
-    manifest["manifest_hash"] = manifest_hash(manifest)
-    port.manager.write_json(intent.run_id, "manifest.json", manifest)
+    manifest = port.read_terminal_manifest(intent.run_id)
+    assert manifest.publication is not None
+    publication = replace(manifest.publication, **{field: value})
+    tampered = replace(manifest, publication=publication, manifest_hash=None)
+    port.manager.write_json(intent.run_id, "manifest.json", tampered.to_dict())
 
     with pytest.raises(Exception, match="(?:evidence|authority) mismatch"):
         port.read_artifact(f"artifact://{intent.run_id}/research-analysis")
@@ -455,7 +467,7 @@ def test_v2_reader_rejects_member_byte_tamper_before_authorization(
         port.read_artifact(f"artifact://{intent.run_id}/research-analysis")
 
 
-def test_failed_legacy_manifest_is_non_destructive_and_diagnostic_only(
+def test_unpublished_staging_is_non_destructive_and_diagnostic_only(
     tmp_path: Path,
 ) -> None:
     accepted_calls: list[object] = []
@@ -475,17 +487,11 @@ def test_failed_legacy_manifest_is_non_destructive_and_diagnostic_only(
                 metadata={"run_id": "legacy-run"},
             )
         )
-    manifest_path = tmp_path / "legacy-run" / "manifest.json"
-    before = manifest_path.read_bytes()
-    manifest = port.manager.read_run_manifest("legacy-run")
-    manifest["status"] = "failed"
-    manifest["manifest_hash"] = manifest_hash(manifest)
-    port.manager.write_json("legacy-run", "manifest.json", manifest)
-    failed_manifest = manifest_path.read_bytes()
+    staged_before = port.list_staged_artifacts("legacy-run")
 
     with pytest.raises(ArtifactPublicationVisibilityError) as error:
         port.read_artifact(ref.ref)
-    assert error.value.disposition == "legacy_quarantined"
+    assert error.value.disposition == "staging_only"
     assert accepted_calls == []
     assert port.read_diagnostic_artifact(
         ref.ref,
@@ -493,11 +499,10 @@ def test_failed_legacy_manifest_is_non_destructive_and_diagnostic_only(
         subject_scope_ref=_SUBJECT_SCOPE,
     )["payload"] == {"status": "failed"}
     assert diagnostic_calls[0].disposition == "legacy_quarantined"
-    assert manifest_path.read_bytes() == failed_manifest
-    assert failed_manifest != before
+    assert port.list_staged_artifacts("legacy-run") == staged_before
 
 
-def test_legacy_reader_requires_an_unambiguous_single_scope_binding(
+def test_unpublished_staging_never_uses_accepted_run_authority(
     tmp_path: Path,
 ) -> None:
     writer = FilesystemHarnessArtifactPort(tmp_path)
@@ -509,67 +514,32 @@ def test_legacy_reader_requires_an_unambiguous_single_scope_binding(
                 metadata={"run_id": "legacy-run"},
             )
         )
-    manifest_path = tmp_path / "legacy-run" / "manifest.json"
-    original_bytes = manifest_path.read_bytes()
-
     shared_root_reader = FilesystemHarnessArtifactPort(
         tmp_path,
         accepted_run_resolver=lambda *_args: True,
     )
     with pytest.raises(ArtifactPublicationVisibilityError) as missing_scope:
         shared_root_reader.read_artifact(ref.ref)
-    assert missing_scope.value.disposition == "legacy_quarantined"
-
-    accepted_record_reader = FilesystemHarnessArtifactPort(
-        tmp_path,
-        accepted_run_resolver=lambda _claim: ResearchArtifactReadResolution(
-            accepted=True,
-            identity_scope_ref=_IDENTITY_SCOPE,
-        ),
-    )
-    assert accepted_record_reader.read_artifact(ref.ref)["payload"] == {
-        "status": "succeeded"
-    }
-
-    single_scope_reader = FilesystemHarnessArtifactPort(
-        tmp_path,
-        accepted_run_resolver=lambda claim: (
-            claim.identity_scope_ref == _IDENTITY_SCOPE
-            and claim.artifact_evidence_ref is not None
-            and bool(claim.member_checksums)
-        ),
-        legacy_identity_scope_ref=_IDENTITY_SCOPE,
-    )
-    assert single_scope_reader.read_artifact(ref.ref)["payload"] == {
-        "status": "succeeded"
-    }
-    assert manifest_path.read_bytes() == original_bytes
+    assert missing_scope.value.disposition == "staging_only"
 
 
-def test_legacy_reader_quarantines_conflicting_manifest_and_root_scope(
+def test_legacy_manifest_is_routed_to_typed_offline_history_diagnostic(
     tmp_path: Path,
 ) -> None:
-    writer = FilesystemHarnessArtifactPort(tmp_path)
-    with writer.bind_run("legacy-run"):
-        ref = writer.write_artifact(
-            ArtifactWriteRequest("research-analysis", {"status": "succeeded"})
-        )
-    manifest_path = tmp_path / "legacy-run" / "manifest.json"
-    manifest = writer.manager.read_run_manifest("legacy-run")
-    manifest["identity_scope_ref"] = checksum_for({"tenant_id": "other"})
-    manifest["manifest_hash"] = manifest_hash(manifest)
-    writer.manager.write_json("legacy-run", "manifest.json", manifest)
-    conflicting_bytes = manifest_path.read_bytes()
-
-    reader = FilesystemHarnessArtifactPort(
-        tmp_path,
-        accepted_run_resolver=lambda *_args: True,
-        legacy_identity_scope_ref=_IDENTITY_SCOPE,
+    run_dir = tmp_path / "legacy-run"
+    run_dir.mkdir()
+    (run_dir / "manifest.json").write_text(
+        '{"schema_version":"newsroom.workflow_run_manifest.v1",'
+        '"run_id":"legacy-run"}',
+        encoding="utf-8",
     )
-    with pytest.raises(ArtifactPublicationVisibilityError) as conflict:
-        reader.read_artifact(ref.ref)
-    assert conflict.value.disposition == "legacy_quarantined"
-    assert manifest_path.read_bytes() == conflicting_bytes
+    reader = FilesystemHarnessArtifactPort(tmp_path)
+
+    with pytest.raises(GraphTerminalManifestHistoryError) as conflict:
+        reader.read_terminal_manifest("legacy-run")
+
+    assert conflict.value.diagnostic.run_id == "legacy-run"
+    assert conflict.value.diagnostic.executable is False
 
 
 def test_diagnostic_reader_is_scope_bound_and_does_not_fallback(
@@ -707,6 +677,16 @@ def _terminal_authority(
         payload={
             "prepared_outcome_refs": [prepared.checksum],
             "history_cutoff": "event-before-terminal",
+            "graph_terminal_manifest_context": {
+                "tenant_id": "research-scope:tenant-a",
+                "graph_id": "research.paper_analysis.graph",
+                "graph_version": "1.0.0",
+                "graph_schema_version": "1.0.0",
+                "compiler_version": "1.0.0",
+                "normalized_graph_checksum": checksum_for("normalized-graph"),
+                "started_at": "2026-08-14T00:00:00Z",
+                "terminal_node_ids": ["publish_artifacts"],
+            },
         },
         candidate_refs=prepared.candidate_refs,
     )

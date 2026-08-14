@@ -128,7 +128,6 @@
       "interfaces/api/app.py",
       "interfaces/api/deps.py",
       "interfaces/services/__init__.py",
-      "interfaces/services/artifact_service.py",
       "interfaces/services/mcp_service.py",
       "interfaces/services/run_inspection_factory.py",
       "interfaces/services/run_inspection_service.py",

@@ -430,7 +430,7 @@ def test_read_only_rollback_reads_previous_policy_and_rejects_mutations(
         captured_at=NOW + timedelta(days=1),
         tenant_id=request.binding.tenant_id,
     )
-    manifest_before = read_only.artifact_port.manager.read_run_manifest(
+    staging_before = read_only.artifact_port.list_staged_artifacts(
         request.binding.run_id
     )
     usage_before = read_only.store.list_usage(
@@ -468,9 +468,9 @@ def test_read_only_rollback_reads_previous_policy_and_rejects_mutations(
         captured_at=NOW + timedelta(days=1),
         tenant_id=request.binding.tenant_id,
     ) == catalog_before
-    assert read_only.artifact_port.manager.read_run_manifest(
+    assert read_only.artifact_port.list_staged_artifacts(
         request.binding.run_id
-    ) == manifest_before
+    ) == staging_before
     assert read_only.store.list_usage(
         tenant_id=request.binding.tenant_id,
         window_start=NOW - timedelta(days=1),

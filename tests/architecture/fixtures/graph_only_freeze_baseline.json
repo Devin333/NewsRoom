@@ -7,7 +7,6 @@
       "business/research/workflows/paper_analysis_workflow.py|<module>|framework.harness.workflow|HarnessGraphSpec,HarnessStepSpec,HarnessWorkerType,HarnessWorkflowSpec,ParallelAll,ParallelBranch,Sequence,StepRef,VerifiedAggregation": 1,
       "framework/__init__.py|<module>|framework.workflow.runtime.run_result|RunResult": 1,
       "framework/__init__.py|<module>|framework.workflow.runtime.runner|WorkflowRunner": 1,
-      "framework/agent/artifacts/runtime/manager.py|<module>|framework.workflow.runtime.manifest|RUN_MANIFEST_SCHEMA_VERSION,append_manifest_artifact_index,manifest_hash,normalize_legacy_run_manifest,register_manifest_artifact,register_manifest_artifact_ref": 1,
       "framework/harness/__init__.py|<module>|framework.harness.workflow|BoundedLoop,Choice,ChoiceBranch,CompensationBinding,ConditionAll,ConditionAny,ConditionOperator,ConditionPredicate,DEFAULT_HARNESS_GRAPH_SCHEMA_REGISTRY,HarnessBranch,HarnessCompensationReference,HarnessContractKind,HarnessContractReference,HarnessControlNode,HarnessExecutableNode,HarnessGraphChecksumRegistry,HarnessGraphCompileResult,HarnessGraphDiagnostic,HarnessGraphEdge,HarnessGraphEdgeKind,HarnessGraphNodeKind,HarnessGraphPreflight,HarnessGraphPreflightPolicy,HarnessGraphRegistrySnapshot,HarnessGraphSchemaRegistry,HarnessGraphSpec,HarnessGraphValidationPhase,HarnessGraphValidationResult,HarnessJoinContract,HarnessLoopContract,HarnessMergeContract,HarnessMergeKind,HarnessPreparedGraph,HarnessRetryPolicy,HarnessRouteKind,HarnessRoutingRule,HarnessStepSpec,HarnessWorkerType,HarnessWorkflowContractReader,HarnessWorkflowGraphCompiler,HarnessWorkflowSpec,NormalizedHarnessGraph,ParallelAll,ParallelAny,ParallelBranch,ParallelMerge,PureMerge,Sequence,StepRef,VerifiedAggregation,Wait,WaitKind,WaitTimeoutPolicy": 1,
       "framework/harness/control_plane/compensation_runtime.py|<module>|framework.harness.workflow.canonical|thaw_json": 1,
       "framework/harness/control_plane/compensation_runtime.py|<module>|framework.harness.workflow.graph|HarnessExecutableNode": 1,
@@ -457,12 +456,9 @@
       "framework/workflow/scheduling/scheduler.py|<module>|framework.workflow.routing|RoutingEngine": 1,
       "framework/workflow/scheduling/scheduler.py|<module>|framework.workflow.runtime.result|StepOutcome as RuntimeStepOutcome": 1,
       "framework/workflow/scheduling/scheduler.py|<module>|framework.workflow.runtime.state_machine|StepRuntimeEvent,StepRuntimeEventType,StepStateMachine,WorkflowStateMachine": 1,
-      "infrastructure/research/artifact_publication.py|<module>|framework.workflow.runtime.manifest|RUN_MANIFEST_SCHEMA_VERSION,append_manifest_artifact_index,manifest_hash,normalize_legacy_run_manifest,register_manifest_artifact,register_manifest_artifact_ref": 1,
-      "infrastructure/research/graph_artifact_lifecycle.py|<module>|framework.workflow.runtime.manifest|manifest_hash": 1,
       "interfaces/composition/research.py|<module>|framework.harness.workflow.binding_authority|HarnessWorkerBinding": 1,
       "interfaces/composition/research.py|<module>|framework.harness.workflow.graph|HarnessContractKind,HarnessContractReference": 1,
       "interfaces/composition/research.py|<module>|framework.harness.workflow|HarnessWorkerType,HarnessWorkflowGraphCompiler": 1,
-      "interfaces/services/artifact_service.py|<module>|framework.workflow.inspection|read_strict_workflow_artifact_content": 1,
       "interfaces/services/event_migration_service.py|<module>|framework.workflow.runtime.event_projection|project_workflow_event": 1,
       "interfaces/services/event_projection_service.py|<module>|framework.workflow.runtime.event_projection|WorkflowEventProjection,WorkflowEventProjectionExporter": 1,
       "interfaces/services/harness_graph_service.py|<module>|framework.harness.workflow.canonical|required_text": 1,
@@ -474,14 +470,6 @@
       "scripts/dev.py|<module>|framework.workflow.operations|LocalWorkflowRunOperationService,OperationActor": 1
     },
     "legacy_schema_writers": {
-      "framework/agent/artifacts/runtime/manager.py|<module>.ArtifactManager.append_manifest_artifact|call_argument:append_manifest_artifact_index": 1,
-      "framework/agent/artifacts/runtime/manager.py|<module>.ArtifactManager.append_manifest_artifact|call_argument:register_manifest_artifact": 1,
-      "framework/agent/artifacts/runtime/manager.py|<module>.ArtifactManager.append_manifest_artifact|call_argument:register_manifest_artifact_ref": 1,
-      "framework/agent/artifacts/runtime/manager.py|<module>.ArtifactManager.append_manifest_artifact|call_argument:write_json": 1,
-      "framework/agent/artifacts/runtime/manager.py|<module>.ArtifactManager.create_run_manifest|call_argument:write_json": 1,
-      "framework/agent/artifacts/runtime/manager.py|<module>.ArtifactManager.create_run_manifest|dict_field:schema_version": 1,
-      "framework/agent/artifacts/runtime/manager.py|<module>.ArtifactManager.finalize_run_manifest|call_argument:write_json": 1,
-      "framework/agent/artifacts/runtime/manager.py|<module>.ArtifactManager.update_run_manifest|call_argument:write_json": 1,
       "framework/events/schema/catalog.py|<module>.default_event_schema_catalog|call_argument:register": 3,
       "framework/events/schema/catalog.py|<module>.default_event_schema_catalog|call_keyword:data_schema": 3,
       "framework/harness/control_plane/durable_events.py|<module>.DurableHarnessEventPort._append_compatibility_projection|call_argument:append": 2,
@@ -541,22 +529,7 @@
       "framework/workflow/checkpoint/migration.py|<module>.check_checkpoint_compatibility|call_argument:append": 2,
       "framework/workflow/runtime/event_projection.py|<module>.project_workflow_event|assignment:projection_schema": 1,
       "framework/workflow/runtime/manifest.py|<module>.build_run_manifest|dict_field:schema_version": 1,
-      "framework/workflow/runtime/manifest.py|<module>.normalize_legacy_run_manifest|assignment:schema_version": 1,
-      "infrastructure/research/artifact_publication.py|<module>.ResearchArtifactBundleHandler._build_final_manifest|call_argument:append_manifest_artifact_index": 1,
-      "infrastructure/research/artifact_publication.py|<module>.ResearchArtifactBundleHandler._build_final_manifest|call_argument:register_manifest_artifact": 1,
-      "infrastructure/research/artifact_publication.py|<module>.ResearchArtifactBundleHandler._build_final_manifest|call_argument:register_manifest_artifact_ref": 1,
-      "infrastructure/research/artifact_publication.py|<module>.ResearchArtifactBundleHandler._build_final_manifest|call_argument:update": 1,
-      "infrastructure/research/artifact_publication.py|<module>.ResearchArtifactBundleHandler._build_final_manifest|dict_field:schema_version": 1,
-      "infrastructure/research/artifact_publication.py|<module>.ResearchArtifactBundleHandler._prepared_outcomes|call_argument:append": 1,
-      "infrastructure/research/artifact_publication.py|<module>.ResearchArtifactBundleHandler._validated_candidate_cleanup_paths|call_argument:append": 1,
-      "infrastructure/research/artifact_publication.py|<module>.ResearchArtifactBundleHandler.cleanup_candidates|call_argument:append": 2,
-      "infrastructure/research/artifact_publication.py|<module>.ResearchArtifactBundleHandler.cleanup_candidates|call_argument:update": 2,
-      "infrastructure/research/artifact_publication.py|<module>.ResearchArtifactBundleHandler.commit|call_argument:append": 2,
-      "infrastructure/research/artifact_publication.py|<module>.ResearchArtifactBundleHandler.commit|call_argument:write_bytes": 1,
-      "infrastructure/research/artifact_publication.py|<module>.ResearchArtifactBundleHandler.commit|call_argument:write_json": 1,
-      "infrastructure/research/artifact_publication.py|<module>.ResearchArtifactBundleHandler.prepare|call_argument:append": 1,
-      "infrastructure/research/artifact_publication.py|<module>.ResearchArtifactBundleHandler.prepare|call_argument:write_bytes": 1,
-      "infrastructure/research/artifact_publication.py|<module>._validated_bundle_members|call_argument:append": 1
+      "framework/workflow/runtime/manifest.py|<module>.normalize_legacy_run_manifest|assignment:schema_version": 1
     },
     "namespace_files": {
       "framework/harness/workflow/__init__.py": 1,
@@ -2586,12 +2559,12 @@
       "scripts/dev.py|<module>|import|LocalWorkflowRunOperationService": 1
     }
   },
-  "captured_at": "2026-08-14",
+  "captured_at": "2026-08-15",
   "forbidden_namespace_prefixes": [
     "framework.workflow",
     "framework.harness.workflow"
   ],
-  "generation": 1,
+  "generation": 2,
   "legacy_schema_ids": [
     "newsroom.harness-checkpoint-legacy/v1",
     "newsroom.harness-decision-legacy/v1",
@@ -2615,8 +2588,171 @@
     "interfaces",
     "scripts"
   ],
-  "retired": [],
+  "retired": [
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 2,
+      "key": "framework/agent/artifacts/runtime/manager.py|<module>|framework.workflow.runtime.manifest|RUN_MANIFEST_SCHEMA_VERSION,append_manifest_artifact_index,manifest_hash,normalize_legacy_run_manifest,register_manifest_artifact,register_manifest_artifact_ref"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 2,
+      "key": "infrastructure/research/artifact_publication.py|<module>|framework.workflow.runtime.manifest|RUN_MANIFEST_SCHEMA_VERSION,append_manifest_artifact_index,manifest_hash,normalize_legacy_run_manifest,register_manifest_artifact,register_manifest_artifact_ref"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 2,
+      "key": "infrastructure/research/graph_artifact_lifecycle.py|<module>|framework.workflow.runtime.manifest|manifest_hash"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 2,
+      "key": "interfaces/services/artifact_service.py|<module>|framework.workflow.inspection|read_strict_workflow_artifact_content"
+    },
+    {
+      "category": "legacy_schema_writers",
+      "count": 1,
+      "generation": 2,
+      "key": "framework/agent/artifacts/runtime/manager.py|<module>.ArtifactManager.append_manifest_artifact|call_argument:append_manifest_artifact_index"
+    },
+    {
+      "category": "legacy_schema_writers",
+      "count": 1,
+      "generation": 2,
+      "key": "framework/agent/artifacts/runtime/manager.py|<module>.ArtifactManager.append_manifest_artifact|call_argument:register_manifest_artifact"
+    },
+    {
+      "category": "legacy_schema_writers",
+      "count": 1,
+      "generation": 2,
+      "key": "framework/agent/artifacts/runtime/manager.py|<module>.ArtifactManager.append_manifest_artifact|call_argument:register_manifest_artifact_ref"
+    },
+    {
+      "category": "legacy_schema_writers",
+      "count": 1,
+      "generation": 2,
+      "key": "framework/agent/artifacts/runtime/manager.py|<module>.ArtifactManager.append_manifest_artifact|call_argument:write_json"
+    },
+    {
+      "category": "legacy_schema_writers",
+      "count": 1,
+      "generation": 2,
+      "key": "framework/agent/artifacts/runtime/manager.py|<module>.ArtifactManager.create_run_manifest|call_argument:write_json"
+    },
+    {
+      "category": "legacy_schema_writers",
+      "count": 1,
+      "generation": 2,
+      "key": "framework/agent/artifacts/runtime/manager.py|<module>.ArtifactManager.create_run_manifest|dict_field:schema_version"
+    },
+    {
+      "category": "legacy_schema_writers",
+      "count": 1,
+      "generation": 2,
+      "key": "framework/agent/artifacts/runtime/manager.py|<module>.ArtifactManager.finalize_run_manifest|call_argument:write_json"
+    },
+    {
+      "category": "legacy_schema_writers",
+      "count": 1,
+      "generation": 2,
+      "key": "framework/agent/artifacts/runtime/manager.py|<module>.ArtifactManager.update_run_manifest|call_argument:write_json"
+    },
+    {
+      "category": "legacy_schema_writers",
+      "count": 1,
+      "generation": 2,
+      "key": "infrastructure/research/artifact_publication.py|<module>.ResearchArtifactBundleHandler._build_final_manifest|call_argument:append_manifest_artifact_index"
+    },
+    {
+      "category": "legacy_schema_writers",
+      "count": 1,
+      "generation": 2,
+      "key": "infrastructure/research/artifact_publication.py|<module>.ResearchArtifactBundleHandler._build_final_manifest|call_argument:register_manifest_artifact"
+    },
+    {
+      "category": "legacy_schema_writers",
+      "count": 1,
+      "generation": 2,
+      "key": "infrastructure/research/artifact_publication.py|<module>.ResearchArtifactBundleHandler._build_final_manifest|call_argument:register_manifest_artifact_ref"
+    },
+    {
+      "category": "legacy_schema_writers",
+      "count": 1,
+      "generation": 2,
+      "key": "infrastructure/research/artifact_publication.py|<module>.ResearchArtifactBundleHandler._build_final_manifest|call_argument:update"
+    },
+    {
+      "category": "legacy_schema_writers",
+      "count": 1,
+      "generation": 2,
+      "key": "infrastructure/research/artifact_publication.py|<module>.ResearchArtifactBundleHandler._build_final_manifest|dict_field:schema_version"
+    },
+    {
+      "category": "legacy_schema_writers",
+      "count": 1,
+      "generation": 2,
+      "key": "infrastructure/research/artifact_publication.py|<module>.ResearchArtifactBundleHandler._prepared_outcomes|call_argument:append"
+    },
+    {
+      "category": "legacy_schema_writers",
+      "count": 1,
+      "generation": 2,
+      "key": "infrastructure/research/artifact_publication.py|<module>.ResearchArtifactBundleHandler._validated_candidate_cleanup_paths|call_argument:append"
+    },
+    {
+      "category": "legacy_schema_writers",
+      "count": 2,
+      "generation": 2,
+      "key": "infrastructure/research/artifact_publication.py|<module>.ResearchArtifactBundleHandler.cleanup_candidates|call_argument:append"
+    },
+    {
+      "category": "legacy_schema_writers",
+      "count": 2,
+      "generation": 2,
+      "key": "infrastructure/research/artifact_publication.py|<module>.ResearchArtifactBundleHandler.cleanup_candidates|call_argument:update"
+    },
+    {
+      "category": "legacy_schema_writers",
+      "count": 2,
+      "generation": 2,
+      "key": "infrastructure/research/artifact_publication.py|<module>.ResearchArtifactBundleHandler.commit|call_argument:append"
+    },
+    {
+      "category": "legacy_schema_writers",
+      "count": 1,
+      "generation": 2,
+      "key": "infrastructure/research/artifact_publication.py|<module>.ResearchArtifactBundleHandler.commit|call_argument:write_bytes"
+    },
+    {
+      "category": "legacy_schema_writers",
+      "count": 1,
+      "generation": 2,
+      "key": "infrastructure/research/artifact_publication.py|<module>.ResearchArtifactBundleHandler.commit|call_argument:write_json"
+    },
+    {
+      "category": "legacy_schema_writers",
+      "count": 1,
+      "generation": 2,
+      "key": "infrastructure/research/artifact_publication.py|<module>.ResearchArtifactBundleHandler.prepare|call_argument:append"
+    },
+    {
+      "category": "legacy_schema_writers",
+      "count": 1,
+      "generation": 2,
+      "key": "infrastructure/research/artifact_publication.py|<module>.ResearchArtifactBundleHandler.prepare|call_argument:write_bytes"
+    },
+    {
+      "category": "legacy_schema_writers",
+      "count": 1,
+      "generation": 2,
+      "key": "infrastructure/research/artifact_publication.py|<module>._validated_bundle_members|call_argument:append"
+    }
+  ],
   "schema": "newsroom.graph-only-freeze-baseline/v1",
-  "source_commit": "8f1e4c83900ca151352d932312bbbdb3b9e04814",
-  "source_tree": "416e80c6c770c44cd859859995314b6bb7114929"
+  "source_commit": "1af71b58dfeec8777addced6d55b71fea9d9cd24",
+  "source_tree": "2d41bf5dd46e1e65285f98b871872b23cfae398a"
 }

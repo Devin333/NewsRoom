@@ -15,6 +15,7 @@ from framework.harness.artifacts import (
     GraphArtifactQuotaScope,
     GraphArtifactUsageKind,
     GraphArtifactUsageReason,
+    GraphTerminalManifest,
 )
 from framework.harness.artifacts.catalog import (
     ArtifactCatalogGcAction,
@@ -121,6 +122,8 @@ def test_cross_run_dedup_stale_plan_and_restart_safe_physical_gc(
             required_for_replay=True,
         )
     ).envelope
+    _commit_terminal_manifest(artifact_port, "run-1")
+    _commit_terminal_manifest(artifact_port, "run-replay")
 
     first_record = first.materialized_refs[0]
     second_record = second.materialized_refs[0]
@@ -252,11 +255,10 @@ def test_cross_run_dedup_stale_plan_and_restart_safe_physical_gc(
     assert {entry.entry_id for entry in snapshot.entries} == {
         replay_entry.entry_id
     }
-    manifest = restarted_lifecycle.manager.read_run_manifest(first_record.run_id)
-    assert all(
-        item["artifact_id"] != first_record.artifact_type
-        for item in manifest["artifact_index"]
+    manifest = restarted_lifecycle.terminal_store.read_terminal_manifest(
+        first_record.run_id
     )
+    assert manifest.artifact(first_record.artifact_type) is None
 
 
 def test_concurrent_multi_run_and_class_quota_has_deterministic_totals(
@@ -408,12 +410,13 @@ def test_hundred_branch_gc_converges_without_duplicate_delete_or_quota_orphan(
             )
         ).envelope
         records.append(envelope.materialized_refs[0])
+    _commit_terminal_manifest(artifact_port, "run-scale")
 
     before_rejection = catalog.snapshot(
         captured_at=NOW,
         tenant_id=TENANT_ID,
     )
-    before_manifest = artifact_port.manager.read_run_manifest("run-scale")
+    before_manifest = artifact_port.read_terminal_manifest("run-scale")
     with pytest.raises(GraphArtifactResultError) as rejected:
         materializer.materialize(
             _request(
@@ -430,11 +433,11 @@ def test_hundred_branch_gc_converges_without_duplicate_delete_or_quota_orphan(
         captured_at=NOW,
         tenant_id=TENANT_ID,
     )
-    after_manifest = artifact_port.manager.read_run_manifest("run-scale")
+    after_manifest = artifact_port.read_terminal_manifest("run-scale")
     assert len(before_rejection.entries) == len(after_rejection.entries) == 100
     assert len(before_rejection.claims) == len(after_rejection.claims) == 100
-    assert len(before_manifest["artifact_index"]) == 100
-    assert after_manifest["artifact_index"] == before_manifest["artifact_index"]
+    assert len(before_manifest.artifacts) == 100
+    assert after_manifest.artifacts == before_manifest.artifacts
 
     lifecycle_one = FilesystemGraphArtifactLifecycle(
         root,
@@ -522,8 +525,8 @@ def test_hundred_branch_gc_converges_without_duplicate_delete_or_quota_orphan(
         now=EXPIRED_AT + timedelta(hours=2),
         tenant_id=TENANT_ID,
     ).is_clean
-    final_manifest = artifact_port.manager.read_run_manifest("run-scale")
-    assert final_manifest["artifact_index"] == []
+    final_manifest = artifact_port.read_terminal_manifest("run-scale")
+    assert final_manifest.artifacts == ()
     gc_usage = tuple(
         fact
         for fact in store.list_usage(
@@ -710,6 +713,33 @@ def _materializer(
         cache=store,
         attempts=store,
         clock=lambda: NOW,
+    )
+
+
+def _commit_terminal_manifest(
+    artifact_port: FilesystemHarnessArtifactPort,
+    run_id: str,
+) -> None:
+    artifacts = artifact_port.list_staged_artifacts(run_id)
+    assert artifacts
+    artifact_port.write_terminal_manifest(
+        GraphTerminalManifest(
+            tenant_id=TENANT_ID,
+            run_id=run_id,
+            graph_id="research-governance-e2e",
+            graph_version="1.0.0",
+            graph_schema_version="1.0.0",
+            compiler_version="1.0.0",
+            normalized_graph_checksum=checksum_for({"graph": run_id}),
+            status="succeeded",
+            started_at=NOW,
+            completed_at=NOW + timedelta(seconds=1),
+            terminal_state_ref=checksum_for({"state": run_id}),
+            checkpoint_ref=f"graph-state://{run_id}/terminal",
+            terminal_node_ids=("branch-result",),
+            gate_evidence_refs=(checksum_for({"gate": run_id}),),
+            artifacts=artifacts,
+        )
     )
 
 

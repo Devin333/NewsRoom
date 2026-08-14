@@ -170,6 +170,7 @@ from framework.harness.workflow.runtime_resolution import (
     HarnessGraphRuntimeResolver,
     HarnessResolvedRuntimeBindings,
 )
+from framework.shared.time import format_datetime
 from framework.harness.workflow.step import HarnessStepSpec, HarnessWorkerType
 from framework.harness.workflow.spec import HarnessRouteKind
 from framework.harness.workflow.validation import (
@@ -209,6 +210,7 @@ class HarnessRunResult:
         default_factory=dict
     )
     graph_state: HarnessGraphState | None = None
+    graph_terminal_node_ids: tuple[str, ...] = ()
 
     @property
     def succeeded(self) -> bool:
@@ -2167,6 +2169,11 @@ class HarnessControlPlane:
                 self._side_effect_outcomes.get(run_spec.run_id, {})
             ),
             graph_state=state,
+            graph_terminal_node_ids=(
+                ()
+                if self._prepared_graphs.get(run_spec.run_id) is None
+                else self._prepared_graphs[run_spec.run_id].terminal_node_ids
+            ),
         )
 
     def _hydrate_graph_execution(
@@ -5485,6 +5492,22 @@ class HarnessControlPlane:
             "state_checksum": state_checksum,
             "completion_input_ref": completion_input_ref,
         }
+        terminal_payload: dict[str, Any] = {
+            "prepared_outcome_refs": [outcome.checksum for outcome in prepared],
+            "history_cutoff": self._terminal_history_cutoff(run_id),
+        }
+        tenant_id = state.run_spec.metadata.get("graph_terminal_tenant_id")
+        if graph is not None and isinstance(tenant_id, str) and tenant_id.strip():
+            terminal_payload["graph_terminal_manifest_context"] = {
+                "tenant_id": tenant_id,
+                "graph_id": graph.graph_id,
+                "graph_version": graph.workflow_ref.version,
+                "graph_schema_version": graph.schema_version,
+                "compiler_version": graph.compiler_version,
+                "normalized_graph_checksum": graph.checksum,
+                "started_at": format_datetime(state.run_spec.created_at),
+                "terminal_node_ids": list(graph.terminal_node_ids),
+            }
         intent = HarnessSideEffectIntent(
             effect_id=f"harness-terminal-effect:{checksum_for(effect_identity).removeprefix('sha256:')}",
             kind=policy.kind,
@@ -5501,10 +5524,7 @@ class HarnessControlPlane:
             state_checksum=state_checksum,
             completion_input_ref=completion_input_ref,
             handler=policy.handler,
-            payload={
-                "prepared_outcome_refs": [outcome.checksum for outcome in prepared],
-                "history_cutoff": self._terminal_history_cutoff(run_id),
-            },
+            payload=terminal_payload,
             candidate_refs=candidate_refs,
         )
         approval_ref = policy.not_required_evidence_ref

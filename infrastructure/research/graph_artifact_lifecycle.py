@@ -29,6 +29,7 @@ from framework.harness.artifacts import (
     GraphArtifactDeletionReceipt,
     GraphArtifactPhysicalDeleteRequest,
     GraphArtifactQuarantineReceipt,
+    GraphTerminalManifest,
 )
 from framework.harness.runtime.materializer import RESULT_PAYLOAD_SCHEMA
 from framework.harness.runtime.result_canonical import (
@@ -53,8 +54,8 @@ from framework.harness.runtime.result_models import (
 from framework.shared.hashing import hash_text
 from framework.shared.json import stable_json_dumps
 from framework.shared.time import utc_now
-from framework.workflow.runtime.manifest import manifest_hash
 from infrastructure.research.artifact_port import FilesystemHarnessArtifactPort
+from infrastructure.storage.artifacts import FilesystemGraphTerminalArtifactStore
 
 
 GRAPH_ARTIFACT_LIFECYCLE_SCHEMA_VERSION = "newsroom.graph-artifact-lifecycle/v1"
@@ -97,6 +98,8 @@ _EXPECTED_METADATA_KEYS = frozenset(
         "candidate_checksum",
         "graph_result_ref_only",
         "identity_checksum",
+        "required_for_replay",
+        "required_for_publication",
     }
 )
 
@@ -234,6 +237,7 @@ class FilesystemGraphArtifactLifecycle:
         *,
         artifact_port: FilesystemHarnessArtifactPort | None = None,
         artifact_manager: ArtifactManager | None = None,
+        terminal_store: FilesystemGraphTerminalArtifactStore | None = None,
         clock: Callable[[], datetime] = utc_now,
         max_physical_bytes: int = DEFAULT_MAX_GRAPH_ARTIFACT_PHYSICAL_BYTES,
         max_state_bytes: int = DEFAULT_MAX_GRAPH_ARTIFACT_LIFECYCLE_STATE_BYTES,
@@ -249,6 +253,11 @@ class FilesystemGraphArtifactLifecycle:
             != configured_root.resolve(strict=False)
         ):
             raise ValueError("artifact_manager root does not match root")
+        if terminal_store is not None and (
+            terminal_store.root.resolve(strict=False)
+            != configured_root.resolve(strict=False)
+        ):
+            raise ValueError("terminal_store root does not match root")
         if not callable(clock):
             raise TypeError("clock must be callable")
         if (
@@ -267,8 +276,12 @@ class FilesystemGraphArtifactLifecycle:
         self.artifact_port = artifact_port or FilesystemHarnessArtifactPort(
             self.root,
             artifact_manager=artifact_manager,
+            terminal_store=terminal_store,
         )
         self.manager = self.artifact_port.manager
+        self.terminal_store = terminal_store or self.artifact_port.terminal_store
+        if self.terminal_store is not self.artifact_port.terminal_store:
+            raise ValueError("artifact_port and lifecycle must share terminal_store")
         self._clock = clock
         self.max_physical_bytes = max_physical_bytes
         self.max_state_bytes = max_state_bytes
@@ -327,7 +340,7 @@ class FilesystemGraphArtifactLifecycle:
         ):
             with self.artifact_port.lock_run(target.run_id):
                 state = self._load_state(paths["state"])
-                manifest = self.manager.read_run_manifest(target.run_id)
+                manifest = self.terminal_store.read_terminal_manifest(target.run_id)
                 evidence = self._manifest_evidence(
                     manifest,
                     record=request.record,
@@ -560,71 +573,53 @@ class FilesystemGraphArtifactLifecycle:
 
     def _manifest_evidence(
         self,
-        manifest: Mapping[str, Any],
+        manifest: GraphTerminalManifest,
         *,
         record: ArtifactRecord,
         target: _Target,
     ) -> _ManifestEvidence | None:
-        artifacts = manifest.get("artifacts")
-        metadata_values = manifest.get("artifact_metadata")
-        refs = manifest.get("artifact_refs")
-        index = manifest.get("artifact_index")
-        if not isinstance(artifacts, Mapping) or not isinstance(
-            metadata_values,
-            Mapping,
-        ):
+        if not isinstance(manifest, GraphTerminalManifest):
             raise _gc_error("lifecycle.manifest.schema")
-        ref_matches = self._matching_entries(refs, target.artifact_type)
-        index_matches = self._matching_entries(index, target.artifact_type)
-        artifact_path = artifacts.get(target.artifact_type)
-        metadata = metadata_values.get(target.artifact_type)
-        present = (
-            artifact_path is not None
-            or metadata is not None
-            or bool(ref_matches)
-            or bool(index_matches)
-        )
-        if not present:
+        artifact = manifest.artifact(target.artifact_type)
+        if artifact is None:
             return None
+        metadata = artifact.metadata
         if (
-            artifact_path != target.relative_path
-            or not isinstance(metadata, Mapping)
-            or len(ref_matches) != 1
-            or len(index_matches) != 1
+            artifact.artifact_id != target.artifact_type
+            or artifact.ref != record.ref
+            or artifact.relative_path != target.relative_path
+            or artifact.media_type != "application/json"
+            or artifact.node_id != record.node_id
+            or artifact.attempt_id != record.attempt_id
+            or artifact.required_for_replay != record.required_for_replay
+            or artifact.required_for_publication != record.required_for_publication
         ):
             raise _gc_error("lifecycle.manifest.membership")
-        physical_checksum = self._validated_manifest_identity(
-            metadata,
-            record=record,
-            target=target,
-            require_internal_metadata=False,
-            require_run_id=True,
-        )
-        ref_checksum = self._validated_manifest_identity(
-            ref_matches[0],
-            record=record,
-            target=target,
-            require_internal_metadata=True,
-            require_run_id=False,
-        )
-        index_checksum = self._validated_manifest_identity(
-            index_matches[0],
-            record=record,
-            target=target,
-            require_internal_metadata=True,
-            require_run_id=True,
-        )
-        sizes = {
-            metadata.get("size_bytes"),
-            ref_matches[0].get("size_bytes"),
-            index_matches[0].get("size_bytes"),
+        expected_metadata = {
+            "tenant_id": record.tenant_id,
+            "run_id": record.run_id,
+            "graph_id": record.graph_id,
+            "node_id": record.node_id,
+            "attempt_id": record.attempt_id,
+            "candidate_checksum": record.content_checksum,
+            "graph_result_ref_only": True,
+            "identity_checksum": (
+                f"sha256:{target.artifact_type.removeprefix(_GRAPH_RESULT_PREFIX)}"
+            ),
+            "required_for_replay": record.required_for_replay,
+            "required_for_publication": record.required_for_publication,
         }
-        if (
-            len({physical_checksum, ref_checksum, index_checksum}) != 1
-            or len(sizes) != 1
+        if any(
+            metadata.get(key) != expected_value
+            for key, expected_value in expected_metadata.items()
         ):
-            raise _gc_error("lifecycle.manifest.physical_identity")
-        physical_size = next(iter(sizes))
+            raise _gc_error("lifecycle.manifest.internal_metadata")
+        physical_checksum = validate_sha256_checksum(
+            artifact.content_checksum.removeprefix("sha256:"),
+            artifact_id=target.artifact_type,
+            field="graph artifact lifecycle manifest checksum",
+        )
+        physical_size = artifact.byte_size
         if (
             isinstance(physical_size, bool)
             or not isinstance(physical_size, int)
@@ -637,108 +632,21 @@ class FilesystemGraphArtifactLifecycle:
             physical_byte_size=physical_size,
         )
 
-    def _validated_manifest_identity(
-        self,
-        value: Mapping[str, Any],
-        *,
-        record: ArtifactRecord,
-        target: _Target,
-        require_internal_metadata: bool,
-        require_run_id: bool,
-    ) -> str:
-        if (
-            value.get("artifact_id") != target.artifact_type
-            or (
-                require_run_id
-                and value.get("run_id") != target.run_id
-            )
-            or (
-                not require_run_id
-                and value.get("run_id") not in {None, target.run_id}
-            )
-            or (value.get("kind") or value.get("artifact_type"))
-            != target.artifact_type
-            or (value.get("path") or value.get("uri")) != target.relative_path
-            or (value.get("content_type") or value.get("media_type"))
-            != "application/json"
-        ):
-            raise _gc_error("lifecycle.manifest.identity")
-        raw_checksum = value.get("checksum") or value.get("content_hash")
-        validated = validate_sha256_checksum(
-            raw_checksum,
-            artifact_id=target.artifact_type,
-            field="graph artifact lifecycle manifest checksum",
-        )
-        if require_internal_metadata:
-            metadata = value.get("metadata")
-            if not isinstance(metadata, Mapping):
-                raise _gc_error("lifecycle.manifest.internal_metadata")
-            expected = {
-                "tenant_id": record.tenant_id,
-                "run_id": record.run_id,
-                "graph_id": record.graph_id,
-                "node_id": record.node_id,
-                "attempt_id": record.attempt_id,
-                "candidate_checksum": record.content_checksum,
-                "graph_result_ref_only": True,
-                "identity_checksum": (
-                    f"sha256:{target.artifact_type.removeprefix(_GRAPH_RESULT_PREFIX)}"
-                ),
-            }
-            if any(
-                metadata.get(key) != expected_value
-                for key, expected_value in expected.items()
-            ):
-                raise _gc_error("lifecycle.manifest.internal_metadata")
-        return validated
-
-    @staticmethod
-    def _matching_entries(value: Any, artifact_type: str) -> tuple[Mapping[str, Any], ...]:
-        if not isinstance(value, list) or any(
-            not isinstance(item, Mapping) for item in value
-        ):
-            raise _gc_error("lifecycle.manifest.schema")
-        return tuple(
-            item
-            for item in value
-            if isinstance(item, Mapping) and item.get("artifact_id") == artifact_type
-        )
-
     def _detach_manifest_member(
         self,
-        manifest: dict[str, Any],
+        manifest: GraphTerminalManifest,
         *,
         run_id: str,
         artifact_type: str,
     ) -> None:
-        artifacts = manifest["artifacts"]
-        metadata = manifest["artifact_metadata"]
-        del artifacts[artifact_type]
-        del metadata[artifact_type]
-        for field_name in ("artifact_refs", "artifact_index"):
-            manifest[field_name] = [
-                item
-                for item in manifest[field_name]
-                if not (
-                    isinstance(item, Mapping)
-                    and item.get("artifact_id") == artifact_type
-                )
-            ]
-        manifest["manifest_hash"] = manifest_hash(manifest)
-        self.manager.write_json(run_id, "manifest.json", manifest)
-        committed = self.manager.read_run_manifest(run_id)
-        artifacts = committed.get("artifacts")
-        metadata = committed.get("artifact_metadata")
-        refs = committed.get("artifact_refs")
-        index = committed.get("artifact_index")
-        if (
-            not isinstance(artifacts, Mapping)
-            or artifact_type in artifacts
-            or not isinstance(metadata, Mapping)
-            or artifact_type in metadata
-            or self._matching_entries(refs, artifact_type)
-            or self._matching_entries(index, artifact_type)
-        ):
+        if manifest.run_id != run_id or manifest.manifest_hash is None:
+            raise _gc_error("lifecycle.manifest.identity")
+        updated = manifest.without_artifact(artifact_type)
+        committed = self.terminal_store.replace_terminal_manifest(
+            updated,
+            expected_manifest_hash=manifest.manifest_hash,
+        )
+        if committed.artifact(artifact_type) is not None:
             raise _gc_error("lifecycle.manifest.detach")
 
     def _read_and_verify_payload(
@@ -783,6 +691,8 @@ class FilesystemGraphArtifactLifecycle:
                 "identity_checksum": (
                     f"sha256:{artifact_type.removeprefix(_GRAPH_RESULT_PREFIX)}"
                 ),
+                "required_for_replay": record.required_for_replay,
+                "required_for_publication": record.required_for_publication,
             }
             if dict(metadata) != expected_metadata:
                 raise ValueError("metadata identity")

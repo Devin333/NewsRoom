@@ -58,17 +58,18 @@ def test_runtime_publication_is_terminal_and_sqlite_authoritative(tmp_path: Path
         "harness-trace",
         "harness-transcript",
     }.issubset(result.artifact_refs)
-    manifest = artifact_port.manager.read_run_manifest(result.run_id)
-    assert manifest["publication_authority_ref"] == result.diagnostics[
+    manifest = artifact_port.read_terminal_manifest(result.run_id)
+    assert manifest.publication is not None
+    assert manifest.publication.publication_authority_ref == result.diagnostics[
         "publication_authority_ref"
     ]
-    assert manifest["terminal_side_effect_outcome_ref"] == result.diagnostics[
+    assert manifest.publication.terminal_side_effect_outcome_ref == result.diagnostics[
         "terminal_side_effect_outcome_ref"
     ]
-    assert manifest["artifact_evidence_ref"] == result.diagnostics[
+    assert manifest.publication.artifact_evidence_ref == result.diagnostics[
         "artifact_evidence_ref"
     ]
-    assert manifest["status"] == "succeeded"
+    assert manifest.status == "succeeded"
 
     published_trace = artifact_port.read_artifact(
         result.artifact_refs["harness-trace"]
@@ -139,7 +140,10 @@ def test_publish_output_schema_failure_calls_no_handler_and_has_zero_visibility(
     assert side_effect_store.list_decisions(run_id=run_id) == ()
     assert result.artifact_refs == {}
     run_dir = artifact_port.root / run_id
-    assert not (run_dir / "manifest.json").exists()
+    manifest = artifact_port.read_terminal_manifest(run_id)
+    assert manifest.status.value == result.status == "halted"
+    assert manifest.publication is None
+    assert manifest.artifacts == ()
     assert not (run_dir / "artifacts").exists()
     assert not (run_dir / ".rc").exists()
 
@@ -246,8 +250,9 @@ def test_terminal_manifest_recovery_reuses_effect_id_without_repeating_workers(
         for event in event_port.events
         if event.run_id == run_id
     ) == worker_event_count_before_restart
-    manifest = second_runtime.artifact_port.manager.read_run_manifest(run_id)
-    assert manifest["terminal_side_effect_outcome_ref"] == outcome.checksum
+    manifest = second_runtime.artifact_port.read_terminal_manifest(run_id)
+    assert manifest.publication is not None
+    assert manifest.publication.terminal_side_effect_outcome_ref == outcome.checksum
     assert set(outcome.public_refs)
 
 

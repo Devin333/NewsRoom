@@ -1,51 +1,104 @@
 from __future__ import annotations
 
+from dataclasses import replace
+from datetime import UTC, datetime, timedelta
+
 import pytest
 
-from framework.agent.artifacts import ArtifactManager, ArtifactReference
-from framework.workflow.checkpoint import CheckpointReference
-from framework.workflow.runtime.manifest import RunManifestError
+from framework.agent.artifacts import ArtifactStoreMetadataError
+from framework.events.canonical import checksum_for
+from framework.harness.artifacts import GraphTerminalArtifact, GraphTerminalManifest
+from infrastructure.storage.artifacts import FilesystemGraphTerminalArtifactStore
 
 
-def test_artifact_manifest_contract_helpers_and_refs(tmp_path) -> None:
-    manager = ArtifactManager(tmp_path)
-    manager.start_run("run-artifact-contract")
-    manager.create_run_manifest(
+_STARTED_AT = datetime(2026, 8, 14, 8, 0, tzinfo=UTC)
+
+
+def test_graph_terminal_store_owns_staging_and_terminal_manifest_contract(
+    tmp_path,
+) -> None:
+    store = FilesystemGraphTerminalArtifactStore(tmp_path)
+    artifact = _artifact()
+
+    staged = store.stage_artifact(run_id="run-artifact-contract", artifact=artifact)
+    committed = store.write_terminal_manifest(_manifest(artifact))
+
+    assert staged == artifact
+    assert store.list_staged_artifacts("run-artifact-contract") == (artifact,)
+    assert committed.artifact("metrics") == artifact
+    assert store.read_terminal_manifest("run-artifact-contract") == committed
+    assert store.stage_artifact(
         run_id="run-artifact-contract",
-        workflow_id="wf",
-        workflow_version="1.0",
-        started_at="2026-05-21T00:00:00Z",
-    )
+        artifact=artifact,
+    ) == artifact
 
-    manifest = manager.append_manifest_artifact(
-        "run-artifact-contract",
-        artifact_key="metrics",
-        relative_path="metrics.json",
-        artifact_ref=ArtifactReference(
-            artifact_id="metrics",
-            run_id="run-artifact-contract",
-            kind="metrics",
-            uri="metrics.json",
-            content_type="application/json",
-            size_bytes=2,
-        ),
-    )
-    checkpoint = CheckpointReference(
-        checkpoint_id="cp-1",
-        run_id="run-artifact-contract",
-        step_id="s1",
-        status="created",
-        path="checkpoints/cp-1.json",
-    )
 
-    assert manifest["artifacts"]["metrics"] == "metrics.json"
-    assert manifest["artifact_refs"][0]["artifact_id"] == "metrics"
-    assert manifest["artifact_index"][0]["path"] == "metrics.json"
-    assert CheckpointReference.from_dict(checkpoint.to_dict()).path == "checkpoints/cp-1.json"
+def test_graph_terminal_manifest_is_immutable_except_compare_and_swap(
+    tmp_path,
+) -> None:
+    store = FilesystemGraphTerminalArtifactStore(tmp_path)
+    artifact = _artifact()
+    committed = store.write_terminal_manifest(_manifest(artifact))
+    updated = committed.without_artifact("metrics")
 
-    with pytest.raises(RunManifestError):
-        manager.append_manifest_artifact(
-            "run-artifact-contract",
-            artifact_key="bad",
-            relative_path="../bad.json",
+    with pytest.raises(ArtifactStoreMetadataError, match="different content"):
+        store.write_terminal_manifest(updated)
+    with pytest.raises(ArtifactStoreMetadataError, match="changed before replacement"):
+        store.replace_terminal_manifest(
+            updated,
+            expected_manifest_hash="sha256:" + "f" * 64,
         )
+
+    replaced = store.replace_terminal_manifest(
+        updated,
+        expected_manifest_hash=committed.manifest_hash or "",
+    )
+    assert replaced.artifacts == ()
+    assert replaced.manifest_hash != committed.manifest_hash
+
+
+def test_terminal_commit_rejects_new_staging_members(tmp_path) -> None:
+    store = FilesystemGraphTerminalArtifactStore(tmp_path)
+    store.write_terminal_manifest(_manifest(_artifact()))
+
+    with pytest.raises(ArtifactStoreMetadataError, match="already committed"):
+        store.stage_artifact(
+            run_id="run-artifact-contract",
+            artifact=replace(_artifact(), artifact_key="late", artifact_id="late"),
+        )
+
+
+def _artifact() -> GraphTerminalArtifact:
+    return GraphTerminalArtifact(
+        artifact_key="metrics",
+        artifact_id="metrics",
+        ref="artifact://run-artifact-contract/metrics",
+        relative_path="artifacts/metrics.json",
+        content_checksum="sha256:" + "1" * 64,
+        byte_size=2,
+        media_type="application/json",
+        node_id="publish",
+        attempt_id="attempt-1",
+        required_for_replay=True,
+        required_for_publication=True,
+    )
+
+
+def _manifest(artifact: GraphTerminalArtifact) -> GraphTerminalManifest:
+    return GraphTerminalManifest(
+        tenant_id="tenant-1",
+        run_id="run-artifact-contract",
+        graph_id="research.artifact-contract",
+        graph_version="1.0.0",
+        graph_schema_version="1.0.0",
+        compiler_version="1.0.0",
+        normalized_graph_checksum=checksum_for({"graph": "artifact-contract"}),
+        status="succeeded",
+        started_at=_STARTED_AT,
+        completed_at=_STARTED_AT + timedelta(seconds=1),
+        terminal_state_ref=checksum_for({"state": "terminal"}),
+        checkpoint_ref="graph-state://run-artifact-contract/terminal",
+        terminal_node_ids=("publish",),
+        gate_evidence_refs=(checksum_for({"gate": "accepted"}),),
+        artifacts=(artifact,),
+    )

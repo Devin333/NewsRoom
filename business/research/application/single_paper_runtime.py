@@ -47,6 +47,12 @@ from framework.harness import (
     SkillExperienceOutcome,
     transcript_entry_from_event,
 )
+from framework.harness.artifacts import (
+    GraphTerminalManifestCommitRequest,
+    GraphTerminalManifestContext,
+    GraphTerminalManifestRecorderPort,
+    GraphTerminalStatus,
+)
 from framework.shared.json import to_jsonable
 from framework.shared.time import utc_now
 
@@ -65,6 +71,7 @@ from business.research.domain import (
     ResearchQualityResult,
     ResearchReaderPayload,
     ThreeMinuteRead,
+    research_event_tenant_id,
     research_identity_scope_ref,
     research_subject_scope_ref,
     stable_research_id,
@@ -145,6 +152,7 @@ def build_research_harness_run_spec(
         metadata={
             "research_runtime": "single_paper",
             "paper_id": request.paper_id,
+            "graph_terminal_tenant_id": research_event_tenant_id(actor_metadata),
             "tenant_scope_ref": identity_scope_ref,
             "identity_scope_ref": identity_scope_ref,
             "subject_scope_ref": research_subject_scope_ref(request.paper_id),
@@ -962,6 +970,31 @@ class ResearchSinglePaperRuntime:
             if callable(cleanup_candidates):
                 cleanup_candidates(run_id)
         terminal_outcome = harness_result.side_effect_outcomes.get("__terminal__")
+        if (
+            terminal_outcome is None
+            and harness_result.state.status
+            in {
+                HarnessRunStatus.BLOCKED,
+                HarnessRunStatus.CANCELLED,
+                HarnessRunStatus.FAILED,
+                HarnessRunStatus.HALTED,
+            }
+            and self.artifact_handler_factory is not None
+        ):
+            if not isinstance(
+                self.artifact_port,
+                GraphTerminalManifestRecorderPort,
+            ):
+                raise TypeError(
+                    "production artifact_port must implement "
+                    "GraphTerminalManifestRecorderPort"
+                )
+            self.artifact_port.commit_unpublished_terminal_manifest(
+                _unpublished_terminal_manifest_request(
+                    run_spec=run_spec,
+                    harness_result=harness_result,
+                )
+            )
         if (
             workspace.analysis is None
             and harness_result.state.status is HarnessRunStatus.SUCCEEDED
@@ -2209,6 +2242,82 @@ def _research_run_created_at(
             },
         )
     return utc_now()
+
+
+def _unpublished_terminal_manifest_request(
+    *,
+    run_spec: HarnessRunSpec,
+    harness_result,
+) -> GraphTerminalManifestCommitRequest:
+    graph_state = harness_result.graph_state
+    terminal_node_ids = tuple(harness_result.graph_terminal_node_ids)
+    if graph_state is None or not terminal_node_ids:
+        raise HarnessValidationError(
+            "unpublished terminal record requires explicit Graph state",
+            code="research_graph_terminal_state_missing",
+        )
+    if graph_state.projection_checksum is None:
+        raise HarnessValidationError(
+            "unpublished terminal record requires a durable state checksum",
+            code="research_graph_terminal_state_missing",
+        )
+    tenant_id = run_spec.metadata.get("graph_terminal_tenant_id")
+    if not isinstance(tenant_id, str) or not tenant_id.strip():
+        raise HarnessValidationError(
+            "unpublished terminal record requires a tenant identity",
+            code="research_graph_terminal_tenant_missing",
+        )
+    return GraphTerminalManifestCommitRequest(
+        context=GraphTerminalManifestContext(
+            tenant_id=tenant_id,
+            graph_id=graph_state.graph_ref.graph_id,
+            graph_version=graph_state.graph_ref.workflow_ref.version,
+            graph_schema_version=graph_state.graph_ref.schema_version,
+            compiler_version=graph_state.graph_ref.compiler_version,
+            normalized_graph_checksum=graph_state.graph_ref.checksum,
+            started_at=run_spec.created_at,
+            terminal_node_ids=terminal_node_ids,
+        ),
+        run_id=run_spec.run_id,
+        status=GraphTerminalStatus(harness_result.state.status.value),
+        completed_at=max(
+            (event.occurred_at for event in harness_result.events),
+            default=run_spec.created_at,
+        ),
+        terminal_state_ref=graph_state.projection_checksum,
+        gate_evidence_refs=_unpublished_terminal_gate_evidence_refs(
+            harness_result.events,
+            terminal_evidence_ref=graph_state.terminal_evidence_ref,
+            terminal_state_ref=graph_state.projection_checksum,
+        ),
+    )
+
+
+def _unpublished_terminal_gate_evidence_refs(
+    events: tuple[HarnessEvent, ...],
+    *,
+    terminal_evidence_ref: str | None,
+    terminal_state_ref: str,
+) -> tuple[str, ...]:
+    refs: list[str] = []
+    for event in events:
+        if event.event_type is not HarnessEventType.GATE_EVALUATED:
+            continue
+        details = event.payload.get("details")
+        harness_gate = (
+            details.get("harness_gate") if isinstance(details, Mapping) else None
+        )
+        result_ref = (
+            harness_gate.get("result_ref")
+            if isinstance(harness_gate, Mapping)
+            else event.payload.get("result_ref")
+        )
+        if isinstance(result_ref, str) and result_ref not in refs:
+            refs.append(result_ref)
+    for fallback in (terminal_evidence_ref, terminal_state_ref):
+        if isinstance(fallback, str) and fallback not in refs:
+            refs.append(fallback)
+    return tuple(refs)
 
 
 def _budget_from_options(options: dict[str, Any]) -> HarnessBudget:

@@ -524,11 +524,15 @@ def test_recorded_transports_execute_full_production_research_analysis(
         }.issubset(artifact_refs)
         manifest_path = settings.artifact.root / _RUN_ID / "manifest.json"
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-        assert manifest["workflow_id"] == "research.paper_analysis"
-        assert manifest["workflow_version"] == "1"
+        assert manifest["schema_version"] == "newsroom.graph-terminal-manifest/v1"
+        assert manifest["graph_id"] == graph_ref.graph_id
+        assert manifest["graph_version"] == graph_ref.workflow_ref.version
+        assert manifest["normalized_graph_checksum"] == graph_ref.checksum
+        assert manifest["status"] == "succeeded"
+        assert manifest["publication"] is not None
         assert all(
-            item["checksum"]
-            for item in manifest["artifact_metadata"].values()
+            item["content_checksum"]
+            for item in manifest["artifacts"]
         )
         assert len(list((settings.run_store.root / "records").glob("*.json"))) == 2
         chunk_state = json.loads(
