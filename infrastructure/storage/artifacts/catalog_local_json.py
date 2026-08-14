@@ -541,16 +541,9 @@ class LocalJsonArtifactCatalog:
         def mutate(
             state: _CatalogState,
         ) -> tuple[_CatalogState, ArtifactCatalogGcDetachReceipt]:
-            current_snapshot = _catalog_snapshot(
-                state,
-                captured_at=request.requested_at,
-                tenant_id=request.decision.tenant_id,
-            )
-            if current_snapshot.snapshot_checksum != request.catalog_snapshot_checksum:
-                raise result_error(
-                    GraphArtifactResultErrorCode.GC_PLAN_STALE,
-                    field="catalog.gc_detach.snapshot",
-                )
+            # The snapshot checksum is immutable plan evidence. Target-local
+            # decision comparison is the CAS guard so earlier candidates from
+            # the same multi-entry plan do not invalidate later candidates.
             entry = state.entries.get(request.decision.entry_id)
             if entry is None:
                 raise result_error(

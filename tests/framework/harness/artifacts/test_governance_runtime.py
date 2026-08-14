@@ -197,7 +197,7 @@ def test_gc_runtime_recovers_catalog_detach_after_ledger_cas_failure(
     original_compare_and_set = store.compare_and_set_gc_operation
     injected = [False]
 
-    def fail_once(operation, *, expected_checksum):
+    def fail_once(operation, *, expected_checksum, usage_fact=None):
         if (
             not injected[0]
             and operation.state is GraphArtifactGcOperationState.CATALOG_DETACHED
@@ -210,6 +210,7 @@ def test_gc_runtime_recovers_catalog_detach_after_ledger_cas_failure(
         return original_compare_and_set(
             operation,
             expected_checksum=expected_checksum,
+            usage_fact=usage_fact,
         )
 
     store.compare_and_set_gc_operation = fail_once

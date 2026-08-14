@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -16,9 +17,15 @@ from framework.harness.artifacts.catalog import ArtifactCatalogRegistrationReque
 from framework.harness.runtime import (
     ArtifactClass,
     ArtifactRecord,
+    BoundedSummary,
+    ContextPolicy,
     GraphArtifactResultError,
     GraphArtifactResultErrorCode,
     GraphArtifactRolloutMode,
+    NodeResultBinding,
+    NodeResultRequest,
+    NodeResultStatus,
+    ResultProvenance,
     ResultSensitivity,
     RetentionClass,
 )
@@ -31,11 +38,21 @@ from interfaces.composition.research_settings import ResearchRuntimeSettings
 NOW = datetime(2026, 8, 14, 9, 0, tzinfo=UTC)
 
 
-def _settings(tmp_path, *, mode: str) -> ResearchRuntimeSettings:
+def _settings(
+    tmp_path,
+    *,
+    mode: str,
+    policy_version: str = "graph-artifact-policy@1",
+    readable_policy_versions: tuple[str, ...] = ("graph-artifact-policy@1",),
+) -> ResearchRuntimeSettings:
     return ResearchRuntimeSettings.from_env(
         {
             "DASHSCOPE_API_KEY": "sk-explicit-test-only",
             "NEWS_RESEARCH_GRAPH_ARTIFACT_MODE": mode,
+            "NEWS_RESEARCH_GRAPH_ARTIFACT_POLICY_VERSION": policy_version,
+            "NEWS_RESEARCH_GRAPH_ARTIFACT_READABLE_POLICY_VERSIONS": ",".join(
+                readable_policy_versions
+            ),
             "NEWS_RESEARCH_GRAPH_ARTIFACT_MAX_PER_RUN": "11",
             "NEWS_RESEARCH_GRAPH_ARTIFACT_MAX_MATERIALIZED_BYTES_PER_RUN": "11000",
             "NEWS_RESEARCH_GRAPH_ARTIFACT_MAX_PER_TENANT": "22",
@@ -44,6 +61,47 @@ def _settings(tmp_path, *, mode: str) -> ResearchRuntimeSettings:
             "NEWS_RESEARCH_GRAPH_ARTIFACT_MAX_MATERIALIZED_BYTES_PER_CLASS": "12000",
         },
         cwd=tmp_path,
+    )
+
+
+def _materialization_request(
+    *,
+    attempt_id: str = "attempt-rollback",
+) -> NodeResultRequest:
+    tenant_id = "tenant-rollback"
+    return NodeResultRequest(
+        binding=NodeResultBinding(
+            tenant_id=tenant_id,
+            tenant_scope_ref=checksum_for(tenant_id),
+            run_id="run-rollback",
+            graph_id="research-graph",
+            graph_version="research-graph@1",
+            node_id="build-evidence",
+            attempt_id=attempt_id,
+            parent_checkpoint_ref="checkpoint://run-rollback/1",
+        ),
+        status=NodeResultStatus.SUCCEEDED,
+        output_schema_ref="research-result@1",
+        output_schema_digest="sha256:" + "a" * 64,
+        candidate={"data": "rollback-evidence-" + "x" * 4_096},
+        media_type="application/json",
+        summary=BoundedSummary.from_text("bounded rollback evidence"),
+        inline_projection={"count": 1},
+        inline_allowed_fields=("count",),
+        provenance=ResultProvenance(
+            producer_ref="research-worker@1",
+            producer_revision="research-worker-revision@1",
+        ),
+        artifact_class=ArtifactClass.EVIDENCE,
+        retention_class=RetentionClass.EVIDENCE,
+        sensitivity=ResultSensitivity.INTERNAL,
+        required_for_replay=False,
+        required_for_publication=False,
+        reusable=False,
+        side_effect_free=True,
+        dependency_digest=None,
+        context_policy=ContextPolicy.SUMMARY_ONLY,
+        created_at=NOW,
     )
 
 
@@ -309,3 +367,131 @@ def test_reconciliation_records_idempotent_drift_alert_and_usage(tmp_path) -> No
     assert alerts[0].kind is GraphArtifactAlertKind.CATALOG_DRIFT
     assert len(usage) == 1
     assert components.governance_runtime.config.mode is GraphArtifactRolloutMode.ENFORCE
+
+
+def test_read_only_rollback_reads_previous_policy_and_rejects_mutations(
+    tmp_path,
+) -> None:
+    request = _materialization_request()
+    enforced = compose_research_graph_artifact_runtime(
+        _settings(tmp_path, mode="enforce")
+    )
+    committed = enforced.materializer.materialize(request).envelope
+    record = committed.materialized_refs[0]
+    assert committed.persistence_decision.policy_version == (
+        "graph-artifact-policy@1"
+    )
+
+    read_only = compose_research_graph_artifact_runtime(
+        _settings(
+            tmp_path,
+            mode="read_only",
+            policy_version="graph-artifact-policy@2",
+            readable_policy_versions=(
+                "graph-artifact-policy@1",
+                "graph-artifact-policy@2",
+            ),
+        )
+    )
+    recovered = read_only.materializer.require_existing(request)
+    stored = read_only.artifact_port.read_graph_result_artifact(
+        record.ref,
+        expected_run_id=record.run_id,
+    )
+    plan = read_only.governance_service.plan_gc(
+        tenant_id=request.binding.tenant_id,
+        observed_at=NOW,
+    )
+    report = read_only.governance_service.generate_cost_report(
+        tenant_id=request.binding.tenant_id,
+        day=NOW.date(),
+        generated_at=NOW + timedelta(days=1, seconds=1),
+    )
+    quota = read_only.governance_service.inspect_quota(
+        tenant_id=request.binding.tenant_id,
+        captured_at=NOW + timedelta(days=1),
+    )
+    reconciliation = read_only.governance_service.reconcile(
+        tenant_id=request.binding.tenant_id,
+        observed_at=NOW + timedelta(days=1),
+    )
+
+    assert recovered == committed
+    assert stored["payload"]["candidate_checksum"] == record.content_checksum
+    assert report.policy_version == "graph-artifact-policy@2"
+    assert quota.snapshots
+    assert reconciliation.plan.is_clean
+    assert read_only.store.get_gc_plan(
+        tenant_id=request.binding.tenant_id,
+        plan_checksum=plan.plan_checksum,
+    ) is None
+
+    catalog_before = read_only.catalog.snapshot(
+        captured_at=NOW + timedelta(days=1),
+        tenant_id=request.binding.tenant_id,
+    )
+    manifest_before = read_only.artifact_port.manager.read_run_manifest(
+        request.binding.run_id
+    )
+    usage_before = read_only.store.list_usage(
+        tenant_id=request.binding.tenant_id,
+        window_start=NOW - timedelta(days=1),
+        window_end=NOW + timedelta(days=3),
+    )
+    operations_before = read_only.store.list_gc_operations(
+        tenant_id=request.binding.tenant_id,
+        include_completed=True,
+    )
+    missing = replace(
+        request,
+        binding=replace(request.binding, attempt_id="attempt-missing"),
+    )
+
+    with pytest.raises(GraphArtifactResultError) as missing_attempt:
+        read_only.materializer.require_existing(missing)
+    with pytest.raises(GraphArtifactResultError) as gc_apply:
+        read_only.governance_service.apply_gc(
+            tenant_id=request.binding.tenant_id,
+            plan_checksum=plan.plan_checksum,
+            confirmed=True,
+            max_operations=1,
+        )
+
+    assert missing_attempt.value.error_code is (
+        GraphArtifactResultErrorCode.RESULT_LEDGER_FAILED
+    )
+    assert gc_apply.value.error_code is (
+        GraphArtifactResultErrorCode.LIFECYCLE_AUTHORIZATION_INVALID
+    )
+    assert read_only.materializer.recover(missing.binding) is None
+    assert read_only.catalog.snapshot(
+        captured_at=NOW + timedelta(days=1),
+        tenant_id=request.binding.tenant_id,
+    ) == catalog_before
+    assert read_only.artifact_port.manager.read_run_manifest(
+        request.binding.run_id
+    ) == manifest_before
+    assert read_only.store.list_usage(
+        tenant_id=request.binding.tenant_id,
+        window_start=NOW - timedelta(days=1),
+        window_end=NOW + timedelta(days=3),
+    ) == usage_before
+    assert read_only.store.list_gc_operations(
+        tenant_id=request.binding.tenant_id,
+        include_completed=True,
+    ) == operations_before
+
+    incompatible_reader = compose_research_graph_artifact_runtime(
+        _settings(
+            tmp_path,
+            mode="read_only",
+            policy_version="graph-artifact-policy@2",
+            readable_policy_versions=("graph-artifact-policy@2",),
+        )
+    )
+    with pytest.raises(GraphArtifactResultError) as unsupported:
+        incompatible_reader.materializer.require_existing(request)
+    assert unsupported.value.error_code is (
+        GraphArtifactResultErrorCode.POLICY_VERSION_UNSUPPORTED
+    )
+    assert incompatible_reader.materializer.recover(request.binding) == committed

@@ -592,6 +592,52 @@ def test_concurrent_gc_detach_has_one_receipt_and_one_stale_result(tmp_path) -> 
     assert state["references"] == []
 
 
+def test_gc_detach_applies_multiple_candidates_from_one_snapshot(tmp_path) -> None:
+    catalog = LocalJsonArtifactCatalog(tmp_path)
+    first = catalog.register(
+        _request(_record(expires_at=NOW + timedelta(days=1)))
+    )
+    second = catalog.register(
+        _request(
+            _record(
+                run_id="run-2",
+                artifact_id="artifact-2",
+                expires_at=NOW + timedelta(days=1),
+            )
+        )
+    )
+    retirement_time = NOW + timedelta(days=2)
+    for registered in (first, second):
+        catalog.retire_reference(
+            _retirement_request(
+                registered.reference,
+                requested_at=retirement_time,
+            )
+        )
+    plan = catalog.plan_gc(now=retirement_time, tenant_id="tenant-1")
+
+    receipts = tuple(
+        catalog.detach_gc_candidate(
+            ArtifactCatalogGcDetachRequest.create(
+                plan_checksum=plan.plan_checksum,
+                catalog_snapshot_checksum=plan.catalog_snapshot_checksum,
+                decision=decision,
+                requested_at=retirement_time,
+            )
+        )
+        for decision in plan.decisions
+    )
+
+    assert {receipt.entry.entry_id for receipt in receipts} == {
+        first.entry.entry_id,
+        second.entry.entry_id,
+    }
+    state = _read_state(tmp_path)
+    assert state["entries"] == []
+    assert state["claims"] == []
+    assert state["references"] == []
+
+
 def test_parallel_registration_has_one_entry_and_no_lost_references(tmp_path) -> None:
     catalog = LocalJsonArtifactCatalog(tmp_path)
 

@@ -157,7 +157,7 @@ def verified_atomic_write(
         if os.name == "nt":
             guard_descriptor, guard_raw = tempfile.mkstemp(
                 dir=target.parent,
-                prefix=f".{target.name}.guard.",
+                prefix=".g.",
                 suffix=".tmp",
             )
             guard_path = Path(guard_raw)
@@ -181,7 +181,7 @@ def verified_atomic_write(
 
         descriptor, raw_path = tempfile.mkstemp(
             dir=target.parent,
-            prefix=f".{target.name}.",
+            prefix=".t.",
             suffix=".tmp",
         )
         temporary_path = Path(raw_path)

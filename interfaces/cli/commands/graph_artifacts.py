@@ -230,18 +230,24 @@ def _run(operation: Callable[[Any], Any]) -> int:
             code="invalid_graph_artifact_governance_request",
             message="graph artifact governance request is invalid",
         )
+    except Exception:
+        return _print_error(
+            code="graph_artifact_governance_failed",
+            message="graph artifact governance operation failed",
+            retryable=True,
+        )
     print(json.dumps(result.to_dict(), ensure_ascii=False, sort_keys=True))
     return 0
 
 
-def _print_error(*, code: str, message: str) -> int:
+def _print_error(*, code: str, message: str, retryable: bool = False) -> int:
     print(
         json.dumps(
             {
                 "error": {
                     "code": code,
                     "message": message,
-                    "retryable": False,
+                    "retryable": retryable,
                 }
             },
             sort_keys=True,

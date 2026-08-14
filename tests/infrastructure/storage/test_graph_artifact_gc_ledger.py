@@ -26,6 +26,10 @@ from framework.harness.artifacts.governance import (
     GraphArtifactGovernanceLedgerPort,
     GraphArtifactPhysicalDeleteRequest,
     GraphArtifactQuarantineReceipt,
+    GraphArtifactUsageFact,
+    GraphArtifactUsageKind,
+    GraphArtifactUsageOutcome,
+    GraphArtifactUsageReason,
 )
 from framework.harness.runtime import (
     ArtifactClass,
@@ -153,6 +157,52 @@ def test_gc_operation_invalid_skip_and_sql_tamper_fail_closed(tmp_path) -> None:
     assert tampered.value.error_code is GraphArtifactResultErrorCode.GOVERNANCE_LEDGER_FAILED
 
 
+def test_gc_transition_and_usage_commit_atomically_on_conflict(tmp_path) -> None:
+    store = SQLiteGraphResultStore(
+        tmp_path / "graph-results.sqlite3",
+        clock=lambda: NOW,
+    )
+    _, operations = _operation_chain()
+    prepared, detached, _, _, _ = operations
+    prepared_usage = _gc_usage(
+        prepared,
+        reason=GraphArtifactUsageReason.GC_PREPARED,
+    )
+    detached_usage = _gc_usage(
+        detached,
+        reason=GraphArtifactUsageReason.GC_CATALOG_DETACHED,
+    )
+    conflicting_usage = _gc_usage(
+        detached,
+        reason=GraphArtifactUsageReason.GC_STALE,
+        outcome=GraphArtifactUsageOutcome.FAILED,
+    )
+
+    assert store.put_gc_operation(
+        prepared,
+        usage_fact=prepared_usage,
+    ) == prepared
+    store.record_usage(conflicting_usage)
+
+    with pytest.raises(GraphArtifactResultError) as conflict:
+        store.compare_and_set_gc_operation(
+            detached,
+            expected_checksum=prepared.operation_checksum,
+            usage_fact=detached_usage,
+        )
+
+    assert conflict.value.error_code is GraphArtifactResultErrorCode.RESULT_IDENTITY_CONFLICT
+    assert store.get_gc_operation(
+        tenant_id="tenant-1",
+        operation_id=prepared.operation_id,
+    ) == prepared
+    assert store.list_usage(
+        tenant_id="tenant-1",
+        window_start=NOW.replace(hour=0),
+        window_end=NOW.replace(hour=0) + timedelta(days=1),
+    ) == (prepared_usage, conflicting_usage)
+
+
 def _operation_chain() -> tuple[
     ArtifactCatalogGcPlan,
     tuple[
@@ -273,6 +323,31 @@ def _operation_chain() -> tuple[
         updated_at=NOW + timedelta(seconds=5),
     )
     return plan, (prepared, detached, quarantined, purged, completed)
+
+
+def _gc_usage(
+    operation: GraphArtifactGcOperation,
+    *,
+    reason: GraphArtifactUsageReason,
+    outcome: GraphArtifactUsageOutcome = GraphArtifactUsageOutcome.SUCCEEDED,
+) -> GraphArtifactUsageFact:
+    record = operation.intent.entry.record
+    return GraphArtifactUsageFact.create(
+        kind=GraphArtifactUsageKind.GC_TRANSITION,
+        outcome=outcome,
+        tenant_id=operation.intent.tenant_id,
+        run_id=record.run_id,
+        graph_id=record.graph_id,
+        node_id=record.node_id,
+        artifact_class=record.artifact_class,
+        retention_class=record.retention_class,
+        policy_version=operation.intent.policy_version,
+        operation_id=(
+            f"{operation.operation_id}/transition/{operation.state.value}"
+        ),
+        reason_code=reason.value,
+        occurred_at=operation.updated_at,
+    )
 
 
 def _catalog_models() -> tuple[

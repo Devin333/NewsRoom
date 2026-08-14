@@ -25,6 +25,7 @@ from framework.harness.artifacts.governance import (
     GraphArtifactUsageKind,
     GraphArtifactUsageOutcome,
     GraphArtifactUsageReason,
+    graph_artifact_gc_transition_usage_fact,
     DailyGraphArtifactCostReport,
     GraphArtifactAlert,
     GraphArtifactAlertStatus,
@@ -196,7 +197,10 @@ class GraphArtifactGovernanceRuntime:
                 operation_id=intent.operation_id,
             )
             stored = (
-                self._ledger.put_gc_operation(prepared)
+                self._ledger.put_gc_operation(
+                    prepared,
+                    usage_fact=self._transition_usage_fact(prepared),
+                )
                 if existing is None
                 else existing
             )
@@ -705,6 +709,7 @@ class GraphArtifactGovernanceRuntime:
             stored = self._ledger.compare_and_set_gc_operation(
                 candidate,
                 expected_checksum=current.operation_checksum,
+                usage_fact=self._transition_usage_fact(candidate),
             )
         except GraphArtifactResultError as exc:
             latest = self._ledger.get_gc_operation(
@@ -777,58 +782,17 @@ class GraphArtifactGovernanceRuntime:
         self,
         operation: GraphArtifactGcOperation,
     ) -> GraphArtifactUsageFact:
-        state = operation.state
-        reason = {
-            GraphArtifactGcOperationState.PREPARED: GraphArtifactUsageReason.GC_PREPARED.value,
-            GraphArtifactGcOperationState.CATALOG_DETACHED: GraphArtifactUsageReason.GC_CATALOG_DETACHED.value,
-            GraphArtifactGcOperationState.QUARANTINED: GraphArtifactUsageReason.GC_QUARANTINED.value,
-            GraphArtifactGcOperationState.PURGED: GraphArtifactUsageReason.GC_PURGED.value,
-            GraphArtifactGcOperationState.COMPLETED: GraphArtifactUsageReason.GC_COMPLETED.value,
-            GraphArtifactGcOperationState.STALE: GraphArtifactUsageReason.GC_STALE.value,
-            GraphArtifactGcOperationState.RETRYABLE_FAILURE: (
-                operation.error_code.value
-                if operation.error_code is not None
-                else GraphArtifactResultErrorCode.GC_OPERATION_FAILED.value
-            ),
-        }[state]
-        outcome = (
-            GraphArtifactUsageOutcome.STALE
-            if state is GraphArtifactGcOperationState.STALE
-            else (
-                GraphArtifactUsageOutcome.FAILED
-                if state is GraphArtifactGcOperationState.RETRYABLE_FAILURE
-                else GraphArtifactUsageOutcome.SUCCEEDED
-            )
-        )
-        stage = state.value
-        if state is GraphArtifactGcOperationState.RETRYABLE_FAILURE:
-            revision = operation.operation_checksum.removeprefix("sha256:")
-            stage = f"{stage}/{_operation_phase(operation)}/{reason}/{revision}"
-        record = operation.intent.entry.record
-        fact = GraphArtifactUsageFact.create(
-            kind=GraphArtifactUsageKind.GC_TRANSITION,
-            outcome=outcome,
-            tenant_id=operation.intent.tenant_id,
-            run_id=record.run_id,
-            graph_id=record.graph_id,
-            node_id=record.node_id,
-            artifact_class=record.artifact_class,
-            retention_class=record.retention_class,
-            policy_version=operation.intent.policy_version,
-            operation_id=f"{operation.operation_id}/transition/{stage}",
-            physical_bytes=(
-                record.byte_size
-                if state is GraphArtifactGcOperationState.PURGED
-                else 0
-            ),
-            object_count=(1 if state is GraphArtifactGcOperationState.PURGED else 0),
-            reason_code=reason,
-            occurred_at=operation.updated_at,
-        )
+        fact = self._transition_usage_fact(operation)
         stored = self._ledger.record_usage(fact)
         if stored != fact:
             raise self._ledger_error("gc_usage")
         return stored
+
+    def _transition_usage_fact(
+        self,
+        operation: GraphArtifactGcOperation,
+    ) -> GraphArtifactUsageFact:
+        return graph_artifact_gc_transition_usage_fact(operation)
 
     def _reload(
         self,
@@ -865,16 +829,6 @@ class GraphArtifactGovernanceRuntime:
             GraphArtifactResultErrorCode.GOVERNANCE_LEDGER_FAILED,
             field=f"governance.{field}",
         )
-
-
-def _operation_phase(operation: GraphArtifactGcOperation) -> str:
-    if operation.deletion is not None:
-        return "completion"
-    if operation.quarantine is not None:
-        return "purge"
-    if operation.request is not None:
-        return "quarantine"
-    return "detach"
 
 
 def _operation_limit(value: int) -> int:

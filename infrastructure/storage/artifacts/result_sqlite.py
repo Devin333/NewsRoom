@@ -23,6 +23,7 @@ from framework.harness.artifacts.governance import (
     GraphArtifactUsageFact,
     GraphArtifactUsageKind,
     GraphArtifactUsageOutcome,
+    graph_artifact_gc_transition_usage_fact,
 )
 from framework.harness.artifacts.catalog import ArtifactCatalogGcPlan
 from framework.harness.runtime.materializer import (
@@ -994,6 +995,8 @@ class SQLiteGraphResultStore(
     def put_gc_operation(
         self,
         operation: GraphArtifactGcOperation,
+        *,
+        usage_fact: GraphArtifactUsageFact | None = None,
     ) -> GraphArtifactGcOperation:
         if (
             not isinstance(operation, GraphArtifactGcOperation)
@@ -1003,6 +1006,7 @@ class SQLiteGraphResultStore(
                 GraphArtifactResultErrorCode.RESULT_SCHEMA_INVALID,
                 field="gc_operation",
             )
+        _validate_gc_operation_usage(operation, usage_fact)
         try:
             with self._write() as connection:
                 row = connection.execute(
@@ -1017,6 +1021,8 @@ class SQLiteGraphResultStore(
                             GraphArtifactResultErrorCode.RESULT_IDENTITY_CONFLICT,
                             field="gc_operation",
                         )
+                    if usage_fact is not None:
+                        _put_usage_row(connection, usage_fact)
                     return existing
                 connection.execute(
                     """
@@ -1027,6 +1033,8 @@ class SQLiteGraphResultStore(
                     """,
                     _gc_operation_row_values(operation),
                 )
+                if usage_fact is not None:
+                    _put_usage_row(connection, usage_fact)
                 return operation
         except GraphArtifactResultError:
             raise
@@ -1065,12 +1073,14 @@ class SQLiteGraphResultStore(
         operation: GraphArtifactGcOperation,
         *,
         expected_checksum: str,
+        usage_fact: GraphArtifactUsageFact | None = None,
     ) -> GraphArtifactGcOperation:
         if not isinstance(operation, GraphArtifactGcOperation):
             raise result_error(
                 GraphArtifactResultErrorCode.RESULT_SCHEMA_INVALID,
                 field="gc_operation",
             )
+        _validate_gc_operation_usage(operation, usage_fact)
         expected = checksum(expected_checksum, "gc_operation.expected_checksum")
         try:
             with self._write() as connection:
@@ -1086,6 +1096,8 @@ class SQLiteGraphResultStore(
                     )
                 current = _gc_operation_from_row(row)
                 if current == operation:
+                    if usage_fact is not None:
+                        _put_usage_row(connection, usage_fact)
                     return current
                 if current.operation_checksum != expected:
                     raise result_error(
@@ -1123,6 +1135,8 @@ class SQLiteGraphResultStore(
                             operation
                         ),
                     )
+                if usage_fact is not None:
+                    _put_usage_row(connection, usage_fact)
                 return operation
         except GraphArtifactResultError:
             raise
@@ -2493,6 +2507,19 @@ def _validate_gc_transition(
         raise result_error(
             GraphArtifactResultErrorCode.GC_OPERATION_FAILED,
             field="gc_operation.transition",
+        )
+
+
+def _validate_gc_operation_usage(
+    operation: GraphArtifactGcOperation,
+    usage_fact: GraphArtifactUsageFact | None,
+) -> None:
+    if usage_fact is None:
+        return
+    if usage_fact != graph_artifact_gc_transition_usage_fact(operation):
+        raise result_error(
+            GraphArtifactResultErrorCode.GOVERNANCE_LEDGER_FAILED,
+            field="gc_operation.usage",
         )
 
 

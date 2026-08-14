@@ -25,6 +25,7 @@ from framework.harness.artifacts.governance import (
     GraphArtifactUsageOutcome,
     GraphArtifactUsagePort,
     GraphArtifactUsageReason,
+    graph_artifact_gc_transition_usage_fact,
 )
 from framework.harness.artifacts.ports import (
     ArtifactCatalogPort,
@@ -79,6 +80,7 @@ __all__ = [
     "GraphArtifactUsageOutcome",
     "GraphArtifactUsagePort",
     "GraphArtifactUsageReason",
+    "graph_artifact_gc_transition_usage_fact",
     "MAX_GC_OPERATIONS",
     "RunBoundArtifactPort",
     "build_daily_graph_artifact_cost_report",

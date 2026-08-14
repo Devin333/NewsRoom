@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 from dataclasses import dataclass, replace
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -13,6 +14,9 @@ from business.research.application.artifact_context import (
 from business.research.application.graph_result_committer import (
     RESEARCH_NODE_RESULT_POLICIES,
     ResearchGraphResultCommitter,
+)
+from business.research.application.graph_artifact_governance import (
+    ResearchGraphArtifactGovernanceService,
 )
 from business.research.application.single_paper_runtime import (
     AnalyzePaperRequest,
@@ -28,6 +32,10 @@ from framework.harness import (
     HarnessWorkerResult,
     HarnessWorkerStatus,
 )
+from framework.harness.artifacts import (
+    GraphArtifactGovernanceRuntime,
+    GraphArtifactQuotaScope,
+)
 from framework.harness.runtime import (
     GraphArtifactPersistenceConfig,
     GraphArtifactRolloutMode,
@@ -35,6 +43,9 @@ from framework.harness.runtime import (
     ResultMaterializer,
 )
 from infrastructure.research.artifact_port import FilesystemHarnessArtifactPort
+from infrastructure.research.graph_artifact_lifecycle import (
+    FilesystemGraphArtifactLifecycle,
+)
 from infrastructure.research.artifact_publication import (
     ResearchArtifactBundleHandler,
 )
@@ -248,6 +259,108 @@ def test_enforced_quality_gate_failure_retains_internal_results_without_publicat
     assert manifest.get("terminal_side_effect_outcome_ref") is None
 
 
+def test_enforced_accepted_and_gate_failed_runs_produce_reproducible_cost_report(
+    tmp_path: Path,
+) -> None:
+    artifact_root = tmp_path / "artifacts"
+    encryption_key = Fernet.generate_key().decode("ascii")
+    accepted_request = _request("research-governance-accepted")
+    accepted_bundle = _runtime_bundle(
+        artifact_root=artifact_root,
+        encryption_key=encryption_key,
+        producers=_counting_producers(),
+    )
+    try:
+        accepted = accepted_bundle.runtime.run(accepted_request)
+    finally:
+        accepted_bundle.side_effect_store.close()
+
+    failed_request = replace(
+        _request("research-governance-gate-failed"),
+        options={"max_replans": 0},
+    )
+    failed_bundle = _runtime_bundle(
+        artifact_root=artifact_root,
+        encryption_key=encryption_key,
+        producers=_counting_producers(),
+        runtime_type=_QualityGateFailingRuntime,
+    )
+    try:
+        failed = failed_bundle.runtime.run(failed_request)
+    finally:
+        failed_bundle.side_effect_store.close()
+
+    tenant_id = research_event_tenant_id(_actor_metadata(accepted_request))
+    all_facts = failed_bundle.result_store.list_usage(
+        tenant_id=tenant_id,
+        window_start=datetime.min.replace(tzinfo=timezone.utc),
+        window_end=datetime.max.replace(tzinfo=timezone.utc),
+    )
+    assert all_facts
+    day_start = min(fact.occurred_at for fact in all_facts).replace(
+        hour=0,
+        minute=0,
+        second=0,
+        microsecond=0,
+    )
+    day_end = day_start + timedelta(days=1)
+    day_facts = tuple(
+        fact for fact in all_facts if day_start <= fact.occurred_at < day_end
+    )
+    quota = failed_bundle.result_store.quota_snapshots(
+        tenant_id=tenant_id,
+        captured_at=day_end,
+    )
+    tenant_quota = next(
+        item for item in quota if item.scope is GraphArtifactQuotaScope.TENANT
+    )
+    accepted_claims = failed_bundle.catalog.list_claims_by_run(
+        tenant_id=tenant_id,
+        run_id=accepted_request.run_id,
+    )
+    failed_claims = failed_bundle.catalog.list_claims_by_run(
+        tenant_id=tenant_id,
+        run_id=failed_request.run_id,
+    )
+
+    first_report = failed_bundle.governance_service.generate_cost_report(
+        tenant_id=tenant_id,
+        day=day_start.date(),
+        generated_at=day_end + timedelta(seconds=1),
+    )
+    repeated_report = failed_bundle.governance_service.generate_cost_report(
+        tenant_id=tenant_id,
+        day=day_start.date(),
+        generated_at=day_end + timedelta(minutes=1),
+    )
+    global_aggregate = next(
+        aggregate
+        for aggregate in first_report.aggregates
+        if aggregate.dimension.run_id is None
+        and aggregate.dimension.graph_id is None
+        and aggregate.dimension.node_id is None
+        and aggregate.dimension.artifact_class is None
+    )
+
+    assert accepted.succeeded is True
+    assert failed.status == "halted"
+    assert accepted_claims
+    assert failed_claims
+    assert tenant_quota.charged_bytes > 0
+    assert tenant_quota.charged_objects > 0
+    assert tenant_quota.pending_bytes == 0
+    assert tenant_quota.pending_objects == 0
+    assert day_facts
+    assert first_report == repeated_report
+    assert first_report.provisional is False
+    assert first_report.usage_watermark == (
+        failed_bundle.result_store.usage_watermark(tenant_id=tenant_id)
+    )
+    assert global_aggregate.logical_bytes > 0
+    assert global_aggregate.logical_count >= len(accepted_claims) + len(failed_claims)
+    assert global_aggregate.unique_physical_bytes > 0
+
+
 @dataclass(frozen=True)
 class _ProducerSet:
     source: Any
@@ -318,6 +431,9 @@ class _RuntimeBundle:
     event_storage: DurableEventStorage
     artifact_port: FilesystemHarnessArtifactPort
     side_effect_store: SQLiteHarnessSideEffectStore
+    catalog: LocalJsonArtifactCatalog
+    result_store: SQLiteGraphResultStore
+    governance_service: ResearchGraphArtifactGovernanceService
 
 
 def _runtime_bundle(
@@ -353,6 +469,17 @@ def _runtime_bundle(
         usage=result_store,
         cache=result_store,
         attempts=result_store,
+    )
+    governance_service = ResearchGraphArtifactGovernanceService(
+        GraphArtifactGovernanceRuntime(
+            catalog=catalog,
+            lifecycle=FilesystemGraphArtifactLifecycle(
+                artifact_root,
+                artifact_port=artifact_port,
+            ),
+            ledger=result_store,
+            config=config,
+        )
     )
     side_effect_store = SQLiteHarnessSideEffectStore(
         records_root / "side-effects.sqlite3"
@@ -420,6 +547,9 @@ def _runtime_bundle(
         event_storage=event_storage,
         artifact_port=artifact_port,
         side_effect_store=side_effect_store,
+        catalog=catalog,
+        result_store=result_store,
+        governance_service=governance_service,
     )
 
 

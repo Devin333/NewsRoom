@@ -314,6 +314,46 @@ def test_invalid_production_settings_return_typed_unavailability(monkeypatch, ca
     ]
 
 
+def test_unexpected_service_failure_never_serializes_secret_or_path(
+    monkeypatch,
+    capsys,
+) -> None:
+    secret = "sk-live-governance-secret"
+    private_path = r"C:\private\research\payload.json"
+
+    class _FailingService:
+        def inspect_quota(self, **_kwargs):
+            raise RuntimeError(f"{secret} at {private_path}")
+
+    monkeypatch.setattr(
+        graph_commands,
+        "build_research_graph_artifact_governance_service",
+        _FailingService,
+    )
+
+    exit_code = news_cli.main(
+        [
+            "storage",
+            "graph-artifacts",
+            "quota",
+            "--tenant-id",
+            "tenant-query",
+            "--json",
+        ]
+    )
+
+    output = capsys.readouterr().out
+    payload = json.loads(output)
+    assert exit_code == 1
+    assert payload["error"] == {
+        "code": "graph_artifact_governance_failed",
+        "message": "graph artifact governance operation failed",
+        "retryable": True,
+    }
+    assert secret not in output
+    assert private_path not in output
+
+
 class _FakeGovernanceService:
     def __init__(self) -> None:
         self.calls: list[tuple[str, dict]] = []
