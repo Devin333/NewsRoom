@@ -222,6 +222,22 @@ def test_large_evidence_candidate_is_materialized_and_graph_state_is_bounded() -
     assert len(graph_json) < 40_000
     assert fixture.catalog.requests[0].record == envelope.materialized_refs[0]
 
+    much_larger_evidence = "evidence-body-" + "y" * 700_000
+    much_larger = _run(
+        node_id="build_evidence_pack",
+        worker_result=HarnessWorkerResult(
+            "succeeded",
+            output={"evidence_pack": {"content": much_larger_evidence}},
+        ),
+    )
+    much_larger_state = much_larger.port.recover_graph(much_larger.run_id).state
+    assert much_larger_state is not None
+    much_larger_graph_json = stable_json_dumps(much_larger_state.to_dict())
+
+    assert much_larger_evidence not in much_larger_graph_json
+    assert len(much_larger_graph_json) < 40_000
+    assert abs(len(much_larger_graph_json) - len(graph_json)) < 256
+
 
 def test_report_candidate_is_durable_without_publication_projection() -> None:
     fixture = _run(
