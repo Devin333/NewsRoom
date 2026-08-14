@@ -70,6 +70,25 @@ def test_usage_facts_are_idempotent_scoped_and_watermarked_after_restart(
     ) == ()
 
 
+def test_usage_retry_preserves_first_durable_occurrence_time(tmp_path) -> None:
+    store = SQLiteGraphResultStore(
+        tmp_path / "graph-results.sqlite3",
+        clock=lambda: NOW,
+    )
+    first = _usage(
+        operation_id="context-load://tenant-1/stable-plan-result",
+        occurred_at=NOW,
+    )
+    retried = _usage(
+        operation_id="context-load://tenant-1/stable-plan-result",
+        occurred_at=NOW + timedelta(hours=1),
+    )
+
+    assert store.record_usage(first) == first
+    assert store.record_usage(retried) == first
+    assert store.usage_watermark(tenant_id="tenant-1") == 1
+
+
 def test_usage_identity_conflict_and_sql_tamper_fail_closed(tmp_path) -> None:
     database = tmp_path / "graph-results.sqlite3"
     store = SQLiteGraphResultStore(database, clock=lambda: NOW)

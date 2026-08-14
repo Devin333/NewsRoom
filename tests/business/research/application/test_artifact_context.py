@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
@@ -10,6 +10,7 @@ from business.research.application.artifact_context import (
 from business.research.domain import research_event_tenant_id
 from framework.events.canonical import checksum_for
 from framework.harness.artifacts.catalog import ArtifactCatalogRegistrationRequest
+from framework.harness.artifacts import GraphArtifactUsageFact
 from framework.harness.control_plane.graph_result_lineage import (
     HarnessGraphArtifactRefProjection,
     HarnessGraphResultLineage,
@@ -44,6 +45,26 @@ class RejectingGraphResultReader:
         del ref, expected_run_id
         self.reads += 1
         raise AssertionError("summary-only recovery must not read artifact bytes")
+
+
+@dataclass
+class RecordingUsage:
+    facts: dict[str, GraphArtifactUsageFact] = field(default_factory=dict)
+
+    def record_usage(self, fact: GraphArtifactUsageFact) -> GraphArtifactUsageFact:
+        return self.facts.setdefault(fact.fact_id, fact)
+
+    def list_usage(self, *, tenant_id, window_start, window_end, watermark=None):
+        del watermark
+        return tuple(
+            fact
+            for fact in self.facts.values()
+            if fact.tenant_id == tenant_id
+            and window_start <= fact.occurred_at < window_end
+        )
+
+    def usage_watermark(self, *, tenant_id):
+        return sum(fact.tenant_id == tenant_id for fact in self.facts.values())
 
 
 def test_research_provider_rebuilds_stable_context_from_durable_recovery(
@@ -246,6 +267,7 @@ def test_research_provider_rebuilds_stable_context_from_durable_recovery(
         event_port=event_port,
         catalog=catalog,
         reader=reader,
+        usage=RecordingUsage(),
         config=GraphArtifactPersistenceConfig(),
     )
     request = {

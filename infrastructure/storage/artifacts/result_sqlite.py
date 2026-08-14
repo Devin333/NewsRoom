@@ -21,6 +21,8 @@ from framework.harness.artifacts.governance import (
     GraphArtifactQuotaScope,
     GraphArtifactQuotaSnapshot,
     GraphArtifactUsageFact,
+    GraphArtifactUsageKind,
+    GraphArtifactUsageOutcome,
 )
 from framework.harness.artifacts.catalog import ArtifactCatalogGcPlan
 from framework.harness.runtime.materializer import (
@@ -603,6 +605,7 @@ class SQLiteGraphResultStore(
         actual_bytes: int,
         object_count: int,
         outcome: ResultMaterializationOutcome,
+        usage_fact: GraphArtifactUsageFact | None = None,
     ) -> None:
         if not isinstance(reservation, ResultQuotaReservation):
             raise result_error(
@@ -629,6 +632,14 @@ class SQLiteGraphResultStore(
             raise result_error(
                 GraphArtifactResultErrorCode.ARTIFACT_QUOTA_SETTLEMENT_FAILED,
                 field="quota.settlement",
+            )
+        if usage_fact is not None:
+            _validate_settlement_usage(
+                reservation,
+                usage_fact,
+                actual_bytes=actual,
+                object_count=objects,
+                outcome=normalized_outcome,
             )
         try:
             with self._write() as connection:
@@ -667,6 +678,8 @@ class SQLiteGraphResultStore(
                             GraphArtifactResultErrorCode.ARTIFACT_QUOTA_SETTLEMENT_FAILED,
                             field="quota.settlement",
                         )
+                    if usage_fact is not None:
+                        _put_usage_row(connection, usage_fact)
                     return
                 settled_at = datetime_to_json(self._now())
                 updated = connection.execute(
@@ -690,6 +703,8 @@ class SQLiteGraphResultStore(
                         GraphArtifactResultErrorCode.ARTIFACT_QUOTA_SETTLEMENT_FAILED,
                         field="quota.settlement",
                     )
+                if usage_fact is not None:
+                    _put_usage_row(connection, usage_fact)
         except GraphArtifactResultError:
             raise
         except sqlite3.Error as exc:
@@ -1221,45 +1236,9 @@ class SQLiteGraphResultStore(
                 GraphArtifactResultErrorCode.RESULT_SCHEMA_INVALID,
                 field="usage.fact",
             )
-        payload = fact.to_dict()
         try:
             with self._write() as connection:
-                row = connection.execute(
-                    "SELECT * FROM graph_artifact_usage WHERE fact_id = ?",
-                    (fact.fact_id,),
-                ).fetchone()
-                if row is not None:
-                    existing = _usage_from_row(row)
-                    if existing != fact:
-                        raise result_error(
-                            GraphArtifactResultErrorCode.RESULT_IDENTITY_CONFLICT,
-                            field="usage.fact",
-                        )
-                    return existing
-                connection.execute(
-                    """
-                    INSERT INTO graph_artifact_usage (
-                        fact_id, tenant_id, run_id, graph_id, node_id,
-                        artifact_class, policy_version, kind, outcome,
-                        occurred_at, fact_json, fact_checksum
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    (
-                        fact.fact_id,
-                        fact.tenant_id,
-                        fact.run_id,
-                        fact.graph_id,
-                        fact.node_id,
-                        fact.artifact_class.value if fact.artifact_class else None,
-                        fact.policy_version,
-                        fact.kind.value,
-                        fact.outcome.value,
-                        datetime_to_json(fact.occurred_at),
-                        stable_json_dumps(payload),
-                        fact.fact_checksum,
-                    ),
-                )
-                return fact
+                return _put_usage_row(connection, fact)
         except GraphArtifactResultError:
             raise
         except sqlite3.Error as exc:
@@ -2321,6 +2300,93 @@ def _usage_from_row(row: sqlite3.Row) -> GraphArtifactUsageFact:
             GraphArtifactResultErrorCode.GOVERNANCE_LEDGER_FAILED,
             "usage.record",
         ) from exc
+
+
+def _put_usage_row(
+    connection: sqlite3.Connection,
+    fact: GraphArtifactUsageFact,
+) -> GraphArtifactUsageFact:
+    row = connection.execute(
+        "SELECT * FROM graph_artifact_usage WHERE fact_id = ?",
+        (fact.fact_id,),
+    ).fetchone()
+    if row is not None:
+        existing = _usage_from_row(row)
+        if not _same_usage_operation(existing, fact):
+            raise result_error(
+                GraphArtifactResultErrorCode.RESULT_IDENTITY_CONFLICT,
+                field="usage.fact",
+            )
+        return existing
+    connection.execute(
+        """
+        INSERT INTO graph_artifact_usage (
+            fact_id, tenant_id, run_id, graph_id, node_id,
+            artifact_class, policy_version, kind, outcome,
+            occurred_at, fact_json, fact_checksum
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            fact.fact_id,
+            fact.tenant_id,
+            fact.run_id,
+            fact.graph_id,
+            fact.node_id,
+            fact.artifact_class.value if fact.artifact_class else None,
+            fact.policy_version,
+            fact.kind.value,
+            fact.outcome.value,
+            datetime_to_json(fact.occurred_at),
+            stable_json_dumps(fact.to_dict()),
+            fact.fact_checksum,
+        ),
+    )
+    return fact
+
+
+def _same_usage_operation(
+    left: GraphArtifactUsageFact,
+    right: GraphArtifactUsageFact,
+) -> bool:
+    left_value = left.to_dict()
+    right_value = right.to_dict()
+    for value in (left_value, right_value):
+        value.pop("occurred_at")
+        value.pop("fact_checksum")
+    return left_value == right_value
+
+
+def _validate_settlement_usage(
+    reservation: ResultQuotaReservation,
+    fact: GraphArtifactUsageFact,
+    *,
+    actual_bytes: int,
+    object_count: int,
+    outcome: ResultMaterializationOutcome,
+) -> None:
+    expected_outcome = {
+        ResultMaterializationOutcome.SUCCEEDED: GraphArtifactUsageOutcome.SUCCEEDED,
+        ResultMaterializationOutcome.FAILED: GraphArtifactUsageOutcome.FAILED,
+        ResultMaterializationOutcome.OMITTED: GraphArtifactUsageOutcome.OMITTED,
+    }[outcome]
+    if (
+        not isinstance(fact, GraphArtifactUsageFact)
+        or fact.kind is not GraphArtifactUsageKind.MATERIALIZATION
+        or fact.outcome is not expected_outcome
+        or fact.tenant_id != reservation.tenant_id
+        or fact.run_id != reservation.run_id
+        or fact.graph_id != reservation.graph_id
+        or fact.node_id != reservation.node_id
+        or fact.artifact_class is not reservation.artifact_class
+        or fact.retention_class is not reservation.retention_class
+        or fact.policy_version != reservation.policy_version
+        or fact.physical_bytes != actual_bytes
+        or fact.object_count != object_count
+    ):
+        raise result_error(
+            GraphArtifactResultErrorCode.ARTIFACT_QUOTA_SETTLEMENT_FAILED,
+            field="quota.usage_fact",
+        )
 
 
 def _gc_plan_from_row(row: sqlite3.Row) -> ArtifactCatalogGcPlan:

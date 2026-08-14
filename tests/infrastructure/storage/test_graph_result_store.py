@@ -9,6 +9,12 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from framework.events.canonical import canonical_json_bytes, checksum_for
+from framework.harness.artifacts import (
+    GraphArtifactUsageFact,
+    GraphArtifactUsageKind,
+    GraphArtifactUsageOutcome,
+    GraphArtifactUsageReason,
+)
 from framework.harness.runtime import (
     ArtifactClass,
     BoundedSummary,
@@ -221,6 +227,76 @@ def test_failed_quota_settlement_releases_usage_and_retry_gets_new_generation(
         tenant_id="tenant-1",
         run_id="run-1",
     ).to_dict() == {"materialized_bytes": 70, "artifact_count": 1}
+
+
+def test_quota_settlement_and_usage_fact_commit_atomically(tmp_path) -> None:
+    database = tmp_path / "graph-results.sqlite3"
+    store = SQLiteGraphResultStore(database, clock=lambda: NOW)
+    reservation = _reserve(store, key="atomic", requested_bytes=42)
+    usage = _settlement_usage(reservation, physical_bytes=42)
+    with sqlite3.connect(database) as connection:
+        connection.execute(
+            "CREATE TRIGGER fail_atomic_usage BEFORE INSERT ON graph_artifact_usage "
+            "BEGIN SELECT RAISE(ABORT, 'injected usage failure'); END"
+        )
+        connection.commit()
+
+    with pytest.raises(GraphArtifactResultError) as failed:
+        store.settle(
+            reservation,
+            actual_bytes=42,
+            object_count=1,
+            outcome=ResultMaterializationOutcome.SUCCEEDED,
+            usage_fact=usage,
+        )
+
+    assert failed.value.error_code is (
+        GraphArtifactResultErrorCode.ARTIFACT_QUOTA_SETTLEMENT_FAILED
+    )
+    with sqlite3.connect(database) as connection:
+        row = connection.execute(
+            "SELECT outcome, actual_bytes, actual_objects "
+            "FROM graph_result_quota_reservations WHERE reservation_id = ?",
+            (reservation.reservation_id,),
+        ).fetchone()
+    assert row == (None, None, None)
+    snapshot = store.budget_snapshot(tenant_id="tenant-1", run_id="run-1")
+    assert snapshot.to_dict() == {"materialized_bytes": 42, "artifact_count": 1}
+
+
+def test_atomic_quota_settlement_is_restart_idempotent_with_one_usage_fact(
+    tmp_path,
+) -> None:
+    database = tmp_path / "graph-results.sqlite3"
+    store = SQLiteGraphResultStore(database, clock=lambda: NOW)
+    reservation = _reserve(store, key="atomic-retry", requested_bytes=42)
+    usage = _settlement_usage(reservation, physical_bytes=40)
+
+    store.settle(
+        reservation,
+        actual_bytes=40,
+        object_count=1,
+        outcome=ResultMaterializationOutcome.SUCCEEDED,
+        usage_fact=usage,
+    )
+    restarted = SQLiteGraphResultStore(database, clock=lambda: NOW)
+    restarted.settle(
+        reservation,
+        actual_bytes=40,
+        object_count=1,
+        outcome=ResultMaterializationOutcome.SUCCEEDED,
+        usage_fact=usage,
+    )
+
+    assert restarted.budget_snapshot(
+        tenant_id="tenant-1",
+        run_id="run-1",
+    ).to_dict() == {"materialized_bytes": 40, "artifact_count": 1}
+    assert restarted.list_usage(
+        tenant_id="tenant-1",
+        window_start=NOW - timedelta(seconds=1),
+        window_end=NOW + timedelta(seconds=1),
+    ) == (usage,)
 
 
 def test_pending_quota_reservation_survives_restart_without_double_charge(
@@ -534,6 +610,7 @@ def test_materializer_uses_durable_store_catalog_lookup_and_internal_artifacts(
         artifact_port=artifact_port,
         catalog=catalog,
         quota=store,
+        usage=store,
         cache=store,
         attempts=store,
         clock=lambda: NOW,
@@ -573,6 +650,7 @@ def test_catalog_dedup_returns_canonical_ref_for_later_run(tmp_path) -> None:
         artifact_port=artifact_port,
         catalog=catalog,
         quota=store,
+        usage=store,
         cache=store,
         attempts=store,
         clock=lambda: NOW,
@@ -662,6 +740,30 @@ def _reserve(store, *, key: str, requested_bytes: int):
     )
     assert reservation is not None
     return reservation
+
+
+def _settlement_usage(
+    reservation,
+    *,
+    physical_bytes: int,
+) -> GraphArtifactUsageFact:
+    return GraphArtifactUsageFact.create(
+        kind=GraphArtifactUsageKind.MATERIALIZATION,
+        outcome=GraphArtifactUsageOutcome.SUCCEEDED,
+        tenant_id=reservation.tenant_id,
+        run_id=reservation.run_id,
+        graph_id=reservation.graph_id,
+        node_id=reservation.node_id,
+        artifact_class=reservation.artifact_class,
+        retention_class=reservation.retention_class,
+        policy_version=reservation.policy_version,
+        operation_id=f"materialization://{reservation.tenant_id}/atomic-settlement",
+        logical_bytes=physical_bytes,
+        physical_bytes=physical_bytes,
+        object_count=1,
+        reason_code=GraphArtifactUsageReason.MATERIALIZED_RESULT.value,
+        occurred_at=NOW,
+    )
 
 
 def _reserve_dimensions(

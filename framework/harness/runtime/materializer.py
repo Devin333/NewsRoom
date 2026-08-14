@@ -10,6 +10,13 @@ from enum import StrEnum
 from typing import TYPE_CHECKING, Any, Protocol, Self, runtime_checkable
 
 from framework.events.canonical import checksum_for
+from framework.harness.artifacts.governance import (
+    GraphArtifactUsageFact,
+    GraphArtifactUsageKind,
+    GraphArtifactUsageOutcome,
+    GraphArtifactUsagePort,
+    GraphArtifactUsageReason,
+)
 from framework.harness.artifacts.catalog import (
     ArtifactCatalogRegistrationRequest,
     ArtifactCatalogRegistrationResult,
@@ -300,6 +307,7 @@ class ResultQuotaPort(Protocol):
         actual_bytes: int,
         object_count: int,
         outcome: ResultMaterializationOutcome,
+        usage_fact: GraphArtifactUsageFact | None = None,
     ) -> None:
         ...
 
@@ -423,6 +431,7 @@ class ResultMaterializer:
         artifact_port: ArtifactPort,
         catalog: ArtifactCatalogPort,
         quota: ResultQuotaPort,
+        usage: GraphArtifactUsagePort,
         cache: ResultCachePort,
         attempts: ResultAttemptLedgerPort,
         clock: Callable[[], datetime] = utc_now,
@@ -434,6 +443,7 @@ class ResultMaterializer:
             (artifact_port, "artifact_port"),
             (catalog, "catalog"),
             (quota, "quota"),
+            (usage, "usage"),
             (cache, "cache"),
             (attempts, "attempts"),
         ):
@@ -449,6 +459,7 @@ class ResultMaterializer:
         self._artifact_port = artifact_port
         self._catalog = catalog
         self._quota = quota
+        self._usage = usage
         self._cache = cache
         self._attempts = attempts
         self._clock = clock
@@ -468,6 +479,16 @@ class ResultMaterializer:
                 existing,
                 request,
                 policy_version=self._policy.config.policy_version,
+            )
+            self._record_usage(
+                self._usage_fact(
+                    request,
+                    policy_version=existing.persistence_decision.policy_version,
+                    kind=GraphArtifactUsageKind.MATERIALIZATION,
+                    outcome=GraphArtifactUsageOutcome.SUCCEEDED,
+                    stage="recovered",
+                    reason_code=GraphArtifactUsageReason.RECOVERED.value,
+                )
             )
             observation = self._observation(
                 request,
@@ -496,8 +517,13 @@ class ResultMaterializer:
                         )
                     evaluation = self._omitted_evaluation(request)
                     envelope = self._build_envelope(request, evaluation)
-                    settlement_attempted = True
-                    self._settle(reservation, request, ResultMaterializationOutcome.OMITTED)
+                    self._record_usage(
+                        self._materialization_usage_fact(
+                            request,
+                            evaluation,
+                            ResultMaterializationOutcome.OMITTED,
+                        )
+                    )
                     observation = self._observation(
                         request,
                         outcome=ResultMaterializationOutcome.OMITTED,
@@ -520,8 +546,22 @@ class ResultMaterializer:
                 envelope = self._build_envelope(request, evaluation, caches=(cache_ref,))
             else:
                 envelope = self._build_envelope(request, evaluation)
-            settlement_attempted = True
-            self._settle(reservation, request, ResultMaterializationOutcome.SUCCEEDED)
+            usage_fact = self._materialization_usage_fact(
+                request,
+                evaluation,
+                ResultMaterializationOutcome.SUCCEEDED,
+            )
+            if reservation is not None:
+                settlement_attempted = True
+                self._settle(
+                    reservation,
+                    request,
+                    ResultMaterializationOutcome.SUCCEEDED,
+                    usage_fact=usage_fact,
+                )
+            else:
+                self._record_usage(usage_fact)
+            self._record_success_boundary_usage(request, evaluation)
             stored = self._put_attempt(envelope)
             if stored != envelope:
                 self._assert_existing_compatible(
@@ -541,9 +581,14 @@ class ResultMaterializer:
             self._emit(observation)
             return MaterializationResult(envelope=envelope, observation=observation)
         except GraphArtifactResultError as exc:
-            if reservation is not None and not settlement_attempted:
-                settlement_attempted = True
-                self._settle(reservation, request, ResultMaterializationOutcome.FAILED, suppress_error=True)
+            accounting_error = self._account_failure(
+                request,
+                evaluation=evaluation,
+                reservation=reservation,
+                settlement_attempted=settlement_attempted,
+                error_code=exc.error_code,
+            )
+            reported_error = accounting_error or exc
             self._emit(
                 self._observation(
                     request,
@@ -552,18 +597,25 @@ class ResultMaterializer:
                     candidate_bytes=request.candidate_bytes,
                     reservation_id=reservation.reservation_id if reservation is not None else None,
                     reason=evaluation.decision.reason if evaluation is not None else None,
-                    error_code=exc.error_code,
+                    error_code=reported_error.error_code,
                 )
             )
+            if accounting_error is not None:
+                raise accounting_error from exc
             raise
         except Exception as exc:
-            if reservation is not None and not settlement_attempted:
-                settlement_attempted = True
-                self._settle(reservation, request, ResultMaterializationOutcome.FAILED, suppress_error=True)
             error = result_error(
                 GraphArtifactResultErrorCode.ARTIFACT_WRITE_FAILED,
                 mode=evaluation.decision.mode if evaluation is not None else PersistenceMode.OMITTED,
             )
+            accounting_error = self._account_failure(
+                request,
+                evaluation=evaluation,
+                reservation=reservation,
+                settlement_attempted=settlement_attempted,
+                error_code=error.error_code,
+            )
+            reported_error = accounting_error or error
             self._emit(
                 self._observation(
                     request,
@@ -572,9 +624,11 @@ class ResultMaterializer:
                     candidate_bytes=request.candidate_bytes,
                     reservation_id=reservation.reservation_id if reservation is not None else None,
                     reason=evaluation.decision.reason if evaluation is not None else None,
-                    error_code=error.error_code,
+                    error_code=reported_error.error_code,
                 )
             )
+            if accounting_error is not None:
+                raise accounting_error from exc
             raise error from exc
 
     def recover(self, binding: NodeResultBinding) -> NodeResultEnvelope | None:
@@ -721,23 +775,228 @@ class ResultMaterializer:
         request: NodeResultRequest,
         outcome: ResultMaterializationOutcome,
         *,
-        suppress_error: bool = False,
+        usage_fact: GraphArtifactUsageFact,
     ) -> None:
         if reservation is None:
-            return
+            raise result_error(
+                GraphArtifactResultErrorCode.ARTIFACT_QUOTA_SETTLEMENT_FAILED,
+                field="quota.reservation",
+            )
         try:
             self._quota.settle(
                 reservation,
                 actual_bytes=request.candidate_bytes if outcome is ResultMaterializationOutcome.SUCCEEDED else 0,
                 object_count=1 if outcome is ResultMaterializationOutcome.SUCCEEDED else 0,
                 outcome=outcome,
+                usage_fact=usage_fact,
             )
         except GraphArtifactResultError:
-            if not suppress_error:
-                raise
+            raise
         except Exception as exc:
-            if not suppress_error:
-                raise result_error(GraphArtifactResultErrorCode.ARTIFACT_QUOTA_SETTLEMENT_FAILED, field="quota.settle") from exc
+            raise result_error(
+                GraphArtifactResultErrorCode.ARTIFACT_QUOTA_SETTLEMENT_FAILED,
+                field="quota.settle",
+            ) from exc
+
+    def _record_usage(self, fact: GraphArtifactUsageFact) -> GraphArtifactUsageFact:
+        try:
+            stored = self._usage.record_usage(fact)
+        except GraphArtifactResultError:
+            raise
+        except Exception as exc:
+            raise result_error(
+                GraphArtifactResultErrorCode.GOVERNANCE_LEDGER_FAILED,
+                field="usage.record",
+            ) from exc
+        if not isinstance(stored, GraphArtifactUsageFact) or stored != fact:
+            raise result_error(
+                GraphArtifactResultErrorCode.GOVERNANCE_LEDGER_FAILED,
+                field="usage.fact",
+            )
+        return stored
+
+    def _materialization_usage_fact(
+        self,
+        request: NodeResultRequest,
+        evaluation: PersistenceEvaluation,
+        outcome: ResultMaterializationOutcome,
+        *,
+        error_code: GraphArtifactResultErrorCode | None = None,
+    ) -> GraphArtifactUsageFact:
+        mode = evaluation.decision.mode
+        if error_code is not None:
+            usage_outcome = GraphArtifactUsageOutcome.FAILED
+            reason_code = error_code.value
+            physical_bytes = 0
+            object_count = 0
+        elif outcome is ResultMaterializationOutcome.OMITTED:
+            usage_outcome = GraphArtifactUsageOutcome.OMITTED
+            reason_code = GraphArtifactUsageReason.RESULT_OMITTED.value
+            physical_bytes = 0
+            object_count = 0
+        else:
+            usage_outcome = GraphArtifactUsageOutcome.SUCCEEDED
+            reason_code = (
+                GraphArtifactUsageReason.INLINE_RESULT.value
+                if mode is PersistenceMode.INLINE
+                else GraphArtifactUsageReason.MATERIALIZED_RESULT.value
+            )
+            physical_bytes = (
+                request.candidate_bytes
+                if mode in {PersistenceMode.ARTIFACT, PersistenceMode.CACHE}
+                else 0
+            )
+            object_count = 1
+        return self._usage_fact(
+            request,
+            policy_version=evaluation.decision.policy_version,
+            kind=GraphArtifactUsageKind.MATERIALIZATION,
+            outcome=usage_outcome,
+            stage=f"materialization:{mode.value}:{usage_outcome.value}",
+            reason_code=reason_code,
+            logical_bytes=request.candidate_bytes,
+            physical_bytes=physical_bytes,
+            object_count=object_count,
+        )
+
+    def _record_success_boundary_usage(
+        self,
+        request: NodeResultRequest,
+        evaluation: PersistenceEvaluation,
+    ) -> None:
+        mode = evaluation.decision.mode
+        if mode is PersistenceMode.ARTIFACT:
+            self._record_usage(
+                self._usage_fact(
+                    request,
+                    policy_version=evaluation.decision.policy_version,
+                    kind=GraphArtifactUsageKind.ARTIFACT_READBACK,
+                    outcome=GraphArtifactUsageOutcome.SUCCEEDED,
+                    stage="artifact:readback",
+                    reason_code=GraphArtifactUsageReason.MATERIALIZED_RESULT.value,
+                    loaded_bytes=request.candidate_bytes,
+                    loaded_tokens=request.candidate_tokens,
+                )
+            )
+        elif mode is PersistenceMode.CACHE:
+            for kind, stage, reason_code, physical_bytes, loaded_bytes in (
+                (
+                    GraphArtifactUsageKind.CACHE_WRITE,
+                    "cache:write",
+                    GraphArtifactUsageReason.CACHE_WRITE.value,
+                    request.candidate_bytes,
+                    0,
+                ),
+                (
+                    GraphArtifactUsageKind.CACHE_READBACK,
+                    "cache:readback",
+                    GraphArtifactUsageReason.CACHE_READBACK.value,
+                    0,
+                    request.candidate_bytes,
+                ),
+            ):
+                self._record_usage(
+                    self._usage_fact(
+                        request,
+                        policy_version=evaluation.decision.policy_version,
+                        kind=kind,
+                        outcome=GraphArtifactUsageOutcome.SUCCEEDED,
+                        stage=stage,
+                        reason_code=reason_code,
+                        physical_bytes=physical_bytes,
+                        loaded_bytes=loaded_bytes,
+                        loaded_tokens=(
+                            request.candidate_tokens if loaded_bytes else 0
+                        ),
+                        object_count=1 if physical_bytes else 0,
+                    )
+                )
+
+    def _account_failure(
+        self,
+        request: NodeResultRequest,
+        *,
+        evaluation: PersistenceEvaluation | None,
+        reservation: ResultQuotaReservation | None,
+        settlement_attempted: bool,
+        error_code: GraphArtifactResultErrorCode,
+    ) -> GraphArtifactResultError | None:
+        if error_code in {
+            GraphArtifactResultErrorCode.GOVERNANCE_LEDGER_FAILED,
+            GraphArtifactResultErrorCode.ARTIFACT_QUOTA_SETTLEMENT_FAILED,
+        }:
+            return None
+        actual_evaluation = evaluation or self._omitted_evaluation(request)
+        primary = self._materialization_usage_fact(
+            request,
+            actual_evaluation,
+            ResultMaterializationOutcome.FAILED,
+            error_code=error_code,
+        )
+        try:
+            if reservation is not None and not settlement_attempted:
+                self._settle(
+                    reservation,
+                    request,
+                    ResultMaterializationOutcome.FAILED,
+                    usage_fact=primary,
+                )
+            else:
+                self._record_usage(primary)
+            boundary_kind = _failure_usage_kind(error_code)
+            if boundary_kind is not None:
+                self._record_usage(
+                    self._usage_fact(
+                        request,
+                        policy_version=actual_evaluation.decision.policy_version,
+                        kind=boundary_kind,
+                        outcome=GraphArtifactUsageOutcome.FAILED,
+                        stage=f"failure:{error_code.value}",
+                        reason_code=error_code.value,
+                    )
+                )
+        except GraphArtifactResultError as exc:
+            return exc
+        return None
+
+    def _usage_fact(
+        self,
+        request: NodeResultRequest,
+        *,
+        policy_version: str,
+        kind: GraphArtifactUsageKind,
+        outcome: GraphArtifactUsageOutcome,
+        stage: str,
+        reason_code: str,
+        logical_bytes: int = 0,
+        physical_bytes: int = 0,
+        loaded_bytes: int = 0,
+        loaded_tokens: int = 0,
+        object_count: int = 0,
+    ) -> GraphArtifactUsageFact:
+        return GraphArtifactUsageFact.create(
+            kind=kind,
+            outcome=outcome,
+            tenant_id=request.binding.tenant_id,
+            run_id=request.binding.run_id,
+            graph_id=request.binding.graph_id,
+            node_id=request.binding.node_id,
+            artifact_class=request.artifact_class,
+            retention_class=request.retention_class,
+            policy_version=policy_version,
+            operation_id=_usage_operation_id(
+                request,
+                policy_version=policy_version,
+                stage=stage,
+            ),
+            logical_bytes=logical_bytes,
+            physical_bytes=physical_bytes,
+            loaded_bytes=loaded_bytes,
+            loaded_tokens=loaded_tokens,
+            object_count=object_count,
+            reason_code=reason_code,
+            occurred_at=request.created_at,
+        )
 
     def _materialize_artifact(self, request: NodeResultRequest) -> ArtifactRecord:
         artifact_id = self._artifact_id(request)
@@ -1120,6 +1379,41 @@ def _artifact_identity_checksum(artifact_type: str) -> str:
         f"sha256:{artifact_type.removeprefix(prefix)}",
         "artifact.identity_checksum",
     )
+
+
+def _usage_operation_id(
+    request: NodeResultRequest,
+    *,
+    policy_version: str,
+    stage: str,
+) -> str:
+    digest = hashlib.sha256(
+        stable_json_dumps(
+            {
+                "binding": request.binding.to_dict(),
+                "candidate_checksum": request.candidate_checksum,
+                "policy_version": policy_version,
+                "stage": stage,
+            }
+        ).encode("utf-8")
+    ).hexdigest()
+    return f"graph-artifact-operation://{request.binding.tenant_id}/{digest}"
+
+
+def _failure_usage_kind(
+    error_code: GraphArtifactResultErrorCode,
+) -> GraphArtifactUsageKind | None:
+    return {
+        GraphArtifactResultErrorCode.ARTIFACT_READBACK_FAILED: (
+            GraphArtifactUsageKind.ARTIFACT_READBACK
+        ),
+        GraphArtifactResultErrorCode.CACHE_WRITE_FAILED: (
+            GraphArtifactUsageKind.CACHE_WRITE
+        ),
+        GraphArtifactResultErrorCode.CACHE_READBACK_FAILED: (
+            GraphArtifactUsageKind.CACHE_READBACK
+        ),
+    }.get(error_code)
 
 
 __all__ = [

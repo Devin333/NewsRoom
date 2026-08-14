@@ -350,6 +350,7 @@ def _runtime_bundle(
         artifact_port=artifact_port,
         catalog=catalog,
         quota=result_store,
+        usage=result_store,
         cache=result_store,
         attempts=result_store,
     )
@@ -371,6 +372,7 @@ def _runtime_bundle(
                 event_port=event_port,
                 catalog=catalog,
                 reader=artifact_port,
+                usage=result_store,
                 config=config,
             )
         )

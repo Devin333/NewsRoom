@@ -1254,6 +1254,7 @@ def _build_configured_composition(
                     artifact_port=artifact_port,
                     catalog=graph_result_catalog,
                     quota=graph_result_store,
+                    usage=graph_result_store,
                     cache=graph_result_store,
                     attempts=graph_result_store,
                 ),
@@ -1655,6 +1656,7 @@ def _build_configured_composition(
                     event_port=event_port,
                     catalog=graph_result_catalog,
                     reader=artifact_port,
+                    usage=graph_result_store,
                     config=settings.graph_artifact_persistence,
                 )
             return build_research_context_assembler(

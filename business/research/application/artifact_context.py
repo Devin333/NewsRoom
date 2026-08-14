@@ -10,6 +10,7 @@ from framework.harness.artifacts.ports import (
     ArtifactCatalogPort,
     GraphResultArtifactReadPort,
 )
+from framework.harness.artifacts.governance import GraphArtifactUsagePort
 from framework.harness.control_plane.errors import HarnessValidationError
 from framework.harness.control_plane.graph_runtime import HarnessGraphCommitKind
 from framework.harness.ports import HarnessTransitionPort
@@ -107,6 +108,7 @@ class ResearchGraphArtifactContextProvider:
         event_port: HarnessTransitionPort,
         catalog: ArtifactCatalogPort,
         reader: GraphResultArtifactReadPort,
+        usage: GraphArtifactUsagePort,
         config: GraphArtifactPersistenceConfig,
         contracts: Mapping[str, ResearchArtifactContextContract] = (
             RESEARCH_ARTIFACT_CONTEXT_CONTRACTS
@@ -125,7 +127,11 @@ class ResearchGraphArtifactContextProvider:
         self._config = config
         self._contracts = MappingProxyType(dict(sorted(normalized.items())))
         self._planner = ArtifactContextLoadPlanner(catalog=catalog, config=config)
-        self._loader = ArtifactContextLoader(reader=reader, config=config)
+        self._loader = ArtifactContextLoader(
+            reader=reader,
+            usage=usage,
+            config=config,
+        )
 
     def load_artifact_context(
         self,

@@ -69,6 +69,7 @@ class GraphArtifactUsageReason(StrEnum):
     CACHE_MISS = "cache_miss"
     CACHE_WRITE = "cache_write"
     CACHE_READBACK = "cache_readback"
+    CONTEXT_LOADED = "context_loaded"
     RESULT_OMITTED = "result_omitted"
     RECOVERED = "recovered"
     CATALOG_DRIFT = "catalog_drift"

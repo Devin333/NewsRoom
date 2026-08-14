@@ -3,9 +3,17 @@ from __future__ import annotations
 import base64
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from typing import Any, Protocol, Self, runtime_checkable
+from datetime import datetime
+from typing import Any, Callable, Protocol, Self, runtime_checkable
 
 from framework.events.canonical import canonical_json_bytes, checksum_for
+from framework.harness.artifacts.governance import (
+    GraphArtifactUsageFact,
+    GraphArtifactUsageKind,
+    GraphArtifactUsageOutcome,
+    GraphArtifactUsagePort,
+    GraphArtifactUsageReason,
+)
 from framework.harness.artifacts.catalog import (
     ArtifactCatalogClaim,
     ArtifactCatalogEntry,
@@ -49,6 +57,7 @@ from framework.harness.runtime.result_models import (
 )
 from framework.harness.runtime.result_policy import GraphArtifactPersistenceConfig
 from framework.harness.workflow.canonical import freeze_json, thaw_json
+from framework.shared.time import utc_now
 
 
 APPROVED_ARTIFACT_LOAD_PLAN_SCHEMA = "newsroom.approved-artifact-load-plan@1"
@@ -1082,14 +1091,22 @@ class ArtifactContextLoader:
         self,
         *,
         reader: GraphResultArtifactReadPort,
+        usage: GraphArtifactUsagePort,
         config: GraphArtifactPersistenceConfig,
+        clock: Callable[[], datetime] = utc_now,
     ) -> None:
         if not isinstance(reader, GraphResultArtifactReadPort):
             raise TypeError("reader must implement GraphResultArtifactReadPort")
         if not isinstance(config, GraphArtifactPersistenceConfig):
             raise TypeError("config must be GraphArtifactPersistenceConfig")
+        if not isinstance(usage, GraphArtifactUsagePort):
+            raise TypeError("usage must implement GraphArtifactUsagePort")
+        if not callable(clock):
+            raise TypeError("clock must be callable")
         self._reader = reader
+        self._usage = usage
         self._config = config
+        self._clock = clock
 
     def load(self, plan: ApprovedArtifactLoadPlan) -> ArtifactContextLoadResult:
         if not isinstance(plan, ApprovedArtifactLoadPlan):
@@ -1135,7 +1152,49 @@ class ArtifactContextLoader:
                 GraphArtifactResultErrorCode.CONTEXT_BUDGET_EXCEEDED,
                 field="context.loaded_budget",
             )
+        self._record_usage(plan, result)
         return result
+
+    def _record_usage(
+        self,
+        plan: ApprovedArtifactLoadPlan,
+        result: ArtifactContextLoadResult,
+    ) -> None:
+        request = plan.request
+        operation_id = _context_usage_operation_id(plan, result)
+        classes = {item.artifact_class for item in result.items}
+        expected = GraphArtifactUsageFact.create(
+            kind=GraphArtifactUsageKind.CONTEXT_LOAD,
+            outcome=GraphArtifactUsageOutcome.SUCCEEDED,
+            tenant_id=request.tenant_id,
+            run_id=request.run_id,
+            graph_id=request.graph_id,
+            node_id=request.node_id,
+            artifact_class=(next(iter(classes)) if len(classes) == 1 else None),
+            retention_class=None,
+            policy_version=plan.policy_version,
+            operation_id=operation_id,
+            loaded_bytes=result.total_loaded_bytes,
+            loaded_tokens=result.total_loaded_tokens,
+            object_count=len(result.items),
+            reason_code=GraphArtifactUsageReason.CONTEXT_LOADED.value,
+            occurred_at=self._clock(),
+        )
+        try:
+            stored = self._usage.record_usage(expected)
+        except Exception as exc:
+            raise result_error(
+                GraphArtifactResultErrorCode.GOVERNANCE_LEDGER_FAILED,
+                field="context.usage",
+            ) from exc
+        if not isinstance(stored, GraphArtifactUsageFact) or not _same_usage_operation(
+            stored,
+            expected,
+        ):
+            raise result_error(
+                GraphArtifactResultErrorCode.GOVERNANCE_LEDGER_FAILED,
+                field="context.usage",
+            )
 
     @staticmethod
     def _summary_item(item: ApprovedArtifactLoadItem) -> ArtifactContextItem:
@@ -1320,6 +1379,38 @@ def _verified_candidate(
             GraphArtifactResultErrorCode.ARTIFACT_READBACK_FAILED,
             field="context.artifact_payload",
         ) from exc
+
+
+def _context_usage_operation_id(
+    plan: ApprovedArtifactLoadPlan,
+    result: ArtifactContextLoadResult,
+) -> str:
+    identity = {
+        "tenant_id": plan.request.tenant_id,
+        "run_id": plan.request.run_id,
+        "graph_id": plan.request.graph_id,
+        "node_id": plan.request.node_id,
+        "plan_checksum": plan.plan_checksum,
+        "result_checksum": result.result_checksum,
+        "purpose": result.purpose.value,
+        "load_mode": result.load_mode.value,
+        "policy_version": result.policy_version,
+    }
+    digest = checksum_for(identity).removeprefix("sha256:")
+    return f"graph-artifact-context-load://{plan.request.tenant_id}/{digest}"
+
+
+def _same_usage_operation(
+    left: GraphArtifactUsageFact,
+    right: GraphArtifactUsageFact,
+) -> bool:
+    def projection(fact: GraphArtifactUsageFact) -> dict[str, Any]:
+        value = fact.to_dict()
+        value.pop("occurred_at")
+        value.pop("fact_checksum")
+        return value
+
+    return projection(left) == projection(right)
 
 
 def _context_content_bytes(content: Any, encoding: str) -> bytes:

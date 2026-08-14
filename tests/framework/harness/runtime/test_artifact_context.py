@@ -7,6 +7,12 @@ from typing import Any
 
 import pytest
 
+from framework.harness.artifacts import (
+    GraphArtifactUsageFact,
+    GraphArtifactUsageKind,
+    GraphArtifactUsageOutcome,
+    GraphArtifactUsageReason,
+)
 from framework.harness.artifacts.catalog import ArtifactCatalogRegistrationRequest
 from framework.harness.context import ContextAssembler
 from framework.harness.control_plane.graph_result_lineage import (
@@ -70,6 +76,33 @@ class StaticArtifactContextProvider:
     def load_artifact_context(self, request):
         self.calls += 1
         return self.result
+
+
+@dataclass
+class RecordingUsage:
+    fail: bool = False
+    facts: dict[str, GraphArtifactUsageFact] = field(default_factory=dict)
+
+    def record_usage(self, fact: GraphArtifactUsageFact) -> GraphArtifactUsageFact:
+        if self.fail:
+            raise RuntimeError("usage unavailable with private-path C:/secret")
+        existing = self.facts.get(fact.fact_id)
+        if existing is not None:
+            return existing
+        self.facts[fact.fact_id] = fact
+        return fact
+
+    def list_usage(self, *, tenant_id, window_start, window_end, watermark=None):
+        del watermark
+        return tuple(
+            fact
+            for fact in self.facts.values()
+            if fact.tenant_id == tenant_id
+            and window_start <= fact.occurred_at < window_end
+        )
+
+    def usage_watermark(self, *, tenant_id):
+        return sum(fact.tenant_id == tenant_id for fact in self.facts.values())
 
 
 def _bundle(
@@ -302,7 +335,11 @@ def _plan_and_loader(tmp_path, *, mode, **bundle_options):
     )
     reader = RecordingGraphResultReader({ref: stored})
     planner = ArtifactContextLoadPlanner(catalog=catalog, config=config)
-    loader = ArtifactContextLoader(reader=reader, config=config)
+    loader = ArtifactContextLoader(
+        reader=reader,
+        usage=RecordingUsage(),
+        config=config,
+    )
     plan = planner.plan(_request(ref, mode=mode), accepted_lineages=(lineage,))
     return plan, loader, reader, normalized, candidate_bytes, lineage, ref
 
@@ -364,6 +401,74 @@ def test_full_load_returns_verified_complete_candidate(tmp_path) -> None:
     assert result.items[0].loaded_checksum == result.items[0].content_checksum
 
 
+def test_context_load_usage_is_exact_idempotent_and_payload_free(tmp_path) -> None:
+    catalog, lineage, ref, stored, _, candidate_bytes = _bundle(
+        tmp_path,
+        candidate={"payload": "private-context-value"},
+    )
+    config = GraphArtifactPersistenceConfig()
+    plan = ArtifactContextLoadPlanner(catalog=catalog, config=config).plan(
+        _request(ref, mode=ContextLoadMode.FULL),
+        accepted_lineages=(lineage,),
+    )
+    usage = RecordingUsage()
+    times = [NOW, NOW + timedelta(seconds=1)]
+    loader = ArtifactContextLoader(
+        reader=RecordingGraphResultReader({ref: stored}),
+        usage=usage,
+        config=config,
+        clock=lambda: times.pop(0),
+    )
+
+    first = loader.load(plan)
+    second = loader.load(plan)
+
+    assert first == second
+    assert len(usage.facts) == 1
+    fact = next(iter(usage.facts.values()))
+    assert fact.kind is GraphArtifactUsageKind.CONTEXT_LOAD
+    assert fact.outcome is GraphArtifactUsageOutcome.SUCCEEDED
+    assert fact.reason_code == GraphArtifactUsageReason.CONTEXT_LOADED.value
+    assert fact.tenant_id == "tenant-1"
+    assert fact.run_id == "run-1"
+    assert fact.graph_id == "graph-1"
+    assert fact.node_id == "consumer-node"
+    assert fact.artifact_class is ArtifactClass.EVIDENCE
+    assert fact.policy_version == plan.policy_version
+    assert fact.loaded_bytes == len(candidate_bytes)
+    assert fact.loaded_tokens == first.total_loaded_tokens
+    assert fact.object_count == 1
+    rendered = stable_json_dumps(fact.to_dict())
+    assert "private-context-value" not in rendered
+    assert ref not in rendered
+
+
+def test_context_load_usage_failure_is_typed_and_sanitized(tmp_path) -> None:
+    catalog, lineage, ref, stored, _, _ = _bundle(
+        tmp_path,
+        candidate={"payload": "never-return-this-value"},
+    )
+    config = GraphArtifactPersistenceConfig()
+    plan = ArtifactContextLoadPlanner(catalog=catalog, config=config).plan(
+        _request(ref, mode=ContextLoadMode.FULL),
+        accepted_lineages=(lineage,),
+    )
+    loader = ArtifactContextLoader(
+        reader=RecordingGraphResultReader({ref: stored}),
+        usage=RecordingUsage(fail=True),
+        config=config,
+        clock=lambda: NOW,
+    )
+
+    with pytest.raises(GraphArtifactResultError) as exc_info:
+        loader.load(plan)
+
+    assert exc_info.value.error_code is GraphArtifactResultErrorCode.GOVERNANCE_LEDGER_FAILED
+    rendered = str(exc_info.value)
+    assert "never-return-this-value" not in rendered
+    assert "C:/secret" not in rendered
+
+
 def test_duplicate_logical_claims_charge_and_read_canonical_content_once(
     tmp_path,
 ) -> None:
@@ -383,7 +488,11 @@ def test_duplicate_logical_claims_charge_and_read_canonical_content_once(
         accepted_lineages=(second, first),
     )
 
-    result = ArtifactContextLoader(reader=reader, config=config).load(plan)
+    result = ArtifactContextLoader(
+        reader=reader,
+        usage=RecordingUsage(),
+        config=config,
+    ).load(plan)
 
     assert len(plan.items) == 1
     assert plan.planned_loaded_bytes == len(candidate_bytes)
@@ -417,7 +526,11 @@ def test_current_run_claim_can_load_a_cross_run_canonical_physical_object(
         accepted_lineages=(current,),
     )
 
-    result = ArtifactContextLoader(reader=reader, config=config).load(plan)
+    result = ArtifactContextLoader(
+        reader=reader,
+        usage=RecordingUsage(),
+        config=config,
+    ).load(plan)
 
     assert result.items[0].complete is True
     assert plan.items[0].run_id == "run-2"

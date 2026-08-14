@@ -8,6 +8,12 @@ from typing import Any
 
 import pytest
 
+from framework.harness.artifacts import (
+    GraphArtifactUsageFact,
+    GraphArtifactUsageKind,
+    GraphArtifactUsageOutcome,
+    GraphArtifactUsageReason,
+)
 from framework.harness.artifacts.catalog import (
     ArtifactCatalogClaim,
     ArtifactCatalogEntry,
@@ -103,10 +109,12 @@ class RecordingCatalog:
 
 
 class RecordingQuota:
-    def __init__(self, *, allow: bool = True) -> None:
+    def __init__(self, *, allow: bool = True, fail_usage: bool = False) -> None:
         self.allow = allow
+        self.fail_usage = fail_usage
         self.reservations: list[ResultQuotaReservation] = []
         self.settlements: list[tuple[ResultQuotaReservation, int, int, ResultMaterializationOutcome]] = []
+        self.usage_facts: dict[str, GraphArtifactUsageFact] = {}
 
     def reserve(
         self,
@@ -141,8 +149,27 @@ class RecordingQuota:
         self.reservations.append(reservation)
         return reservation
 
-    def settle(self, reservation, *, actual_bytes, object_count, outcome):
+    def settle(
+        self,
+        reservation,
+        *,
+        actual_bytes,
+        object_count,
+        outcome,
+        usage_fact=None,
+    ):
         self.settlements.append((reservation, actual_bytes, object_count, outcome))
+        if usage_fact is not None:
+            self.record_usage(usage_fact)
+
+    def record_usage(self, fact):
+        if self.fail_usage:
+            raise RuntimeError("usage ledger unavailable")
+        existing = self.usage_facts.get(fact.fact_id)
+        if existing is not None and existing != fact:
+            raise AssertionError("conflicting usage fact")
+        self.usage_facts[fact.fact_id] = fact
+        return fact
 
 
 class RecordingCache:
@@ -240,12 +267,23 @@ def _request(
     )
 
 
-def _materializer(*, quota=None, attempts=None, cache=None, artifact=None, catalog=None, observations=None, config=None):
+def _materializer(
+    *,
+    quota=None,
+    attempts=None,
+    cache=None,
+    artifact=None,
+    catalog=None,
+    observations=None,
+    config=None,
+):
+    actual_quota = quota or RecordingQuota()
     return ResultMaterializer(
         policy=PersistencePolicy(config or GraphArtifactPersistenceConfig()),
         artifact_port=artifact or RecordingArtifactPort(),
         catalog=catalog or RecordingCatalog(),
-        quota=quota or RecordingQuota(),
+        quota=actual_quota,
+        usage=actual_quota,
         cache=cache or RecordingCache(),
         attempts=attempts or RecordingAttempts(),
         clock=lambda: NOW,
@@ -467,3 +505,140 @@ def test_observation_does_not_contain_candidate_payload() -> None:
     )
     rendered = stable_json_dumps(result.observation.to_dict())
     assert "secret-looking-but-not-sensitive" not in rendered
+
+
+def test_inline_artifact_cache_and_omitted_usage_is_exact_and_sanitized() -> None:
+    inline_quota = RecordingQuota()
+    inline_request = _request(candidate={"data": "inline-secret"})
+    _materializer(quota=inline_quota).materialize(inline_request)
+    inline = tuple(inline_quota.usage_facts.values())
+    assert len(inline) == 1
+    assert inline[0].kind is GraphArtifactUsageKind.MATERIALIZATION
+    assert inline[0].outcome is GraphArtifactUsageOutcome.SUCCEEDED
+    assert inline[0].reason_code == GraphArtifactUsageReason.INLINE_RESULT.value
+    assert inline[0].logical_bytes == inline_request.candidate_bytes
+    assert inline[0].physical_bytes == 0
+
+    artifact_quota = RecordingQuota()
+    artifact_request = _request(candidate={"data": "artifact-secret" * 4096})
+    _materializer(quota=artifact_quota).materialize(artifact_request)
+    artifact = tuple(artifact_quota.usage_facts.values())
+    assert {fact.kind for fact in artifact} == {
+        GraphArtifactUsageKind.MATERIALIZATION,
+        GraphArtifactUsageKind.ARTIFACT_READBACK,
+    }
+    materialized = next(
+        fact for fact in artifact if fact.kind is GraphArtifactUsageKind.MATERIALIZATION
+    )
+    readback = next(
+        fact for fact in artifact if fact.kind is GraphArtifactUsageKind.ARTIFACT_READBACK
+    )
+    assert materialized.physical_bytes == artifact_request.candidate_bytes
+    assert materialized.object_count == 1
+    assert readback.loaded_bytes == artifact_request.candidate_bytes
+    assert readback.loaded_tokens == artifact_request.candidate_tokens
+
+    cache_quota = RecordingQuota()
+    cache_request = _request(
+        candidate={"data": "cache-secret"},
+        reusable=True,
+        dependency_digest=DEPENDENCY,
+    )
+    _materializer(quota=cache_quota).materialize(cache_request)
+    cache = tuple(cache_quota.usage_facts.values())
+    assert {fact.kind for fact in cache} == {
+        GraphArtifactUsageKind.MATERIALIZATION,
+        GraphArtifactUsageKind.CACHE_WRITE,
+        GraphArtifactUsageKind.CACHE_READBACK,
+    }
+    assert GraphArtifactUsageKind.CACHE_LOOKUP not in {fact.kind for fact in cache}
+
+    omitted_quota = RecordingQuota(allow=False)
+    _materializer(quota=omitted_quota).materialize(artifact_request)
+    omitted = tuple(omitted_quota.usage_facts.values())
+    assert len(omitted) == 1
+    assert omitted[0].outcome is GraphArtifactUsageOutcome.OMITTED
+    assert omitted[0].reason_code == GraphArtifactUsageReason.RESULT_OMITTED.value
+
+    rendered = stable_json_dumps(
+        [
+            fact.to_dict()
+            for fact in (*inline, *artifact, *cache, *omitted)
+        ]
+    )
+    for secret in (
+        "inline-secret",
+        "artifact-secret",
+        "cache-secret",
+        "usage ledger unavailable",
+    ):
+        assert secret not in rendered
+
+
+def test_recovery_and_failed_readback_record_idempotent_outcomes() -> None:
+    recovered_quota = RecordingQuota()
+    attempts = RecordingAttempts()
+    request = _request(candidate={"data": "x" * (32 * 1024)})
+    materializer = _materializer(quota=recovered_quota, attempts=attempts)
+
+    materializer.materialize(request)
+    before = len(recovered_quota.usage_facts)
+    materializer.materialize(request)
+    materializer.materialize(request)
+
+    assert len(recovered_quota.usage_facts) == before + 1
+    recovered = next(
+        fact
+        for fact in recovered_quota.usage_facts.values()
+        if fact.reason_code == GraphArtifactUsageReason.RECOVERED.value
+    )
+    assert recovered.outcome is GraphArtifactUsageOutcome.SUCCEEDED
+    assert recovered.logical_bytes == 0
+    assert recovered.physical_bytes == 0
+
+    failed_quota = RecordingQuota()
+    artifact = RecordingArtifactPort()
+    artifact.tamper = True
+    with pytest.raises(GraphArtifactResultError):
+        _materializer(quota=failed_quota, artifact=artifact).materialize(request)
+    failed = tuple(failed_quota.usage_facts.values())
+    assert {fact.kind for fact in failed} == {
+        GraphArtifactUsageKind.MATERIALIZATION,
+        GraphArtifactUsageKind.ARTIFACT_READBACK,
+    }
+    assert all(fact.outcome is GraphArtifactUsageOutcome.FAILED for fact in failed)
+    assert all(fact.physical_bytes == 0 for fact in failed)
+
+
+def test_usage_ledger_failure_fails_closed_before_attempt_commit() -> None:
+    quota = RecordingQuota(fail_usage=True)
+    attempts = RecordingAttempts()
+
+    with pytest.raises(GraphArtifactResultError) as exc_info:
+        _materializer(quota=quota, attempts=attempts).materialize(
+            _request(candidate={"data": "private-candidate"})
+        )
+
+    assert exc_info.value.error_code is GraphArtifactResultErrorCode.GOVERNANCE_LEDGER_FAILED
+    assert attempts.put_count == 0
+
+
+def test_attempt_commit_failure_records_materialization_failure_without_recharge() -> None:
+    quota = RecordingQuota()
+
+    with pytest.raises(GraphArtifactResultError) as exc_info:
+        _materializer(quota=quota, attempts=FailingAttempts()).materialize(
+            _request(candidate={"data": "x" * (32 * 1024)})
+        )
+
+    assert exc_info.value.error_code is GraphArtifactResultErrorCode.RESULT_LEDGER_FAILED
+    materializations = tuple(
+        fact
+        for fact in quota.usage_facts.values()
+        if fact.kind is GraphArtifactUsageKind.MATERIALIZATION
+    )
+    assert {fact.outcome for fact in materializations} == {
+        GraphArtifactUsageOutcome.SUCCEEDED,
+        GraphArtifactUsageOutcome.FAILED,
+    }
+    assert len(quota.settlements) == 1
