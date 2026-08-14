@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Callable
 
 from framework.harness.artifacts.catalog import (
@@ -8,6 +8,7 @@ from framework.harness.artifacts.catalog import (
     ArtifactCatalogGcDetachReceipt,
     ArtifactCatalogGcDetachRequest,
     ArtifactCatalogGcPlan,
+    ArtifactCatalogReconciliationPlan,
     ArtifactCatalogSnapshot,
     ArtifactReferenceRetirementReceipt,
     ArtifactReferenceRetirementRequest,
@@ -23,8 +24,15 @@ from framework.harness.artifacts.governance import (
     GraphArtifactUsageKind,
     GraphArtifactUsageOutcome,
     GraphArtifactUsageReason,
+    DailyGraphArtifactCostReport,
+    GraphArtifactAlert,
+    GraphArtifactAlertStatus,
 )
 from framework.harness.artifacts.ports import ArtifactCatalogPort
+from framework.harness.artifacts.reporting import (
+    build_daily_graph_artifact_cost_report,
+    evaluate_graph_artifact_alerts,
+)
 from framework.harness.runtime.result_canonical import (
     aware_datetime,
     identifier,
@@ -291,6 +299,150 @@ class GraphArtifactGovernanceRuntime:
             request.authorization.policy_version
         )
         return self._catalog.retire_reference(request)
+
+    def generate_cost_report(
+        self,
+        *,
+        tenant_id: str,
+        window_start: datetime,
+        generated_at: datetime | None = None,
+    ) -> DailyGraphArtifactCostReport:
+        tenant = identifier(tenant_id, "governance.tenant_id")
+        start = aware_datetime(window_start, "governance.window_start")
+        end = start + timedelta(days=1)
+        now = self._time(generated_at)
+        if now < start:
+            raise result_error(
+                GraphArtifactResultErrorCode.RESULT_SCHEMA_INVALID,
+                field="governance.generated_at",
+            )
+        provisional = now < end
+        plan, snapshot = self._coherent_plan_snapshot(
+            tenant_id=tenant,
+            observed_at=now,
+        )
+        watermark = self._ledger.usage_watermark(tenant_id=tenant)
+        existing_reports = self._ledger.list_cost_reports(
+            tenant_id=tenant,
+            window_start=start,
+            window_end=end,
+        )
+        for existing in existing_reports:
+            if (
+                existing.provisional is provisional
+                and existing.policy_version == self._config.policy_version
+                and existing.catalog_snapshot_checksum == snapshot.snapshot_checksum
+                and existing.usage_watermark == watermark
+            ):
+                return existing
+        usage = self._ledger.list_usage(
+            tenant_id=tenant,
+            window_start=start,
+            window_end=end,
+            watermark=watermark,
+        )
+        report = build_daily_graph_artifact_cost_report(
+            tenant_id=tenant,
+            window_start=start,
+            window_end=end,
+            provisional=provisional,
+            policy_version=self._config.policy_version,
+            catalog_snapshot=snapshot,
+            usage_watermark=watermark,
+            usage_facts=usage,
+            gc_plan=plan,
+            completed_operations=self._ledger.list_gc_operations(
+                tenant_id=tenant,
+                include_completed=True,
+            ),
+            generated_at=now,
+        )
+        if self._config.mode is GraphArtifactRolloutMode.LEGACY:
+            return report
+        stored = self._ledger.put_cost_report(report)
+        if stored != report:
+            raise result_error(
+                GraphArtifactResultErrorCode.COST_REPORT_FAILED,
+                field="governance.cost_report",
+            )
+        return stored
+
+    def evaluate_alerts(
+        self,
+        *,
+        tenant_id: str,
+        report: DailyGraphArtifactCostReport,
+        gc_plan: ArtifactCatalogGcPlan | None = None,
+        reconciliation: ArtifactCatalogReconciliationPlan | None = None,
+    ) -> tuple[GraphArtifactAlert, ...]:
+        tenant = identifier(tenant_id, "governance.tenant_id")
+        if not isinstance(report, DailyGraphArtifactCostReport) or report.tenant_id != tenant:
+            raise result_error(
+                GraphArtifactResultErrorCode.ARTIFACT_SCOPE_MISMATCH,
+                field="governance.alert.report",
+            )
+        usage = self._ledger.list_usage(
+            tenant_id=tenant,
+            window_start=report.window_start,
+            window_end=report.window_end,
+            watermark=report.usage_watermark,
+        )
+        candidates = evaluate_graph_artifact_alerts(
+            config=self._config,
+            report=report,
+            quota_snapshots=self._ledger.quota_snapshots(
+                tenant_id=tenant,
+                captured_at=report.generated_at,
+            ),
+            gc_plan=gc_plan,
+            usage_facts=usage,
+            reconciliation=reconciliation,
+        )
+        if self._config.mode is GraphArtifactRolloutMode.LEGACY:
+            return candidates
+        delivered: list[GraphArtifactAlert] = []
+        for candidate in candidates:
+            existing = self._ledger.get_alert(
+                tenant_id=tenant,
+                alert_id=candidate.alert_id,
+            )
+            delivered.append(
+                self._ledger.put_alert(candidate)
+                if existing is None
+                else existing
+            )
+        return tuple(sorted(delivered, key=lambda alert: alert.alert_id))
+
+    def list_alerts(
+        self,
+        *,
+        tenant_id: str,
+        status: GraphArtifactAlertStatus | None = None,
+    ) -> tuple[GraphArtifactAlert, ...]:
+        return self._ledger.list_alerts(
+            tenant_id=identifier(tenant_id, "governance.tenant_id"),
+            status=status,
+        )
+
+    def acknowledge_alert(
+        self,
+        *,
+        tenant_id: str,
+        alert_id: str,
+        expected_checksum: str,
+        acknowledged_by: str,
+        acknowledged_at: datetime | None = None,
+    ) -> GraphArtifactAlert:
+        return self._ledger.acknowledge_alert(
+            tenant_id=identifier(tenant_id, "governance.tenant_id"),
+            alert_id=reference(alert_id, "governance.alert_id"),
+            expected_checksum=expected_checksum,
+            acknowledged_at=self._time(acknowledged_at),
+            acknowledged_by=identifier(
+                acknowledged_by,
+                "governance.acknowledged_by",
+            ),
+        )
 
     def _coherent_plan_snapshot(
         self,

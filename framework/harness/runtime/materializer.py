@@ -839,7 +839,11 @@ class ResultMaterializer:
             reason_code = (
                 GraphArtifactUsageReason.INLINE_RESULT.value
                 if mode is PersistenceMode.INLINE
-                else GraphArtifactUsageReason.MATERIALIZED_RESULT.value
+                else (
+                    GraphArtifactUsageReason.ARTIFACT_RESULT.value
+                    if mode is PersistenceMode.ARTIFACT
+                    else GraphArtifactUsageReason.CACHE_RESULT.value
+                )
             )
             physical_bytes = (
                 request.candidate_bytes

@@ -65,6 +65,8 @@ class GraphArtifactUsageOutcome(StrEnum):
 class GraphArtifactUsageReason(StrEnum):
     INLINE_RESULT = "inline_result"
     MATERIALIZED_RESULT = "materialized_result"
+    ARTIFACT_RESULT = "artifact_result"
+    CACHE_RESULT = "cache_result"
     CACHE_HIT = "cache_hit"
     CACHE_MISS = "cache_miss"
     CACHE_WRITE = "cache_write"
@@ -1488,6 +1490,14 @@ class GraphArtifactPhysicalLifecyclePort(Protocol):
 
 @runtime_checkable
 class GraphArtifactGovernanceLedgerPort(GraphArtifactUsagePort, Protocol):
+    def quota_snapshots(
+        self,
+        *,
+        tenant_id: str,
+        captured_at: datetime,
+    ) -> tuple[GraphArtifactQuotaSnapshot, ...]:
+        ...
+
     def put_gc_plan(
         self,
         *,
@@ -1766,6 +1776,7 @@ def _report_identity(values: Mapping[str, Any]) -> dict[str, Any]:
         "tenant_id": values["tenant_id"],
         "window_start": datetime_to_json(values["window_start"]),
         "window_end": datetime_to_json(values["window_end"]),
+        "provisional": values["provisional"],
         "policy_version": values["policy_version"],
         "catalog_snapshot_checksum": values["catalog_snapshot_checksum"],
         "usage_watermark": values["usage_watermark"],

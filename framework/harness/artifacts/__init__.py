@@ -40,6 +40,10 @@ from framework.harness.artifacts.runtime import (
     GraphArtifactGovernanceRuntime,
     MAX_GC_OPERATIONS,
 )
+from framework.harness.artifacts.reporting import (
+    build_daily_graph_artifact_cost_report,
+    evaluate_graph_artifact_alerts,
+)
 
 __all__ = [
     "ArtifactCatalogPort",
@@ -76,4 +80,6 @@ __all__ = [
     "GraphArtifactUsageReason",
     "MAX_GC_OPERATIONS",
     "RunBoundArtifactPort",
+    "build_daily_graph_artifact_cost_report",
+    "evaluate_graph_artifact_alerts",
 ]

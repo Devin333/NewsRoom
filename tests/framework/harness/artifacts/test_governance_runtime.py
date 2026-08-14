@@ -14,6 +14,10 @@ from framework.harness.artifacts import (
     GraphArtifactPhysicalDeleteRequest,
     GraphArtifactQuarantineReceipt,
     GraphArtifactUsageKind,
+    GraphArtifactUsageFact,
+    GraphArtifactUsageOutcome,
+    GraphArtifactUsageReason,
+    GraphArtifactAlertStatus,
 )
 from framework.harness.artifacts.catalog import (
     ArtifactCatalogGcAction,
@@ -24,6 +28,9 @@ from framework.harness.artifacts.catalog import (
     ArtifactReferenceKind,
     ArtifactReferenceRetirementReason,
     ArtifactReferenceRetirementRequest,
+    ArtifactCatalogReconciliationIssue,
+    ArtifactCatalogReconciliationIssueKind,
+    ArtifactCatalogReconciliationPlan,
 )
 from framework.harness.runtime import (
     ArtifactClass,
@@ -317,6 +324,179 @@ def test_read_only_runtime_plans_without_writes_and_rejects_gc_apply(tmp_path) -
     )
     assert lifecycle.quarantine_calls == 0
     assert registered.reference is not None
+
+
+def test_cost_report_reuses_inputs_and_preserves_open_closed_and_late_revisions(
+    tmp_path,
+) -> None:
+    runtime, _, store, _, _ = _runtime_bundle(tmp_path)
+
+    provisional = runtime.generate_cost_report(
+        tenant_id="tenant-1",
+        window_start=DAY,
+        generated_at=NOW,
+    )
+    closed = runtime.generate_cost_report(
+        tenant_id="tenant-1",
+        window_start=DAY,
+        generated_at=DAY + timedelta(days=1),
+    )
+
+    assert provisional.provisional is True
+    assert closed.provisional is False
+    assert provisional.report_id != closed.report_id
+    assert runtime.generate_cost_report(
+        tenant_id="tenant-1",
+        window_start=DAY,
+        generated_at=DAY + timedelta(days=1, hours=1),
+    ) == closed
+
+    late_fact = GraphArtifactUsageFact.create(
+        kind=GraphArtifactUsageKind.MATERIALIZATION,
+        outcome=GraphArtifactUsageOutcome.SUCCEEDED,
+        tenant_id="tenant-1",
+        run_id="run-1",
+        graph_id="graph-1",
+        node_id="late-node",
+        artifact_class=ArtifactClass.CONTROL,
+        retention_class=RetentionClass.RUN,
+        policy_version="graph-artifact-policy@1",
+        operation_id="materialization://tenant-1/late-inline",
+        logical_bytes=5,
+        physical_bytes=0,
+        object_count=1,
+        reason_code=GraphArtifactUsageReason.INLINE_RESULT.value,
+        occurred_at=NOW,
+    )
+    store.record_usage(late_fact)
+    late = runtime.generate_cost_report(
+        tenant_id="tenant-1",
+        window_start=DAY,
+        generated_at=DAY + timedelta(days=1, hours=2),
+    )
+
+    assert late.usage_watermark > closed.usage_watermark
+    assert late.report_id != closed.report_id
+    assert runtime.generate_cost_report(
+        tenant_id="tenant-1",
+        window_start=DAY,
+        generated_at=DAY + timedelta(days=1, hours=3),
+    ) == late
+    assert store.list_cost_reports(
+        tenant_id="tenant-1",
+        window_start=DAY,
+        window_end=DAY + timedelta(days=1),
+    ) == (provisional, closed, late)
+
+
+def test_alert_delivery_is_idempotent_and_ack_preserves_source_facts(tmp_path) -> None:
+    runtime, _, store, _, _ = _runtime_bundle(tmp_path)
+    readback_failure = GraphArtifactUsageFact.create(
+        kind=GraphArtifactUsageKind.ARTIFACT_READBACK,
+        outcome=GraphArtifactUsageOutcome.FAILED,
+        tenant_id="tenant-1",
+        run_id="run-1",
+        graph_id="graph-1",
+        node_id="source-node",
+        artifact_class=ArtifactClass.EVIDENCE,
+        retention_class=RetentionClass.EVIDENCE,
+        policy_version="graph-artifact-policy@1",
+        operation_id="artifact-readback://tenant-1/failure-1",
+        reason_code=GraphArtifactResultErrorCode.ARTIFACT_READBACK_FAILED.value,
+        occurred_at=NOW,
+    )
+    store.record_usage(readback_failure)
+    report = runtime.generate_cost_report(
+        tenant_id="tenant-1",
+        window_start=DAY,
+        generated_at=DAY + timedelta(days=1),
+    )
+    issue = ArtifactCatalogReconciliationIssue.create(
+        kind=ArtifactCatalogReconciliationIssueKind.MISSING_PHYSICAL_OBJECT,
+        subject_id="artifact://run-1/missing",
+        entry_id="catalog-entry://missing",
+    )
+    reconciliation = ArtifactCatalogReconciliationPlan.create(
+        generated_at=report.generated_at,
+        issues=(issue,),
+    )
+
+    first = runtime.evaluate_alerts(
+        tenant_id="tenant-1",
+        report=report,
+        reconciliation=reconciliation,
+    )
+    repeated = runtime.evaluate_alerts(
+        tenant_id="tenant-1",
+        report=report,
+        reconciliation=reconciliation,
+    )
+
+    assert repeated == first
+    assert len(first) == 2
+    acknowledged = runtime.acknowledge_alert(
+        tenant_id="tenant-1",
+        alert_id=first[0].alert_id,
+        expected_checksum=first[0].alert_checksum,
+        acknowledged_by="operator-1",
+        acknowledged_at=report.generated_at + timedelta(seconds=1),
+    )
+    assert acknowledged.status is GraphArtifactAlertStatus.ACKNOWLEDGED
+    after_ack = runtime.evaluate_alerts(
+        tenant_id="tenant-1",
+        report=report,
+        reconciliation=reconciliation,
+    )
+    assert acknowledged in after_ack
+    assert store.list_usage(
+        tenant_id="tenant-1",
+        window_start=DAY,
+        window_end=DAY + timedelta(days=1),
+    ) == (readback_failure,)
+
+
+def test_cost_report_carries_expiry_backlog_into_completed_gc_tombstone(tmp_path) -> None:
+    runtime, _, _, _, registered = _runtime_bundle(tmp_path)
+    runtime.retire_reference(
+        tenant_id="tenant-1",
+        request=_retirement_request(registered.reference),
+    )
+    plan = runtime.prepare_gc(tenant_id="tenant-1", observed_at=NOW)
+    before = runtime.generate_cost_report(
+        tenant_id="tenant-1",
+        window_start=DAY,
+        generated_at=NOW,
+    )
+    before_global = next(
+        aggregate
+        for aggregate in before.aggregates
+        if aggregate.dimension.run_id is None
+        and aggregate.dimension.artifact_class is None
+    )
+    assert before_global.expired_bytes == registered.entry.record.byte_size
+
+    runtime.apply_gc(
+        tenant_id="tenant-1",
+        plan_checksum=plan.plan_checksum,
+        confirmed=True,
+    )
+    after = runtime.generate_cost_report(
+        tenant_id="tenant-1",
+        window_start=DAY,
+        generated_at=NOW + timedelta(hours=1),
+    )
+    after_global = next(
+        aggregate
+        for aggregate in after.aggregates
+        if aggregate.dimension.run_id is None
+        and aggregate.dimension.artifact_class is None
+    )
+
+    assert after.report_id != before.report_id
+    assert after_global.logical_bytes == registered.entry.record.byte_size
+    assert after_global.unique_physical_bytes == registered.entry.record.byte_size
+    assert after_global.expired_bytes == 0
+    assert after_global.gc_purged_bytes == registered.entry.record.byte_size
 
 
 def _runtime_bundle(
