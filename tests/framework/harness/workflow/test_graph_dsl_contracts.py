@@ -229,6 +229,43 @@ def test_condition_contract_is_shared_by_legacy_and_graph_evaluation() -> None:
 
 
 @pytest.mark.parametrize(
+    "payload",
+    (
+        {"path": "worker_result.status", "equals": "succeeded"},
+        {
+            "kind": "future_condition",
+            "path": "worker_result.status",
+            "operator": "equals",
+            "expected": "succeeded",
+            "policy_version": "newsroom.harness-graph-condition-policy/v999",
+        },
+    ),
+)
+def test_graph_condition_reader_does_not_fallback_to_legacy_or_unknown_kinds(
+    payload: dict[str, object],
+) -> None:
+    with pytest.raises(HarnessValidationError) as captured:
+        condition_from_dict(payload)
+
+    assert captured.value.code == "unsupported_condition_kind"
+
+
+def test_graph_condition_reader_rejects_unknown_policy_version() -> None:
+    with pytest.raises(HarnessValidationError) as captured:
+        condition_from_dict(
+            {
+                "kind": "predicate",
+                "path": "worker_result.status",
+                "operator": "equals",
+                "expected": "succeeded",
+                "policy_version": "newsroom.harness-graph-condition-policy/v999",
+            }
+        )
+
+    assert captured.value.code == "unsupported_condition_policy"
+
+
+@pytest.mark.parametrize(
     "condition,code",
     (
         ({"path": "worker_result.status"}, "missing_condition_operator"),

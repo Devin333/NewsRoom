@@ -68,6 +68,21 @@ class HarnessGraphCompileResult:
                 "unsupported workflow declaration mode",
                 code="unsupported_workflow_declaration_mode",
             )
+        if self.compiler_version != HARNESS_GRAPH_COMPILER_VERSION:
+            raise HarnessValidationError(
+                "unsupported graph compiler version",
+                code="unsupported_graph_compiler",
+                details={"compiler_version": str(self.compiler_version)},
+            )
+        if self.graph.compiler_version != self.compiler_version:
+            raise HarnessValidationError(
+                "compile result does not match the pinned graph compiler",
+                code="graph_compiler_version_mismatch",
+                details={
+                    "result_compiler_version": self.compiler_version,
+                    "graph_compiler_version": self.graph.compiler_version,
+                },
+            )
 
     def to_dict(self) -> dict[str, Any]:
         return {

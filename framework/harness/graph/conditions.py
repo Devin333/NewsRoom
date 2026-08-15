@@ -175,7 +175,11 @@ def condition_from_dict(value: Mapping[str, Any]) -> HarnessCondition:
         if kind == "all":
             return ConditionAll(conditions=conditions, policy_version=value["policy_version"])
         return ConditionAny(conditions=conditions, policy_version=value["policy_version"])
-    return condition_from_legacy_dict(value)
+    raise HarnessValidationError(
+        "unsupported condition contract kind",
+        code="unsupported_condition_kind",
+        details={"kind": str(kind)},
+    )
 
 
 def condition_from_legacy_dict(value: Mapping[str, Any]) -> HarnessCondition:

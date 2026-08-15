@@ -4,7 +4,10 @@ import pytest
 
 from framework.harness.control_plane.errors import HarnessValidationError
 from framework.harness.side_effects.models import HarnessTerminalSideEffectPolicy
-from framework.harness.workflow.compiler import HarnessWorkflowGraphCompiler
+from framework.harness.workflow.compiler import (
+    HarnessGraphCompileResult,
+    HarnessWorkflowGraphCompiler,
+)
 from framework.harness.graph.conditions import ConditionPredicate
 from framework.harness.graph.dsl import (
     BoundedLoop,
@@ -29,6 +32,7 @@ from framework.harness.graph.model import (
 )
 from framework.harness.workflow.spec import HarnessRoutingRule, HarnessWorkflowSpec
 from framework.harness.graph.activity import HarnessRetryPolicy, HarnessStepSpec
+from framework.harness.graph.versioning import HARNESS_GRAPH_COMPILER_VERSION
 
 
 def test_legacy_linear_workflow_lowers_to_dependency_edges_without_fake_control_workers() -> (
@@ -66,6 +70,37 @@ def test_legacy_linear_workflow_lowers_to_dependency_edges_without_fake_control_
     }
     assert first.graph.entry_node_ids == ("collect",)
     assert first.graph.terminal_node_ids == ("report",)
+
+
+def test_compile_result_requires_the_exact_pinned_compiler_version() -> None:
+    graph = HarnessWorkflowGraphCompiler().compile(
+        HarnessWorkflowSpec(
+            workflow_id="compiler-version",
+            steps=_steps("collect"),
+            entry_step_id="collect",
+        )
+    ).graph
+
+    with pytest.raises(HarnessValidationError) as captured:
+        HarnessGraphCompileResult(
+            graph=graph,
+            declaration_mode="graph",
+            compiler_version="newsroom.harness-graph-compiler/v999",
+        )
+    assert captured.value.code == "unsupported_graph_compiler"
+
+    object.__setattr__(
+        graph,
+        "compiler_version",
+        "newsroom.harness-graph-compiler/v999",
+    )
+    with pytest.raises(HarnessValidationError) as captured:
+        HarnessGraphCompileResult(
+            graph=graph,
+            declaration_mode="graph",
+            compiler_version=HARNESS_GRAPH_COMPILER_VERSION,
+        )
+    assert captured.value.code == "graph_compiler_version_mismatch"
 
 
 def test_legacy_conditional_routes_lower_to_one_explicit_choice_with_stable_priority() -> (
