@@ -19,6 +19,7 @@ from framework.harness.graph.conditions import (
 from framework.harness.graph.definition import (
     HarnessGraphDefinition,
     HarnessGraphDefinitionReader,
+    HarnessGraphLeafBinding,
     MAX_GRAPH_DEFINITION_ACTIVITIES,
 )
 from framework.harness.graph.dsl import (
@@ -126,6 +127,7 @@ __all__ = [
     "HarnessGraphChecksumRegistry",
     "HarnessGraphDefinition",
     "HarnessGraphDefinitionReader",
+    "HarnessGraphLeafBinding",
     "HarnessGraphEdge",
     "HarnessGraphEdgeKind",
     "HarnessGraphExpression",

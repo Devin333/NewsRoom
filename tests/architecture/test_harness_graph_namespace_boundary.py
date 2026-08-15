@@ -51,6 +51,7 @@ _MOVED_PUBLIC_NAMES = {
     "HarnessGraphChecksumRegistry",
     "HarnessGraphEdge",
     "HarnessGraphEdgeKind",
+    "HarnessGraphLeafBinding",
     "HarnessGraphNode",
     "HarnessGraphNodeKind",
     "HarnessGraphDiagnostic",
@@ -160,6 +161,7 @@ def test_graph_public_api_excludes_legacy_declaration_and_compiler() -> None:
     assert {
         "HarnessGraphDefinition",
         "HarnessGraphDefinitionReader",
+        "HarnessGraphLeafBinding",
         "HarnessGraphSpec",
         "HarnessStepSpec",
         "NormalizedHarnessGraph",
