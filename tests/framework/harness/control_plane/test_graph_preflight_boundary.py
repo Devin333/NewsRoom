@@ -26,7 +26,7 @@ from framework.harness.graph.model import HarnessGraphEdge
 from framework.harness.workflow.spec import HarnessWorkflowSpec
 from framework.harness.graph.activity import HarnessStepSpec
 from framework.harness.graph.validation import HarnessGraphPreflightPolicy
-from framework.harness.workflow.validation import HarnessGraphPreflight
+from framework.harness.graph.validation import HarnessGraphPreflight
 from framework.harness.workers.result import HarnessWorkerResult
 
 
@@ -54,9 +54,9 @@ def test_static_preflight_failure_leaves_no_run_or_partial_graph_state(
             "second": lambda task: _record_worker(worker_calls, task),
         },
         graph_preflight=HarnessGraphPreflight(
-            compiler=_StaticCompiler(graph),
             policy=policy,
         ),
+        legacy_workflow_compiler=_StaticCompiler(graph),
     )
 
     with pytest.raises(HarnessValidationError) as captured:
@@ -164,6 +164,36 @@ def test_valid_explicit_graph_initializes_without_legacy_state_or_events() -> No
     assert control_plane.graph_transition_port.recover_graph(run_id).state == state
 
 
+def test_live_admission_and_replay_share_the_injected_transition_compiler() -> None:
+    workflow = HarnessWorkflowSpec(
+        workflow_id="shared-transition-compiler",
+        steps=(HarnessStepSpec("first", "script"),),
+        entry_step_id="first",
+        graph=HarnessGraphSpec(
+            graph_id="shared-transition-compiler",
+            root=StepRef("first"),
+        ),
+    )
+    compiler = _CountingCompiler()
+    control_plane = HarnessControlPlane(
+        event_port=InMemoryHarnessEventPort(),
+        worker_registry={
+            "first": lambda task: HarnessWorkerResult("succeeded", output=task)
+        },
+        legacy_workflow_compiler=compiler,
+    )
+    run_spec = HarnessRunSpec(
+        run_id="run-shared-transition-compiler",
+        workflow=workflow,
+    )
+
+    control_plane.initialize(run_spec)
+    control_plane.verify_graph_history(run_spec)
+
+    assert compiler.calls == 2
+    assert control_plane.legacy_workflow_compiler is compiler
+
+
 def test_failed_preflight_does_not_poison_same_run_id_for_corrected_spec() -> None:
     workflow = _legacy_workflow()
     valid_graph = HarnessWorkflowGraphCompiler().compile(workflow).graph
@@ -188,7 +218,8 @@ def test_failed_preflight_does_not_poison_same_run_id_for_corrected_spec() -> No
             "first": lambda task: HarnessWorkerResult("succeeded", output=task),
             "second": lambda task: HarnessWorkerResult("succeeded", output=task),
         },
-        graph_preflight=HarnessGraphPreflight(compiler=compiler),
+        graph_preflight=HarnessGraphPreflight(),
+        legacy_workflow_compiler=compiler,
     )
     run_spec = HarnessRunSpec(run_id=run_id, workflow=workflow)
 
@@ -325,6 +356,16 @@ class _StaticCompiler:
             graph=self.graph,
             declaration_mode=workflow.declaration_mode,
         )
+
+
+class _CountingCompiler:
+    def __init__(self) -> None:
+        self.calls = 0
+        self.delegate = HarnessWorkflowGraphCompiler()
+
+    def compile(self, workflow) -> HarnessGraphCompileResult:
+        self.calls += 1
+        return self.delegate.compile(workflow)
 
 
 class _SwitchingCompiler:

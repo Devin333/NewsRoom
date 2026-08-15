@@ -606,6 +606,7 @@ from framework.harness.graph import (
 )
 from framework.harness.graph.validation import (
     HarnessGraphDiagnostic,
+    HarnessGraphPreflight,
     HarnessGraphPreflightPolicy,
     HarnessGraphRegistrySnapshot,
     HarnessGraphValidationPhase,
@@ -614,9 +615,7 @@ from framework.harness.graph.validation import (
 from framework.harness.workflow import (
     DEFAULT_HARNESS_GRAPH_SCHEMA_REGISTRY,
     HarnessGraphCompileResult,
-    HarnessGraphPreflight,
     HarnessGraphSchemaRegistry,
-    HarnessPreparedGraph,
     HarnessRouteKind,
     HarnessRoutingRule,
     HarnessWorkflowContractReader,
@@ -988,7 +987,6 @@ __all__ = [
     "HarnessNodeOutputStagedWrite",
     "HarnessNodeOutputStaleOwnerError",
     "HarnessPinnedDecisionKernel",
-    "HarnessPreparedGraph",
     "HarnessStepSpec",
     "HarnessStepState",
     "HarnessStepStatus",

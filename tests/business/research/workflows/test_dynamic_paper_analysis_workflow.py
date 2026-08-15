@@ -9,7 +9,7 @@ from business.research.workflows import (
 )
 from framework.harness.graph import HarnessWorkerType
 from framework.harness.workflow import HarnessWorkflowGraphCompiler
-from framework.harness.workflow.validation import HarnessGraphPreflight
+from framework.harness.graph.validation import HarnessGraphPreflight
 
 
 def test_dynamic_variant_replaces_only_analysis_fanout():

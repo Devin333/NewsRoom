@@ -48,7 +48,7 @@ from framework.harness.graph.model import (
 )
 from framework.harness.graph.activity import HarnessStepSpec
 from framework.harness.graph.validation import HarnessGraphPreflightPolicy
-from framework.harness.workflow.validation import HarnessGraphPreflight
+from framework.harness.graph.validation import HarnessGraphPreflight
 from framework.harness.workers.result import HarnessWorkerResult
 from framework.harness.waits.models import (
     HarnessEarlySignalRetentionPolicy,

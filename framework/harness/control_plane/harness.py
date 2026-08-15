@@ -4,7 +4,7 @@ import math
 from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
 from datetime import timedelta
-from typing import TYPE_CHECKING, Any, Callable, Iterable
+from typing import TYPE_CHECKING, Any, Callable, Iterable, Literal, overload
 from uuid import uuid4
 
 from framework.events.canonical import (
@@ -179,8 +179,10 @@ from framework.harness.graph.runtime_resolution import (
 from framework.shared.time import format_datetime
 from framework.harness.graph.activity import HarnessStepSpec, HarnessWorkerType
 from framework.harness.workflow.spec import HarnessRouteKind
-from framework.harness.graph.validation import HarnessGraphPreflightPolicy
-from framework.harness.workflow.validation import HarnessGraphPreflight
+from framework.harness.graph.validation import (
+    HarnessGraphPreflight,
+    HarnessGraphPreflightPolicy,
+)
 from framework.harness.workers.result import HarnessWorkerResult, HarnessWorkerStatus
 from framework.harness.waits.models import (
     HarnessWaitApprovalEvidenceRecord,
@@ -586,6 +588,7 @@ class HarnessControlPlane:
         approval_evidence_resolver: HarnessSideEffectApprovalResolver | None = None,
         runtime_binding_authority: HarnessRuntimeBindingAuthority | None = None,
         graph_preflight: HarnessGraphPreflight | None = None,
+        legacy_workflow_compiler: object | None = None,
         graph_activity_dispatcher: HarnessGraphActivityDispatcherPort | None = None,
         graph_result_committer: HarnessGraphResultCommitterPort | None = None,
         graph_result_observer: HarnessGraphResultObserverPort | None = None,
@@ -643,7 +646,12 @@ class HarnessControlPlane:
             HarnessGraphPreflight,
         ):
             raise TypeError("graph_preflight must be HarnessGraphPreflight")
+        if legacy_workflow_compiler is not None and not callable(
+            getattr(legacy_workflow_compiler, "compile", None)
+        ):
+            raise TypeError("legacy_workflow_compiler must implement compile")
         self.runtime_binding_authority = runtime_binding_authority
+        self.legacy_workflow_compiler = legacy_workflow_compiler
         if timer_wake_port is not None and not isinstance(
             timer_wake_port,
             HarnessTimerWakePort,
@@ -820,8 +828,7 @@ class HarnessControlPlane:
                     },
                 )
 
-        compile_result = self.graph_preflight.compiler.compile(run_spec.workflow)
-        graph = compile_result.graph
+        graph = self._graph_replay_recovery(run_spec, compile_only=True)
         self.graph_preflight.validate_static(graph).raise_if_invalid()
         authority = self.runtime_binding_authority or self._legacy_runtime_authority(
             run_spec.workflow,
@@ -1708,14 +1715,39 @@ class HarnessControlPlane:
             run_spec_checksum=self._prepared_run_specs[run_spec.run_id],
         )
 
+    @overload
     def _graph_replay_recovery(
         self,
         run_spec: HarnessRunSpec,
-    ) -> tuple[HarnessGraphRecovery, NormalizedHarnessGraph]:
-        """Resolve only immutable history and the canonical pure compiler."""
+        *,
+        compile_only: Literal[True],
+    ) -> NormalizedHarnessGraph: ...
+
+    @overload
+    def _graph_replay_recovery(
+        self,
+        run_spec: HarnessRunSpec,
+        *,
+        compile_only: Literal[False] = False,
+    ) -> tuple[HarnessGraphRecovery, NormalizedHarnessGraph]: ...
+
+    def _graph_replay_recovery(
+        self,
+        run_spec: HarnessRunSpec,
+        *,
+        compile_only: bool = False,
+    ) -> NormalizedHarnessGraph | tuple[HarnessGraphRecovery, NormalizedHarnessGraph]:
+        """Compile through one pinned adapter and optionally resolve history."""
 
         if not isinstance(run_spec, HarnessRunSpec):
             raise TypeError("run_spec must be HarnessRunSpec")
+        compiler = self.legacy_workflow_compiler
+        if compiler is None:
+            compiler = HarnessWorkflowGraphCompiler()
+            self.legacy_workflow_compiler = compiler
+        compiled_graph = compiler.compile(run_spec.workflow).graph
+        if compile_only:
+            return compiled_graph
         recovery = self._require_graph_runtime().transition_port.recover_graph(
             run_spec.run_id
         )
@@ -1733,7 +1765,6 @@ class HarnessControlPlane:
                 sequence=recovery.expected_last_sequence,
                 reason="graph replay run specification checksum mismatch",
             )
-        compiled_graph = HarnessWorkflowGraphCompiler().compile(run_spec.workflow).graph
         if compiled_graph != recovery.graph:
             raise EventReplayMismatchError(
                 sequence=1,

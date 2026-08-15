@@ -37,7 +37,7 @@ from framework.harness.graph.dsl import (
     StepRef,
 )
 from framework.harness.graph.validation import HarnessGraphPreflightPolicy
-from framework.harness.workflow.validation import HarnessGraphPreflight
+from framework.harness.graph.validation import HarnessGraphPreflight
 
 
 _CREATED_AT = datetime(2026, 7, 31, 5, 0, tzinfo=UTC)

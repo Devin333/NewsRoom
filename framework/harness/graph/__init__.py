@@ -92,6 +92,7 @@ from framework.harness.graph.versioning import (
 from framework.harness.side_effects.models import (
     HarnessTerminalSideEffectPolicy,
 )
+from framework.harness.graph.validation import HarnessGraphPreflight
 
 __all__ = [
     "ALLOWED_CONDITION_PATH_PREFIXES",
@@ -139,6 +140,7 @@ __all__ = [
     "HarnessGraphExpression",
     "HarnessGraphNode",
     "HarnessGraphNodeKind",
+    "HarnessGraphPreflight",
     "HarnessGraphSpec",
     "HarnessJoinContract",
     "HarnessLeafActivityKind",

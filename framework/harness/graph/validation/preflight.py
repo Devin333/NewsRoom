@@ -2,14 +2,9 @@ from __future__ import annotations
 
 import re
 from collections.abc import Mapping
-from dataclasses import dataclass
 
-from framework.harness.workflow.compiler import (
-    HarnessGraphCompileResult,
-    HarnessWorkflowGraphCompiler,
-)
+from framework.harness.control_plane.errors import HarnessValidationError
 from framework.harness.graph.model import HarnessExecutableNode, NormalizedHarnessGraph
-from framework.harness.workflow.spec import HarnessWorkflowSpec
 from framework.harness.graph.activity import HarnessWorkerType
 from framework.harness.graph.validation.dataflow import validate_dataflow
 from framework.harness.graph.validation.models import (
@@ -30,47 +25,15 @@ from framework.harness.graph.validation.structural import validate_structure
 from framework.harness.graph.versioning import (
     NORMALIZED_HARNESS_GRAPH_SCHEMA,
 )
-from framework.harness.workflow.versioning import (
-    DEFAULT_HARNESS_GRAPH_SCHEMA_REGISTRY,
-    HarnessGraphContractKind,
-)
-@dataclass(frozen=True, slots=True)
-class HarnessPreparedGraph:
-    compile_result: HarnessGraphCompileResult
-    validation: HarnessGraphValidationResult
-
-    @property
-    def graph(self) -> NormalizedHarnessGraph:
-        return self.compile_result.graph
-
-    @property
-    def is_valid(self) -> bool:
-        return self.validation.is_valid
-
-    def require_valid(self) -> NormalizedHarnessGraph:
-        self.validation.raise_if_invalid()
-        return self.graph
 
 
 class HarnessGraphPreflight:
     def __init__(
         self,
         *,
-        compiler: HarnessWorkflowGraphCompiler | None = None,
         policy: HarnessGraphPreflightPolicy | None = None,
     ) -> None:
-        self.compiler = compiler or HarnessWorkflowGraphCompiler()
         self.policy = policy or HarnessGraphPreflightPolicy()
-
-    def prepare(
-        self,
-        workflow: HarnessWorkflowSpec,
-        *,
-        registry: HarnessGraphRegistrySnapshot,
-    ) -> HarnessPreparedGraph:
-        compile_result = self.compiler.compile(workflow)
-        validation = self.validate(compile_result.graph, registry=registry)
-        return HarnessPreparedGraph(compile_result=compile_result, validation=validation)
 
     def validate(
         self,
@@ -109,13 +72,14 @@ class HarnessGraphPreflight:
 
     @staticmethod
     def _require_executable_schema(graph: NormalizedHarnessGraph) -> None:
-        DEFAULT_HARNESS_GRAPH_SCHEMA_REGISTRY.require_executable(
-            HarnessGraphContractKind.NORMALIZED_GRAPH,
-            graph.schema_version,
-        )
         if graph.schema_version != NORMALIZED_HARNESS_GRAPH_SCHEMA:
-            raise AssertionError(
-                "schema registry accepted an unexpected normalized graph schema"
+            raise HarnessValidationError(
+                "unsupported normalized graph schema",
+                code="unsupported_graph_schema",
+                details={
+                    "contract_kind": "normalized_graph",
+                    "schema": str(graph.schema_version),
+                },
             )
 
     def _result(
@@ -134,7 +98,7 @@ class HarnessGraphPreflight:
         )
 
 
-__all__ = ["HarnessGraphPreflight", "HarnessPreparedGraph"]
+__all__ = ["HarnessGraphPreflight"]
 
 
 _EXACT_REFERENCE_PATTERN = re.compile(

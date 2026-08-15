@@ -32,21 +32,36 @@ from framework.harness.graph.model import (
 from framework.harness.workflow.spec import HarnessWorkflowSpec
 from framework.harness.graph.activity import HarnessStepSpec
 from framework.harness.graph.validation import (
+    HarnessGraphPreflight,
     HarnessGraphPreflightPolicy,
     HarnessGraphRegistrySnapshot,
     graph_contract_references,
 )
-from framework.harness.workflow.validation import HarnessGraphPreflight
 
 
 def test_valid_sequence_graph_passes_every_preflight_phase() -> None:
-    prepared = _valid_prepared()
+    graph = _valid_graph()
+    validation = _preflight(graph)
 
-    assert prepared.is_valid
-    assert prepared.validation.diagnostics == ()
-    assert prepared.require_valid() == prepared.graph
-    assert prepared.graph.input_keys == ("paper",)
-    assert prepared.graph.terminal_output_keys == ("report",)
+    assert validation.is_valid
+    assert validation.diagnostics == ()
+    validation.raise_if_invalid()
+    assert graph.input_keys == ("paper",)
+    assert graph.terminal_output_keys == ("report",)
+
+
+def test_preflight_rejects_unknown_normalized_graph_schema() -> None:
+    graph = _valid_graph()
+    object.__setattr__(graph, "schema_version", "newsroom.harness-graph/v999")
+
+    with pytest.raises(HarnessValidationError) as captured:
+        _preflight(graph)
+
+    assert captured.value.code == "unsupported_graph_schema"
+    assert captured.value.details == {
+        "contract_kind": "normalized_graph",
+        "schema": "newsroom.harness-graph/v999",
+    }
 
 
 def test_control_fact_declaration_requires_exact_deterministic_gate() -> None:
@@ -407,7 +422,7 @@ def test_registry_requires_every_exact_reference_and_parallel_safety_capability(
 
 
 def test_policy_enforces_size_depth_activation_and_parallel_capacity() -> None:
-    graph = _valid_prepared().graph
+    graph = _valid_graph()
     policy = HarnessGraphPreflightPolicy(
         max_nodes=1,
         max_edges=1,
@@ -452,7 +467,7 @@ def test_preflight_benchmark_fixture_handles_1000_nodes_and_5000_edges() -> None
     assert elapsed < 5.0
 
 
-def _valid_prepared():
+def _valid_graph() -> NormalizedHarnessGraph:
     workflow = HarnessWorkflowSpec(
         workflow_id="valid",
         steps=(
@@ -479,8 +494,7 @@ def _valid_prepared():
             terminal_output_keys=("report",),
         ),
     )
-    graph = HarnessWorkflowGraphCompiler().compile(workflow).graph
-    return HarnessGraphPreflight().prepare(workflow, registry=_snapshot(graph))
+    return HarnessWorkflowGraphCompiler().compile(workflow).graph
 
 
 def _preflight(graph: NormalizedHarnessGraph):

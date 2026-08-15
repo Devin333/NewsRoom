@@ -46,7 +46,6 @@
       "framework/harness/workflow/compiler.py",
       "framework/harness/workflow/reader.py",
       "framework/harness/workflow/spec.py",
-      "framework/harness/workflow/validation/preflight.py",
       "tests/architecture/test_harness_graph_authority.py",
       "tests/architecture/test_harness_graph_namespace_boundary.py",
       "tests/fixtures/task_plan.py",

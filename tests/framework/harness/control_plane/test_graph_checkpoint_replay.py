@@ -526,7 +526,7 @@ def test_completed_compensation_replays_from_committed_effect_evidence() -> None
         _parallel_compensation_fixture,
     )
     from framework.harness.graph.validation import HarnessGraphPreflightPolicy
-    from framework.harness.workflow.validation import HarnessGraphPreflight
+    from framework.harness.graph.validation import HarnessGraphPreflight
 
     fixture = _parallel_compensation_fixture("run-replay-completed-compensation")
     fixture.control_plane.graph_preflight = HarnessGraphPreflight(

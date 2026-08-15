@@ -30,7 +30,7 @@ from framework.harness.graph.validation import (
     HarnessGraphRegistrySnapshot,
     graph_contract_references,
 )
-from framework.harness.workflow.validation import HarnessGraphPreflight
+from framework.harness.graph.validation import HarnessGraphPreflight
 
 
 def test_wait_scope_and_correlation_sources_must_be_structural_graph_paths() -> None:

@@ -10,6 +10,7 @@ from framework.harness.graph.validation.policy import (
     HarnessGraphPreflightPolicy,
     validate_policy,
 )
+from framework.harness.graph.validation.preflight import HarnessGraphPreflight
 from framework.harness.graph.validation.registry import (
     HarnessGraphRegistrySnapshot,
     graph_contract_references,
@@ -21,6 +22,7 @@ from framework.harness.graph.validation.structural import validate_structure
 
 __all__ = [
     "HarnessGraphDiagnostic",
+    "HarnessGraphPreflight",
     "HarnessGraphPreflightPolicy",
     "HarnessGraphRegistrySnapshot",
     "HarnessGraphValidationPhase",
