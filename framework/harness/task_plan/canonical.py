@@ -6,7 +6,7 @@ from typing import Any, TypeVar
 
 from framework.events.canonical import canonical_json_bytes
 from framework.harness.control_plane.errors import HarnessValidationError
-from framework.harness.workflow.canonical import (
+from framework.harness.graph.canonical import (
     canonical_checksum,
     freeze_json,
     thaw_json,

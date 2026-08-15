@@ -36,7 +36,7 @@ from framework.harness.workflow.binding_authority import (
     HarnessRuntimeBindingAuthority,
     HarnessWorkerBinding,
 )
-from framework.harness.workflow.dsl import (
+from framework.harness.graph.dsl import (
     HarnessGraphSpec,
     ParallelAll,
     ParallelBranch,
@@ -47,7 +47,7 @@ from framework.harness.workflow.dsl import (
 )
 from framework.harness.workflow.graph import HarnessControlNode
 from framework.harness.workflow.spec import HarnessWorkflowSpec
-from framework.harness.workflow.step import HarnessStepSpec
+from framework.harness.graph.activity import HarnessStepSpec
 from framework.harness.workflow.validation import (
     HarnessGraphPreflight,
     HarnessGraphPreflightPolicy,

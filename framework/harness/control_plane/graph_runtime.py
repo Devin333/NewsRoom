@@ -30,7 +30,7 @@ from framework.harness.control_plane.graph_state import (
     HarnessGraphState,
 )
 from framework.harness.control_plane.state import HarnessRunSpec
-from framework.harness.workflow.canonical import (
+from framework.harness.graph.canonical import (
     canonical_checksum,
     freeze_json,
     required_text,
@@ -42,7 +42,7 @@ from framework.harness.workflow.graph import (
     NormalizedHarnessGraph,
 )
 from framework.harness.workflow.validation import HarnessGraphPreflightPolicy
-from framework.harness.workflow.versioning import HARNESS_GRAPH_RUNTIME_VERSION
+from framework.harness.graph.versioning import HARNESS_GRAPH_RUNTIME_VERSION
 from framework.shared.time import ensure_utc, format_datetime
 
 

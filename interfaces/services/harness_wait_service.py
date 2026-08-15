@@ -18,7 +18,7 @@ from framework.harness.waits.models import (
     HarnessWaitTimeoutRecord,
     HarnessWaitTimerWakeRecord,
 )
-from framework.harness.workflow.canonical import (
+from framework.harness.graph.canonical import (
     canonical_checksum,
     exact_reference,
     freeze_json,

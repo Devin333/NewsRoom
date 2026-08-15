@@ -39,13 +39,13 @@ from framework.harness.control_plane.step_lifecycle import (
     StepWorkerObservation,
 )
 from framework.harness.quality.verdict import HarnessQualityVerdict
-from framework.harness.workflow.step import HarnessRetryPolicy, HarnessStepSpec
+from framework.harness.graph.activity import HarnessRetryPolicy, HarnessStepSpec
 from framework.harness.workflow.graph import (
     HarnessContractKind,
     HarnessContractReference,
     HarnessGraphNodeKind,
 )
-from framework.harness.workflow.versioning import HARNESS_STEP_LIFECYCLE_VERSION
+from framework.harness.graph.versioning import HARNESS_STEP_LIFECYCLE_VERSION
 from framework.harness.workers.result import HarnessWorkerResult
 from framework.shared.json import stable_json_dumps
 

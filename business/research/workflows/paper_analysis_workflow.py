@@ -4,17 +4,17 @@ from dataclasses import replace
 
 from framework.events.canonical import checksum_for
 from framework.harness.side_effects import HarnessTerminalSideEffectPolicy
-from framework.harness.workflow import (
+from framework.harness.graph import (
     HarnessGraphSpec,
     HarnessStepSpec,
     HarnessWorkerType,
-    HarnessWorkflowSpec,
     ParallelAll,
     ParallelBranch,
     Sequence,
     StepRef,
     VerifiedAggregation,
 )
+from framework.harness.workflow import HarnessWorkflowSpec
 
 from business.research.ports.artifact_publication import (
     RESEARCH_ARTIFACT_EFFECT_KIND,

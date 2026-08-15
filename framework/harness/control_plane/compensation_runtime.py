@@ -10,7 +10,7 @@ from framework.harness.control_plane.graph_state import (
     HarnessNodeInstanceState,
     HarnessNodeInstanceStatus,
 )
-from framework.harness.workflow.canonical import thaw_json
+from framework.harness.graph.canonical import thaw_json
 from framework.harness.workflow.graph import HarnessExecutableNode
 
 

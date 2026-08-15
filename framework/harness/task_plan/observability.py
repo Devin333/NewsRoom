@@ -11,7 +11,7 @@ from typing import Any
 from framework.harness.control_plane.errors import HarnessValidationError
 from framework.harness.task_plan.models import TaskPlanProjection, ValidatedTaskPlan
 from framework.harness.task_plan.store import TaskPlanEvent
-from framework.harness.workflow.canonical import required_text
+from framework.harness.graph.canonical import required_text
 
 
 _METRIC_LABELS = frozenset(

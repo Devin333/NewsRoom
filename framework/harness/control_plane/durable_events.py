@@ -104,7 +104,7 @@ from framework.harness.workflow.graph import (
     HarnessExecutableNode,
     NormalizedHarnessGraph,
 )
-from framework.harness.workflow.versioning import (
+from framework.harness.graph.versioning import (
     HARNESS_GRAPH_REDUCER_VERSION,
     HARNESS_GRAPH_STATE_SCHEMA,
 )

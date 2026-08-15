@@ -8,7 +8,7 @@ from typing import Any
 
 from framework.harness.control_plane.errors import HarnessValidationError
 from framework.harness.control_plane.graph_state import HarnessGraphReference
-from framework.harness.workflow.canonical import (
+from framework.harness.graph.canonical import (
     canonical_checksum,
     exact_reference,
     freeze_json,
@@ -19,7 +19,7 @@ from framework.harness.workflow.graph import (
     HarnessContractKind,
     HarnessContractReference,
 )
-from framework.harness.workflow.versioning import (
+from framework.harness.graph.versioning import (
     HARNESS_GRAPH_CONTROL_POLICY_VERSION,
     HARNESS_GRAPH_DECISION_SCHEMA,
     HARNESS_GRAPH_EVALUATOR_VERSION,

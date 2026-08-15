@@ -5,8 +5,8 @@ from datetime import datetime
 from threading import RLock
 
 from framework.harness.control_plane.errors import HarnessValidationError
-from framework.harness.workflow.canonical import canonical_checksum
-from framework.harness.workflow.dsl import WaitKind
+from framework.harness.graph.canonical import canonical_checksum
+from framework.harness.graph.dsl import WaitKind
 from framework.harness.waits.models import (
     HarnessWaitRegistrationRecord,
     HarnessWaitTimeoutRecord,

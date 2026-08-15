@@ -9,7 +9,7 @@ import pytest
 import business.research.workflows as research_workflows
 from business.research.workflows import build_paper_analysis_workflow_spec
 from framework.harness.control_plane.gate_registry import GateReference
-from framework.harness.workflow import HarnessWorkerType
+from framework.harness.graph import HarnessWorkerType
 
 
 _REPOSITORY_ROOT = Path(__file__).resolve().parents[4]

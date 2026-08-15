@@ -7,7 +7,8 @@ from business.research.workflows import (
     build_paper_analysis_workflow_spec,
     build_research_analysis_task_plan_policy,
 )
-from framework.harness.workflow import HarnessWorkerType, HarnessWorkflowGraphCompiler
+from framework.harness.graph import HarnessWorkerType
+from framework.harness.workflow import HarnessWorkflowGraphCompiler
 from framework.harness.workflow.validation import HarnessGraphPreflight
 
 

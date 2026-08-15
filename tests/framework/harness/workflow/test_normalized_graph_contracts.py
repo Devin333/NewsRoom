@@ -7,7 +7,7 @@ import pytest
 
 from framework.harness.control_plane.errors import HarnessValidationError
 from framework.harness.side_effects.models import HarnessTerminalSideEffectPolicy
-from framework.harness.workflow.canonical import canonical_checksum
+from framework.harness.graph.canonical import canonical_checksum
 from framework.harness.workflow.graph import (
     HarnessContractKind,
     HarnessContractReference,
@@ -18,14 +18,16 @@ from framework.harness.workflow.graph import (
     HarnessGraphNodeKind,
     NormalizedHarnessGraph,
 )
-from framework.harness.workflow.versioning import (
-    DEFAULT_HARNESS_GRAPH_SCHEMA_REGISTRY,
+from framework.harness.graph.versioning import (
     HARNESS_GRAPH_DSL_SCHEMA,
     HARNESS_GRAPH_EVENT_SCHEMAS,
     HARNESS_GRAPH_INSPECTION_SCHEMA,
     HARNESS_GRAPH_RUNTIME_VERSION,
-    LEGACY_STATE_SCHEMA,
     NORMALIZED_HARNESS_GRAPH_SCHEMA,
+)
+from framework.harness.workflow.versioning import (
+    DEFAULT_HARNESS_GRAPH_SCHEMA_REGISTRY,
+    LEGACY_STATE_SCHEMA,
     HarnessGraphContractKind,
 )
 

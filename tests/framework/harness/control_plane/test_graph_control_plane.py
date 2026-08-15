@@ -37,9 +37,9 @@ from framework.harness.control_plane.harness import (
 from framework.harness.control_plane.policy import HarnessBudget
 from framework.harness.control_plane.scheduler import HarnessScheduler
 from framework.harness.control_plane.state import HarnessRunSpec, HarnessStepStatus
-from framework.harness.workflow.canonical import canonical_checksum
-from framework.harness.workflow.conditions import ConditionPredicate
-from framework.harness.workflow.dsl import (
+from framework.harness.graph.canonical import canonical_checksum
+from framework.harness.graph.conditions import ConditionPredicate
+from framework.harness.graph.dsl import (
     Choice,
     ChoiceBranch,
     HarnessGraphSpec,
@@ -51,7 +51,7 @@ from framework.harness.workflow.graph import (
     NormalizedHarnessGraph,
 )
 from framework.harness.workflow.spec import HarnessRoutingRule, HarnessWorkflowSpec
-from framework.harness.workflow.step import HarnessStepSpec
+from framework.harness.graph.activity import HarnessStepSpec
 from framework.harness.workflow.validation import (
     HarnessGraphPreflight,
     HarnessGraphPreflightPolicy,

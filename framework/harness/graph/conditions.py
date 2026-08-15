@@ -7,8 +7,8 @@ from enum import StrEnum
 from typing import Any, TypeAlias
 
 from framework.harness.control_plane.errors import HarnessValidationError
-from framework.harness.workflow.canonical import freeze_json, required_text, thaw_json
-from framework.harness.workflow.versioning import HARNESS_CONDITION_POLICY_VERSION
+from framework.harness.graph.canonical import freeze_json, required_text, thaw_json
+from framework.harness.graph.versioning import HARNESS_CONDITION_POLICY_VERSION
 
 
 ALLOWED_CONDITION_PATH_PREFIXES = (

@@ -5,8 +5,8 @@ import pytest
 from framework.harness.control_plane.errors import HarnessValidationError
 from framework.harness.side_effects.models import HarnessTerminalSideEffectPolicy
 from framework.harness.workflow.compiler import HarnessWorkflowGraphCompiler
-from framework.harness.workflow.conditions import ConditionPredicate
-from framework.harness.workflow.dsl import (
+from framework.harness.graph.conditions import ConditionPredicate
+from framework.harness.graph.dsl import (
     BoundedLoop,
     Choice,
     ChoiceBranch,
@@ -28,7 +28,7 @@ from framework.harness.workflow.graph import (
     HarnessGraphNodeKind,
 )
 from framework.harness.workflow.spec import HarnessRoutingRule, HarnessWorkflowSpec
-from framework.harness.workflow.step import HarnessRetryPolicy, HarnessStepSpec
+from framework.harness.graph.activity import HarnessRetryPolicy, HarnessStepSpec
 
 
 def test_legacy_linear_workflow_lowers_to_dependency_edges_without_fake_control_workers() -> (

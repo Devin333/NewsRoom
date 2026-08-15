@@ -56,7 +56,7 @@ from framework.harness.runtime.result_models import (
     ResultSensitivity,
 )
 from framework.harness.runtime.result_policy import GraphArtifactPersistenceConfig
-from framework.harness.workflow.canonical import freeze_json, thaw_json
+from framework.harness.graph.canonical import freeze_json, thaw_json
 from framework.shared.time import utc_now
 
 

@@ -20,7 +20,7 @@ from framework.harness.control_plane.graph_state import (
 from framework.harness.control_plane.policy import HarnessBudgetSnapshot
 from framework.harness.control_plane.state import HarnessStepState, HarnessStepStatus
 from framework.harness.quality.verdict import HarnessQualityVerdict
-from framework.harness.workflow.canonical import (
+from framework.harness.graph.canonical import (
     canonical_checksum,
     freeze_json,
     optional_text,
@@ -31,8 +31,8 @@ from framework.harness.workflow.graph import (
     HarnessContractKind,
     HarnessContractReference,
 )
-from framework.harness.workflow.step import HarnessStepSpec
-from framework.harness.workflow.versioning import HARNESS_STEP_LIFECYCLE_VERSION
+from framework.harness.graph.activity import HarnessStepSpec
+from framework.harness.graph.versioning import HARNESS_STEP_LIFECYCLE_VERSION
 from framework.harness.workers.result import HarnessWorkerResult, HarnessWorkerStatus
 
 

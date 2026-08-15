@@ -6,7 +6,7 @@ from enum import StrEnum
 from typing import Any
 
 from framework.harness.control_plane.errors import HarnessValidationError
-from framework.harness.workflow.canonical import freeze_json, required_text, thaw_json
+from framework.harness.graph.canonical import freeze_json, required_text, thaw_json
 
 
 class HarnessGraphValidationPhase(StrEnum):

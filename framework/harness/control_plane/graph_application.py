@@ -80,7 +80,7 @@ from framework.harness.side_effects.models import (
 )
 from framework.harness.side_effects.ports import HarnessSideEffectStorePort
 from framework.harness.workflow.binding_authority import HarnessActivityCapabilities
-from framework.harness.workflow.canonical import (
+from framework.harness.graph.canonical import (
     canonical_checksum,
     freeze_json,
     required_text,
@@ -97,7 +97,7 @@ from framework.harness.workflow.graph import (
     HarnessMergeKind,
     NormalizedHarnessGraph,
 )
-from framework.harness.workflow.dsl import WaitKind
+from framework.harness.graph.dsl import WaitKind
 from framework.harness.workflow.validation import HarnessGraphPreflightPolicy
 from framework.harness.waits.models import (
     HarnessSignalInboxEntry,

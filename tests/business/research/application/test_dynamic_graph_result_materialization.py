@@ -24,7 +24,7 @@ from framework.harness.runtime import (
     HarnessGraphResultRuntime,
     HarnessSubAgentResultAdapter,
 )
-from framework.harness.workflow import HarnessWorkerType
+from framework.harness.graph import HarnessWorkerType
 from tests.framework.harness.runtime.test_materializer import (
     RecordingArtifactPort,
     RecordingAttempts,

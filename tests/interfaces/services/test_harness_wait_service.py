@@ -11,9 +11,9 @@ from framework.harness.control_plane.harness import (
 )
 from framework.harness.control_plane.policy import HarnessBudget
 from framework.harness.control_plane.state import HarnessRunSpec
-from framework.harness.workflow.dsl import HarnessGraphSpec, Sequence, StepRef, Wait
+from framework.harness.graph.dsl import HarnessGraphSpec, Sequence, StepRef, Wait
 from framework.harness.workflow.spec import HarnessWorkflowSpec
-from framework.harness.workflow.step import HarnessStepSpec
+from framework.harness.graph.activity import HarnessStepSpec
 from framework.harness.workers.result import HarnessWorkerResult
 from framework.harness.waits.models import HarnessWaitScope, HarnessWaitTimerWakeRecord
 from interfaces.models.actor import ActorContext

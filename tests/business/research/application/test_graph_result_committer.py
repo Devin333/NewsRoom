@@ -36,10 +36,10 @@ from framework.harness.runtime import (
     RetentionClass,
 )
 from framework.harness.workflow import HarnessWorkflowGraphCompiler
-from framework.harness.workflow.dsl import HarnessGraphSpec, StepRef
+from framework.harness.graph.dsl import HarnessGraphSpec, StepRef
 from framework.harness.workflow.graph import HarnessExecutableNode
 from framework.harness.workflow.spec import HarnessWorkflowSpec
-from framework.harness.workflow.step import HarnessStepSpec
+from framework.harness.graph.activity import HarnessStepSpec
 from framework.harness.workers.result import HarnessWorkerResult
 from framework.shared.json import stable_json_dumps
 from tests.framework.harness.runtime.test_graph_result_runtime import (

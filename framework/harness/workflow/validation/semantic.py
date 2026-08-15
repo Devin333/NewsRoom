@@ -3,13 +3,13 @@ from __future__ import annotations
 from collections import Counter
 from collections.abc import Mapping
 
-from framework.harness.workflow.conditions import (
+from framework.harness.graph.conditions import (
     ConditionAll,
     ConditionAny,
     ConditionPredicate,
     HarnessCondition,
 )
-from framework.harness.workflow.dsl import WaitKind
+from framework.harness.graph.dsl import WaitKind
 from framework.harness.workflow.graph import (
     HarnessCompensationReference,
     HarnessControlNode,
@@ -23,7 +23,7 @@ from framework.harness.workflow.validation.models import (
     HarnessGraphValidationPhase,
     diagnostic,
 )
-from framework.harness.workflow.versioning import HARNESS_CONDITION_POLICY_VERSION
+from framework.harness.graph.versioning import HARNESS_CONDITION_POLICY_VERSION
 
 
 _WAIT_SCOPE_PATH_PREFIX = "graph.inputs."

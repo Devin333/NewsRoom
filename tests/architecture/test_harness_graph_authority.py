@@ -41,10 +41,8 @@ _LEGACY_RUNTIME_AUTHORITY_MARKERS = (
 
 def test_harness_graph_modules_do_not_import_outer_layers() -> None:
     graph_modules = (
-        Path("framework/harness/workflow/canonical.py"),
-        Path("framework/harness/workflow/conditions.py"),
+        *sorted(Path("framework/harness/graph").glob("*.py")),
         Path("framework/harness/workflow/compiler.py"),
-        Path("framework/harness/workflow/dsl.py"),
         Path("framework/harness/workflow/graph.py"),
         Path("framework/harness/workflow/reader.py"),
         Path("framework/harness/workflow/versioning.py"),

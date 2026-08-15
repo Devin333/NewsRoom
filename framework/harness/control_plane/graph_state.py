@@ -12,7 +12,7 @@ from framework.harness.waits.models import (
     HarnessSignalInboxEntry,
     HarnessSignalInboxEntryStatus,
 )
-from framework.harness.workflow.canonical import (
+from framework.harness.graph.canonical import (
     canonical_checksum,
     exact_reference,
     freeze_json,
@@ -20,17 +20,17 @@ from framework.harness.workflow.canonical import (
     required_text,
     thaw_json,
 )
-from framework.harness.workflow.dsl import WaitKind
+from framework.harness.graph.dsl import WaitKind
 from framework.harness.workflow.graph import (
     HarnessContractKind,
     HarnessContractReference,
     HarnessGraphNodeKind,
 )
-from framework.harness.workflow.versioning import (
+from framework.harness.graph.versioning import (
     HARNESS_GRAPH_RUNTIME_VERSION,
     HARNESS_GRAPH_STATE_SCHEMA,
-    LEGACY_STATE_SCHEMA,
 )
+from framework.harness.workflow.versioning import LEGACY_STATE_SCHEMA
 
 
 _CHECKSUM_PATTERN = re.compile(r"^sha256:[0-9a-f]{64}$")

@@ -29,9 +29,9 @@ from framework.harness.runtime import (
     ResultProvenance,
     RetentionClass,
 )
-from framework.harness.workflow.dsl import HarnessGraphSpec, StepRef
+from framework.harness.graph.dsl import HarnessGraphSpec, StepRef
 from framework.harness.workflow.spec import HarnessWorkflowSpec
-from framework.harness.workflow.step import HarnessStepSpec
+from framework.harness.graph.activity import HarnessStepSpec
 from framework.harness.workers.result import HarnessWorkerResult, HarnessWorkerStatus
 
 

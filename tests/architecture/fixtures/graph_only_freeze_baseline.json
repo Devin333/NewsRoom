@@ -3,116 +3,53 @@
     "import_edges": {
       "business/research/application/graph_result_committer.py|<module>|framework.harness.workflow.graph|HarnessExecutableNode,NormalizedHarnessGraph": 1,
       "business/research/workflows/paper_analysis_task_plan.py|<module>|framework.harness.workflow.binding_authority|HarnessWorkerBinding": 1,
-      "business/research/workflows/paper_analysis_task_plan.py|<module>|framework.harness.workflow.step|HarnessWorkerType": 1,
-      "business/research/workflows/paper_analysis_workflow.py|<module>|framework.harness.workflow|HarnessGraphSpec,HarnessStepSpec,HarnessWorkerType,HarnessWorkflowSpec,ParallelAll,ParallelBranch,Sequence,StepRef,VerifiedAggregation": 1,
+      "business/research/workflows/paper_analysis_workflow.py|<module>|framework.harness.workflow|HarnessWorkflowSpec": 1,
       "framework/__init__.py|<module>|framework.workflow.runtime.run_result|RunResult": 1,
       "framework/__init__.py|<module>|framework.workflow.runtime.runner|WorkflowRunner": 1,
-      "framework/harness/__init__.py|<module>|framework.harness.workflow|BoundedLoop,Choice,ChoiceBranch,CompensationBinding,ConditionAll,ConditionAny,ConditionOperator,ConditionPredicate,DEFAULT_HARNESS_GRAPH_SCHEMA_REGISTRY,HarnessBranch,HarnessCompensationReference,HarnessContractKind,HarnessContractReference,HarnessControlNode,HarnessExecutableNode,HarnessGraphChecksumRegistry,HarnessGraphCompileResult,HarnessGraphDiagnostic,HarnessGraphEdge,HarnessGraphEdgeKind,HarnessGraphNodeKind,HarnessGraphPreflight,HarnessGraphPreflightPolicy,HarnessGraphRegistrySnapshot,HarnessGraphSchemaRegistry,HarnessGraphSpec,HarnessGraphValidationPhase,HarnessGraphValidationResult,HarnessJoinContract,HarnessLoopContract,HarnessMergeContract,HarnessMergeKind,HarnessPreparedGraph,HarnessRetryPolicy,HarnessRouteKind,HarnessRoutingRule,HarnessStepSpec,HarnessWorkerType,HarnessWorkflowContractReader,HarnessWorkflowGraphCompiler,HarnessWorkflowSpec,NormalizedHarnessGraph,ParallelAll,ParallelAny,ParallelBranch,ParallelMerge,PureMerge,Sequence,StepRef,VerifiedAggregation,Wait,WaitKind,WaitTimeoutPolicy": 1,
-      "framework/harness/control_plane/compensation_runtime.py|<module>|framework.harness.workflow.canonical|thaw_json": 1,
+      "framework/harness/__init__.py|<module>|framework.harness.workflow|DEFAULT_HARNESS_GRAPH_SCHEMA_REGISTRY,HarnessBranch,HarnessCompensationReference,HarnessContractKind,HarnessContractReference,HarnessControlNode,HarnessExecutableNode,HarnessGraphChecksumRegistry,HarnessGraphCompileResult,HarnessGraphDiagnostic,HarnessGraphEdge,HarnessGraphEdgeKind,HarnessGraphNodeKind,HarnessGraphPreflight,HarnessGraphPreflightPolicy,HarnessGraphRegistrySnapshot,HarnessGraphSchemaRegistry,HarnessGraphValidationPhase,HarnessGraphValidationResult,HarnessJoinContract,HarnessLoopContract,HarnessMergeContract,HarnessMergeKind,HarnessPreparedGraph,HarnessRouteKind,HarnessRoutingRule,HarnessWorkflowContractReader,HarnessWorkflowGraphCompiler,HarnessWorkflowSpec,NormalizedHarnessGraph": 1,
       "framework/harness/control_plane/compensation_runtime.py|<module>|framework.harness.workflow.graph|HarnessExecutableNode": 1,
       "framework/harness/control_plane/durable_events.py|<module>|framework.harness.workflow.graph|HarnessContractReference,HarnessExecutableNode,NormalizedHarnessGraph": 1,
-      "framework/harness/control_plane/durable_events.py|<module>|framework.harness.workflow.versioning|HARNESS_GRAPH_REDUCER_VERSION,HARNESS_GRAPH_STATE_SCHEMA": 1,
-      "framework/harness/control_plane/gates.py|<module>|framework.harness.workflow.step|HarnessStepSpec,HarnessWorkerType": 1,
       "framework/harness/control_plane/graph_application.py|<module>|framework.harness.workflow.binding_authority|HarnessActivityCapabilities": 1,
-      "framework/harness/control_plane/graph_application.py|<module>|framework.harness.workflow.canonical|canonical_checksum,freeze_json,required_text,thaw_json": 1,
-      "framework/harness/control_plane/graph_application.py|<module>|framework.harness.workflow.dsl|WaitKind": 1,
       "framework/harness/control_plane/graph_application.py|<module>|framework.harness.workflow.graph|HarnessContractKind,HarnessContractReference,HarnessControlNode,HarnessExecutableNode,HarnessGraphEdgeKind,HarnessGraphNode,HarnessGraphNodeKind,HarnessMergeKind,NormalizedHarnessGraph": 1,
       "framework/harness/control_plane/graph_application.py|<module>|framework.harness.workflow.validation|HarnessGraphPreflightPolicy": 1,
-      "framework/harness/control_plane/graph_checkpoint.py|<module>|framework.harness.workflow.canonical|canonical_checksum,required_text": 1,
       "framework/harness/control_plane/graph_checkpoint.py|<module>|framework.harness.workflow.graph|NormalizedHarnessGraph": 1,
-      "framework/harness/control_plane/graph_checkpoint.py|<module>|framework.harness.workflow.versioning|HARNESS_GRAPH_CHECKPOINT_SCHEMA,HARNESS_GRAPH_COMPILER_VERSION,HARNESS_GRAPH_CONTROL_POLICY_VERSION,HARNESS_GRAPH_EVALUATOR_VERSION,HARNESS_GRAPH_REDUCER_VERSION,HARNESS_GRAPH_RUNTIME_VERSION,HARNESS_GRAPH_STATE_SCHEMA,HARNESS_STEP_LIFECYCLE_VERSION,LEGACY_CHECKPOINT_SCHEMA,LEGACY_EVENT_SCHEMA,LEGACY_STATE_SCHEMA": 1,
-      "framework/harness/control_plane/graph_decision.py|<module>|framework.harness.workflow.canonical|canonical_checksum,exact_reference,freeze_json,required_text,thaw_json": 1,
+      "framework/harness/control_plane/graph_checkpoint.py|<module>|framework.harness.workflow.versioning|LEGACY_CHECKPOINT_SCHEMA,LEGACY_EVENT_SCHEMA,LEGACY_STATE_SCHEMA": 1,
       "framework/harness/control_plane/graph_decision.py|<module>|framework.harness.workflow.graph|HarnessContractKind,HarnessContractReference": 1,
-      "framework/harness/control_plane/graph_decision.py|<module>|framework.harness.workflow.versioning|HARNESS_GRAPH_CONTROL_POLICY_VERSION,HARNESS_GRAPH_DECISION_SCHEMA,HARNESS_GRAPH_EVALUATOR_VERSION,HARNESS_STEP_LIFECYCLE_VERSION": 1,
-      "framework/harness/control_plane/graph_evaluator.py|<module>|framework.harness.workflow.canonical|canonical_checksum,exact_reference,freeze_json,required_text,thaw_json": 1,
-      "framework/harness/control_plane/graph_evaluator.py|<module>|framework.harness.workflow.conditions|ConditionAll,ConditionAny,ConditionPredicate,HarnessCondition,evaluate_condition,resolve_condition_path": 1,
-      "framework/harness/control_plane/graph_evaluator.py|<module>|framework.harness.workflow.dsl|WaitKind,WaitTimeoutAction": 1,
       "framework/harness/control_plane/graph_evaluator.py|<module>|framework.harness.workflow.graph|HarnessContractKind,HarnessContractReference,HarnessControlNode,HarnessExecutableNode,HarnessGraphEdge,HarnessGraphEdgeKind,HarnessGraphNode,HarnessGraphNodeKind,NormalizedHarnessGraph": 1,
-      "framework/harness/control_plane/graph_evaluator.py|<module>|framework.harness.workflow.versioning|HARNESS_GRAPH_EVALUATOR_VERSION": 1,
-      "framework/harness/control_plane/graph_inspection.py|<module>|framework.harness.workflow.canonical|freeze_json,thaw_json": 1,
-      "framework/harness/control_plane/graph_inspection.py|<module>|framework.harness.workflow.versioning|HARNESS_GRAPH_INSPECTION_SCHEMA": 1,
-      "framework/harness/control_plane/graph_observability.py|<module>|framework.harness.workflow.canonical|required_text": 1,
-      "framework/harness/control_plane/graph_result_lineage.py|<module>|framework.harness.workflow.canonical|canonical_checksum,exact_reference,freeze_json,required_text,thaw_json": 1,
-      "framework/harness/control_plane/graph_runtime.py|<module>|framework.harness.workflow.canonical|canonical_checksum,freeze_json,required_text,thaw_json": 1,
       "framework/harness/control_plane/graph_runtime.py|<module>|framework.harness.workflow.graph|HarnessContractKind,HarnessContractReference,NormalizedHarnessGraph": 1,
       "framework/harness/control_plane/graph_runtime.py|<module>|framework.harness.workflow.validation|HarnessGraphPreflightPolicy": 1,
-      "framework/harness/control_plane/graph_runtime.py|<module>|framework.harness.workflow.versioning|HARNESS_GRAPH_RUNTIME_VERSION": 1,
-      "framework/harness/control_plane/graph_state.py|<module>|framework.harness.workflow.canonical|canonical_checksum,exact_reference,freeze_json,optional_text,required_text,thaw_json": 1,
-      "framework/harness/control_plane/graph_state.py|<module>|framework.harness.workflow.dsl|WaitKind": 1,
       "framework/harness/control_plane/graph_state.py|<module>|framework.harness.workflow.graph|HarnessContractKind,HarnessContractReference,HarnessGraphNodeKind": 1,
-      "framework/harness/control_plane/graph_state.py|<module>|framework.harness.workflow.versioning|HARNESS_GRAPH_RUNTIME_VERSION,HARNESS_GRAPH_STATE_SCHEMA,LEGACY_STATE_SCHEMA": 1,
+      "framework/harness/control_plane/graph_state.py|<module>|framework.harness.workflow.versioning|LEGACY_STATE_SCHEMA": 1,
       "framework/harness/control_plane/harness.py|<module>|framework.harness.workflow.binding_authority|HarnessActivityCapabilities,HarnessActivityContractBinding,HarnessRuntimeBindingAuthority,HarnessWorkerBinding": 1,
       "framework/harness/control_plane/harness.py|<module>|framework.harness.workflow.compiler|HarnessWorkflowGraphCompiler": 1,
       "framework/harness/control_plane/harness.py|<module>|framework.harness.workflow.graph|HarnessContractKind,HarnessContractReference,HarnessControlNode,HarnessExecutableNode,HarnessGraphNode,HarnessGraphNodeKind,HarnessMergeKind,NormalizedHarnessGraph": 1,
       "framework/harness/control_plane/harness.py|<module>|framework.harness.workflow.runtime_resolution|HarnessGraphRuntimeResolver,HarnessResolvedRuntimeBindings": 1,
       "framework/harness/control_plane/harness.py|<module>|framework.harness.workflow.spec|HarnessRouteKind": 1,
-      "framework/harness/control_plane/harness.py|<module>|framework.harness.workflow.step|HarnessStepSpec,HarnessWorkerType": 1,
       "framework/harness/control_plane/harness.py|<module>|framework.harness.workflow.validation|HarnessGraphPreflight,HarnessGraphPreflightPolicy": 1,
-      "framework/harness/control_plane/scheduler.py|<module>|framework.harness.workflow.canonical|canonical_checksum,freeze_json,required_text,thaw_json": 1,
       "framework/harness/control_plane/scheduler.py|<module>|framework.harness.workflow.graph|HarnessContractKind,HarnessContractReference,HarnessControlNode,HarnessExecutableNode,HarnessGraphEdgeKind,HarnessGraphNode,HarnessGraphNodeKind,NormalizedHarnessGraph": 1,
-      "framework/harness/control_plane/scheduler.py|<module>|framework.harness.workflow.step|HarnessRetryPolicy,HarnessStepSpec": 1,
-      "framework/harness/control_plane/scheduler.py|<module>|framework.harness.workflow.versioning|HARNESS_WORKER_ACTIVITY_SCHEMA": 1,
       "framework/harness/control_plane/state.py|<module>|framework.harness.workflow.spec|HarnessWorkflowSpec": 1,
-      "framework/harness/control_plane/step_lifecycle.py|<module>|framework.harness.workflow.canonical|canonical_checksum,freeze_json,optional_text,required_text,thaw_json": 1,
       "framework/harness/control_plane/step_lifecycle.py|<module>|framework.harness.workflow.graph|HarnessContractKind,HarnessContractReference": 1,
-      "framework/harness/control_plane/step_lifecycle.py|<module>|framework.harness.workflow.step|HarnessStepSpec": 1,
-      "framework/harness/control_plane/step_lifecycle.py|<module>|framework.harness.workflow.versioning|HARNESS_STEP_LIFECYCLE_VERSION": 1,
       "framework/harness/ports.py|<module>|framework.harness.workflow.graph|NormalizedHarnessGraph": 1,
-      "framework/harness/runtime/artifact_context.py|<module>|framework.harness.workflow.canonical|freeze_json,thaw_json": 1,
-      "framework/harness/runtime/graph_result_projection.py|<module>|framework.harness.workflow.canonical|canonical_checksum,required_text": 1,
       "framework/harness/runtime/graph_result_runtime.py|<module>|framework.harness.workflow.graph|NormalizedHarnessGraph": 1,
-      "framework/harness/runtime/materializer.py|<module>|framework.harness.workflow.canonical|thaw_json": 1,
-      "framework/harness/runtime/result_canonical.py|<module>|framework.harness.workflow.canonical|freeze_json,thaw_json": 1,
       "framework/harness/runtime/subagent_result_adapter.py|<module>|framework.harness.workflow.graph|NormalizedHarnessGraph": 1,
       "framework/harness/runtime/tool_result_adapter.py|<module>|framework.harness.workflow.graph|NormalizedHarnessGraph": 1,
-      "framework/harness/task_plan/canonical.py|<module>|framework.harness.workflow.canonical|canonical_checksum,freeze_json,thaw_json": 1,
       "framework/harness/task_plan/capability.py|<module>|framework.harness.workflow.binding_authority|HarnessWorkerBinding": 1,
-      "framework/harness/task_plan/capability.py|<module>|framework.harness.workflow.step|HarnessWorkerType": 1,
-      "framework/harness/task_plan/inspection.py|<module>|framework.harness.workflow.canonical|freeze_json,thaw_json": 1,
-      "framework/harness/task_plan/observability.py|<module>|framework.harness.workflow.canonical|required_text": 1,
-      "framework/harness/task_plan/stage.py|<module>|framework.harness.workflow.step|HarnessWorkerType": 1,
-      "framework/harness/waits/models.py|<module>|framework.harness.workflow.canonical|canonical_checksum,exact_reference,required_text": 1,
-      "framework/harness/waits/models.py|<module>|framework.harness.workflow.dsl|WaitKind": 1,
-      "framework/harness/waits/timer.py|<module>|framework.harness.workflow.canonical|canonical_checksum": 1,
-      "framework/harness/waits/timer.py|<module>|framework.harness.workflow.dsl|WaitKind": 1,
       "framework/harness/workflow/__init__.py|<module>|framework.harness.workflow.compiler|HarnessGraphCompileResult,HarnessWorkflowGraphCompiler": 1,
-      "framework/harness/workflow/__init__.py|<module>|framework.harness.workflow.conditions|ALLOWED_CONDITION_PATH_PREFIXES,ConditionAll,ConditionAny,ConditionOperator,ConditionPredicate,HarnessCondition,condition_from_dict,condition_from_legacy_dict,evaluate_condition": 1,
-      "framework/harness/workflow/__init__.py|<module>|framework.harness.workflow.dsl|BoundedLoop,Choice,ChoiceBranch,CompensationBinding,HarnessGraphExpression,HarnessGraphSpec,ParallelAll,ParallelAllFailurePolicy,ParallelAny,ParallelAnyCancellationPolicy,ParallelAnyFailurePolicy,ParallelBranch,ParallelMerge,PureMerge,Sequence,StepRef,VerifiedAggregation,Wait,WaitKind,WaitTimeoutAction,WaitTimeoutPolicy,expression_from_dict": 1,
       "framework/harness/workflow/__init__.py|<module>|framework.harness.workflow.graph|HarnessBranch,HarnessCompensationReference,HarnessContractKind,HarnessContractReference,HarnessControlNode,HarnessExecutableNode,HarnessGraphChecksumRegistry,HarnessGraphEdge,HarnessGraphEdgeKind,HarnessGraphNode,HarnessGraphNodeKind,HarnessJoinContract,HarnessLoopContract,HarnessMergeContract,HarnessMergeKind,HarnessWaitContract,NormalizedHarnessGraph,graph_node_from_dict": 1,
       "framework/harness/workflow/__init__.py|<module>|framework.harness.workflow.reader|HarnessWorkflowContractReader": 1,
       "framework/harness/workflow/__init__.py|<module>|framework.harness.workflow.spec|HarnessRouteKind,HarnessRoutingRule,HarnessWorkflowSpec": 1,
-      "framework/harness/workflow/__init__.py|<module>|framework.harness.workflow.step|HarnessRetryPolicy,HarnessStepSpec,HarnessWorkerType": 1,
       "framework/harness/workflow/__init__.py|<module>|framework.harness.workflow.validation|HarnessGraphDiagnostic,HarnessGraphPreflight,HarnessGraphPreflightPolicy,HarnessGraphRegistrySnapshot,HarnessGraphValidationPhase,HarnessGraphValidationResult,HarnessPreparedGraph,graph_contract_references": 1,
-      "framework/harness/workflow/__init__.py|<module>|framework.harness.workflow.versioning|DEFAULT_HARNESS_GRAPH_SCHEMA_REGISTRY,HARNESS_CONDITION_POLICY_VERSION,HARNESS_GRAPH_CHECKPOINT_SCHEMA,HARNESS_GRAPH_COMPILER_VERSION,HARNESS_GRAPH_CONTROL_POLICY_VERSION,HARNESS_GRAPH_DECISION_SCHEMA,HARNESS_GRAPH_DSL_SCHEMA,HARNESS_GRAPH_EVALUATOR_VERSION,HARNESS_GRAPH_EVENT_SCHEMA,HARNESS_GRAPH_EVENT_SCHEMAS,HARNESS_GRAPH_INSPECTION_SCHEMA,HARNESS_GRAPH_MERGE_VERSION,HARNESS_GRAPH_REDUCER_VERSION,HARNESS_GRAPH_RUNTIME_VERSION,HARNESS_GRAPH_STATE_SCHEMA,HARNESS_STEP_LIFECYCLE_VERSION,HARNESS_WORKER_ACTIVITY_SCHEMA,HarnessGraphContractKind,HarnessGraphSchemaRegistration,HarnessGraphSchemaRegistry,LEGACY_CHECKPOINT_SCHEMA,LEGACY_DECISION_SCHEMA,LEGACY_EVENT_SCHEMA,LEGACY_STATE_SCHEMA,LEGACY_WORKFLOW_SCHEMA,NORMALIZED_HARNESS_GRAPH_SCHEMA": 1,
+      "framework/harness/workflow/__init__.py|<module>|framework.harness.workflow.versioning|DEFAULT_HARNESS_GRAPH_SCHEMA_REGISTRY,HarnessGraphSchemaRegistry": 1,
       "framework/harness/workflow/binding_authority.py|<module>|framework.harness.workflow.graph|HarnessContractKind,HarnessContractReference": 1,
-      "framework/harness/workflow/binding_authority.py|<module>|framework.harness.workflow.step|HarnessWorkerType": 1,
-      "framework/harness/workflow/compiler.py|<module>|framework.harness.workflow.conditions|ConditionAll,ConditionPredicate,HarnessCondition,condition_from_legacy_dict": 1,
-      "framework/harness/workflow/compiler.py|<module>|framework.harness.workflow.dsl|BoundedLoop,Choice,HarnessGraphExpression,ParallelAll,ParallelAny,PureMerge,Sequence,StepRef,VerifiedAggregation,Wait,WaitTimeoutAction": 1,
       "framework/harness/workflow/compiler.py|<module>|framework.harness.workflow.graph|HarnessBranch,HarnessCompensationReference,HarnessContractKind,HarnessContractReference,HarnessControlNode,HarnessExecutableNode,HarnessGraphEdge,HarnessGraphEdgeKind,HarnessGraphNode,HarnessGraphNodeKind,HarnessJoinContract,HarnessLoopContract,HarnessMergeContract,HarnessMergeKind,HarnessWaitContract,NormalizedHarnessGraph": 1,
       "framework/harness/workflow/compiler.py|<module>|framework.harness.workflow.spec|HarnessRouteKind,HarnessRoutingRule,HarnessWorkflowSpec": 1,
-      "framework/harness/workflow/compiler.py|<module>|framework.harness.workflow.step|HarnessStepSpec": 1,
-      "framework/harness/workflow/compiler.py|<module>|framework.harness.workflow.versioning|HARNESS_GRAPH_COMPILER_VERSION,HARNESS_WORKER_ACTIVITY_SCHEMA": 1,
-      "framework/harness/workflow/conditions.py|<module>|framework.harness.workflow.canonical|freeze_json,required_text,thaw_json": 1,
-      "framework/harness/workflow/conditions.py|<module>|framework.harness.workflow.versioning|HARNESS_CONDITION_POLICY_VERSION": 1,
-      "framework/harness/workflow/dsl.py|<module>|framework.harness.workflow.canonical|exact_reference,freeze_json,optional_text,required_text,thaw_json": 1,
-      "framework/harness/workflow/dsl.py|<module>|framework.harness.workflow.conditions|ConditionAll,ConditionAny,ConditionPredicate,HarnessCondition,condition_from_dict": 1,
-      "framework/harness/workflow/dsl.py|<module>|framework.harness.workflow.versioning|HARNESS_GRAPH_DSL_SCHEMA": 1,
-      "framework/harness/workflow/graph.py|<module>|framework.harness.workflow.canonical|canonical_checksum,freeze_json,optional_text,required_text,thaw_json": 1,
-      "framework/harness/workflow/graph.py|<module>|framework.harness.workflow.conditions|ConditionAll,ConditionAny,ConditionPredicate,HarnessCondition,condition_from_dict": 1,
-      "framework/harness/workflow/graph.py|<module>|framework.harness.workflow.dsl|WaitKind,WaitTimeoutPolicy": 1,
-      "framework/harness/workflow/graph.py|<module>|framework.harness.workflow.versioning|HARNESS_CONDITION_POLICY_VERSION,HARNESS_GRAPH_COMPILER_VERSION,NORMALIZED_HARNESS_GRAPH_SCHEMA": 1,
-      "framework/harness/workflow/reader.py|<module>|framework.harness.workflow.dsl|HarnessGraphSpec": 1,
       "framework/harness/workflow/reader.py|<module>|framework.harness.workflow.spec|HarnessRoutingRule,HarnessWorkflowSpec": 1,
-      "framework/harness/workflow/reader.py|<module>|framework.harness.workflow.step|HarnessRetryPolicy,HarnessStepSpec": 1,
-      "framework/harness/workflow/reader.py|<module>|framework.harness.workflow.versioning|DEFAULT_HARNESS_GRAPH_SCHEMA_REGISTRY,HARNESS_GRAPH_DSL_SCHEMA,HarnessGraphContractKind,HarnessGraphSchemaRegistry,LEGACY_WORKFLOW_SCHEMA": 1,
+      "framework/harness/workflow/reader.py|<module>|framework.harness.workflow.versioning|DEFAULT_HARNESS_GRAPH_SCHEMA_REGISTRY,HarnessGraphContractKind,HarnessGraphSchemaRegistry,LEGACY_WORKFLOW_SCHEMA": 1,
       "framework/harness/workflow/runtime_resolution.py|<module>|framework.harness.workflow.binding_authority|HarnessActivityCapabilities,HarnessActivityContractBinding,HarnessCompensationHandlerBinding,HarnessDeterministicMergeBinding,HarnessRuntimeBindingAuthority,HarnessWorkerBinding": 1,
       "framework/harness/workflow/runtime_resolution.py|<module>|framework.harness.workflow.graph|HarnessContractKind,HarnessContractReference,HarnessControlNode,HarnessExecutableNode,HarnessGraphEdgeKind,HarnessGraphNodeKind,NormalizedHarnessGraph": 1,
       "framework/harness/workflow/runtime_resolution.py|<module>|framework.harness.workflow.spec|HarnessWorkflowSpec": 1,
       "framework/harness/workflow/runtime_resolution.py|<module>|framework.harness.workflow.validation.registry|HarnessGraphRegistrySnapshot": 1,
-      "framework/harness/workflow/spec.py|<module>|framework.harness.workflow.canonical|required_text": 1,
-      "framework/harness/workflow/spec.py|<module>|framework.harness.workflow.dsl|HarnessGraphSpec": 1,
-      "framework/harness/workflow/spec.py|<module>|framework.harness.workflow.step|HarnessStepSpec": 1,
-      "framework/harness/workflow/spec.py|<module>|framework.harness.workflow.versioning|HARNESS_GRAPH_DSL_SCHEMA,LEGACY_WORKFLOW_SCHEMA": 1,
+      "framework/harness/workflow/spec.py|<module>|framework.harness.workflow.versioning|LEGACY_WORKFLOW_SCHEMA": 1,
       "framework/harness/workflow/validation/__init__.py|<module>|framework.harness.workflow.validation.dataflow|validate_dataflow": 1,
       "framework/harness/workflow/validation/__init__.py|<module>|framework.harness.workflow.validation.models|HarnessGraphDiagnostic,HarnessGraphValidationPhase,HarnessGraphValidationResult": 1,
       "framework/harness/workflow/validation/__init__.py|<module>|framework.harness.workflow.validation.policy|HarnessGraphPreflightPolicy,validate_policy": 1,
@@ -122,31 +59,25 @@
       "framework/harness/workflow/validation/__init__.py|<module>|framework.harness.workflow.validation.structural|validate_structure": 1,
       "framework/harness/workflow/validation/dataflow.py|<module>|framework.harness.workflow.graph|HarnessControlNode,HarnessExecutableNode,HarnessGraphEdgeKind,HarnessGraphNodeKind,NormalizedHarnessGraph": 1,
       "framework/harness/workflow/validation/dataflow.py|<module>|framework.harness.workflow.validation.models|HarnessGraphDiagnostic,HarnessGraphValidationPhase,diagnostic": 1,
-      "framework/harness/workflow/validation/models.py|<module>|framework.harness.workflow.canonical|freeze_json,required_text,thaw_json": 1,
       "framework/harness/workflow/validation/policy.py|<module>|framework.harness.workflow.graph|HarnessControlNode,HarnessGraphEdgeKind,HarnessGraphNodeKind,NormalizedHarnessGraph": 1,
       "framework/harness/workflow/validation/policy.py|<module>|framework.harness.workflow.validation.models|HarnessGraphDiagnostic,HarnessGraphValidationPhase,diagnostic": 1,
       "framework/harness/workflow/validation/preflight.py|<module>|framework.harness.workflow.compiler|HarnessGraphCompileResult,HarnessWorkflowGraphCompiler": 1,
       "framework/harness/workflow/validation/preflight.py|<module>|framework.harness.workflow.graph|HarnessExecutableNode,NormalizedHarnessGraph": 1,
       "framework/harness/workflow/validation/preflight.py|<module>|framework.harness.workflow.spec|HarnessWorkflowSpec": 1,
-      "framework/harness/workflow/validation/preflight.py|<module>|framework.harness.workflow.step|HarnessWorkerType": 1,
       "framework/harness/workflow/validation/preflight.py|<module>|framework.harness.workflow.validation.dataflow|validate_dataflow": 1,
       "framework/harness/workflow/validation/preflight.py|<module>|framework.harness.workflow.validation.models|HarnessGraphDiagnostic,HarnessGraphValidationPhase,HarnessGraphValidationResult": 1,
       "framework/harness/workflow/validation/preflight.py|<module>|framework.harness.workflow.validation.policy|HarnessGraphPreflightPolicy,validate_policy": 1,
       "framework/harness/workflow/validation/preflight.py|<module>|framework.harness.workflow.validation.registry|HarnessGraphRegistrySnapshot,validate_registry": 1,
       "framework/harness/workflow/validation/preflight.py|<module>|framework.harness.workflow.validation.semantic|validate_semantics": 1,
       "framework/harness/workflow/validation/preflight.py|<module>|framework.harness.workflow.validation.structural|validate_structure": 1,
-      "framework/harness/workflow/validation/preflight.py|<module>|framework.harness.workflow.versioning|DEFAULT_HARNESS_GRAPH_SCHEMA_REGISTRY,HarnessGraphContractKind,NORMALIZED_HARNESS_GRAPH_SCHEMA": 1,
+      "framework/harness/workflow/validation/preflight.py|<module>|framework.harness.workflow.versioning|DEFAULT_HARNESS_GRAPH_SCHEMA_REGISTRY,HarnessGraphContractKind": 1,
       "framework/harness/workflow/validation/registry.py|<module>|framework.harness.workflow.graph|HarnessContractKind,HarnessContractReference,HarnessControlNode,HarnessExecutableNode,HarnessGraphNodeKind,NormalizedHarnessGraph": 1,
       "framework/harness/workflow/validation/registry.py|<module>|framework.harness.workflow.validation.models|HarnessGraphDiagnostic,HarnessGraphValidationPhase,diagnostic": 1,
       "framework/harness/workflow/validation/registry.py|<module>|framework.harness.workflow.validation.policy|HarnessGraphPreflightPolicy": 1,
-      "framework/harness/workflow/validation/semantic.py|<module>|framework.harness.workflow.conditions|ConditionAll,ConditionAny,ConditionPredicate,HarnessCondition": 1,
-      "framework/harness/workflow/validation/semantic.py|<module>|framework.harness.workflow.dsl|WaitKind": 1,
       "framework/harness/workflow/validation/semantic.py|<module>|framework.harness.workflow.graph|HarnessCompensationReference,HarnessControlNode,HarnessExecutableNode,HarnessGraphEdgeKind,HarnessGraphNodeKind,NormalizedHarnessGraph": 1,
       "framework/harness/workflow/validation/semantic.py|<module>|framework.harness.workflow.validation.models|HarnessGraphDiagnostic,HarnessGraphValidationPhase,diagnostic": 1,
-      "framework/harness/workflow/validation/semantic.py|<module>|framework.harness.workflow.versioning|HARNESS_CONDITION_POLICY_VERSION": 1,
       "framework/harness/workflow/validation/structural.py|<module>|framework.harness.workflow.graph|HarnessControlNode,HarnessGraphEdgeKind,HarnessGraphNodeKind,NormalizedHarnessGraph": 1,
       "framework/harness/workflow/validation/structural.py|<module>|framework.harness.workflow.validation.models|HarnessGraphDiagnostic,HarnessGraphValidationPhase,diagnostic": 1,
-      "framework/harness/workflow/versioning.py|<module>|framework.harness.workflow.canonical|required_text": 1,
       "framework/workflow/__init__.py|<module>|framework.workflow.buffer|BufferDiff,BufferLineage,BufferValueSchema,BufferWriteRecord,DataBuffer,DataBufferDiff,DataBufferKeyError,DataBufferPermissionError,DataBufferReadPermissionError,DataBufferSchemaError,DataBufferSnapshot,DataBufferWritePermissionError,RedactionStatus,ScopedDataBuffer,StepDataScope,StepScopedDataBufferView,stable_hash,stable_json_dumps,step_scope_from_spec": 1,
       "framework/workflow/__init__.py|<module>|framework.workflow.checkpoint|CHECKPOINT_SCHEMA_VERSION,CHECKPOINT_SCHEMA_VERSION_V0,CheckpointCompatibilityResult,CheckpointMigration,CheckpointMigrationRegistry,CheckpointNotFoundError,CheckpointV0ToV1Migration,HumanReviewResumeDecision,LocalJsonCheckpointStore,PartialArtifactRecoveryReport,ResumeMode,ResumePatchValidationResult,WorkflowCheckpoint,WorkflowCheckpointEnvelope,WorkflowCheckpointStore,WorkflowResumePlan,WorkflowResumePlanner,WorkflowResumeRequest,attach_checkpoint_checksum,check_checkpoint_compatibility,checkpoint_checksum_payload,compute_checkpoint_checksum,default_checkpoint_migration_registry,envelope_from_checkpoint,envelope_from_payload,envelope_to_checkpoint,envelope_to_payload,inspect_checkpoint_artifacts,validate_approval_resume_binding,validate_resume_patch,verify_checkpoint_checksum": 1,
       "framework/workflow/__init__.py|<module>|framework.workflow.compiler|CompiledWorkflowGraph,StepReadWritePlan,WorkflowCompileError,WorkflowCompileIssueCode,WorkflowCompileOptions,WorkflowCompileResult,WorkflowCompileSeverity,WorkflowCompileWarning,WorkflowCompiler,WorkflowReadWritePlan": 1,
@@ -458,10 +389,8 @@
       "framework/workflow/scheduling/scheduler.py|<module>|framework.workflow.runtime.state_machine|StepRuntimeEvent,StepRuntimeEventType,StepStateMachine,WorkflowStateMachine": 1,
       "interfaces/composition/research.py|<module>|framework.harness.workflow.binding_authority|HarnessWorkerBinding": 1,
       "interfaces/composition/research.py|<module>|framework.harness.workflow.graph|HarnessContractKind,HarnessContractReference": 1,
-      "interfaces/composition/research.py|<module>|framework.harness.workflow|HarnessWorkerType,HarnessWorkflowGraphCompiler": 1,
+      "interfaces/composition/research.py|<module>|framework.harness.workflow|HarnessWorkflowGraphCompiler": 1,
       "interfaces/services/event_projection_service.py|<module>|framework.workflow.runtime.event_projection|WorkflowEventProjection,WorkflowEventProjectionExporter": 1,
-      "interfaces/services/harness_graph_service.py|<module>|framework.harness.workflow.canonical|required_text": 1,
-      "interfaces/services/harness_wait_service.py|<module>|framework.harness.workflow.canonical|canonical_checksum,exact_reference,freeze_json,required_text": 1,
       "interfaces/services/run_inspection_service.py|<module>|framework.workflow.inspection|WorkflowArtifactContentRecord,WorkflowEventRecord,WorkflowReplayContentBundle,WorkflowRunInspectionError,WorkflowRunInspector,WorkflowRunListItem,redact_sensitive_values": 1,
       "interfaces/services/run_inspection_service.py|<module>|framework.workflow.runtime.event_projection|project_workflow_event": 1,
       "interfaces/services/run_inspection_service.py|<module>|framework.workflow.runtime.manifest|normalize_legacy_run_manifest": 1,
@@ -493,30 +422,9 @@
       "framework/harness/control_plane/durable_events.py|<module>._graph_publish_request|assignment:data_schema": 1,
       "framework/harness/control_plane/durable_events.py|<module>._graph_publish_request|call_argument:update": 1,
       "framework/harness/control_plane/durable_events.py|<module>._graph_publish_request|call_keyword:data_schema": 2,
-      "framework/harness/control_plane/graph_checkpoint.py|<module>.HarnessGraphCheckpoint.__post_init__|dict_field:schema_version": 1,
-      "framework/harness/control_plane/graph_checkpoint.py|<module>.HarnessGraphCheckpoint.checksum_projection|dict_field:schema_version": 1,
       "framework/harness/control_plane/graph_checkpoint.py|<module>.HarnessGraphCheckpointReader.upcast_legacy|dict_field:schema_version": 1,
-      "framework/harness/control_plane/graph_checkpoint.py|<module>.HarnessGraphCheckpoint|annotated_assignment:schema_version": 1,
-      "framework/harness/control_plane/graph_checkpoint.py|<module>.HarnessLegacyEventEvidence.checksum_projection|dict_field:schema_version": 1,
-      "framework/harness/control_plane/graph_decision.py|<module>.HarnessGraphDecision.checksum_projection|dict_field:schema_version": 1,
-      "framework/harness/control_plane/graph_decision.py|<module>.HarnessGraphDecision|annotated_assignment:schema_version": 1,
-      "framework/harness/control_plane/graph_inspection.py|<module>.HarnessGraphInspection.from_state|dict_field:schema_version": 1,
-      "framework/harness/control_plane/graph_state.py|<module>.HarnessGraphReference.to_dict|dict_field:schema_version": 1,
-      "framework/harness/control_plane/graph_state.py|<module>.HarnessGraphState.__post_init__|dict_field:schema_version": 1,
-      "framework/harness/control_plane/graph_state.py|<module>.HarnessGraphState.checksum_projection|dict_field:schema_version": 1,
-      "framework/harness/control_plane/graph_state.py|<module>.HarnessGraphState|annotated_assignment:schema_version": 1,
       "framework/harness/control_plane/replay_history.py|<module>.harness_activity_history|call_keyword:schema_version": 1,
       "framework/harness/control_plane/replay_history.py|<module>.harness_decision_history|call_keyword:schema_version": 1,
-      "framework/harness/control_plane/scheduler.py|<module>.HarnessScheduler._next_graph_decision|call_argument:append": 3,
-      "framework/harness/workflow/compiler.py|<module>._CompilerContext._add_control|call_argument:append": 1,
-      "framework/harness/workflow/compiler.py|<module>._CompilerContext._add_executable|call_argument:append": 1,
-      "framework/harness/workflow/compiler.py|<module>._CompilerContext._compile_compensations|call_argument:append": 1,
-      "framework/harness/workflow/dsl.py|<module>.HarnessGraphSpec.__post_init__|dict_field:schema_version": 1,
-      "framework/harness/workflow/dsl.py|<module>.HarnessGraphSpec.to_dict|dict_field:schema_version": 1,
-      "framework/harness/workflow/dsl.py|<module>.HarnessGraphSpec|annotated_assignment:schema_version": 1,
-      "framework/harness/workflow/graph.py|<module>.NormalizedHarnessGraph.__post_init__|dict_field:schema_version": 1,
-      "framework/harness/workflow/graph.py|<module>.NormalizedHarnessGraph.checksum_projection|dict_field:schema_version": 1,
-      "framework/harness/workflow/graph.py|<module>.NormalizedHarnessGraph|annotated_assignment:schema_version": 1,
       "framework/workflow/checkpoint/durable.py|<module>.WorkflowCheckpointV2Envelope|annotated_assignment:schema_version": 1,
       "framework/workflow/checkpoint/durable.py|<module>.durable_envelope_to_payload|dict_field:schema_version": 1,
       "framework/workflow/checkpoint/envelope.py|<module>.envelope_from_checkpoint|call_keyword:schema_version": 1,
@@ -533,15 +441,11 @@
     "namespace_files": {
       "framework/harness/workflow/__init__.py": 1,
       "framework/harness/workflow/binding_authority.py": 1,
-      "framework/harness/workflow/canonical.py": 1,
       "framework/harness/workflow/compiler.py": 1,
-      "framework/harness/workflow/conditions.py": 1,
-      "framework/harness/workflow/dsl.py": 1,
       "framework/harness/workflow/graph.py": 1,
       "framework/harness/workflow/reader.py": 1,
       "framework/harness/workflow/runtime_resolution.py": 1,
       "framework/harness/workflow/spec.py": 1,
-      "framework/harness/workflow/step.py": 1,
       "framework/harness/workflow/validation/__init__.py": 1,
       "framework/harness/workflow/validation/dataflow.py": 1,
       "framework/harness/workflow/validation/models.py": 1,
@@ -664,54 +568,24 @@
       "framework/harness/__init__.py|WorkflowGraphEvaluator": 1,
       "framework/harness/control_plane/__init__.py|WorkflowGraphEvaluator": 1,
       "framework/harness/control_plane/graph_evaluator.py|WorkflowGraphEvaluator": 1,
-      "framework/harness/workflow/__init__.py|ALLOWED_CONDITION_PATH_PREFIXES": 1,
-      "framework/harness/workflow/__init__.py|BoundedLoop": 1,
-      "framework/harness/workflow/__init__.py|Choice": 1,
-      "framework/harness/workflow/__init__.py|ChoiceBranch": 1,
-      "framework/harness/workflow/__init__.py|CompensationBinding": 1,
-      "framework/harness/workflow/__init__.py|ConditionAll": 1,
-      "framework/harness/workflow/__init__.py|ConditionAny": 1,
-      "framework/harness/workflow/__init__.py|ConditionOperator": 1,
-      "framework/harness/workflow/__init__.py|ConditionPredicate": 1,
       "framework/harness/workflow/__init__.py|DEFAULT_HARNESS_GRAPH_SCHEMA_REGISTRY": 1,
-      "framework/harness/workflow/__init__.py|HARNESS_CONDITION_POLICY_VERSION": 1,
-      "framework/harness/workflow/__init__.py|HARNESS_GRAPH_CHECKPOINT_SCHEMA": 1,
-      "framework/harness/workflow/__init__.py|HARNESS_GRAPH_COMPILER_VERSION": 1,
-      "framework/harness/workflow/__init__.py|HARNESS_GRAPH_CONTROL_POLICY_VERSION": 1,
-      "framework/harness/workflow/__init__.py|HARNESS_GRAPH_DECISION_SCHEMA": 1,
-      "framework/harness/workflow/__init__.py|HARNESS_GRAPH_DSL_SCHEMA": 1,
-      "framework/harness/workflow/__init__.py|HARNESS_GRAPH_EVALUATOR_VERSION": 1,
-      "framework/harness/workflow/__init__.py|HARNESS_GRAPH_EVENT_SCHEMA": 1,
-      "framework/harness/workflow/__init__.py|HARNESS_GRAPH_EVENT_SCHEMAS": 1,
-      "framework/harness/workflow/__init__.py|HARNESS_GRAPH_INSPECTION_SCHEMA": 1,
-      "framework/harness/workflow/__init__.py|HARNESS_GRAPH_MERGE_VERSION": 1,
-      "framework/harness/workflow/__init__.py|HARNESS_GRAPH_REDUCER_VERSION": 1,
-      "framework/harness/workflow/__init__.py|HARNESS_GRAPH_RUNTIME_VERSION": 1,
-      "framework/harness/workflow/__init__.py|HARNESS_GRAPH_STATE_SCHEMA": 1,
-      "framework/harness/workflow/__init__.py|HARNESS_STEP_LIFECYCLE_VERSION": 1,
-      "framework/harness/workflow/__init__.py|HARNESS_WORKER_ACTIVITY_SCHEMA": 1,
       "framework/harness/workflow/__init__.py|HarnessBranch": 1,
       "framework/harness/workflow/__init__.py|HarnessCompensationReference": 1,
-      "framework/harness/workflow/__init__.py|HarnessCondition": 1,
       "framework/harness/workflow/__init__.py|HarnessContractKind": 1,
       "framework/harness/workflow/__init__.py|HarnessContractReference": 1,
       "framework/harness/workflow/__init__.py|HarnessControlNode": 1,
       "framework/harness/workflow/__init__.py|HarnessExecutableNode": 1,
       "framework/harness/workflow/__init__.py|HarnessGraphChecksumRegistry": 1,
       "framework/harness/workflow/__init__.py|HarnessGraphCompileResult": 1,
-      "framework/harness/workflow/__init__.py|HarnessGraphContractKind": 1,
       "framework/harness/workflow/__init__.py|HarnessGraphDiagnostic": 1,
       "framework/harness/workflow/__init__.py|HarnessGraphEdge": 1,
       "framework/harness/workflow/__init__.py|HarnessGraphEdgeKind": 1,
-      "framework/harness/workflow/__init__.py|HarnessGraphExpression": 1,
       "framework/harness/workflow/__init__.py|HarnessGraphNode": 1,
       "framework/harness/workflow/__init__.py|HarnessGraphNodeKind": 1,
       "framework/harness/workflow/__init__.py|HarnessGraphPreflight": 1,
       "framework/harness/workflow/__init__.py|HarnessGraphPreflightPolicy": 1,
       "framework/harness/workflow/__init__.py|HarnessGraphRegistrySnapshot": 1,
-      "framework/harness/workflow/__init__.py|HarnessGraphSchemaRegistration": 1,
       "framework/harness/workflow/__init__.py|HarnessGraphSchemaRegistry": 1,
-      "framework/harness/workflow/__init__.py|HarnessGraphSpec": 1,
       "framework/harness/workflow/__init__.py|HarnessGraphValidationPhase": 1,
       "framework/harness/workflow/__init__.py|HarnessGraphValidationResult": 1,
       "framework/harness/workflow/__init__.py|HarnessJoinContract": 1,
@@ -719,42 +593,13 @@
       "framework/harness/workflow/__init__.py|HarnessMergeContract": 1,
       "framework/harness/workflow/__init__.py|HarnessMergeKind": 1,
       "framework/harness/workflow/__init__.py|HarnessPreparedGraph": 1,
-      "framework/harness/workflow/__init__.py|HarnessRetryPolicy": 1,
       "framework/harness/workflow/__init__.py|HarnessRouteKind": 1,
       "framework/harness/workflow/__init__.py|HarnessRoutingRule": 1,
-      "framework/harness/workflow/__init__.py|HarnessStepSpec": 1,
-      "framework/harness/workflow/__init__.py|HarnessTerminalSideEffectPolicy": 1,
       "framework/harness/workflow/__init__.py|HarnessWaitContract": 1,
-      "framework/harness/workflow/__init__.py|HarnessWorkerType": 1,
       "framework/harness/workflow/__init__.py|HarnessWorkflowContractReader": 1,
       "framework/harness/workflow/__init__.py|HarnessWorkflowGraphCompiler": 1,
       "framework/harness/workflow/__init__.py|HarnessWorkflowSpec": 1,
-      "framework/harness/workflow/__init__.py|LEGACY_CHECKPOINT_SCHEMA": 1,
-      "framework/harness/workflow/__init__.py|LEGACY_DECISION_SCHEMA": 1,
-      "framework/harness/workflow/__init__.py|LEGACY_EVENT_SCHEMA": 1,
-      "framework/harness/workflow/__init__.py|LEGACY_STATE_SCHEMA": 1,
-      "framework/harness/workflow/__init__.py|LEGACY_WORKFLOW_SCHEMA": 1,
-      "framework/harness/workflow/__init__.py|NORMALIZED_HARNESS_GRAPH_SCHEMA": 1,
       "framework/harness/workflow/__init__.py|NormalizedHarnessGraph": 1,
-      "framework/harness/workflow/__init__.py|ParallelAll": 1,
-      "framework/harness/workflow/__init__.py|ParallelAllFailurePolicy": 1,
-      "framework/harness/workflow/__init__.py|ParallelAny": 1,
-      "framework/harness/workflow/__init__.py|ParallelAnyCancellationPolicy": 1,
-      "framework/harness/workflow/__init__.py|ParallelAnyFailurePolicy": 1,
-      "framework/harness/workflow/__init__.py|ParallelBranch": 1,
-      "framework/harness/workflow/__init__.py|ParallelMerge": 1,
-      "framework/harness/workflow/__init__.py|PureMerge": 1,
-      "framework/harness/workflow/__init__.py|Sequence": 1,
-      "framework/harness/workflow/__init__.py|StepRef": 1,
-      "framework/harness/workflow/__init__.py|VerifiedAggregation": 1,
-      "framework/harness/workflow/__init__.py|Wait": 1,
-      "framework/harness/workflow/__init__.py|WaitKind": 1,
-      "framework/harness/workflow/__init__.py|WaitTimeoutAction": 1,
-      "framework/harness/workflow/__init__.py|WaitTimeoutPolicy": 1,
-      "framework/harness/workflow/__init__.py|condition_from_dict": 1,
-      "framework/harness/workflow/__init__.py|condition_from_legacy_dict": 1,
-      "framework/harness/workflow/__init__.py|evaluate_condition": 1,
-      "framework/harness/workflow/__init__.py|expression_from_dict": 1,
       "framework/harness/workflow/__init__.py|graph_contract_references": 1,
       "framework/harness/workflow/__init__.py|graph_node_from_dict": 1,
       "framework/harness/workflow/binding_authority.py|HarnessActivityCapabilities": 1,
@@ -764,48 +609,8 @@
       "framework/harness/workflow/binding_authority.py|HarnessDeterministicMergeBinding": 1,
       "framework/harness/workflow/binding_authority.py|HarnessRuntimeBindingAuthority": 1,
       "framework/harness/workflow/binding_authority.py|HarnessWorkerBinding": 1,
-      "framework/harness/workflow/canonical.py|canonical_checksum": 1,
-      "framework/harness/workflow/canonical.py|exact_reference": 1,
-      "framework/harness/workflow/canonical.py|freeze_json": 1,
-      "framework/harness/workflow/canonical.py|mapping_to_dict": 1,
-      "framework/harness/workflow/canonical.py|optional_text": 1,
-      "framework/harness/workflow/canonical.py|required_text": 1,
-      "framework/harness/workflow/canonical.py|stable_unique_tuple": 1,
-      "framework/harness/workflow/canonical.py|thaw_json": 1,
       "framework/harness/workflow/compiler.py|HarnessGraphCompileResult": 1,
       "framework/harness/workflow/compiler.py|HarnessWorkflowGraphCompiler": 1,
-      "framework/harness/workflow/conditions.py|ALLOWED_CONDITION_PATH_PREFIXES": 1,
-      "framework/harness/workflow/conditions.py|ConditionAll": 1,
-      "framework/harness/workflow/conditions.py|ConditionAny": 1,
-      "framework/harness/workflow/conditions.py|ConditionOperator": 1,
-      "framework/harness/workflow/conditions.py|ConditionPredicate": 1,
-      "framework/harness/workflow/conditions.py|HarnessCondition": 1,
-      "framework/harness/workflow/conditions.py|condition_from_dict": 1,
-      "framework/harness/workflow/conditions.py|condition_from_legacy_dict": 1,
-      "framework/harness/workflow/conditions.py|evaluate_condition": 1,
-      "framework/harness/workflow/conditions.py|resolve_condition_path": 1,
-      "framework/harness/workflow/dsl.py|BoundedLoop": 1,
-      "framework/harness/workflow/dsl.py|Choice": 1,
-      "framework/harness/workflow/dsl.py|ChoiceBranch": 1,
-      "framework/harness/workflow/dsl.py|CompensationBinding": 1,
-      "framework/harness/workflow/dsl.py|HarnessGraphExpression": 1,
-      "framework/harness/workflow/dsl.py|HarnessGraphSpec": 1,
-      "framework/harness/workflow/dsl.py|ParallelAll": 1,
-      "framework/harness/workflow/dsl.py|ParallelAllFailurePolicy": 1,
-      "framework/harness/workflow/dsl.py|ParallelAny": 1,
-      "framework/harness/workflow/dsl.py|ParallelAnyCancellationPolicy": 1,
-      "framework/harness/workflow/dsl.py|ParallelAnyFailurePolicy": 1,
-      "framework/harness/workflow/dsl.py|ParallelBranch": 1,
-      "framework/harness/workflow/dsl.py|ParallelMerge": 1,
-      "framework/harness/workflow/dsl.py|PureMerge": 1,
-      "framework/harness/workflow/dsl.py|Sequence": 1,
-      "framework/harness/workflow/dsl.py|StepRef": 1,
-      "framework/harness/workflow/dsl.py|VerifiedAggregation": 1,
-      "framework/harness/workflow/dsl.py|Wait": 1,
-      "framework/harness/workflow/dsl.py|WaitKind": 1,
-      "framework/harness/workflow/dsl.py|WaitTimeoutAction": 1,
-      "framework/harness/workflow/dsl.py|WaitTimeoutPolicy": 1,
-      "framework/harness/workflow/dsl.py|expression_from_dict": 1,
       "framework/harness/workflow/graph.py|HarnessBranch": 1,
       "framework/harness/workflow/graph.py|HarnessCompensationReference": 1,
       "framework/harness/workflow/graph.py|HarnessContractKind": 1,
@@ -830,9 +635,6 @@
       "framework/harness/workflow/spec.py|HarnessRouteKind": 1,
       "framework/harness/workflow/spec.py|HarnessRoutingRule": 1,
       "framework/harness/workflow/spec.py|HarnessWorkflowSpec": 1,
-      "framework/harness/workflow/step.py|HarnessRetryPolicy": 1,
-      "framework/harness/workflow/step.py|HarnessStepSpec": 1,
-      "framework/harness/workflow/step.py|HarnessWorkerType": 1,
       "framework/harness/workflow/validation/__init__.py|HarnessGraphDiagnostic": 1,
       "framework/harness/workflow/validation/__init__.py|HarnessGraphPreflight": 1,
       "framework/harness/workflow/validation/__init__.py|HarnessGraphPreflightPolicy": 1,
@@ -1156,19 +958,9 @@
       "framework/harness/workflow/__init__.py|<module>|import|HarnessWorkflowContractReader": 1,
       "framework/harness/workflow/__init__.py|<module>|import|HarnessWorkflowGraphCompiler": 1,
       "framework/harness/workflow/__init__.py|<module>|import|HarnessWorkflowSpec": 1,
-      "framework/harness/workflow/__init__.py|<module>|import|LEGACY_CHECKPOINT_SCHEMA": 1,
-      "framework/harness/workflow/__init__.py|<module>|import|LEGACY_DECISION_SCHEMA": 1,
-      "framework/harness/workflow/__init__.py|<module>|import|LEGACY_EVENT_SCHEMA": 1,
-      "framework/harness/workflow/__init__.py|<module>|import|LEGACY_STATE_SCHEMA": 1,
-      "framework/harness/workflow/__init__.py|<module>|import|LEGACY_WORKFLOW_SCHEMA": 1,
       "framework/harness/workflow/__init__.py|<module>|string_literal|HarnessWorkflowContractReader": 1,
       "framework/harness/workflow/__init__.py|<module>|string_literal|HarnessWorkflowGraphCompiler": 1,
       "framework/harness/workflow/__init__.py|<module>|string_literal|HarnessWorkflowSpec": 1,
-      "framework/harness/workflow/__init__.py|<module>|string_literal|LEGACY_CHECKPOINT_SCHEMA": 1,
-      "framework/harness/workflow/__init__.py|<module>|string_literal|LEGACY_DECISION_SCHEMA": 1,
-      "framework/harness/workflow/__init__.py|<module>|string_literal|LEGACY_EVENT_SCHEMA": 1,
-      "framework/harness/workflow/__init__.py|<module>|string_literal|LEGACY_STATE_SCHEMA": 1,
-      "framework/harness/workflow/__init__.py|<module>|string_literal|LEGACY_WORKFLOW_SCHEMA": 1,
       "framework/harness/workflow/compiler.py|<module>.HarnessWorkflowGraphCompiler.compile|name_load|HarnessWorkflowSpec": 2,
       "framework/harness/workflow/compiler.py|<module>.HarnessWorkflowGraphCompiler.compile|string_literal|HarnessWorkflowSpec": 1,
       "framework/harness/workflow/compiler.py|<module>._CompilerContext.__init__|name_load|HarnessWorkflowSpec": 1,
@@ -2563,7 +2355,7 @@
     "framework.workflow",
     "framework.harness.workflow"
   ],
-  "generation": 3,
+  "generation": 4,
   "legacy_schema_ids": [
     "newsroom.harness-checkpoint-legacy/v1",
     "newsroom.harness-decision-legacy/v1",
@@ -2755,9 +2547,2439 @@
       "count": 1,
       "generation": 3,
       "key": "interfaces/services/event_migration_service.py|<module>|framework.workflow.runtime.event_projection|project_workflow_event"
+    },
+    {
+      "category": "namespace_files",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/canonical.py"
+    },
+    {
+      "category": "namespace_files",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/conditions.py"
+    },
+    {
+      "category": "namespace_files",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/dsl.py"
+    },
+    {
+      "category": "namespace_files",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/step.py"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "business/research/workflows/paper_analysis_task_plan.py|<module>|framework.harness.workflow.step|HarnessWorkerType"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "business/research/workflows/paper_analysis_workflow.py|<module>|framework.harness.workflow|HarnessGraphSpec"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "business/research/workflows/paper_analysis_workflow.py|<module>|framework.harness.workflow|HarnessStepSpec"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "business/research/workflows/paper_analysis_workflow.py|<module>|framework.harness.workflow|HarnessWorkerType"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "business/research/workflows/paper_analysis_workflow.py|<module>|framework.harness.workflow|ParallelAll"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "business/research/workflows/paper_analysis_workflow.py|<module>|framework.harness.workflow|ParallelBranch"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "business/research/workflows/paper_analysis_workflow.py|<module>|framework.harness.workflow|Sequence"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "business/research/workflows/paper_analysis_workflow.py|<module>|framework.harness.workflow|StepRef"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "business/research/workflows/paper_analysis_workflow.py|<module>|framework.harness.workflow|VerifiedAggregation"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/__init__.py|<module>|framework.harness.workflow|BoundedLoop"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/__init__.py|<module>|framework.harness.workflow|Choice"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/__init__.py|<module>|framework.harness.workflow|ChoiceBranch"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/__init__.py|<module>|framework.harness.workflow|CompensationBinding"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/__init__.py|<module>|framework.harness.workflow|ConditionAll"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/__init__.py|<module>|framework.harness.workflow|ConditionAny"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/__init__.py|<module>|framework.harness.workflow|ConditionOperator"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/__init__.py|<module>|framework.harness.workflow|ConditionPredicate"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/__init__.py|<module>|framework.harness.workflow|HarnessGraphSpec"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/__init__.py|<module>|framework.harness.workflow|HarnessRetryPolicy"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/__init__.py|<module>|framework.harness.workflow|HarnessStepSpec"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/__init__.py|<module>|framework.harness.workflow|HarnessWorkerType"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/__init__.py|<module>|framework.harness.workflow|ParallelAll"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/__init__.py|<module>|framework.harness.workflow|ParallelAny"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/__init__.py|<module>|framework.harness.workflow|ParallelBranch"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/__init__.py|<module>|framework.harness.workflow|ParallelMerge"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/__init__.py|<module>|framework.harness.workflow|PureMerge"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/__init__.py|<module>|framework.harness.workflow|Sequence"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/__init__.py|<module>|framework.harness.workflow|StepRef"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/__init__.py|<module>|framework.harness.workflow|VerifiedAggregation"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/__init__.py|<module>|framework.harness.workflow|Wait"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/__init__.py|<module>|framework.harness.workflow|WaitKind"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/__init__.py|<module>|framework.harness.workflow|WaitTimeoutPolicy"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/control_plane/compensation_runtime.py|<module>|framework.harness.workflow.canonical|thaw_json"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/control_plane/durable_events.py|<module>|framework.harness.workflow.versioning|HARNESS_GRAPH_REDUCER_VERSION"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/control_plane/durable_events.py|<module>|framework.harness.workflow.versioning|HARNESS_GRAPH_STATE_SCHEMA"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/control_plane/gates.py|<module>|framework.harness.workflow.step|HarnessStepSpec"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/control_plane/gates.py|<module>|framework.harness.workflow.step|HarnessWorkerType"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/control_plane/graph_application.py|<module>|framework.harness.workflow.canonical|canonical_checksum"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/control_plane/graph_application.py|<module>|framework.harness.workflow.canonical|freeze_json"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/control_plane/graph_application.py|<module>|framework.harness.workflow.canonical|required_text"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/control_plane/graph_application.py|<module>|framework.harness.workflow.canonical|thaw_json"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/control_plane/graph_application.py|<module>|framework.harness.workflow.dsl|WaitKind"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/control_plane/graph_checkpoint.py|<module>|framework.harness.workflow.canonical|canonical_checksum"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/control_plane/graph_checkpoint.py|<module>|framework.harness.workflow.canonical|required_text"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/control_plane/graph_checkpoint.py|<module>|framework.harness.workflow.versioning|HARNESS_GRAPH_CHECKPOINT_SCHEMA"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/control_plane/graph_checkpoint.py|<module>|framework.harness.workflow.versioning|HARNESS_GRAPH_COMPILER_VERSION"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/control_plane/graph_checkpoint.py|<module>|framework.harness.workflow.versioning|HARNESS_GRAPH_CONTROL_POLICY_VERSION"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/control_plane/graph_checkpoint.py|<module>|framework.harness.workflow.versioning|HARNESS_GRAPH_EVALUATOR_VERSION"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/control_plane/graph_checkpoint.py|<module>|framework.harness.workflow.versioning|HARNESS_GRAPH_REDUCER_VERSION"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/control_plane/graph_checkpoint.py|<module>|framework.harness.workflow.versioning|HARNESS_GRAPH_RUNTIME_VERSION"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/control_plane/graph_checkpoint.py|<module>|framework.harness.workflow.versioning|HARNESS_GRAPH_STATE_SCHEMA"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/control_plane/graph_checkpoint.py|<module>|framework.harness.workflow.versioning|HARNESS_STEP_LIFECYCLE_VERSION"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/control_plane/graph_decision.py|<module>|framework.harness.workflow.canonical|canonical_checksum"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/control_plane/graph_decision.py|<module>|framework.harness.workflow.canonical|exact_reference"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/control_plane/graph_decision.py|<module>|framework.harness.workflow.canonical|freeze_json"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/control_plane/graph_decision.py|<module>|framework.harness.workflow.canonical|required_text"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/control_plane/graph_decision.py|<module>|framework.harness.workflow.canonical|thaw_json"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/control_plane/graph_decision.py|<module>|framework.harness.workflow.versioning|HARNESS_GRAPH_CONTROL_POLICY_VERSION"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/control_plane/graph_decision.py|<module>|framework.harness.workflow.versioning|HARNESS_GRAPH_DECISION_SCHEMA"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/control_plane/graph_decision.py|<module>|framework.harness.workflow.versioning|HARNESS_GRAPH_EVALUATOR_VERSION"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/control_plane/graph_decision.py|<module>|framework.harness.workflow.versioning|HARNESS_STEP_LIFECYCLE_VERSION"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/control_plane/graph_evaluator.py|<module>|framework.harness.workflow.canonical|canonical_checksum"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/control_plane/graph_evaluator.py|<module>|framework.harness.workflow.canonical|exact_reference"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/control_plane/graph_evaluator.py|<module>|framework.harness.workflow.canonical|freeze_json"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/control_plane/graph_evaluator.py|<module>|framework.harness.workflow.canonical|required_text"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/control_plane/graph_evaluator.py|<module>|framework.harness.workflow.canonical|thaw_json"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/control_plane/graph_evaluator.py|<module>|framework.harness.workflow.conditions|ConditionAll"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/control_plane/graph_evaluator.py|<module>|framework.harness.workflow.conditions|ConditionAny"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/control_plane/graph_evaluator.py|<module>|framework.harness.workflow.conditions|ConditionPredicate"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/control_plane/graph_evaluator.py|<module>|framework.harness.workflow.conditions|HarnessCondition"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/control_plane/graph_evaluator.py|<module>|framework.harness.workflow.conditions|evaluate_condition"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/control_plane/graph_evaluator.py|<module>|framework.harness.workflow.conditions|resolve_condition_path"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/control_plane/graph_evaluator.py|<module>|framework.harness.workflow.dsl|WaitKind"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/control_plane/graph_evaluator.py|<module>|framework.harness.workflow.dsl|WaitTimeoutAction"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/control_plane/graph_evaluator.py|<module>|framework.harness.workflow.versioning|HARNESS_GRAPH_EVALUATOR_VERSION"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/control_plane/graph_inspection.py|<module>|framework.harness.workflow.canonical|freeze_json"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/control_plane/graph_inspection.py|<module>|framework.harness.workflow.canonical|thaw_json"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/control_plane/graph_inspection.py|<module>|framework.harness.workflow.versioning|HARNESS_GRAPH_INSPECTION_SCHEMA"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/control_plane/graph_observability.py|<module>|framework.harness.workflow.canonical|required_text"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/control_plane/graph_result_lineage.py|<module>|framework.harness.workflow.canonical|canonical_checksum"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/control_plane/graph_result_lineage.py|<module>|framework.harness.workflow.canonical|exact_reference"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/control_plane/graph_result_lineage.py|<module>|framework.harness.workflow.canonical|freeze_json"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/control_plane/graph_result_lineage.py|<module>|framework.harness.workflow.canonical|required_text"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/control_plane/graph_result_lineage.py|<module>|framework.harness.workflow.canonical|thaw_json"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/control_plane/graph_runtime.py|<module>|framework.harness.workflow.canonical|canonical_checksum"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/control_plane/graph_runtime.py|<module>|framework.harness.workflow.canonical|freeze_json"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/control_plane/graph_runtime.py|<module>|framework.harness.workflow.canonical|required_text"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/control_plane/graph_runtime.py|<module>|framework.harness.workflow.canonical|thaw_json"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/control_plane/graph_runtime.py|<module>|framework.harness.workflow.versioning|HARNESS_GRAPH_RUNTIME_VERSION"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/control_plane/graph_state.py|<module>|framework.harness.workflow.canonical|canonical_checksum"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/control_plane/graph_state.py|<module>|framework.harness.workflow.canonical|exact_reference"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/control_plane/graph_state.py|<module>|framework.harness.workflow.canonical|freeze_json"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/control_plane/graph_state.py|<module>|framework.harness.workflow.canonical|optional_text"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/control_plane/graph_state.py|<module>|framework.harness.workflow.canonical|required_text"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/control_plane/graph_state.py|<module>|framework.harness.workflow.canonical|thaw_json"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/control_plane/graph_state.py|<module>|framework.harness.workflow.dsl|WaitKind"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/control_plane/graph_state.py|<module>|framework.harness.workflow.versioning|HARNESS_GRAPH_RUNTIME_VERSION"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/control_plane/graph_state.py|<module>|framework.harness.workflow.versioning|HARNESS_GRAPH_STATE_SCHEMA"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/control_plane/harness.py|<module>|framework.harness.workflow.step|HarnessStepSpec"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/control_plane/harness.py|<module>|framework.harness.workflow.step|HarnessWorkerType"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/control_plane/scheduler.py|<module>|framework.harness.workflow.canonical|canonical_checksum"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/control_plane/scheduler.py|<module>|framework.harness.workflow.canonical|freeze_json"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/control_plane/scheduler.py|<module>|framework.harness.workflow.canonical|required_text"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/control_plane/scheduler.py|<module>|framework.harness.workflow.canonical|thaw_json"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/control_plane/scheduler.py|<module>|framework.harness.workflow.step|HarnessRetryPolicy"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/control_plane/scheduler.py|<module>|framework.harness.workflow.step|HarnessStepSpec"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/control_plane/scheduler.py|<module>|framework.harness.workflow.versioning|HARNESS_WORKER_ACTIVITY_SCHEMA"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/control_plane/step_lifecycle.py|<module>|framework.harness.workflow.canonical|canonical_checksum"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/control_plane/step_lifecycle.py|<module>|framework.harness.workflow.canonical|freeze_json"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/control_plane/step_lifecycle.py|<module>|framework.harness.workflow.canonical|optional_text"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/control_plane/step_lifecycle.py|<module>|framework.harness.workflow.canonical|required_text"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/control_plane/step_lifecycle.py|<module>|framework.harness.workflow.canonical|thaw_json"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/control_plane/step_lifecycle.py|<module>|framework.harness.workflow.step|HarnessStepSpec"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/control_plane/step_lifecycle.py|<module>|framework.harness.workflow.versioning|HARNESS_STEP_LIFECYCLE_VERSION"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/runtime/artifact_context.py|<module>|framework.harness.workflow.canonical|freeze_json"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/runtime/artifact_context.py|<module>|framework.harness.workflow.canonical|thaw_json"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/runtime/graph_result_projection.py|<module>|framework.harness.workflow.canonical|canonical_checksum"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/runtime/graph_result_projection.py|<module>|framework.harness.workflow.canonical|required_text"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/runtime/materializer.py|<module>|framework.harness.workflow.canonical|thaw_json"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/runtime/result_canonical.py|<module>|framework.harness.workflow.canonical|freeze_json"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/runtime/result_canonical.py|<module>|framework.harness.workflow.canonical|thaw_json"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/task_plan/canonical.py|<module>|framework.harness.workflow.canonical|canonical_checksum"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/task_plan/canonical.py|<module>|framework.harness.workflow.canonical|freeze_json"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/task_plan/canonical.py|<module>|framework.harness.workflow.canonical|thaw_json"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/task_plan/capability.py|<module>|framework.harness.workflow.step|HarnessWorkerType"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/task_plan/inspection.py|<module>|framework.harness.workflow.canonical|freeze_json"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/task_plan/inspection.py|<module>|framework.harness.workflow.canonical|thaw_json"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/task_plan/observability.py|<module>|framework.harness.workflow.canonical|required_text"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/task_plan/stage.py|<module>|framework.harness.workflow.step|HarnessWorkerType"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/waits/models.py|<module>|framework.harness.workflow.canonical|canonical_checksum"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/waits/models.py|<module>|framework.harness.workflow.canonical|exact_reference"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/waits/models.py|<module>|framework.harness.workflow.canonical|required_text"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/waits/models.py|<module>|framework.harness.workflow.dsl|WaitKind"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/waits/timer.py|<module>|framework.harness.workflow.canonical|canonical_checksum"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/waits/timer.py|<module>|framework.harness.workflow.dsl|WaitKind"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/__init__.py|<module>|framework.harness.workflow.conditions|ALLOWED_CONDITION_PATH_PREFIXES"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/__init__.py|<module>|framework.harness.workflow.conditions|ConditionAll"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/__init__.py|<module>|framework.harness.workflow.conditions|ConditionAny"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/__init__.py|<module>|framework.harness.workflow.conditions|ConditionOperator"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/__init__.py|<module>|framework.harness.workflow.conditions|ConditionPredicate"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/__init__.py|<module>|framework.harness.workflow.conditions|HarnessCondition"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/__init__.py|<module>|framework.harness.workflow.conditions|condition_from_dict"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/__init__.py|<module>|framework.harness.workflow.conditions|condition_from_legacy_dict"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/__init__.py|<module>|framework.harness.workflow.conditions|evaluate_condition"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/__init__.py|<module>|framework.harness.workflow.dsl|BoundedLoop"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/__init__.py|<module>|framework.harness.workflow.dsl|Choice"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/__init__.py|<module>|framework.harness.workflow.dsl|ChoiceBranch"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/__init__.py|<module>|framework.harness.workflow.dsl|CompensationBinding"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/__init__.py|<module>|framework.harness.workflow.dsl|HarnessGraphExpression"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/__init__.py|<module>|framework.harness.workflow.dsl|HarnessGraphSpec"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/__init__.py|<module>|framework.harness.workflow.dsl|ParallelAll"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/__init__.py|<module>|framework.harness.workflow.dsl|ParallelAllFailurePolicy"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/__init__.py|<module>|framework.harness.workflow.dsl|ParallelAny"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/__init__.py|<module>|framework.harness.workflow.dsl|ParallelAnyCancellationPolicy"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/__init__.py|<module>|framework.harness.workflow.dsl|ParallelAnyFailurePolicy"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/__init__.py|<module>|framework.harness.workflow.dsl|ParallelBranch"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/__init__.py|<module>|framework.harness.workflow.dsl|ParallelMerge"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/__init__.py|<module>|framework.harness.workflow.dsl|PureMerge"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/__init__.py|<module>|framework.harness.workflow.dsl|Sequence"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/__init__.py|<module>|framework.harness.workflow.dsl|StepRef"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/__init__.py|<module>|framework.harness.workflow.dsl|VerifiedAggregation"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/__init__.py|<module>|framework.harness.workflow.dsl|Wait"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/__init__.py|<module>|framework.harness.workflow.dsl|WaitKind"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/__init__.py|<module>|framework.harness.workflow.dsl|WaitTimeoutAction"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/__init__.py|<module>|framework.harness.workflow.dsl|WaitTimeoutPolicy"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/__init__.py|<module>|framework.harness.workflow.dsl|expression_from_dict"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/__init__.py|<module>|framework.harness.workflow.step|HarnessRetryPolicy"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/__init__.py|<module>|framework.harness.workflow.step|HarnessStepSpec"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/__init__.py|<module>|framework.harness.workflow.step|HarnessWorkerType"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/__init__.py|<module>|framework.harness.workflow.versioning|HARNESS_CONDITION_POLICY_VERSION"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/__init__.py|<module>|framework.harness.workflow.versioning|HARNESS_GRAPH_CHECKPOINT_SCHEMA"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/__init__.py|<module>|framework.harness.workflow.versioning|HARNESS_GRAPH_COMPILER_VERSION"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/__init__.py|<module>|framework.harness.workflow.versioning|HARNESS_GRAPH_CONTROL_POLICY_VERSION"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/__init__.py|<module>|framework.harness.workflow.versioning|HARNESS_GRAPH_DECISION_SCHEMA"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/__init__.py|<module>|framework.harness.workflow.versioning|HARNESS_GRAPH_DSL_SCHEMA"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/__init__.py|<module>|framework.harness.workflow.versioning|HARNESS_GRAPH_EVALUATOR_VERSION"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/__init__.py|<module>|framework.harness.workflow.versioning|HARNESS_GRAPH_EVENT_SCHEMA"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/__init__.py|<module>|framework.harness.workflow.versioning|HARNESS_GRAPH_EVENT_SCHEMAS"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/__init__.py|<module>|framework.harness.workflow.versioning|HARNESS_GRAPH_INSPECTION_SCHEMA"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/__init__.py|<module>|framework.harness.workflow.versioning|HARNESS_GRAPH_MERGE_VERSION"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/__init__.py|<module>|framework.harness.workflow.versioning|HARNESS_GRAPH_REDUCER_VERSION"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/__init__.py|<module>|framework.harness.workflow.versioning|HARNESS_GRAPH_RUNTIME_VERSION"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/__init__.py|<module>|framework.harness.workflow.versioning|HARNESS_GRAPH_STATE_SCHEMA"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/__init__.py|<module>|framework.harness.workflow.versioning|HARNESS_STEP_LIFECYCLE_VERSION"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/__init__.py|<module>|framework.harness.workflow.versioning|HARNESS_WORKER_ACTIVITY_SCHEMA"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/__init__.py|<module>|framework.harness.workflow.versioning|HarnessGraphContractKind"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/__init__.py|<module>|framework.harness.workflow.versioning|HarnessGraphSchemaRegistration"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/__init__.py|<module>|framework.harness.workflow.versioning|LEGACY_CHECKPOINT_SCHEMA"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/__init__.py|<module>|framework.harness.workflow.versioning|LEGACY_DECISION_SCHEMA"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/__init__.py|<module>|framework.harness.workflow.versioning|LEGACY_EVENT_SCHEMA"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/__init__.py|<module>|framework.harness.workflow.versioning|LEGACY_STATE_SCHEMA"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/__init__.py|<module>|framework.harness.workflow.versioning|LEGACY_WORKFLOW_SCHEMA"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/__init__.py|<module>|framework.harness.workflow.versioning|NORMALIZED_HARNESS_GRAPH_SCHEMA"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/binding_authority.py|<module>|framework.harness.workflow.step|HarnessWorkerType"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/compiler.py|<module>|framework.harness.workflow.conditions|ConditionAll"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/compiler.py|<module>|framework.harness.workflow.conditions|ConditionPredicate"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/compiler.py|<module>|framework.harness.workflow.conditions|HarnessCondition"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/compiler.py|<module>|framework.harness.workflow.conditions|condition_from_legacy_dict"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/compiler.py|<module>|framework.harness.workflow.dsl|BoundedLoop"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/compiler.py|<module>|framework.harness.workflow.dsl|Choice"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/compiler.py|<module>|framework.harness.workflow.dsl|HarnessGraphExpression"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/compiler.py|<module>|framework.harness.workflow.dsl|ParallelAll"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/compiler.py|<module>|framework.harness.workflow.dsl|ParallelAny"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/compiler.py|<module>|framework.harness.workflow.dsl|PureMerge"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/compiler.py|<module>|framework.harness.workflow.dsl|Sequence"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/compiler.py|<module>|framework.harness.workflow.dsl|StepRef"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/compiler.py|<module>|framework.harness.workflow.dsl|VerifiedAggregation"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/compiler.py|<module>|framework.harness.workflow.dsl|Wait"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/compiler.py|<module>|framework.harness.workflow.dsl|WaitTimeoutAction"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/compiler.py|<module>|framework.harness.workflow.step|HarnessStepSpec"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/compiler.py|<module>|framework.harness.workflow.versioning|HARNESS_GRAPH_COMPILER_VERSION"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/compiler.py|<module>|framework.harness.workflow.versioning|HARNESS_WORKER_ACTIVITY_SCHEMA"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/conditions.py|<module>|framework.harness.workflow.canonical|freeze_json"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/conditions.py|<module>|framework.harness.workflow.canonical|required_text"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/conditions.py|<module>|framework.harness.workflow.canonical|thaw_json"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/conditions.py|<module>|framework.harness.workflow.versioning|HARNESS_CONDITION_POLICY_VERSION"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/dsl.py|<module>|framework.harness.workflow.canonical|exact_reference"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/dsl.py|<module>|framework.harness.workflow.canonical|freeze_json"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/dsl.py|<module>|framework.harness.workflow.canonical|optional_text"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/dsl.py|<module>|framework.harness.workflow.canonical|required_text"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/dsl.py|<module>|framework.harness.workflow.canonical|thaw_json"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/dsl.py|<module>|framework.harness.workflow.conditions|ConditionAll"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/dsl.py|<module>|framework.harness.workflow.conditions|ConditionAny"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/dsl.py|<module>|framework.harness.workflow.conditions|ConditionPredicate"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/dsl.py|<module>|framework.harness.workflow.conditions|HarnessCondition"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/dsl.py|<module>|framework.harness.workflow.conditions|condition_from_dict"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/dsl.py|<module>|framework.harness.workflow.versioning|HARNESS_GRAPH_DSL_SCHEMA"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/graph.py|<module>|framework.harness.workflow.canonical|canonical_checksum"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/graph.py|<module>|framework.harness.workflow.canonical|freeze_json"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/graph.py|<module>|framework.harness.workflow.canonical|optional_text"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/graph.py|<module>|framework.harness.workflow.canonical|required_text"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/graph.py|<module>|framework.harness.workflow.canonical|thaw_json"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/graph.py|<module>|framework.harness.workflow.conditions|ConditionAll"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/graph.py|<module>|framework.harness.workflow.conditions|ConditionAny"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/graph.py|<module>|framework.harness.workflow.conditions|ConditionPredicate"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/graph.py|<module>|framework.harness.workflow.conditions|HarnessCondition"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/graph.py|<module>|framework.harness.workflow.conditions|condition_from_dict"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/graph.py|<module>|framework.harness.workflow.dsl|WaitKind"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/graph.py|<module>|framework.harness.workflow.dsl|WaitTimeoutPolicy"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/graph.py|<module>|framework.harness.workflow.versioning|HARNESS_CONDITION_POLICY_VERSION"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/graph.py|<module>|framework.harness.workflow.versioning|HARNESS_GRAPH_COMPILER_VERSION"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/graph.py|<module>|framework.harness.workflow.versioning|NORMALIZED_HARNESS_GRAPH_SCHEMA"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/reader.py|<module>|framework.harness.workflow.dsl|HarnessGraphSpec"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/reader.py|<module>|framework.harness.workflow.step|HarnessRetryPolicy"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/reader.py|<module>|framework.harness.workflow.step|HarnessStepSpec"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/reader.py|<module>|framework.harness.workflow.versioning|HARNESS_GRAPH_DSL_SCHEMA"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/spec.py|<module>|framework.harness.workflow.canonical|required_text"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/spec.py|<module>|framework.harness.workflow.dsl|HarnessGraphSpec"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/spec.py|<module>|framework.harness.workflow.step|HarnessStepSpec"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/spec.py|<module>|framework.harness.workflow.versioning|HARNESS_GRAPH_DSL_SCHEMA"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/validation/models.py|<module>|framework.harness.workflow.canonical|freeze_json"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/validation/models.py|<module>|framework.harness.workflow.canonical|required_text"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/validation/models.py|<module>|framework.harness.workflow.canonical|thaw_json"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/validation/preflight.py|<module>|framework.harness.workflow.step|HarnessWorkerType"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/validation/preflight.py|<module>|framework.harness.workflow.versioning|NORMALIZED_HARNESS_GRAPH_SCHEMA"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/validation/semantic.py|<module>|framework.harness.workflow.conditions|ConditionAll"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/validation/semantic.py|<module>|framework.harness.workflow.conditions|ConditionAny"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/validation/semantic.py|<module>|framework.harness.workflow.conditions|ConditionPredicate"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/validation/semantic.py|<module>|framework.harness.workflow.conditions|HarnessCondition"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/validation/semantic.py|<module>|framework.harness.workflow.dsl|WaitKind"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/validation/semantic.py|<module>|framework.harness.workflow.versioning|HARNESS_CONDITION_POLICY_VERSION"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/versioning.py|<module>|framework.harness.workflow.canonical|required_text"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "interfaces/composition/research.py|<module>|framework.harness.workflow|HarnessWorkerType"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "interfaces/services/harness_graph_service.py|<module>|framework.harness.workflow.canonical|required_text"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "interfaces/services/harness_wait_service.py|<module>|framework.harness.workflow.canonical|canonical_checksum"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "interfaces/services/harness_wait_service.py|<module>|framework.harness.workflow.canonical|exact_reference"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "interfaces/services/harness_wait_service.py|<module>|framework.harness.workflow.canonical|freeze_json"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 4,
+      "key": "interfaces/services/harness_wait_service.py|<module>|framework.harness.workflow.canonical|required_text"
+    },
+    {
+      "category": "retired_symbols",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/__init__.py|<module>|import|LEGACY_CHECKPOINT_SCHEMA"
+    },
+    {
+      "category": "retired_symbols",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/__init__.py|<module>|import|LEGACY_DECISION_SCHEMA"
+    },
+    {
+      "category": "retired_symbols",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/__init__.py|<module>|import|LEGACY_EVENT_SCHEMA"
+    },
+    {
+      "category": "retired_symbols",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/__init__.py|<module>|import|LEGACY_STATE_SCHEMA"
+    },
+    {
+      "category": "retired_symbols",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/__init__.py|<module>|import|LEGACY_WORKFLOW_SCHEMA"
+    },
+    {
+      "category": "retired_symbols",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/__init__.py|<module>|string_literal|LEGACY_CHECKPOINT_SCHEMA"
+    },
+    {
+      "category": "retired_symbols",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/__init__.py|<module>|string_literal|LEGACY_DECISION_SCHEMA"
+    },
+    {
+      "category": "retired_symbols",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/__init__.py|<module>|string_literal|LEGACY_EVENT_SCHEMA"
+    },
+    {
+      "category": "retired_symbols",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/__init__.py|<module>|string_literal|LEGACY_STATE_SCHEMA"
+    },
+    {
+      "category": "retired_symbols",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/__init__.py|<module>|string_literal|LEGACY_WORKFLOW_SCHEMA"
+    },
+    {
+      "category": "public_exports",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/__init__.py|ALLOWED_CONDITION_PATH_PREFIXES"
+    },
+    {
+      "category": "public_exports",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/__init__.py|BoundedLoop"
+    },
+    {
+      "category": "public_exports",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/__init__.py|Choice"
+    },
+    {
+      "category": "public_exports",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/__init__.py|ChoiceBranch"
+    },
+    {
+      "category": "public_exports",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/__init__.py|CompensationBinding"
+    },
+    {
+      "category": "public_exports",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/__init__.py|ConditionAll"
+    },
+    {
+      "category": "public_exports",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/__init__.py|ConditionAny"
+    },
+    {
+      "category": "public_exports",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/__init__.py|ConditionOperator"
+    },
+    {
+      "category": "public_exports",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/__init__.py|ConditionPredicate"
+    },
+    {
+      "category": "public_exports",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/__init__.py|HARNESS_CONDITION_POLICY_VERSION"
+    },
+    {
+      "category": "public_exports",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/__init__.py|HARNESS_GRAPH_CHECKPOINT_SCHEMA"
+    },
+    {
+      "category": "public_exports",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/__init__.py|HARNESS_GRAPH_COMPILER_VERSION"
+    },
+    {
+      "category": "public_exports",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/__init__.py|HARNESS_GRAPH_CONTROL_POLICY_VERSION"
+    },
+    {
+      "category": "public_exports",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/__init__.py|HARNESS_GRAPH_DECISION_SCHEMA"
+    },
+    {
+      "category": "public_exports",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/__init__.py|HARNESS_GRAPH_DSL_SCHEMA"
+    },
+    {
+      "category": "public_exports",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/__init__.py|HARNESS_GRAPH_EVALUATOR_VERSION"
+    },
+    {
+      "category": "public_exports",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/__init__.py|HARNESS_GRAPH_EVENT_SCHEMA"
+    },
+    {
+      "category": "public_exports",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/__init__.py|HARNESS_GRAPH_EVENT_SCHEMAS"
+    },
+    {
+      "category": "public_exports",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/__init__.py|HARNESS_GRAPH_INSPECTION_SCHEMA"
+    },
+    {
+      "category": "public_exports",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/__init__.py|HARNESS_GRAPH_MERGE_VERSION"
+    },
+    {
+      "category": "public_exports",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/__init__.py|HARNESS_GRAPH_REDUCER_VERSION"
+    },
+    {
+      "category": "public_exports",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/__init__.py|HARNESS_GRAPH_RUNTIME_VERSION"
+    },
+    {
+      "category": "public_exports",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/__init__.py|HARNESS_GRAPH_STATE_SCHEMA"
+    },
+    {
+      "category": "public_exports",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/__init__.py|HARNESS_STEP_LIFECYCLE_VERSION"
+    },
+    {
+      "category": "public_exports",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/__init__.py|HARNESS_WORKER_ACTIVITY_SCHEMA"
+    },
+    {
+      "category": "public_exports",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/__init__.py|HarnessCondition"
+    },
+    {
+      "category": "public_exports",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/__init__.py|HarnessGraphContractKind"
+    },
+    {
+      "category": "public_exports",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/__init__.py|HarnessGraphExpression"
+    },
+    {
+      "category": "public_exports",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/__init__.py|HarnessGraphSchemaRegistration"
+    },
+    {
+      "category": "public_exports",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/__init__.py|HarnessGraphSpec"
+    },
+    {
+      "category": "public_exports",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/__init__.py|HarnessRetryPolicy"
+    },
+    {
+      "category": "public_exports",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/__init__.py|HarnessStepSpec"
+    },
+    {
+      "category": "public_exports",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/__init__.py|HarnessTerminalSideEffectPolicy"
+    },
+    {
+      "category": "public_exports",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/__init__.py|HarnessWorkerType"
+    },
+    {
+      "category": "public_exports",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/__init__.py|LEGACY_CHECKPOINT_SCHEMA"
+    },
+    {
+      "category": "public_exports",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/__init__.py|LEGACY_DECISION_SCHEMA"
+    },
+    {
+      "category": "public_exports",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/__init__.py|LEGACY_EVENT_SCHEMA"
+    },
+    {
+      "category": "public_exports",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/__init__.py|LEGACY_STATE_SCHEMA"
+    },
+    {
+      "category": "public_exports",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/__init__.py|LEGACY_WORKFLOW_SCHEMA"
+    },
+    {
+      "category": "public_exports",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/__init__.py|NORMALIZED_HARNESS_GRAPH_SCHEMA"
+    },
+    {
+      "category": "public_exports",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/__init__.py|ParallelAll"
+    },
+    {
+      "category": "public_exports",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/__init__.py|ParallelAllFailurePolicy"
+    },
+    {
+      "category": "public_exports",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/__init__.py|ParallelAny"
+    },
+    {
+      "category": "public_exports",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/__init__.py|ParallelAnyCancellationPolicy"
+    },
+    {
+      "category": "public_exports",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/__init__.py|ParallelAnyFailurePolicy"
+    },
+    {
+      "category": "public_exports",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/__init__.py|ParallelBranch"
+    },
+    {
+      "category": "public_exports",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/__init__.py|ParallelMerge"
+    },
+    {
+      "category": "public_exports",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/__init__.py|PureMerge"
+    },
+    {
+      "category": "public_exports",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/__init__.py|Sequence"
+    },
+    {
+      "category": "public_exports",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/__init__.py|StepRef"
+    },
+    {
+      "category": "public_exports",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/__init__.py|VerifiedAggregation"
+    },
+    {
+      "category": "public_exports",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/__init__.py|Wait"
+    },
+    {
+      "category": "public_exports",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/__init__.py|WaitKind"
+    },
+    {
+      "category": "public_exports",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/__init__.py|WaitTimeoutAction"
+    },
+    {
+      "category": "public_exports",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/__init__.py|WaitTimeoutPolicy"
+    },
+    {
+      "category": "public_exports",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/__init__.py|condition_from_dict"
+    },
+    {
+      "category": "public_exports",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/__init__.py|condition_from_legacy_dict"
+    },
+    {
+      "category": "public_exports",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/__init__.py|evaluate_condition"
+    },
+    {
+      "category": "public_exports",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/__init__.py|expression_from_dict"
+    },
+    {
+      "category": "public_exports",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/canonical.py|canonical_checksum"
+    },
+    {
+      "category": "public_exports",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/canonical.py|exact_reference"
+    },
+    {
+      "category": "public_exports",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/canonical.py|freeze_json"
+    },
+    {
+      "category": "public_exports",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/canonical.py|mapping_to_dict"
+    },
+    {
+      "category": "public_exports",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/canonical.py|optional_text"
+    },
+    {
+      "category": "public_exports",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/canonical.py|required_text"
+    },
+    {
+      "category": "public_exports",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/canonical.py|stable_unique_tuple"
+    },
+    {
+      "category": "public_exports",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/canonical.py|thaw_json"
+    },
+    {
+      "category": "public_exports",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/conditions.py|ALLOWED_CONDITION_PATH_PREFIXES"
+    },
+    {
+      "category": "public_exports",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/conditions.py|ConditionAll"
+    },
+    {
+      "category": "public_exports",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/conditions.py|ConditionAny"
+    },
+    {
+      "category": "public_exports",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/conditions.py|ConditionOperator"
+    },
+    {
+      "category": "public_exports",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/conditions.py|ConditionPredicate"
+    },
+    {
+      "category": "public_exports",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/conditions.py|HarnessCondition"
+    },
+    {
+      "category": "public_exports",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/conditions.py|condition_from_dict"
+    },
+    {
+      "category": "public_exports",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/conditions.py|condition_from_legacy_dict"
+    },
+    {
+      "category": "public_exports",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/conditions.py|evaluate_condition"
+    },
+    {
+      "category": "public_exports",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/conditions.py|resolve_condition_path"
+    },
+    {
+      "category": "public_exports",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/dsl.py|BoundedLoop"
+    },
+    {
+      "category": "public_exports",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/dsl.py|Choice"
+    },
+    {
+      "category": "public_exports",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/dsl.py|ChoiceBranch"
+    },
+    {
+      "category": "public_exports",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/dsl.py|CompensationBinding"
+    },
+    {
+      "category": "public_exports",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/dsl.py|HarnessGraphExpression"
+    },
+    {
+      "category": "public_exports",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/dsl.py|HarnessGraphSpec"
+    },
+    {
+      "category": "public_exports",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/dsl.py|ParallelAll"
+    },
+    {
+      "category": "public_exports",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/dsl.py|ParallelAllFailurePolicy"
+    },
+    {
+      "category": "public_exports",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/dsl.py|ParallelAny"
+    },
+    {
+      "category": "public_exports",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/dsl.py|ParallelAnyCancellationPolicy"
+    },
+    {
+      "category": "public_exports",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/dsl.py|ParallelAnyFailurePolicy"
+    },
+    {
+      "category": "public_exports",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/dsl.py|ParallelBranch"
+    },
+    {
+      "category": "public_exports",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/dsl.py|ParallelMerge"
+    },
+    {
+      "category": "public_exports",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/dsl.py|PureMerge"
+    },
+    {
+      "category": "public_exports",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/dsl.py|Sequence"
+    },
+    {
+      "category": "public_exports",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/dsl.py|StepRef"
+    },
+    {
+      "category": "public_exports",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/dsl.py|VerifiedAggregation"
+    },
+    {
+      "category": "public_exports",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/dsl.py|Wait"
+    },
+    {
+      "category": "public_exports",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/dsl.py|WaitKind"
+    },
+    {
+      "category": "public_exports",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/dsl.py|WaitTimeoutAction"
+    },
+    {
+      "category": "public_exports",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/dsl.py|WaitTimeoutPolicy"
+    },
+    {
+      "category": "public_exports",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/dsl.py|expression_from_dict"
+    },
+    {
+      "category": "public_exports",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/step.py|HarnessRetryPolicy"
+    },
+    {
+      "category": "public_exports",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/step.py|HarnessStepSpec"
+    },
+    {
+      "category": "public_exports",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/step.py|HarnessWorkerType"
+    },
+    {
+      "category": "legacy_schema_writers",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/control_plane/graph_checkpoint.py|<module>.HarnessGraphCheckpoint.__post_init__|dict_field:schema_version"
+    },
+    {
+      "category": "legacy_schema_writers",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/control_plane/graph_checkpoint.py|<module>.HarnessGraphCheckpoint.checksum_projection|dict_field:schema_version"
+    },
+    {
+      "category": "legacy_schema_writers",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/control_plane/graph_checkpoint.py|<module>.HarnessGraphCheckpoint|annotated_assignment:schema_version"
+    },
+    {
+      "category": "legacy_schema_writers",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/control_plane/graph_checkpoint.py|<module>.HarnessLegacyEventEvidence.checksum_projection|dict_field:schema_version"
+    },
+    {
+      "category": "legacy_schema_writers",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/control_plane/graph_decision.py|<module>.HarnessGraphDecision.checksum_projection|dict_field:schema_version"
+    },
+    {
+      "category": "legacy_schema_writers",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/control_plane/graph_decision.py|<module>.HarnessGraphDecision|annotated_assignment:schema_version"
+    },
+    {
+      "category": "legacy_schema_writers",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/control_plane/graph_inspection.py|<module>.HarnessGraphInspection.from_state|dict_field:schema_version"
+    },
+    {
+      "category": "legacy_schema_writers",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/control_plane/graph_state.py|<module>.HarnessGraphReference.to_dict|dict_field:schema_version"
+    },
+    {
+      "category": "legacy_schema_writers",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/control_plane/graph_state.py|<module>.HarnessGraphState.__post_init__|dict_field:schema_version"
+    },
+    {
+      "category": "legacy_schema_writers",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/control_plane/graph_state.py|<module>.HarnessGraphState.checksum_projection|dict_field:schema_version"
+    },
+    {
+      "category": "legacy_schema_writers",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/control_plane/graph_state.py|<module>.HarnessGraphState|annotated_assignment:schema_version"
+    },
+    {
+      "category": "legacy_schema_writers",
+      "count": 3,
+      "generation": 4,
+      "key": "framework/harness/control_plane/scheduler.py|<module>.HarnessScheduler._next_graph_decision|call_argument:append"
+    },
+    {
+      "category": "legacy_schema_writers",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/compiler.py|<module>._CompilerContext._add_control|call_argument:append"
+    },
+    {
+      "category": "legacy_schema_writers",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/compiler.py|<module>._CompilerContext._add_executable|call_argument:append"
+    },
+    {
+      "category": "legacy_schema_writers",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/compiler.py|<module>._CompilerContext._compile_compensations|call_argument:append"
+    },
+    {
+      "category": "legacy_schema_writers",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/dsl.py|<module>.HarnessGraphSpec.__post_init__|dict_field:schema_version"
+    },
+    {
+      "category": "legacy_schema_writers",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/dsl.py|<module>.HarnessGraphSpec.to_dict|dict_field:schema_version"
+    },
+    {
+      "category": "legacy_schema_writers",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/dsl.py|<module>.HarnessGraphSpec|annotated_assignment:schema_version"
+    },
+    {
+      "category": "legacy_schema_writers",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/graph.py|<module>.NormalizedHarnessGraph.__post_init__|dict_field:schema_version"
+    },
+    {
+      "category": "legacy_schema_writers",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/graph.py|<module>.NormalizedHarnessGraph.checksum_projection|dict_field:schema_version"
+    },
+    {
+      "category": "legacy_schema_writers",
+      "count": 1,
+      "generation": 4,
+      "key": "framework/harness/workflow/graph.py|<module>.NormalizedHarnessGraph|annotated_assignment:schema_version"
     }
   ],
   "schema": "newsroom.graph-only-freeze-baseline/v1",
-  "source_commit": "ed0bcbe8287b74586754e0e64b7ba57e081c82b8",
-  "source_tree": "167fc911cef06b0e804abdf5d647d4e49f9a34ad"
+  "source_commit": "130acb481ddff545d43ca3b37ff283e47baebcf0",
+  "source_tree": "2a7e3422ad1436b7421ad92e89cf1cce335df1fe"
 }

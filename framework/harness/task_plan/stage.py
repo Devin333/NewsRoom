@@ -29,7 +29,7 @@ from framework.harness.task_plan.verification import (
     TaskPlanResultVerificationRequest,
     TaskPlanResultVerifier,
 )
-from framework.harness.workflow.step import HarnessWorkerType
+from framework.harness.graph.activity import HarnessWorkerType
 
 
 class TaskPlanStageRunner(TaskPlanStageRunnerPort):

@@ -6,10 +6,11 @@ from typing import Any
 
 from framework.harness.control_plane.errors import HarnessValidationError
 from framework.harness.side_effects.models import HarnessTerminalSideEffectPolicy
-from framework.harness.workflow.canonical import required_text
-from framework.harness.workflow.dsl import HarnessGraphSpec
-from framework.harness.workflow.step import HarnessStepSpec
-from framework.harness.workflow.versioning import HARNESS_GRAPH_DSL_SCHEMA, LEGACY_WORKFLOW_SCHEMA
+from framework.harness.graph.canonical import required_text
+from framework.harness.graph.dsl import HarnessGraphSpec
+from framework.harness.graph.activity import HarnessStepSpec
+from framework.harness.graph.versioning import HARNESS_GRAPH_DSL_SCHEMA
+from framework.harness.workflow.versioning import LEGACY_WORKFLOW_SCHEMA
 from framework.shared.json import to_jsonable
 
 

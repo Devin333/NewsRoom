@@ -15,7 +15,7 @@ from framework.harness.control_plane.graph_state import (
     HarnessWaitStatus,
     RunOutcome,
 )
-from framework.harness.workflow.canonical import required_text
+from framework.harness.graph.canonical import required_text
 
 
 class HarnessGraphHealthStatus(StrEnum):

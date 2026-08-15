@@ -21,7 +21,7 @@ from framework.harness.task_plan.models import ResolvedTaskSpec, TaskRetryPolicy
 from framework.harness.task_plan.policy import TaskPlanPolicy
 from framework.harness.task_plan.schema import TASK_CAPABILITY_BINDING_SCHEMA, TASK_PLAN_RUNTIME_VERSION
 from framework.harness.workflow.binding_authority import HarnessWorkerBinding
-from framework.harness.workflow.step import HarnessWorkerType
+from framework.harness.graph.activity import HarnessWorkerType
 
 
 @dataclass(frozen=True, slots=True)

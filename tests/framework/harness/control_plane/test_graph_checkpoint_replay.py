@@ -33,9 +33,9 @@ from framework.harness.control_plane.harness import (
 )
 from framework.harness.control_plane.state import HarnessRunSpec
 from framework.harness.runtime.checkpoint import HarnessCheckpoint
-from framework.harness.workflow.dsl import HarnessGraphSpec, Sequence, StepRef
+from framework.harness.graph.dsl import HarnessGraphSpec, Sequence, StepRef
 from framework.harness.workflow.spec import HarnessWorkflowSpec
-from framework.harness.workflow.step import HarnessStepSpec
+from framework.harness.graph.activity import HarnessStepSpec
 from framework.harness.workflow.versioning import (
     DEFAULT_HARNESS_GRAPH_SCHEMA_REGISTRY,
     LEGACY_CHECKPOINT_SCHEMA,

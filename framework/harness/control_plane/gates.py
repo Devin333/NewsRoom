@@ -11,7 +11,7 @@ from framework.harness.control_plane.errors import HarnessValidationError
 from framework.harness.control_plane.policy import HarnessBudgetSnapshot
 from framework.harness.control_plane.state import HarnessState, HarnessStepState
 from framework.harness.quality.verdict import HarnessQualityVerdict
-from framework.harness.workflow.step import HarnessStepSpec, HarnessWorkerType
+from framework.harness.graph.activity import HarnessStepSpec, HarnessWorkerType
 from framework.harness.workers.result import HarnessWorkerResult
 
 

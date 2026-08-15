@@ -41,7 +41,7 @@ from framework.harness.control_plane.step_lifecycle import (
     StepLifecycleTransition,
     StepLifecycleTransitionType,
 )
-from framework.harness.workflow.canonical import (
+from framework.harness.graph.canonical import (
     canonical_checksum,
     freeze_json,
     required_text,
@@ -57,11 +57,11 @@ from framework.harness.workflow.graph import (
     HarnessGraphNodeKind,
     NormalizedHarnessGraph,
 )
-from framework.harness.workflow.step import (
+from framework.harness.graph.activity import (
     HarnessRetryPolicy,
     HarnessStepSpec,
 )
-from framework.harness.workflow.versioning import HARNESS_WORKER_ACTIVITY_SCHEMA
+from framework.harness.graph.versioning import HARNESS_WORKER_ACTIVITY_SCHEMA
 
 
 _STEP_GRAPH_DECISION_TYPES = MappingProxyType(

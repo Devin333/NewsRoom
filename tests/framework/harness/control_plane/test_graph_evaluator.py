@@ -35,10 +35,10 @@ from framework.harness.control_plane.graph_state import (
 )
 from framework.harness.control_plane.scheduler import HarnessScheduler
 from framework.harness.control_plane.state import HarnessStepStatus
-from framework.harness.workflow.canonical import canonical_checksum
+from framework.harness.graph.canonical import canonical_checksum
 from framework.harness.workflow.compiler import HarnessWorkflowGraphCompiler
-from framework.harness.workflow.conditions import ConditionPredicate
-from framework.harness.workflow.dsl import (
+from framework.harness.graph.conditions import ConditionPredicate
+from framework.harness.graph.dsl import (
     BoundedLoop,
     Choice,
     ChoiceBranch,
@@ -58,7 +58,7 @@ from framework.harness.workflow.graph import (
     NormalizedHarnessGraph,
 )
 from framework.harness.workflow.spec import HarnessWorkflowSpec
-from framework.harness.workflow.step import HarnessStepSpec
+from framework.harness.graph.activity import HarnessStepSpec
 
 
 def test_sequence_entry_and_successor_readiness_are_deterministic() -> None:

@@ -13,8 +13,8 @@ from typing import Any
 
 from framework.harness.control_plane.graph_checkpoint import HarnessGraphReplayReport
 from framework.harness.control_plane.graph_state import HarnessGraphState
-from framework.harness.workflow.canonical import freeze_json, thaw_json
-from framework.harness.workflow.versioning import HARNESS_GRAPH_INSPECTION_SCHEMA
+from framework.harness.graph.canonical import freeze_json, thaw_json
+from framework.harness.graph.versioning import HARNESS_GRAPH_INSPECTION_SCHEMA
 
 
 @dataclass(frozen=True, slots=True)

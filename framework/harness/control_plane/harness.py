@@ -177,7 +177,7 @@ from framework.harness.workflow.runtime_resolution import (
     HarnessResolvedRuntimeBindings,
 )
 from framework.shared.time import format_datetime
-from framework.harness.workflow.step import HarnessStepSpec, HarnessWorkerType
+from framework.harness.graph.activity import HarnessStepSpec, HarnessWorkerType
 from framework.harness.workflow.spec import HarnessRouteKind
 from framework.harness.workflow.validation import (
     HarnessGraphPreflight,

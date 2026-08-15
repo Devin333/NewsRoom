@@ -41,8 +41,8 @@ from framework.harness.control_plane.event import HarnessEvent, HarnessEventType
 from framework.harness.control_plane.errors import HarnessValidationError
 from framework.harness.control_plane.state import HarnessRunSpec
 from framework.harness.workflow.spec import HarnessWorkflowSpec
-from framework.harness.workflow.step import HarnessStepSpec
-from framework.harness.workflow.dsl import (
+from framework.harness.graph.activity import HarnessStepSpec
+from framework.harness.graph.dsl import (
     HarnessGraphSpec,
     ParallelAll,
     ParallelBranch,

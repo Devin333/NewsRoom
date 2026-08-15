@@ -33,14 +33,14 @@ from framework.harness.control_plane.graph_operations import (
     HarnessGraphRunOperationType,
 )
 from framework.harness.control_plane.state import HarnessStepStatus
-from framework.harness.workflow.canonical import (
+from framework.harness.graph.canonical import (
     canonical_checksum,
     exact_reference,
     freeze_json,
     required_text,
     thaw_json,
 )
-from framework.harness.workflow.conditions import (
+from framework.harness.graph.conditions import (
     ConditionAll,
     ConditionAny,
     ConditionPredicate,
@@ -48,7 +48,7 @@ from framework.harness.workflow.conditions import (
     evaluate_condition,
     resolve_condition_path,
 )
-from framework.harness.workflow.dsl import WaitKind, WaitTimeoutAction
+from framework.harness.graph.dsl import WaitKind, WaitTimeoutAction
 from framework.harness.workflow.graph import (
     HarnessControlNode,
     HarnessContractKind,
@@ -60,7 +60,7 @@ from framework.harness.workflow.graph import (
     HarnessGraphNodeKind,
     NormalizedHarnessGraph,
 )
-from framework.harness.workflow.versioning import HARNESS_GRAPH_EVALUATOR_VERSION
+from framework.harness.graph.versioning import HARNESS_GRAPH_EVALUATOR_VERSION
 from framework.harness.waits.models import (
     HarnessWaitApprovalEvidenceRecord,
     HarnessWaitCancellationRecord,

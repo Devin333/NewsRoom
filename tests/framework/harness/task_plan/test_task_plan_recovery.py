@@ -31,7 +31,7 @@ from framework.harness.task_plan.canonical import canonical_payload_checksum
 from framework.harness.task_plan.models import PlanPatch, PlanPatchOperation, PlanPatchOperationType
 from framework.harness.workflow.binding_authority import HarnessWorkerBinding
 from framework.harness.workflow.graph import HarnessContractKind, HarnessContractReference
-from framework.harness.workflow.step import HarnessWorkerType
+from framework.harness.graph.activity import HarnessWorkerType
 from framework.harness.workers.result import HarnessWorkerResult
 
 

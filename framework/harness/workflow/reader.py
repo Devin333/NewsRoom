@@ -5,12 +5,14 @@ from typing import Any
 
 from framework.harness.control_plane.errors import HarnessValidationError
 from framework.harness.side_effects.models import HarnessSideEffectHandlerReference
-from framework.harness.workflow.dsl import HarnessGraphSpec
+from framework.harness.graph.dsl import HarnessGraphSpec
 from framework.harness.workflow.spec import HarnessRoutingRule, HarnessWorkflowSpec
-from framework.harness.workflow.step import HarnessRetryPolicy, HarnessStepSpec
+from framework.harness.graph.activity import HarnessRetryPolicy, HarnessStepSpec
+from framework.harness.graph.versioning import (
+    HARNESS_GRAPH_DSL_SCHEMA,
+)
 from framework.harness.workflow.versioning import (
     DEFAULT_HARNESS_GRAPH_SCHEMA_REGISTRY,
-    HARNESS_GRAPH_DSL_SCHEMA,
     LEGACY_WORKFLOW_SCHEMA,
     HarnessGraphContractKind,
     HarnessGraphSchemaRegistry,

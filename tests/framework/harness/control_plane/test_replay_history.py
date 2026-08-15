@@ -46,7 +46,7 @@ from framework.harness.workflow.spec import (
     HarnessRoutingRule,
     HarnessWorkflowSpec,
 )
-from framework.harness.workflow.step import HarnessStepSpec
+from framework.harness.graph.activity import HarnessStepSpec
 
 
 NOW = datetime(2026, 7, 16, 12, 0, tzinfo=UTC)

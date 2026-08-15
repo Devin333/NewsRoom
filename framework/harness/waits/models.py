@@ -6,12 +6,12 @@ from enum import StrEnum
 from typing import Any
 
 from framework.harness.control_plane.errors import HarnessValidationError
-from framework.harness.workflow.canonical import (
+from framework.harness.graph.canonical import (
     canonical_checksum,
     exact_reference,
     required_text,
 )
-from framework.harness.workflow.dsl import WaitKind
+from framework.harness.graph.dsl import WaitKind
 
 
 HARNESS_WAIT_RECORD_SCHEMA = "newsroom.harness.wait-record/v1"

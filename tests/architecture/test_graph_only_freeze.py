@@ -88,6 +88,44 @@ def test_symbol_added_to_existing_import_fails_as_expansion(tmp_path: Path) -> N
     )
 
 
+def test_import_symbol_subtraction_can_advance_the_baseline(tmp_path: Path) -> None:
+    baseline = _capture(
+        tmp_path,
+        {
+            "business/service.py": (
+                "from framework.workflow.runtime import "
+                "WorkflowExecutor, WorkflowRunner\n"
+                "VALUE = WorkflowRunner\n"
+            )
+        },
+    )
+    _write(
+        tmp_path,
+        "business/service.py",
+        "from framework.workflow.runtime import WorkflowRunner\n"
+        "VALUE = WorkflowRunner\n",
+    )
+    reduced = scan_tree(tmp_path)
+
+    assert _has_code(
+        verify_tree(tmp_path, baseline),
+        "graph_only_freeze_baseline_not_monotonic",
+    )
+    updated = update_baseline(
+        baseline,
+        reduced,
+        source_commit="b" * 40,
+        source_tree="c" * 40,
+    )
+
+    assert verify_tree(tmp_path, updated) == []
+    assert any(
+        row["category"] == "import_edges"
+        and row["key"].endswith("|WorkflowExecutor")
+        for row in updated["retired"]
+    )
+
+
 @pytest.mark.parametrize(
     "source,code",
     [

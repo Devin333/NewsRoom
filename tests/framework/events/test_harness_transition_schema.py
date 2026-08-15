@@ -10,7 +10,7 @@ from framework.events.schema import default_event_schema_catalog
 from framework.harness.control_plane.state import HarnessRunSpec, HarnessState
 from framework.harness.control_plane.transition import HarnessTransitionCommitted
 from framework.harness.workflow.spec import HarnessWorkflowSpec
-from framework.harness.workflow.step import HarnessStepSpec
+from framework.harness.graph.activity import HarnessStepSpec
 
 
 NOW = datetime(2026, 7, 16, 10, 0, tzinfo=UTC)

@@ -21,7 +21,7 @@ from framework.harness.control_plane.transition import (
 )
 from framework.harness.control_plane.transitions import transition_run
 from framework.harness.workflow.spec import HarnessWorkflowSpec
-from framework.harness.workflow.step import HarnessStepSpec
+from framework.harness.graph.activity import HarnessStepSpec
 from framework.shared.json import stable_json_dumps
 
 

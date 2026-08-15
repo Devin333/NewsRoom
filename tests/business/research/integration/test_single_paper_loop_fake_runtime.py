@@ -15,7 +15,7 @@ from framework.harness import (
     InMemoryHarnessEventPort,
     project_public_legacy_status,
 )
-from framework.harness.workflow import LEGACY_EVENT_SCHEMA, LEGACY_STATE_SCHEMA
+from framework.harness.workflow.versioning import LEGACY_EVENT_SCHEMA, LEGACY_STATE_SCHEMA
 
 from business.research.application import AnalyzePaperRequest, AnalyzePaperUseCase
 from business.research.application import single_paper_runtime as runtime_module

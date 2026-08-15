@@ -23,8 +23,8 @@ from framework.harness.workflow.binding_authority import (
     HarnessWorkerBinding,
 )
 from framework.harness.workflow.compiler import HarnessWorkflowGraphCompiler
-from framework.harness.workflow.conditions import ConditionPredicate
-from framework.harness.workflow.dsl import (
+from framework.harness.graph.conditions import ConditionPredicate
+from framework.harness.graph.dsl import (
     Choice,
     ChoiceBranch,
     HarnessGraphSpec,
@@ -32,7 +32,7 @@ from framework.harness.workflow.dsl import (
 )
 from framework.harness.workflow.runtime_resolution import HarnessGraphRuntimeResolver
 from framework.harness.workflow.spec import HarnessWorkflowSpec
-from framework.harness.workflow.step import HarnessStepSpec
+from framework.harness.graph.activity import HarnessStepSpec
 from framework.harness.workflow.validation import HarnessGraphPreflight
 from framework.harness.workers.result import HarnessWorkerResult
 

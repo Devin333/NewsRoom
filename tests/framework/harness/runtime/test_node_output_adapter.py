@@ -14,12 +14,12 @@ from framework.harness.control_plane.node_output import (
 from framework.harness.runtime.node_output import (
     HarnessAdmittedGraphActivityOutputAdapter,
 )
-from framework.harness.workflow.canonical import canonical_checksum
+from framework.harness.graph.canonical import canonical_checksum
 from framework.harness.workflow.graph import (
     HarnessContractKind,
     HarnessContractReference,
 )
-from framework.harness.workflow.versioning import (
+from framework.harness.graph.versioning import (
     HARNESS_CONDITION_POLICY_VERSION,
     HARNESS_GRAPH_COMPILER_VERSION,
     NORMALIZED_HARNESS_GRAPH_SCHEMA,

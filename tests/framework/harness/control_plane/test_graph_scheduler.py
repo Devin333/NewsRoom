@@ -47,9 +47,9 @@ from framework.harness.control_plane.step_lifecycle import (
     StepLifecycleObservations,
     StepWorkerObservation,
 )
-from framework.harness.workflow.canonical import canonical_checksum
+from framework.harness.graph.canonical import canonical_checksum
 from framework.harness.workflow.compiler import HarnessWorkflowGraphCompiler
-from framework.harness.workflow.dsl import (
+from framework.harness.graph.dsl import (
     Choice,
     ChoiceBranch,
     CompensationBinding,
@@ -66,7 +66,7 @@ from framework.harness.workflow.graph import (
     NormalizedHarnessGraph,
 )
 from framework.harness.workflow.spec import HarnessWorkflowSpec
-from framework.harness.workflow.step import HarnessStepSpec
+from framework.harness.graph.activity import HarnessStepSpec
 
 
 class _CandidateEvaluator(WorkflowGraphEvaluator):

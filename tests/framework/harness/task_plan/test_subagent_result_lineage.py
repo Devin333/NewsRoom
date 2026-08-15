@@ -48,7 +48,7 @@ from framework.harness import (
     task_instance_for_attempt,
 )
 from framework.harness.task_plan.store import TASK_PLAN_RESULT_SCHEMA_V1
-from framework.harness.workflow import HarnessWorkerType
+from framework.harness.graph import HarnessWorkerType
 from framework.harness.workflow.binding_authority import HarnessWorkerBinding
 from framework.harness.workflow.graph import (
     HarnessContractKind,

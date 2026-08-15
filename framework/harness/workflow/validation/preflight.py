@@ -10,7 +10,7 @@ from framework.harness.workflow.compiler import (
 )
 from framework.harness.workflow.graph import HarnessExecutableNode, NormalizedHarnessGraph
 from framework.harness.workflow.spec import HarnessWorkflowSpec
-from framework.harness.workflow.step import HarnessWorkerType
+from framework.harness.graph.activity import HarnessWorkerType
 from framework.harness.workflow.validation.dataflow import validate_dataflow
 from framework.harness.workflow.validation.models import (
     HarnessGraphDiagnostic,
@@ -27,9 +27,11 @@ from framework.harness.workflow.validation.registry import (
 )
 from framework.harness.workflow.validation.semantic import validate_semantics
 from framework.harness.workflow.validation.structural import validate_structure
+from framework.harness.graph.versioning import (
+    NORMALIZED_HARNESS_GRAPH_SCHEMA,
+)
 from framework.harness.workflow.versioning import (
     DEFAULT_HARNESS_GRAPH_SCHEMA_REGISTRY,
-    NORMALIZED_HARNESS_GRAPH_SCHEMA,
     HarnessGraphContractKind,
 )
 @dataclass(frozen=True, slots=True)

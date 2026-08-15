@@ -32,7 +32,7 @@ from framework.harness.control_plane.harness import (
 )
 from framework.harness.control_plane.policy import HarnessBudget
 from framework.harness.control_plane.state import HarnessRunSpec
-from framework.harness.workflow.dsl import (
+from framework.harness.graph.dsl import (
     HarnessGraphSpec,
     ParallelAll,
     ParallelBranch,
@@ -46,7 +46,7 @@ from framework.harness.workflow.graph import (
     HarnessContractKind,
     HarnessContractReference,
 )
-from framework.harness.workflow.step import HarnessStepSpec
+from framework.harness.graph.activity import HarnessStepSpec
 from framework.harness.workflow.validation import (
     HarnessGraphPreflight,
     HarnessGraphPreflightPolicy,

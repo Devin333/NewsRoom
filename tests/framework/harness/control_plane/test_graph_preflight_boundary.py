@@ -21,10 +21,10 @@ from framework.harness.workflow.compiler import (
     HarnessGraphCompileResult,
     HarnessWorkflowGraphCompiler,
 )
-from framework.harness.workflow.dsl import HarnessGraphSpec, StepRef, Wait
+from framework.harness.graph.dsl import HarnessGraphSpec, StepRef, Wait
 from framework.harness.workflow.graph import HarnessGraphEdge
 from framework.harness.workflow.spec import HarnessWorkflowSpec
-from framework.harness.workflow.step import HarnessStepSpec
+from framework.harness.graph.activity import HarnessStepSpec
 from framework.harness.workflow.validation import (
     HarnessGraphPreflight,
     HarnessGraphPreflightPolicy,

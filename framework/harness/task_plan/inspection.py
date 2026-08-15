@@ -16,7 +16,7 @@ from framework.harness.task_plan.canonical import (
 )
 from framework.harness.task_plan.models import TaskPlanProjection, ValidatedTaskPlan
 from framework.harness.task_plan.store import TaskPlanEvent, TaskPlanStorePort
-from framework.harness.workflow.canonical import freeze_json, thaw_json
+from framework.harness.graph.canonical import freeze_json, thaw_json
 
 
 _DEFAULT_MAX_TASKS = 128

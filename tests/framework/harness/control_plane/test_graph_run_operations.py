@@ -33,13 +33,13 @@ from framework.harness.control_plane.harness import (
     InMemoryHarnessEventPort,
 )
 from framework.harness.control_plane.state import HarnessRunSpec
-from framework.harness.workflow.dsl import HarnessGraphSpec, Sequence, StepRef, Wait
+from framework.harness.graph.dsl import HarnessGraphSpec, Sequence, StepRef, Wait
 from framework.harness.workflow.graph import (
     HarnessContractKind,
     HarnessContractReference,
 )
 from framework.harness.workflow.spec import HarnessWorkflowSpec
-from framework.harness.workflow.step import HarnessStepSpec
+from framework.harness.graph.activity import HarnessStepSpec
 from framework.harness.workers.result import HarnessWorkerResult
 
 

@@ -46,7 +46,7 @@ from framework.harness.task_plan.patches import TaskPlanPatchValidator
 from framework.harness.task_plan.policy import TaskPlanPolicy
 from framework.harness.workflow.binding_authority import HarnessWorkerBinding
 from framework.harness.workflow.graph import HarnessContractKind, HarnessContractReference
-from framework.harness.workflow.step import HarnessWorkerType
+from framework.harness.graph.activity import HarnessWorkerType
 
 
 FIXED_NOW = datetime(2026, 8, 2, 0, 0, tzinfo=UTC)

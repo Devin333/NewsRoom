@@ -181,8 +181,11 @@ def update_baseline(
 
     retired = [dict(item) for item in previous["retired"]]
     for category in CATEGORIES:
-        previous_rows = previous["active"][category]
-        current_rows = current.active[category]
+        previous_rows = _comparison_rows(
+            category,
+            previous["active"][category],
+        )
+        current_rows = _comparison_rows(category, current.active[category])
         additions = {
             key: count
             for key, count in current_rows.items()
@@ -234,8 +237,8 @@ def verify_tree(project_root: Path, baseline: Mapping[str, Any]) -> list[str]:
     ]
 
     for category in CATEGORIES:
-        expected = baseline["active"][category]
-        actual = result.active[category]
+        expected = _comparison_rows(category, baseline["active"][category])
+        actual = _comparison_rows(category, result.active[category])
         for key, count in actual.items():
             expected_count = expected.get(key)
             if expected_count is None or count > expected_count:
@@ -738,6 +741,24 @@ def _diagnostic_for_growth(
     else:
         code = "graph_only_freeze_new_legacy_registry_binding"
     return _diagnostic(code, path, scope, f"line={line},count={count},key={key}")
+
+
+def _comparison_rows(
+    category: str,
+    rows: Mapping[str, int],
+) -> dict[str, int]:
+    if category != "import_edges":
+        return dict(rows)
+    normalized: Counter[str] = Counter()
+    for key, count in rows.items():
+        parts = key.split("|", maxsplit=3)
+        if len(parts) != 4 or not parts[3]:
+            raise FreezeBaselineError(f"invalid import edge key: {key!r}")
+        for symbol in parts[3].split(","):
+            if not symbol:
+                raise FreezeBaselineError(f"invalid import edge symbol: {key!r}")
+            normalized["|".join((*parts[:3], symbol))] += count
+    return dict(sorted(normalized.items()))
 
 
 def _path_and_scope(category: str, key: str) -> tuple[str, str]:

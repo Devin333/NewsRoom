@@ -16,7 +16,7 @@ from framework.harness.runtime.result_errors import (
     GraphArtifactResultErrorCode,
     result_error,
 )
-from framework.harness.workflow.canonical import freeze_json, thaw_json
+from framework.harness.graph.canonical import freeze_json, thaw_json
 from framework.shared.time import ensure_utc, format_datetime
 
 

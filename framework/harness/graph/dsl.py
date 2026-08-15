@@ -6,21 +6,21 @@ from enum import StrEnum
 from typing import Any, TypeAlias
 
 from framework.harness.control_plane.errors import HarnessValidationError
-from framework.harness.workflow.canonical import (
+from framework.harness.graph.canonical import (
     exact_reference,
     freeze_json,
     optional_text,
     required_text,
     thaw_json,
 )
-from framework.harness.workflow.conditions import (
+from framework.harness.graph.conditions import (
     ConditionAll,
     ConditionAny,
     ConditionPredicate,
     HarnessCondition,
     condition_from_dict,
 )
-from framework.harness.workflow.versioning import HARNESS_GRAPH_DSL_SCHEMA
+from framework.harness.graph.versioning import HARNESS_GRAPH_DSL_SCHEMA
 
 
 class ParallelAllFailurePolicy(StrEnum):

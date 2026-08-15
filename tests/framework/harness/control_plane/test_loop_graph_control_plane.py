@@ -23,12 +23,12 @@ from framework.harness import (
     RunLifecycle,
     RunOutcome,
 )
-from framework.harness.workflow.conditions import (
+from framework.harness.graph.conditions import (
     ConditionAll,
     ConditionAny,
     ConditionPredicate,
 )
-from framework.harness.workflow.dsl import (
+from framework.harness.graph.dsl import (
     BoundedLoop,
     HarnessGraphSpec,
     ParallelAll,

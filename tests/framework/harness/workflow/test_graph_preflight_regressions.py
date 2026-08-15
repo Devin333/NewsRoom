@@ -3,8 +3,8 @@ from __future__ import annotations
 from dataclasses import replace
 
 from framework.harness.workflow.compiler import HarnessWorkflowGraphCompiler
-from framework.harness.workflow.conditions import ConditionPredicate
-from framework.harness.workflow.dsl import (
+from framework.harness.graph.conditions import ConditionPredicate
+from framework.harness.graph.dsl import (
     BoundedLoop,
     HarnessGraphSpec,
     ParallelAll,
@@ -24,7 +24,7 @@ from framework.harness.workflow.graph import (
     NormalizedHarnessGraph,
 )
 from framework.harness.workflow.spec import HarnessRoutingRule, HarnessWorkflowSpec
-from framework.harness.workflow.step import HarnessRetryPolicy, HarnessStepSpec
+from framework.harness.graph.activity import HarnessRetryPolicy, HarnessStepSpec
 from framework.harness.workflow.validation import (
     HarnessGraphPreflight,
     HarnessGraphPreflightPolicy,

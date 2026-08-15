@@ -44,7 +44,7 @@ from framework.harness.task_plan.verification import (
     TaskPlanGateRequest,
 )
 from framework.harness.workflow.binding_authority import HarnessWorkerBinding
-from framework.harness.workflow.step import HarnessWorkerType
+from framework.harness.graph.activity import HarnessWorkerType
 
 
 RESEARCH_DYNAMIC_STAGE_ID = "dynamic_analysis_stage"

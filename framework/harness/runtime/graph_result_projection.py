@@ -7,7 +7,7 @@ from framework.harness.control_plane.graph_result_lineage import (
     HarnessGraphResultSummary,
 )
 from framework.harness.runtime.result_models import NodeResultEnvelope
-from framework.harness.workflow.canonical import canonical_checksum, required_text
+from framework.harness.graph.canonical import canonical_checksum, required_text
 from framework.shared.time import format_datetime
 
 

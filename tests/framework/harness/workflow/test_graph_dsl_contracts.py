@@ -5,7 +5,7 @@ from types import MappingProxyType
 import pytest
 
 from framework.harness.control_plane.errors import HarnessValidationError
-from framework.harness.workflow.conditions import (
+from framework.harness.graph.conditions import (
     ConditionAll,
     ConditionAny,
     ConditionOperator,
@@ -14,7 +14,7 @@ from framework.harness.workflow.conditions import (
     condition_from_legacy_dict,
     evaluate_condition,
 )
-from framework.harness.workflow.dsl import (
+from framework.harness.graph.dsl import (
     BoundedLoop,
     Choice,
     ChoiceBranch,
@@ -30,7 +30,7 @@ from framework.harness.workflow.dsl import (
     Wait,
     WaitTimeoutPolicy,
 )
-from framework.harness.workflow.versioning import HARNESS_GRAPH_DSL_SCHEMA
+from framework.harness.graph.versioning import HARNESS_GRAPH_DSL_SCHEMA
 
 
 def test_every_graph_dsl_construct_round_trips_canonically() -> None:

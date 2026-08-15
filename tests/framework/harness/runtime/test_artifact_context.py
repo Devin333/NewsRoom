@@ -43,7 +43,7 @@ from framework.harness.runtime.result_canonical import (
     sha256_checksum,
 )
 from framework.shared.json import stable_json_dumps
-from framework.harness.workflow.canonical import thaw_json
+from framework.harness.graph.canonical import thaw_json
 from infrastructure.storage.artifacts import LocalJsonArtifactCatalog
 
 

@@ -22,7 +22,7 @@ from framework.harness.control_plane.graph_observability import (
 )
 from framework.harness.control_plane.harness import HarnessRunResult
 from framework.harness.control_plane.state import HarnessRunSpec
-from framework.harness.workflow.canonical import required_text
+from framework.harness.graph.canonical import required_text
 from interfaces.models.actor import (
     READ_REPORTS_PERMISSION,
     WRITE_RUNS_PERMISSION,

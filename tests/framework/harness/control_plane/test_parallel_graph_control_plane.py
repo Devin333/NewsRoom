@@ -31,7 +31,7 @@ from framework.harness import (
     harness_worker_candidate_ref,
 )
 from framework.harness.control_plane.errors import HarnessValidationError
-from framework.harness.workflow.dsl import (
+from framework.harness.graph.dsl import (
     HarnessGraphSpec,
     ParallelAll,
     ParallelAny,

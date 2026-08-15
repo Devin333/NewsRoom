@@ -20,7 +20,7 @@ from framework.harness.workflow.graph import (
     HarnessContractKind,
     HarnessContractReference,
 )
-from framework.harness.workflow.step import HarnessWorkerType
+from framework.harness.graph.activity import HarnessWorkerType
 
 
 _CONTRACT_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/+-]*$")

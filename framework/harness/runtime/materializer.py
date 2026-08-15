@@ -65,7 +65,7 @@ from framework.harness.runtime.result_policy import (
     PersistenceEvaluation,
     PersistencePolicy,
 )
-from framework.harness.workflow.canonical import thaw_json
+from framework.harness.graph.canonical import thaw_json
 from framework.shared.json import stable_json_dumps
 from framework.shared.time import utc_now
 

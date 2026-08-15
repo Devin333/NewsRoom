@@ -3,12 +3,13 @@ from __future__ import annotations
 import pytest
 
 from framework.harness.control_plane.errors import HarnessValidationError
-from framework.harness.workflow.conditions import ConditionPredicate
-from framework.harness.workflow.dsl import Choice, ChoiceBranch, HarnessGraphSpec, StepRef
+from framework.harness.graph.conditions import ConditionPredicate
+from framework.harness.graph.dsl import Choice, ChoiceBranch, HarnessGraphSpec, StepRef
 from framework.harness.workflow.reader import HarnessWorkflowContractReader
 from framework.harness.workflow.spec import HarnessRoutingRule, HarnessWorkflowSpec
-from framework.harness.workflow.step import HarnessRetryPolicy, HarnessStepSpec
-from framework.harness.workflow.versioning import HARNESS_GRAPH_DSL_SCHEMA, LEGACY_WORKFLOW_SCHEMA
+from framework.harness.graph.activity import HarnessRetryPolicy, HarnessStepSpec
+from framework.harness.graph.versioning import HARNESS_GRAPH_DSL_SCHEMA
+from framework.harness.workflow.versioning import LEGACY_WORKFLOW_SCHEMA
 
 
 def test_legacy_serialization_shape_remains_byte_compatible_and_reads_explicitly() -> None:

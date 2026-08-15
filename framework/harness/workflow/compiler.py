@@ -5,13 +5,13 @@ from dataclasses import dataclass
 from typing import Any
 
 from framework.harness.control_plane.errors import HarnessValidationError
-from framework.harness.workflow.conditions import (
+from framework.harness.graph.conditions import (
     ConditionAll,
     ConditionPredicate,
     HarnessCondition,
     condition_from_legacy_dict,
 )
-from framework.harness.workflow.dsl import (
+from framework.harness.graph.dsl import (
     BoundedLoop,
     Choice,
     HarnessGraphExpression,
@@ -47,8 +47,8 @@ from framework.harness.workflow.spec import (
     HarnessRoutingRule,
     HarnessWorkflowSpec,
 )
-from framework.harness.workflow.step import HarnessStepSpec
-from framework.harness.workflow.versioning import (
+from framework.harness.graph.activity import HarnessStepSpec
+from framework.harness.graph.versioning import (
     HARNESS_GRAPH_COMPILER_VERSION,
     HARNESS_WORKER_ACTIVITY_SCHEMA,
 )

@@ -90,7 +90,8 @@ from framework.harness import (
     DurableTaskPlanStore,
     transcript_entry_from_event,
 )
-from framework.harness.workflow import HarnessWorkflowGraphCompiler, HarnessWorkerType
+from framework.harness.graph import HarnessWorkerType
+from framework.harness.workflow import HarnessWorkflowGraphCompiler
 from framework.harness.workflow.binding_authority import HarnessWorkerBinding
 from framework.harness.workflow.graph import HarnessContractKind, HarnessContractReference
 from framework.harness.control_plane.gates import GateContext

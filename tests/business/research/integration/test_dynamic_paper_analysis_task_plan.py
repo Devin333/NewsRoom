@@ -45,7 +45,8 @@ from framework.harness import (
     subagent_attempt_evidence,
 )
 from framework.harness.control_plane.gates import GateContext
-from framework.harness.workflow import HarnessWorkerType, HarnessWorkflowGraphCompiler
+from framework.harness.graph import HarnessWorkerType
+from framework.harness.workflow import HarnessWorkflowGraphCompiler
 from framework.harness.workflow.binding_authority import HarnessWorkerBinding
 from framework.harness.workflow.graph import (
     HarnessContractKind,

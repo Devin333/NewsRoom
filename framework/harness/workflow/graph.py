@@ -7,22 +7,22 @@ from typing import Any, TypeAlias
 
 from framework.harness.control_plane.errors import HarnessValidationError
 from framework.harness.side_effects.models import HarnessTerminalSideEffectPolicy
-from framework.harness.workflow.canonical import (
+from framework.harness.graph.canonical import (
     canonical_checksum,
     freeze_json,
     optional_text,
     required_text,
     thaw_json,
 )
-from framework.harness.workflow.conditions import (
+from framework.harness.graph.conditions import (
     ConditionAll,
     ConditionAny,
     ConditionPredicate,
     HarnessCondition,
     condition_from_dict,
 )
-from framework.harness.workflow.dsl import WaitKind, WaitTimeoutPolicy
-from framework.harness.workflow.versioning import (
+from framework.harness.graph.dsl import WaitKind, WaitTimeoutPolicy
+from framework.harness.graph.versioning import (
     HARNESS_CONDITION_POLICY_VERSION,
     HARNESS_GRAPH_COMPILER_VERSION,
     NORMALIZED_HARNESS_GRAPH_SCHEMA,
