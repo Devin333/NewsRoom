@@ -8,8 +8,20 @@ from business.research.domain.reader_repair import (
     ReaderRepairMemoryQuery,
     ReaderRepairStrategy,
 )
-from business.research.ports import ReaderRepairMemoryVersion
+from business.research.ports import (
+    ReaderRepairMemoryCommitReceipt,
+    ReaderRepairMemoryCommitRequest,
+    ReaderRepairMemoryVersion,
+)
+from business.research.ports.repair_memory import (
+    reader_repair_case_memory_ref,
+    reader_repair_strategy_memory_ref,
+)
 from infrastructure.storage.postgres import PostgresReaderRepairMemoryRepository
+from infrastructure.storage.postgres.repair_memory_repository import (
+    PostgresReaderRepairMemoryCommitRecord,
+    PostgresReaderRepairMemoryObjectWrite,
+)
 
 
 _PROMOTED_STRATEGY_STATUSES = ("promoted_memory", "skill_candidate_ready", "validated")
@@ -173,9 +185,153 @@ class PostgresReaderRepairMemoryPort:
         )
 
 
+class PostgresReaderRepairMemoryCommitPort:
+    """Durable atomic writer used only by the Harness terminal handler."""
+
+    def __init__(self, repository: PostgresReaderRepairMemoryRepository) -> None:
+        self._repository = repository
+
+    def commit(
+        self,
+        request: ReaderRepairMemoryCommitRequest,
+    ) -> ReaderRepairMemoryCommitReceipt:
+        if not isinstance(request, ReaderRepairMemoryCommitRequest):
+            raise TypeError("request must be ReaderRepairMemoryCommitRequest")
+        projection = request.projection
+        request_checksum = _commit_request_checksum(request)
+        record = self._repository.commit_bundle(
+            idempotency_key=request.idempotency_key,
+            request_checksum=request_checksum,
+            request_id=request.request_id,
+            run_id=request.run_id,
+            terminal_effect_id=request.terminal_effect_id,
+            authorization_ref=request.authorization_ref,
+            identity_scope_ref=request.identity_scope_ref,
+            subject_scope_ref=request.subject_scope_ref,
+            namespace=projection.candidate.namespace,
+            repair_case=_case_commit_write(projection.repair_case),
+            strategies=tuple(
+                _strategy_commit_write(strategy)
+                for strategy in projection.strategies
+            ),
+        )
+        _verify_commit_record(request, record)
+        strategy_versions = tuple(
+            version for _object_id, version in record.strategy_versions
+        )
+        return ReaderRepairMemoryCommitReceipt(
+            receipt_id=f"reader-repair-memory-receipt:{request.request_id}",
+            request_ref=request_checksum,
+            run_id=request.run_id,
+            terminal_effect_id=request.terminal_effect_id,
+            authorization_ref=request.authorization_ref,
+            idempotency_key=request.idempotency_key,
+            namespace=projection.candidate.namespace,
+            case_ref=reader_repair_case_memory_ref(
+                projection.repair_case,
+                version=record.case_version,
+            ),
+            case_version=record.case_version,
+            strategy_refs=tuple(
+                reader_repair_strategy_memory_ref(strategy, version=version)
+                for strategy, version in zip(
+                    projection.strategies,
+                    strategy_versions,
+                    strict=True,
+                )
+            ),
+            strategy_versions=strategy_versions,
+            committed_at=record.committed_at,
+        )
+
+
+def _case_commit_write(
+    repair_case: ReaderRepairCase,
+) -> PostgresReaderRepairMemoryObjectWrite:
+    return PostgresReaderRepairMemoryObjectWrite(
+        object_type="case",
+        object_id=repair_case.repair_case_id,
+        issue_type=repair_case.issue.issue_type,
+        error_signature=repair_case.issue.error_signature,
+        successful=repair_case.successful,
+        status=None,
+        memory_kind=repair_case.memory_kind,
+        payload=repair_case.to_dict(),
+    )
+
+
+def _strategy_commit_write(
+    strategy: ReaderRepairStrategy,
+) -> PostgresReaderRepairMemoryObjectWrite:
+    return PostgresReaderRepairMemoryObjectWrite(
+        object_type="strategy",
+        object_id=strategy.strategy_id,
+        issue_type=strategy.issue_type,
+        error_signature=None,
+        successful=None,
+        status=strategy.status,
+        memory_kind="procedural",
+        payload=strategy.to_dict(),
+    )
+
+
+def _commit_request_checksum(request: ReaderRepairMemoryCommitRequest) -> str:
+    if request.checksum is None:
+        raise ValueError("reader repair memory commit request has no checksum")
+    return request.checksum
+
+
+def _verify_commit_record(
+    request: ReaderRepairMemoryCommitRequest,
+    record: PostgresReaderRepairMemoryCommitRecord,
+) -> None:
+    if not isinstance(record, PostgresReaderRepairMemoryCommitRecord):
+        raise TypeError("reader repair memory repository returned an invalid record")
+    projection = request.projection
+    expected_strategy_ids = tuple(
+        strategy.strategy_id for strategy in projection.strategies
+    )
+    actual_strategy_ids = tuple(
+        object_id for object_id, _version in record.strategy_versions
+    )
+    expected_identity = (
+        request.idempotency_key,
+        _commit_request_checksum(request),
+        request.request_id,
+        request.run_id,
+        request.terminal_effect_id,
+        request.authorization_ref,
+        request.identity_scope_ref,
+        request.subject_scope_ref,
+        projection.candidate.namespace,
+        projection.repair_case.repair_case_id,
+        expected_strategy_ids,
+    )
+    actual_identity = (
+        record.idempotency_key,
+        record.request_checksum,
+        record.request_id,
+        record.run_id,
+        record.terminal_effect_id,
+        record.authorization_ref,
+        record.identity_scope_ref,
+        record.subject_scope_ref,
+        record.namespace,
+        record.case_object_id,
+        actual_strategy_ids,
+    )
+    if actual_identity != expected_identity:
+        raise ValueError(
+            "reader repair memory repository record conflicts with commit request"
+        )
+
+
 def _require_namespace(namespace: str) -> None:
     if namespace != READER_REPAIR_NAMESPACE:
         raise ValueError("reader repair memory can only use research.reader_repair namespace")
 
 
-__all__ = ["PostgresReaderRepairMemoryPort"]
+__all__ = [
+    "PostgresReaderRepairMemoryCommitPort",
+    "PostgresReaderRepairMemoryPort",
+]

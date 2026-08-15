@@ -17,6 +17,9 @@ RECORDED_ACTIVITIES_MIGRATION = MIGRATIONS_DIR / "009_recorded_activities.sql"
 RETIREMENT_CANCELLATION_MIGRATION = (
     MIGRATIONS_DIR / "010_retirement_cancellations.sql"
 )
+READER_REPAIR_MEMORY_COMMIT_MIGRATION = (
+    MIGRATIONS_DIR / "011_reader_repair_memory_commits.sql"
+)
 INITIAL_MIGRATION_SHA256 = "f224356de92f5b087b3353b38dab4d9ced0b7c0b70f3bf9228adc0b9e2f8fbd3"
 
 
@@ -45,6 +48,8 @@ def test_postgres_migration_sql_contains_required_tables() -> None:
         "memory_preferences",
         "reader_repair_memory_objects",
         "reader_repair_memory_versions",
+        "reader_repair_memory_commits",
+        "reader_repair_memory_commit_members",
         "agent_conversations",
         "agent_conversation_messages",
         "agent_conversation_state",
@@ -282,7 +287,7 @@ def test_recorded_activity_migration_is_additive_encrypted_and_loaded_in_order()
     )
 
 
-def test_retirement_cancellation_migration_is_additive_bounded_and_loaded_last() -> None:
+def test_retirement_cancellation_migration_is_additive_bounded_and_loaded_in_order() -> None:
     sql = RETIREMENT_CANCELLATION_MIGRATION.read_text(encoding="utf-8")
     loaded = load_migration_sql()
 
@@ -307,6 +312,32 @@ def test_retirement_cancellation_migration_is_additive_bounded_and_loaded_last()
     assert loaded.index("CREATE TABLE IF NOT EXISTS event_activity_payloads") < (
         loaded.index("CREATE TABLE IF NOT EXISTS event_retirement_cancellation_reports")
     )
+
+
+def test_reader_repair_memory_commit_migration_is_atomic_and_append_only() -> None:
+    sql = READER_REPAIR_MEMORY_COMMIT_MIGRATION.read_text(encoding="utf-8")
+    loaded = load_migration_sql()
+
+    assert "CREATE TABLE IF NOT EXISTS reader_repair_memory_commits" in sql
+    assert "CREATE TABLE IF NOT EXISTS reader_repair_memory_commit_members" in sql
+    assert "UNIQUE (run_id, terminal_effect_id)" in sql
+    assert "UNIQUE (idempotency_key, object_type, object_id)" in sql
+    assert "request_checksum ~ '^sha256:[0-9a-f]{64}$'" in sql
+    assert "FOREIGN KEY (idempotency_key, namespace)" in sql
+    assert "REFERENCES reader_repair_memory_versions" in sql
+    assert "DEFERRABLE INITIALLY DEFERRED" in sql
+    assert "reader repair memory commit requires exactly one case member" in sql
+    assert "reader repair memory commit receipts are append-only" in sql
+    assert "reader repair memory versions are append-only" in sql
+    assert "trg_reader_repair_memory_commits_immutable" in sql
+    assert "trg_reader_repair_memory_commit_members_immutable" in sql
+    assert "trg_reader_repair_memory_versions_immutable" in sql
+    assert "ALTER TABLE" not in sql
+    assert "DROP TABLE" not in sql
+    assert "DROP COLUMN" not in sql
+    assert loaded.index(
+        "CREATE TABLE IF NOT EXISTS event_retirement_cancellation_reports"
+    ) < loaded.index("CREATE TABLE IF NOT EXISTS reader_repair_memory_commits")
 
 
 def test_initial_postgres_migration_remains_byte_for_byte_unchanged() -> None:

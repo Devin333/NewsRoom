@@ -108,11 +108,27 @@ def test_reader_repair_memory_side_effect_is_atomic_and_inactive() -> None:
         / "ports"
         / "repair_memory.py"
     )
+    adapter_path = (
+        PROJECT_ROOT
+        / "interfaces"
+        / "services"
+        / "reader_repair_memory.py"
+    )
+    factory_path = (
+        PROJECT_ROOT
+        / "interfaces"
+        / "services"
+        / "reader_repair_factory.py"
+    )
     handler_source = handler_path.read_text(encoding="utf-8")
     port_source = port_path.read_text(encoding="utf-8")
+    adapter_source = adapter_path.read_text(encoding="utf-8")
+    factory_source = factory_path.read_text(encoding="utf-8")
 
     assert "class ReaderRepairMemoryCommitPort" in port_source
     assert "class ReaderRepairMemorySideEffectHandler" in handler_source
+    assert "class PostgresReaderRepairMemoryCommitPort" in adapter_source
+    assert "build_reader_repair_memory_commit_port_from_env" in factory_source
     assert ".write_case(" not in handler_source
     assert ".write_strategy(" not in handler_source
     assert "business.research.reader_repair.repair_memory" not in imported_modules(
