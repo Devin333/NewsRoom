@@ -16,6 +16,9 @@ from interfaces.services.event_migration_service import (
     MigrationSourceSnapshot,
 )
 from interfaces.services.event_projection_service import EventProjectionService
+from interfaces.services.graph_event_preparation_service import (
+    GraphEventPreparationApplicationService,
+)
 from interfaces.services.event_quarantine_service import EventQuarantineService
 from interfaces.services.event_reader_service import (
     EventAuthorizationContext,
@@ -69,6 +72,7 @@ __all__ = [
     "EventReaderService",
     "EventReplayService",
     "EventStreamReadResult",
+    "GraphEventPreparationApplicationService",
     "HarnessWaitApplicationService",
     "HarnessGraphApplicationService",
     "HarnessGraphReplayResult",
