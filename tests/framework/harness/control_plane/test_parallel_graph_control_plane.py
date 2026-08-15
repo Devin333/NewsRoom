@@ -23,13 +23,13 @@ from framework.harness import (
     HarnessSideEffectRegistry,
     HarnessStepSpec,
     HarnessWorkerResult,
-    HarnessWorkflowSpec,
     InMemoryHarnessEventPort,
     InMemoryHarnessSideEffectStore,
     RunLifecycle,
     RunOutcome,
     harness_worker_candidate_ref,
 )
+from framework.harness.workflow.spec import HarnessWorkflowSpec
 from framework.harness.control_plane.errors import HarnessValidationError
 from framework.harness.graph.dsl import (
     HarnessGraphSpec,

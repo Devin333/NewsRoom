@@ -23,9 +23,9 @@ from framework.harness import (
     HarnessTerminalSideEffectPolicy,
     HarnessTransitionKind,
     HarnessWorkerResult,
-    HarnessWorkflowSpec,
     harness_worker_candidate_ref,
 )
+from framework.harness.workflow.spec import HarnessWorkflowSpec
 from framework.harness.control_plane.graph_evaluator import HarnessGraphObservationType
 from infrastructure.storage.events.activity_store import SQLiteRecordedActivityStore
 from infrastructure.storage.events.sqlite import SQLiteEventStore

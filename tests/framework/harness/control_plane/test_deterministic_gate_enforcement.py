@@ -10,15 +10,17 @@ from framework.harness import (
     HarnessEventType,
     HarnessGraphDecisionType,
     HarnessGraphObservationType,
-    HarnessRouteKind,
-    HarnessRoutingRule,
     HarnessRunSpec,
     HarnessRunStatus,
     HarnessStepSpec,
     HarnessValidationError,
     HarnessWorkerResult,
-    HarnessWorkflowSpec,
     InMemoryHarnessEventPort,
+)
+from framework.harness.workflow.spec import (
+    HarnessRouteKind,
+    HarnessRoutingRule,
+    HarnessWorkflowSpec,
 )
 from framework.harness.control_plane.gate_registry import (
     DeterministicGateRegistry,

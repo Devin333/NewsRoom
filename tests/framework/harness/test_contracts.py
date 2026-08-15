@@ -10,14 +10,13 @@ from framework.harness import (
     HarnessDecision,
     HarnessDecisionType,
     HarnessRetryPolicy,
-    HarnessRoutingRule,
     HarnessRunSpec,
     HarnessState,
     HarnessStepSpec,
     HarnessValidationError,
     HarnessWorkerType,
-    HarnessWorkflowSpec,
 )
+from framework.harness.workflow.spec import HarnessRoutingRule, HarnessWorkflowSpec
 
 
 def test_workflow_spec_requires_entry_step() -> None:

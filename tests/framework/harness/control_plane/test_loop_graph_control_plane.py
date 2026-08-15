@@ -18,11 +18,11 @@ from framework.harness import (
     HarnessStepSpec,
     HarnessValidationError,
     HarnessWorkerResult,
-    HarnessWorkflowSpec,
     InMemoryHarnessEventPort,
     RunLifecycle,
     RunOutcome,
 )
+from framework.harness.workflow.spec import HarnessWorkflowSpec
 from framework.harness.graph.conditions import (
     ConditionAll,
     ConditionAny,

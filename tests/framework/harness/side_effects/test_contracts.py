@@ -21,11 +21,11 @@ from framework.harness import (
     HarnessSideEffectOutcome,
     HarnessTerminalSideEffectPolicy,
     HarnessStepSpec,
-    HarnessWorkflowSpec,
     InMemoryHarnessSideEffectApprovalResolver,
     InMemoryHarnessSideEffectStore,
     HarnessValidationError,
 )
+from framework.harness.workflow.spec import HarnessWorkflowSpec
 from framework.harness.side_effects.models import HarnessSideEffectAttemptStatus
 from framework.harness.side_effects.ports import HarnessFencedSideEffectStorePort
 from framework.harness.side_effects.registry import HarnessSideEffectCapabilities

@@ -12,9 +12,9 @@ from framework.harness import (
     HarnessValidationError,
     HarnessWorkerEvidence,
     HarnessWorkerResult,
-    HarnessWorkflowSpec,
     InMemoryHarnessEventPort,
 )
+from framework.harness.workflow.spec import HarnessWorkflowSpec
 from framework.harness.workers.result import HarnessWorkerStatus
 
 

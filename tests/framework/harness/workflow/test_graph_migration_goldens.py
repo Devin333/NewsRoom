@@ -28,19 +28,18 @@ from framework.harness import (
     HarnessGraphDecision,
     HarnessGraphDecisionType,
     HarnessRetryPolicy,
-    HarnessRoutingRule,
     HarnessRunSpec,
     HarnessSideEffectHandlerBinding,
     HarnessSideEffectIntent,
     HarnessSideEffectRegistry,
     HarnessStepSpec,
     HarnessWorkerResult,
-    HarnessWorkflowGraphCompiler,
-    HarnessWorkflowSpec,
     InMemoryHarnessEventPort,
     InMemoryHarnessSideEffectStore,
     harness_worker_candidate_ref,
 )
+from framework.harness.workflow.compiler import HarnessWorkflowGraphCompiler
+from framework.harness.workflow.spec import HarnessRoutingRule, HarnessWorkflowSpec
 from tests.business.research.fakes import (
     FakeGithubRepositoryPort,
     FakeResearchDocumentCompiler,

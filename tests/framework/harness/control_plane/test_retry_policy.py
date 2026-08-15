@@ -10,8 +10,8 @@ from framework.harness import (
     HarnessStepSpec,
     HarnessStepStatus,
     HarnessWorkerResult,
-    HarnessWorkflowSpec,
 )
+from framework.harness.workflow.spec import HarnessWorkflowSpec
 
 
 def test_retry_exhaustion_fails_run() -> None:

@@ -5,9 +5,9 @@ from framework.harness import (
     HarnessRunSpec,
     HarnessState,
     HarnessStepSpec,
-    HarnessWorkflowSpec,
     InMemoryHarnessCheckpointStore,
 )
+from framework.harness.workflow.spec import HarnessWorkflowSpec
 
 
 def test_checkpoint_store_roundtrips_and_verifies_checksum() -> None:

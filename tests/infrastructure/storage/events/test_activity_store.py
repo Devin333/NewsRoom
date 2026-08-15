@@ -22,8 +22,8 @@ from framework.harness import (
     HarnessControlPlane,
     HarnessRunSpec,
     HarnessStepSpec,
-    HarnessWorkflowSpec,
 )
+from framework.harness.workflow.spec import HarnessWorkflowSpec
 from framework.harness.control_plane.activity import HarnessActivityResultRecord
 from infrastructure.storage.events.activity_store import SQLiteRecordedActivityStore
 from infrastructure.storage.events.factory import durable_event_storage_from_env

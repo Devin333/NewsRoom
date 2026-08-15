@@ -13,13 +13,15 @@ from framework.harness import (
     HarnessGraphDecisionType,
     InMemoryHarnessEventPort,
     HarnessRetryPolicy,
-    HarnessRouteKind,
-    HarnessRoutingRule,
     HarnessRunSpec,
     HarnessRunStatus,
     HarnessStepSpec,
     HarnessStepStatus,
     HarnessWorkerResult,
+)
+from framework.harness.workflow.spec import (
+    HarnessRouteKind,
+    HarnessRoutingRule,
     HarnessWorkflowSpec,
 )
 

@@ -16,7 +16,6 @@ from framework.harness import (
     HarnessValidationError,
     HarnessWorkerResult,
     HarnessWorkerType,
-    HarnessWorkflowSpec,
     InMemoryHarnessEventPort,
     InMemorySkillReleaseAuthorityResolver,
     SkillPromotionDecision,
@@ -27,6 +26,7 @@ from framework.harness import (
     skill_promotion_gate_ref,
     skill_rollback_plan_ref,
 )
+from framework.harness.workflow.spec import HarnessWorkflowSpec
 from tests.framework.harness.skills.evolution._authority_fixtures import (
     AuthorizedReleaseFixture,
     authorized_release_fixture,

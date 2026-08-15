@@ -15,9 +15,9 @@ from framework.harness import (
     HarnessWorkerResult,
     HarnessWorkerStatus,
     HarnessWorkerType,
-    HarnessWorkflowSpec,
     InMemoryHarnessEventPort,
 )
+from framework.harness.workflow.spec import HarnessWorkflowSpec
 
 
 @dataclass(frozen=True)

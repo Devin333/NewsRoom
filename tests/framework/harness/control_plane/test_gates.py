@@ -14,10 +14,10 @@ from framework.harness import (
     HarnessState,
     HarnessStepSpec,
     HarnessWorkerResult,
-    HarnessWorkflowSpec,
     ScoreRangeGate,
     ToolAllowlistGate,
 )
+from framework.harness.workflow.spec import HarnessWorkflowSpec
 from framework.harness.control_plane.transitions import get_step_state
 
 

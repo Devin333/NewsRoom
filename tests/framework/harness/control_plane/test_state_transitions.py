@@ -9,8 +9,8 @@ from framework.harness import (
     HarnessStepSpec,
     HarnessStepStatus,
     HarnessValidationError,
-    HarnessWorkflowSpec,
 )
+from framework.harness.workflow.spec import HarnessWorkflowSpec
 from framework.harness.control_plane.transitions import get_step_state, transition_run, transition_step
 
 

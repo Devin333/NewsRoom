@@ -3,6 +3,7 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
+import framework.harness as harness_api
 import framework.harness.graph as graph_api
 
 
@@ -188,6 +189,33 @@ def test_graph_public_api_excludes_legacy_declaration_and_compiler() -> None:
             "LEGACY_WORKFLOW_SCHEMA",
         }
     )
+
+
+def test_harness_root_public_api_excludes_legacy_workflow_facade() -> None:
+    legacy_names = {
+        "DEFAULT_HARNESS_GRAPH_SCHEMA_REGISTRY",
+        "HarnessGraphCompileResult",
+        "HarnessGraphSchemaRegistry",
+        "HarnessRouteKind",
+        "HarnessRoutingRule",
+        "HarnessWorkflowContractReader",
+        "HarnessWorkflowGraphCompiler",
+        "HarnessWorkflowSpec",
+    }
+
+    assert set(harness_api.__all__).isdisjoint(legacy_names)
+    assert {name for name in legacy_names if hasattr(harness_api, name)} == set()
+
+
+def test_harness_root_public_api_retains_artifact_contracts() -> None:
+    artifact_contract_names = {
+        "ArtifactPort",
+        "ArtifactReferenceVerifierPort",
+        "GraphResultArtifactReadPort",
+    }
+
+    assert artifact_contract_names.issubset(set(harness_api.__all__))
+    assert all(hasattr(harness_api, name) for name in artifact_contract_names)
 
 
 def test_graph_definition_is_not_activated_in_gate_a_runtime() -> None:

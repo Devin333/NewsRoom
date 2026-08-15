@@ -61,8 +61,8 @@ from framework.harness import (
     HarnessRunSpec,
     HarnessStepSpec,
     HarnessWorkerResult,
-    HarnessWorkflowSpec,
 )
+from framework.harness.workflow.spec import HarnessWorkflowSpec
 from framework.harness.control_plane.durable_events import (
     HARNESS_GRAPH_DECISION_EVENT_TYPE,
     HARNESS_GRAPH_PROJECTION_EVENT_TYPE,

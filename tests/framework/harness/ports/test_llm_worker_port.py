@@ -8,8 +8,8 @@ from framework.harness import (
     HarnessRunStatus,
     HarnessStepSpec,
     HarnessWorkerResult,
-    HarnessWorkflowSpec,
 )
+from framework.harness.workflow.spec import HarnessWorkflowSpec
 
 
 def test_fake_llm_worker_can_be_called_by_harness_control_plane() -> None:

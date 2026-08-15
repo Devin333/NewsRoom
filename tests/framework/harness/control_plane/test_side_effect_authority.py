@@ -21,12 +21,12 @@ from framework.harness import (
     HarnessTerminalSideEffectPolicy,
     HarnessValidationError,
     HarnessWorkerResult,
-    HarnessWorkflowSpec,
     InMemoryHarnessEventPort,
     InMemoryHarnessSideEffectApprovalResolver,
     InMemoryHarnessSideEffectStore,
     harness_worker_candidate_ref,
 )
+from framework.harness.workflow.spec import HarnessWorkflowSpec
 from framework.harness.control_plane.graph_decision import HarnessGraphDecisionType
 from framework.harness.control_plane.graph_evaluator import HarnessGraphObservationType
 from framework.harness.control_plane.graph_runtime import HarnessGraphCommitKind

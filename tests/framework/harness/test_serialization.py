@@ -19,8 +19,8 @@ from framework.harness import (
     HarnessTrace,
     HarnessValidationError,
     HarnessWorkerResult,
-    HarnessWorkflowSpec,
 )
+from framework.harness.workflow.spec import HarnessWorkflowSpec
 
 
 def test_core_contracts_are_serializable() -> None:
