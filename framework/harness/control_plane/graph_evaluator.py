@@ -49,7 +49,7 @@ from framework.harness.graph.conditions import (
     resolve_condition_path,
 )
 from framework.harness.graph.dsl import WaitKind, WaitTimeoutAction
-from framework.harness.workflow.graph import (
+from framework.harness.graph.model import (
     HarnessControlNode,
     HarnessContractKind,
     HarnessContractReference,

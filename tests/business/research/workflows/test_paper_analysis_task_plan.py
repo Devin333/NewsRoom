@@ -30,8 +30,8 @@ from framework.harness.task_plan import (
     TaskResultRecord,
 )
 from framework.harness.task_plan.canonical import canonical_payload_checksum
-from framework.harness.workflow.binding_authority import HarnessWorkerBinding
-from framework.harness.workflow.graph import (
+from framework.harness.graph.bindings import HarnessWorkerBinding
+from framework.harness.graph.model import (
     HarnessContractKind,
     HarnessContractReference,
 )

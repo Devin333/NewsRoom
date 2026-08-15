@@ -15,7 +15,7 @@ from framework.harness.runtime.node_output import (
     HarnessAdmittedGraphActivityOutputAdapter,
 )
 from framework.harness.graph.canonical import canonical_checksum
-from framework.harness.workflow.graph import (
+from framework.harness.graph.model import (
     HarnessContractKind,
     HarnessContractReference,
 )

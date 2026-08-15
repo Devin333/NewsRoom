@@ -8,7 +8,7 @@ import pytest
 from framework.harness.control_plane.errors import HarnessValidationError
 from framework.harness.side_effects.models import HarnessTerminalSideEffectPolicy
 from framework.harness.graph.canonical import canonical_checksum
-from framework.harness.workflow.graph import (
+from framework.harness.graph.model import (
     HarnessContractKind,
     HarnessContractReference,
     HarnessControlNode,

@@ -49,8 +49,8 @@ from framework.harness import (
 )
 from framework.harness.task_plan.store import TASK_PLAN_RESULT_SCHEMA_V1
 from framework.harness.graph import HarnessWorkerType
-from framework.harness.workflow.binding_authority import HarnessWorkerBinding
-from framework.harness.workflow.graph import (
+from framework.harness.graph.bindings import HarnessWorkerBinding
+from framework.harness.graph.model import (
     HarnessContractKind,
     HarnessContractReference,
 )

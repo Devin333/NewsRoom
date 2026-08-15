@@ -4,7 +4,7 @@ from collections import defaultdict, deque
 from collections.abc import Mapping, Sequence
 from typing import Any
 
-from framework.harness.workflow.graph import (
+from framework.harness.graph.model import (
     HarnessControlNode,
     HarnessExecutableNode,
     HarnessGraphEdgeKind,

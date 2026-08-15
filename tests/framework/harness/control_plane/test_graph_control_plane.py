@@ -46,7 +46,7 @@ from framework.harness.graph.dsl import (
     Sequence,
     StepRef,
 )
-from framework.harness.workflow.graph import (
+from framework.harness.graph.model import (
     HarnessExecutableNode,
     NormalizedHarnessGraph,
 )

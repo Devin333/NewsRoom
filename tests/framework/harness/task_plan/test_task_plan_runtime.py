@@ -39,8 +39,8 @@ from framework.harness.task_plan.observability import (
     task_plan_metric_samples,
     task_plan_trace_events,
 )
-from framework.harness.workflow.binding_authority import HarnessWorkerBinding
-from framework.harness.workflow.graph import HarnessContractKind, HarnessContractReference
+from framework.harness.graph.bindings import HarnessWorkerBinding
+from framework.harness.graph.model import HarnessContractKind, HarnessContractReference
 from framework.harness.graph.activity import HarnessWorkerType
 from framework.harness.workers.result import HarnessWorkerResult
 

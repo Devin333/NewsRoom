@@ -51,7 +51,7 @@ from framework.harness.subagents.transcript import (
     SubAgentTranscriptStorePort,
     sanitize_subagent_payload,
 )
-from framework.harness.workflow.graph import NormalizedHarnessGraph
+from framework.harness.graph.model import NormalizedHarnessGraph
 from framework.shared.json import stable_json_dumps
 from framework.shared.time import ensure_utc, utc_now
 

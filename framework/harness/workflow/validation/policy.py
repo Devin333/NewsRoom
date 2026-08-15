@@ -4,7 +4,7 @@ from collections import defaultdict, deque
 from dataclasses import dataclass
 
 from framework.harness.control_plane.errors import HarnessValidationError
-from framework.harness.workflow.graph import (
+from framework.harness.graph.model import (
     HarnessControlNode,
     HarnessGraphEdgeKind,
     HarnessGraphNodeKind,

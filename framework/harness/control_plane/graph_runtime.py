@@ -36,7 +36,7 @@ from framework.harness.graph.canonical import (
     required_text,
     thaw_json,
 )
-from framework.harness.workflow.graph import (
+from framework.harness.graph.model import (
     HarnessContractKind,
     HarnessContractReference,
     NormalizedHarnessGraph,

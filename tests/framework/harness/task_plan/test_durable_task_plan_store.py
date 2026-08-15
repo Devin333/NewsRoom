@@ -44,8 +44,8 @@ from framework.harness.task_plan import (
 from framework.harness.task_plan.canonical import canonical_payload_checksum
 from framework.harness.task_plan.patches import TaskPlanPatchValidator
 from framework.harness.task_plan.policy import TaskPlanPolicy
-from framework.harness.workflow.binding_authority import HarnessWorkerBinding
-from framework.harness.workflow.graph import HarnessContractKind, HarnessContractReference
+from framework.harness.graph.bindings import HarnessWorkerBinding
+from framework.harness.graph.model import HarnessContractKind, HarnessContractReference
 from framework.harness.graph.activity import HarnessWorkerType
 
 

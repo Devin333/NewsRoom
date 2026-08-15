@@ -58,7 +58,7 @@ from framework.harness.graph.dsl import (
     ParallelBranch,
     StepRef,
 )
-from framework.harness.workflow.graph import (
+from framework.harness.graph.model import (
     HarnessContractKind,
     HarnessContractReference,
     HarnessControlNode,

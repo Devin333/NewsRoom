@@ -24,7 +24,7 @@ from framework.harness.graph.dsl import (
     Wait,
     WaitTimeoutAction,
 )
-from framework.harness.workflow.graph import (
+from framework.harness.graph.model import (
     HarnessBranch,
     HarnessCompensationReference,
     HarnessContractKind,

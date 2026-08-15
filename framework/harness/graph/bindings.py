@@ -16,7 +16,7 @@ from framework.harness.side_effects.registry import (
     HarnessSideEffectHandlerBinding,
     HarnessSideEffectRegistry,
 )
-from framework.harness.workflow.graph import (
+from framework.harness.graph.model import (
     HarnessContractKind,
     HarnessContractReference,
 )

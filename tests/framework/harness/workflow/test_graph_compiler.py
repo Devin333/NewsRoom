@@ -21,7 +21,7 @@ from framework.harness.graph.dsl import (
     VerifiedAggregation,
     Wait,
 )
-from framework.harness.workflow.graph import (
+from framework.harness.graph.model import (
     HarnessControlNode,
     HarnessExecutableNode,
     HarnessGraphEdgeKind,

@@ -39,7 +39,7 @@ from framework.harness.graph.dsl import (
     Sequence,
     StepRef,
 )
-from framework.harness.workflow.binding_authority import (
+from framework.harness.graph.bindings import (
     HarnessActivityCapabilities,
     HarnessActivityContractBinding,
     HarnessRuntimeBindingAuthority,

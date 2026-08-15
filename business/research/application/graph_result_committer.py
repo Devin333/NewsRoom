@@ -43,7 +43,7 @@ from framework.harness.task_plan.models import (
 )
 from framework.harness.task_plan.ports import TaskPlanResultVerifierPort
 from framework.harness.task_plan.store import TaskResultRecord
-from framework.harness.workflow.graph import (
+from framework.harness.graph.model import (
     HarnessExecutableNode,
     NormalizedHarnessGraph,
 )

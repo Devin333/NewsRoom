@@ -29,7 +29,7 @@ from framework.harness.control_plane.harness import (
     InMemoryHarnessEventPort,
 )
 from framework.harness.control_plane.state import HarnessRunSpec
-from framework.harness.workflow.binding_authority import (
+from framework.harness.graph.bindings import (
     HarnessActivityCapabilities,
     HarnessActivityContractBinding,
     HarnessDeterministicMergeBinding,
@@ -45,7 +45,7 @@ from framework.harness.graph.dsl import (
     StepRef,
     VerifiedAggregation,
 )
-from framework.harness.workflow.graph import HarnessControlNode
+from framework.harness.graph.model import HarnessControlNode
 from framework.harness.workflow.spec import HarnessWorkflowSpec
 from framework.harness.graph.activity import HarnessStepSpec
 from framework.harness.workflow.validation import (

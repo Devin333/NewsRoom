@@ -23,7 +23,7 @@ from framework.harness.runtime.graph_result_projection import (
     graph_result_lineage_from_envelope,
 )
 from framework.harness.runtime.result_models import NodeResultBinding, NodeResultEnvelope
-from framework.harness.workflow.graph import NormalizedHarnessGraph
+from framework.harness.graph.model import NormalizedHarnessGraph
 
 
 class HarnessGraphResultRuntime:

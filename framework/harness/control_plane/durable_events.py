@@ -99,7 +99,7 @@ from framework.harness.control_plane.transition import (
     HarnessTransitionCommitted,
 )
 from framework.harness.quality.verdict import gate_result_evidence
-from framework.harness.workflow.graph import (
+from framework.harness.graph.model import (
     HarnessContractReference,
     HarnessExecutableNode,
     NormalizedHarnessGraph,

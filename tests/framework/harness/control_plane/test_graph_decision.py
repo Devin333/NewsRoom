@@ -9,7 +9,7 @@ from framework.harness.control_plane.graph_decision import (
 )
 from framework.harness.control_plane.graph_state import HarnessGraphReference
 from framework.harness.graph.canonical import canonical_checksum
-from framework.harness.workflow.graph import (
+from framework.harness.graph.model import (
     HarnessContractKind,
     HarnessContractReference,
 )

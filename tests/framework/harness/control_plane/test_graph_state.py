@@ -27,7 +27,7 @@ from framework.harness.control_plane.graph_state import (
 )
 from framework.harness.control_plane.state import HarnessRunStatus
 from framework.harness.graph.canonical import canonical_checksum
-from framework.harness.workflow.graph import (
+from framework.harness.graph.model import (
     HarnessContractKind,
     HarnessContractReference,
 )

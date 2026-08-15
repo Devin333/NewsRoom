@@ -21,7 +21,7 @@ from framework.harness.control_plane.node_output import (
     InMemoryHarnessNodeOutputResource,
 )
 from framework.harness.graph.canonical import canonical_checksum
-from framework.harness.workflow.graph import (
+from framework.harness.graph.model import (
     HarnessContractKind,
     HarnessContractReference,
 )

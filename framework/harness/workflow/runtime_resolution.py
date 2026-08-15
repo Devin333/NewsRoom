@@ -9,7 +9,7 @@ from framework.harness.control_plane.errors import HarnessValidationError
 from framework.harness.control_plane.gate_registry import GateBinding
 from framework.harness.side_effects.models import HarnessSideEffectOrigin
 from framework.harness.side_effects.registry import HarnessSideEffectHandlerBinding
-from framework.harness.workflow.binding_authority import (
+from framework.harness.graph.bindings import (
     HarnessActivityCapabilities,
     HarnessActivityContractBinding,
     HarnessCompensationHandlerBinding,
@@ -17,7 +17,7 @@ from framework.harness.workflow.binding_authority import (
     HarnessRuntimeBindingAuthority,
     HarnessWorkerBinding,
 )
-from framework.harness.workflow.graph import (
+from framework.harness.graph.model import (
     HarnessContractKind,
     HarnessContractReference,
     HarnessControlNode,

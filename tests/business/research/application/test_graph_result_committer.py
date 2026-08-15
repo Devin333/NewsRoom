@@ -37,7 +37,7 @@ from framework.harness.runtime import (
 )
 from framework.harness.workflow import HarnessWorkflowGraphCompiler
 from framework.harness.graph.dsl import HarnessGraphSpec, StepRef
-from framework.harness.workflow.graph import HarnessExecutableNode
+from framework.harness.graph.model import HarnessExecutableNode
 from framework.harness.workflow.spec import HarnessWorkflowSpec
 from framework.harness.graph.activity import HarnessStepSpec
 from framework.harness.workers.result import HarnessWorkerResult

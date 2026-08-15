@@ -16,13 +16,13 @@ from framework.harness.side_effects.registry import (
     HarnessSideEffectHandlerBinding,
     HarnessSideEffectRegistry,
 )
-from framework.harness.workflow.binding_authority import HarnessRuntimeBindingAuthority
+from framework.harness.graph.bindings import HarnessRuntimeBindingAuthority
 from framework.harness.workflow.compiler import (
     HarnessGraphCompileResult,
     HarnessWorkflowGraphCompiler,
 )
 from framework.harness.graph.dsl import HarnessGraphSpec, StepRef, Wait
-from framework.harness.workflow.graph import HarnessGraphEdge
+from framework.harness.graph.model import HarnessGraphEdge
 from framework.harness.workflow.spec import HarnessWorkflowSpec
 from framework.harness.graph.activity import HarnessStepSpec
 from framework.harness.workflow.validation import (

@@ -39,7 +39,7 @@ from framework.harness.runtime.result_policy import (
     NodeResultRequest,
     PersistenceBudgetSnapshot,
 )
-from framework.harness.workflow.graph import NormalizedHarnessGraph
+from framework.harness.graph.model import NormalizedHarnessGraph
 from framework.shared.time import ensure_utc, utc_now
 from framework.tool.models import (
     ToolCall,

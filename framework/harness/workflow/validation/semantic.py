@@ -10,7 +10,7 @@ from framework.harness.graph.conditions import (
     HarnessCondition,
 )
 from framework.harness.graph.dsl import WaitKind
-from framework.harness.workflow.graph import (
+from framework.harness.graph.model import (
     HarnessCompensationReference,
     HarnessControlNode,
     HarnessExecutableNode,

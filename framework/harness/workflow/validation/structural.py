@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections import Counter, defaultdict, deque
 
-from framework.harness.workflow.graph import (
+from framework.harness.graph.model import (
     HarnessControlNode,
     HarnessGraphEdgeKind,
     HarnessGraphNodeKind,

@@ -46,7 +46,7 @@ from framework.harness.control_plane.graph_state import (
 from framework.harness.control_plane.scheduler import HarnessGraphStepSchedulingInput
 from framework.harness.control_plane.state import HarnessStepStatus
 from framework.harness.graph.canonical import canonical_checksum, required_text
-from framework.harness.workflow.graph import NormalizedHarnessGraph
+from framework.harness.graph.model import NormalizedHarnessGraph
 from framework.harness.graph.versioning import (
     HARNESS_GRAPH_COMPILER_VERSION,
     HARNESS_GRAPH_CHECKPOINT_SCHEMA,

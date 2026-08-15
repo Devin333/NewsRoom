@@ -79,14 +79,14 @@ from framework.harness.side_effects.models import (
     HarnessSideEffectOutcomeStatus,
 )
 from framework.harness.side_effects.ports import HarnessSideEffectStorePort
-from framework.harness.workflow.binding_authority import HarnessActivityCapabilities
+from framework.harness.graph.bindings import HarnessActivityCapabilities
 from framework.harness.graph.canonical import (
     canonical_checksum,
     freeze_json,
     required_text,
     thaw_json,
 )
-from framework.harness.workflow.graph import (
+from framework.harness.graph.model import (
     HarnessControlNode,
     HarnessContractKind,
     HarnessContractReference,

@@ -155,14 +155,14 @@ from framework.harness.side_effects import (
     HarnessSideEffectRegistry,
     HarnessSideEffectStorePort,
 )
-from framework.harness.workflow.binding_authority import (
+from framework.harness.graph.bindings import (
     HarnessActivityCapabilities,
     HarnessActivityContractBinding,
     HarnessRuntimeBindingAuthority,
     HarnessWorkerBinding,
 )
 from framework.harness.workflow.compiler import HarnessWorkflowGraphCompiler
-from framework.harness.workflow.graph import (
+from framework.harness.graph.model import (
     HarnessControlNode,
     HarnessContractKind,
     HarnessContractReference,

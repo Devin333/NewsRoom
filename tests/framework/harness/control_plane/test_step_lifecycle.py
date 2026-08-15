@@ -40,7 +40,7 @@ from framework.harness.control_plane.step_lifecycle import (
 )
 from framework.harness.quality.verdict import HarnessQualityVerdict
 from framework.harness.graph.activity import HarnessRetryPolicy, HarnessStepSpec
-from framework.harness.workflow.graph import (
+from framework.harness.graph.model import (
     HarnessContractKind,
     HarnessContractReference,
     HarnessGraphNodeKind,

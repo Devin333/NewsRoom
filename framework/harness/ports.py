@@ -30,7 +30,7 @@ if TYPE_CHECKING:
     from framework.harness.control_plane.activity import HarnessActivity
     from framework.harness.control_plane.graph_runtime import HarnessGraphActivity
     from framework.harness.control_plane.graph_state import HarnessGraphState
-    from framework.harness.workflow.graph import NormalizedHarnessGraph
+    from framework.harness.graph.model import NormalizedHarnessGraph
 
 
 @runtime_checkable

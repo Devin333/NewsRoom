@@ -16,7 +16,7 @@ from framework.harness.side_effects.registry import (
     HarnessSideEffectHandlerBinding,
     HarnessSideEffectRegistry,
 )
-from framework.harness.workflow.binding_authority import (
+from framework.harness.graph.bindings import (
     HarnessActivityCapabilities,
     HarnessActivityContractBinding,
     HarnessRuntimeBindingAuthority,

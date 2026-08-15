@@ -43,7 +43,7 @@ from framework.harness.task_plan.verification import (
     TaskPlanGateRegistry,
     TaskPlanGateRequest,
 )
-from framework.harness.workflow.binding_authority import HarnessWorkerBinding
+from framework.harness.graph.bindings import HarnessWorkerBinding
 from framework.harness.graph.activity import HarnessWorkerType
 
 

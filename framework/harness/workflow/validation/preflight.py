@@ -8,7 +8,7 @@ from framework.harness.workflow.compiler import (
     HarnessGraphCompileResult,
     HarnessWorkflowGraphCompiler,
 )
-from framework.harness.workflow.graph import HarnessExecutableNode, NormalizedHarnessGraph
+from framework.harness.graph.model import HarnessExecutableNode, NormalizedHarnessGraph
 from framework.harness.workflow.spec import HarnessWorkflowSpec
 from framework.harness.graph.activity import HarnessWorkerType
 from framework.harness.workflow.validation.dataflow import validate_dataflow

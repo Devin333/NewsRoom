@@ -9,12 +9,14 @@ import framework.harness.graph as graph_api
 _PROJECT_ROOT = Path(__file__).resolve().parents[2]
 _GRAPH_ROOT = _PROJECT_ROOT / "framework/harness/graph"
 _WORKFLOW_ROOT = _PROJECT_ROOT / "framework/harness/workflow"
-_MOVED_MODULES = (
-    "canonical.py",
-    "conditions.py",
-    "dsl.py",
-    "step.py",
-)
+_MOVED_MODULES = {
+    "binding_authority.py": "bindings.py",
+    "canonical.py": "canonical.py",
+    "conditions.py": "conditions.py",
+    "dsl.py": "dsl.py",
+    "graph.py": "model.py",
+    "step.py": "activity.py",
+}
 _MOVED_IMPORTS = tuple(
     f"framework.harness.workflow.{name.removesuffix('.py')}"
     for name in _MOVED_MODULES
@@ -28,10 +30,34 @@ _MOVED_PUBLIC_NAMES = {
     "ConditionAny",
     "ConditionOperator",
     "ConditionPredicate",
+    "HarnessActivityCapabilities",
+    "HarnessActivityContractBinding",
+    "HarnessActivityUsage",
+    "HarnessBranch",
+    "HarnessCompensationHandlerBinding",
+    "HarnessCompensationReference",
+    "HarnessContractKind",
+    "HarnessContractReference",
+    "HarnessControlNode",
+    "HarnessDeterministicMergeBinding",
+    "HarnessExecutableNode",
+    "HarnessGraphChecksumRegistry",
+    "HarnessGraphEdge",
+    "HarnessGraphEdgeKind",
+    "HarnessGraphNode",
+    "HarnessGraphNodeKind",
     "HarnessGraphSpec",
+    "HarnessJoinContract",
+    "HarnessLoopContract",
+    "HarnessMergeContract",
+    "HarnessMergeKind",
     "HarnessRetryPolicy",
+    "HarnessRuntimeBindingAuthority",
     "HarnessStepSpec",
+    "HarnessWaitContract",
+    "HarnessWorkerBinding",
     "HarnessWorkerType",
+    "NormalizedHarnessGraph",
     "ParallelAll",
     "ParallelAny",
     "ParallelBranch",
@@ -58,6 +84,11 @@ def test_graph_owner_does_not_import_legacy_workflow_namespace() -> None:
 def test_moved_graph_owner_modules_have_no_workflow_path_shims() -> None:
     assert [
         name for name in _MOVED_MODULES if (_WORKFLOW_ROOT / name).exists()
+    ] == []
+    assert [
+        target
+        for target in _MOVED_MODULES.values()
+        if not (_GRAPH_ROOT / target).is_file()
     ] == []
 
 
@@ -113,6 +144,7 @@ def test_graph_public_api_excludes_legacy_declaration_and_compiler() -> None:
         "HarnessGraphDefinitionReader",
         "HarnessGraphSpec",
         "HarnessStepSpec",
+        "NormalizedHarnessGraph",
     }.issubset(exported)
     assert exported.isdisjoint(
         {

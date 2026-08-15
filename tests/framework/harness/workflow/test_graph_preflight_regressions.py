@@ -13,7 +13,7 @@ from framework.harness.graph.dsl import (
     StepRef,
     Wait,
 )
-from framework.harness.workflow.graph import (
+from framework.harness.graph.model import (
     HarnessCompensationReference,
     HarnessContractKind,
     HarnessContractReference,

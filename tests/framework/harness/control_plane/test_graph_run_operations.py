@@ -34,7 +34,7 @@ from framework.harness.control_plane.harness import (
 )
 from framework.harness.control_plane.state import HarnessRunSpec
 from framework.harness.graph.dsl import HarnessGraphSpec, Sequence, StepRef, Wait
-from framework.harness.workflow.graph import (
+from framework.harness.graph.model import (
     HarnessContractKind,
     HarnessContractReference,
 )

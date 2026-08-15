@@ -20,7 +20,7 @@ from framework.harness.task_plan.canonical import (
 from framework.harness.task_plan.models import ResolvedTaskSpec, TaskRetryPolicy, TaskSpec
 from framework.harness.task_plan.policy import TaskPlanPolicy
 from framework.harness.task_plan.schema import TASK_CAPABILITY_BINDING_SCHEMA, TASK_PLAN_RUNTIME_VERSION
-from framework.harness.workflow.binding_authority import HarnessWorkerBinding
+from framework.harness.graph.bindings import HarnessWorkerBinding
 from framework.harness.graph.activity import HarnessWorkerType
 
 

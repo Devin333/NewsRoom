@@ -43,7 +43,6 @@ def test_harness_graph_modules_do_not_import_outer_layers() -> None:
     graph_modules = (
         *sorted(Path("framework/harness/graph").glob("*.py")),
         Path("framework/harness/workflow/compiler.py"),
-        Path("framework/harness/workflow/graph.py"),
         Path("framework/harness/workflow/reader.py"),
         Path("framework/harness/workflow/versioning.py"),
         *sorted(Path("framework/harness/workflow/validation").glob("*.py")),

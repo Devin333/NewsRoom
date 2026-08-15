@@ -11,7 +11,7 @@ from framework.harness.control_plane.graph_state import (
     HarnessNodeInstanceStatus,
 )
 from framework.harness.graph.canonical import thaw_json
-from framework.harness.workflow.graph import HarnessExecutableNode
+from framework.harness.graph.model import HarnessExecutableNode
 
 
 def compensation_entry_for_node(
