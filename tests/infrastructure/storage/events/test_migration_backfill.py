@@ -18,8 +18,8 @@ from framework.events.migration_backfill import (
     MigrationSourceChangedError,
     migration_records_fingerprint,
 )
+from framework.events.projection import project_canonical_event
 from framework.events.schema import default_event_schema_catalog
-from framework.workflow.runtime.event_projection import project_workflow_event
 from infrastructure.storage.events.migration_reports import (
     JsonMigrationBackfillReportStore,
     read_migration_shadow_report,
@@ -384,7 +384,7 @@ def _stream_request(stream_id: str, *, through_sequence: int):
 
 
 def _project_event(event):
-    return project_workflow_event(
+    return project_canonical_event(
         event,
         schema_catalog=default_event_schema_catalog(),
     )

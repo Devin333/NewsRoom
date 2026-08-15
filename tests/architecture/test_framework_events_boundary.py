@@ -18,6 +18,7 @@ EVENT_CANDIDATE_CONSTRUCTION_BOUNDARIES = frozenset(
 )
 FORBIDDEN_IMPORT_PREFIXES = (
     "business",
+    "framework.workflow",
     "interfaces",
     "infrastructure",
     "storage",

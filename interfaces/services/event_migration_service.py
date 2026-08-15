@@ -24,6 +24,7 @@ from framework.events.migration import (
     MigrationSourceRecord,
 )
 from framework.events.canonical import checksum_for
+from framework.events.projection import project_canonical_event
 from infrastructure.storage.events.migration_readers import (
     MigrationSourceReadError,
     PostgresEventMigrationReader,
@@ -31,7 +32,6 @@ from infrastructure.storage.events.migration_readers import (
     iter_checkpoint_records,
     iter_jsonl_records,
 )
-from framework.workflow.runtime.event_projection import project_workflow_event
 
 
 PostgresReaderFactory = Callable[[str], Any]
@@ -248,7 +248,7 @@ class EventMigrationBackfillApplicationService:
             raise TypeError("schema_catalog must be an EventSchemaCatalog")
 
         def project_event(event):
-            return project_workflow_event(event, schema_catalog=schema_catalog)
+            return project_canonical_event(event, schema_catalog=schema_catalog)
 
         self._backfill = EventMigrationBackfill(
             store=staging_store,

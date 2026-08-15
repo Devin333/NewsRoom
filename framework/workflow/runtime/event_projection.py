@@ -1,69 +1,34 @@
 from __future__ import annotations
 
-import json
-import os
-from collections.abc import Mapping
 from dataclasses import dataclass
-from hashlib import sha256
 from pathlib import Path
 from typing import Any
-from uuid import uuid4
 
 from framework.events.canonical import StoredEvent, checksum_for, thaw_canonical_json
-from framework.events.errors import EventContractError
-from framework.events.ports import EventReaderPort
-from framework.events.runtime.models import MAX_PAGE_LIMIT, StreamReadRequest
+from framework.events.projection import (
+    EventProjection,
+    EventProjectionExporter,
+)
 from framework.events.schema.catalog import EventSchemaCatalog
 from framework.events.schema.security import EventSecurityProjector
-from framework.events.telemetry import (
-    EventTelemetry,
-    TelemetryInstrumentationScope,
-    TelemetryResource,
-    default_event_telemetry,
-)
 
 
 @dataclass(frozen=True, slots=True)
-class WorkflowEventProjection:
-    path: Path
-    stream_id: str
-    high_watermark: int | None
-    event_count: int
-    checksum: str
+class WorkflowEventProjection(EventProjection):
+    """Legacy Workflow projection descriptor retained until Gate C deletion."""
 
 
-class WorkflowEventProjectionExporter:
-    """Build a deterministic compatibility artifact from a durable stream."""
+class WorkflowEventProjectionExporter(EventProjectionExporter):
+    """Legacy schema mapper backed by the event-owned projection engine."""
 
-    def __init__(
-        self,
-        *,
-        reader: EventReaderPort,
-        schema_catalog: EventSchemaCatalog,
-        security_projector: EventSecurityProjector | None = None,
-        page_size: int = 1_000,
-        telemetry: EventTelemetry | None = None,
-    ) -> None:
-        if reader is None:
-            raise ValueError("event reader is required")
-        if not isinstance(schema_catalog, EventSchemaCatalog):
-            raise TypeError("schema_catalog must be EventSchemaCatalog")
-        if (
-            isinstance(page_size, bool)
-            or not isinstance(page_size, int)
-            or not 1 <= page_size <= MAX_PAGE_LIMIT
-        ):
-            raise ValueError("page_size must be a positive integer")
-        self._reader = reader
-        self._schema_catalog = schema_catalog
-        self._security_projector = security_projector or EventSecurityProjector()
-        self._page_size = page_size
-        self._telemetry = telemetry or default_event_telemetry(
-            resource=TelemetryResource(service_name="newsroom-event-runtime"),
-            scope=TelemetryInstrumentationScope(
-                name="framework.workflow.event_projection",
-                version="1",
-            ),
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(projection_name="workflow", **kwargs)
+
+    def project_event(self, event: StoredEvent) -> dict[str, Any]:
+        return project_workflow_event(
+            event,
+            schema_catalog=self._schema_catalog,
+            security_projector=self._security_projector,
         )
 
     def export(
@@ -74,58 +39,19 @@ class WorkflowEventProjectionExporter:
         tenant_id: str | None = None,
         through_sequence: int | None = None,
     ) -> WorkflowEventProjection:
-        normalized_stream_id = _required_text(stream_id, "stream_id")
-        target_path = Path(target)
-        requested_high_watermark = (
-            None
-            if through_sequence is None
-            else _positive_sequence(through_sequence)
+        projection = super().export(
+            stream_id=stream_id,
+            target=target,
+            tenant_id=tenant_id,
+            through_sequence=through_sequence,
         )
-        high_watermark = (
-            self._reader.get_stream_high_watermark(
-                normalized_stream_id,
-                tenant_id=tenant_id,
-            )
-            if requested_high_watermark is None
-            else requested_high_watermark
+        return WorkflowEventProjection(
+            path=projection.path,
+            stream_id=projection.stream_id,
+            high_watermark=projection.high_watermark,
+            event_count=projection.event_count,
+            checksum=projection.checksum,
         )
-        target_path.parent.mkdir(parents=True, exist_ok=True)
-        temporary_path = target_path.with_name(
-            f".{target_path.name}.{uuid4().hex}.tmp"
-        )
-        digest = sha256()
-        event_count = 0
-        try:
-            with temporary_path.open("xb") as handle:
-                if high_watermark is not None:
-                    for event in self._read_prefix(
-                        stream_id=normalized_stream_id,
-                        tenant_id=tenant_id,
-                        high_watermark=high_watermark,
-                    ):
-                        encoded = _jsonl_bytes(self.project_event(event))
-                        handle.write(encoded)
-                        digest.update(encoded)
-                        event_count += 1
-                handle.flush()
-                os.fsync(handle.fileno())
-            os.replace(temporary_path, target_path)
-            _fsync_directory(target_path.parent)
-        except Exception:
-            try:
-                temporary_path.unlink(missing_ok=True)
-            except OSError:
-                pass
-            raise
-        projection = WorkflowEventProjection(
-            path=target_path,
-            stream_id=normalized_stream_id,
-            high_watermark=high_watermark,
-            event_count=event_count,
-            checksum=f"sha256:{digest.hexdigest()}",
-        )
-        self._record_projection_metrics(high_watermark=high_watermark, staleness=0)
-        return projection
 
     def verify_existing(
         self,
@@ -137,159 +63,20 @@ class WorkflowEventProjectionExporter:
         checksum: str,
         tenant_id: str | None = None,
     ) -> WorkflowEventProjection:
-        """Verify that an existing projection is the recorded durable prefix."""
-
-        normalized_stream_id = _required_text(stream_id, "stream_id")
-        target_path = Path(target)
-        expected_high_watermark = (
-            None if high_watermark is None else _positive_sequence(high_watermark)
-        )
-        expected_count = _nonnegative_count(event_count)
-        expected_checksum = _sha256_checksum(checksum)
-        if expected_high_watermark is None:
-            if expected_count != 0:
-                raise EventContractError(
-                    "empty event projection must record an event count of zero"
-                )
-        elif expected_count != expected_high_watermark:
-            raise EventContractError(
-                "workflow event projection count must equal its stream high watermark"
-            )
-
-        current_high_watermark = self._reader.get_stream_high_watermark(
-            normalized_stream_id,
-            tenant_id=tenant_id,
-        )
-        if expected_high_watermark is not None and (
-            current_high_watermark is None
-            or current_high_watermark < expected_high_watermark
-        ):
-            raise EventContractError(
-                "durable stream does not contain the recorded projection prefix"
-            )
-
-        digest = sha256()
-        verified_count = 0
-        try:
-            handle = target_path.open("rb")
-        except OSError as exc:
-            raise EventContractError("event projection artifact is unavailable") from exc
-        with handle:
-            events = (
-                ()
-                if expected_high_watermark is None
-                else self._read_prefix(
-                    stream_id=normalized_stream_id,
-                    tenant_id=tenant_id,
-                    high_watermark=expected_high_watermark,
-                )
-            )
-            for event in events:
-                raw_line = handle.readline()
-                if not raw_line or not raw_line.endswith(b"\n"):
-                    raise EventContractError(
-                        "event projection is missing a complete durable event row"
-                    )
-                digest.update(raw_line)
-                try:
-                    row = json.loads(raw_line)
-                except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-                    raise EventContractError("event projection row is invalid JSON") from exc
-                if not isinstance(row, Mapping) or dict(row) != self.project_event(event):
-                    raise EventContractError(
-                        "event projection row does not match the durable event"
-                    )
-                verified_count += 1
-            if handle.read(1):
-                raise EventContractError(
-                    "event projection contains rows beyond its recorded high watermark"
-                )
-
-        actual_checksum = f"sha256:{digest.hexdigest()}"
-        if verified_count != expected_count:
-            raise EventContractError("event projection count does not match its manifest")
-        if actual_checksum != expected_checksum:
-            raise EventContractError("event projection checksum does not match its manifest")
-        projection = WorkflowEventProjection(
-            path=target_path,
-            stream_id=normalized_stream_id,
-            high_watermark=expected_high_watermark,
-            event_count=verified_count,
-            checksum=actual_checksum,
-        )
-        self._record_projection_metrics(
-            high_watermark=expected_high_watermark,
-            staleness=max(
-                0,
-                (current_high_watermark or 0) - (expected_high_watermark or 0),
-            ),
-        )
-        return projection
-
-    def _record_projection_metrics(
-        self,
-        *,
-        high_watermark: int | None,
-        staleness: int,
-    ) -> None:
-        labels = {"projection": "workflow"}
-        self._telemetry.record_gauge(
-            "event_projection_high_watermark",
-            high_watermark or 0,
-            labels=labels,
-        )
-        self._telemetry.record_gauge(
-            "event_projection_staleness",
-            staleness,
-            labels=labels,
-        )
-
-    def _read_prefix(
-        self,
-        *,
-        stream_id: str,
-        tenant_id: str | None,
-        high_watermark: int,
-    ):
-        request = StreamReadRequest(
+        projection = super().verify_existing(
             stream_id=stream_id,
+            target=target,
+            high_watermark=high_watermark,
+            event_count=event_count,
+            checksum=checksum,
             tenant_id=tenant_id,
-            limit=self._page_size,
-            through_sequence=high_watermark,
         )
-        expected_sequence = 1
-        while True:
-            page = self._reader.read_stream(request)
-            if page.stream_id != stream_id or page.tenant_id != tenant_id:
-                raise EventContractError("event reader returned another stream scope")
-            if page.high_watermark != high_watermark:
-                raise EventContractError("event reader changed the projection high watermark")
-            for event in page.events:
-                if event.stream_sequence != expected_sequence:
-                    raise EventContractError(
-                        "event projection requires a contiguous stream prefix"
-                    )
-                expected_sequence += 1
-                yield event
-            if page.next_cursor is None:
-                break
-            request = StreamReadRequest(
-                stream_id=stream_id,
-                tenant_id=tenant_id,
-                cursor=page.next_cursor,
-                limit=self._page_size,
-                through_sequence=high_watermark,
-            )
-        if expected_sequence - 1 != high_watermark:
-            raise EventContractError("event reader returned an incomplete stream prefix")
-
-    def project_event(self, event: StoredEvent) -> dict[str, Any]:
-        """Return the schema-aware compatibility row used by JSONL and online reads."""
-
-        return project_workflow_event(
-            event,
-            schema_catalog=self._schema_catalog,
-            security_projector=self._security_projector,
+        return WorkflowEventProjection(
+            path=projection.path,
+            stream_id=projection.stream_id,
+            high_watermark=projection.high_watermark,
+            event_count=projection.event_count,
+            checksum=projection.checksum,
         )
 
 
@@ -299,7 +86,7 @@ def project_workflow_event(
     schema_catalog: EventSchemaCatalog,
     security_projector: EventSecurityProjector | None = None,
 ) -> dict[str, Any]:
-    """Project one durable event without writing or feeding it back to a store."""
+    """Project one legacy Workflow event during the bounded migration window."""
 
     if not isinstance(event, StoredEvent):
         raise TypeError("event must be a StoredEvent")
@@ -342,60 +129,6 @@ def project_workflow_event(
     )
     row["projection_checksum"] = checksum_for(row)
     return row
-
-
-def _jsonl_bytes(value: dict[str, Any]) -> bytes:
-    return (
-        json.dumps(
-            value,
-            ensure_ascii=False,
-            sort_keys=True,
-            separators=(",", ":"),
-        )
-        + "\n"
-    ).encode("utf-8")
-
-
-def _required_text(value: Any, field_name: str) -> str:
-    if not isinstance(value, str) or not value.strip():
-        raise ValueError(f"{field_name} is required")
-    return value.strip()
-
-
-def _positive_sequence(value: Any) -> int:
-    if isinstance(value, bool) or not isinstance(value, int) or value < 1:
-        raise ValueError("through_sequence must be a positive integer")
-    return value
-
-
-def _nonnegative_count(value: Any) -> int:
-    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
-        raise EventContractError("event projection count must be a non-negative integer")
-    return value
-
-
-def _sha256_checksum(value: Any) -> str:
-    if not isinstance(value, str):
-        raise EventContractError("event projection checksum must be SHA-256")
-    prefix, separator, digest = value.partition(":")
-    if (
-        separator != ":"
-        or prefix != "sha256"
-        or len(digest) != 64
-        or any(character not in "0123456789abcdef" for character in digest)
-    ):
-        raise EventContractError("event projection checksum must be SHA-256")
-    return value
-
-
-def _fsync_directory(path: Path) -> None:
-    if os.name == "nt":
-        return
-    descriptor = os.open(path, os.O_RDONLY)
-    try:
-        os.fsync(descriptor)
-    finally:
-        os.close(descriptor)
 
 
 __all__ = [

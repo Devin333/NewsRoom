@@ -459,7 +459,6 @@
       "interfaces/composition/research.py|<module>|framework.harness.workflow.binding_authority|HarnessWorkerBinding": 1,
       "interfaces/composition/research.py|<module>|framework.harness.workflow.graph|HarnessContractKind,HarnessContractReference": 1,
       "interfaces/composition/research.py|<module>|framework.harness.workflow|HarnessWorkerType,HarnessWorkflowGraphCompiler": 1,
-      "interfaces/services/event_migration_service.py|<module>|framework.workflow.runtime.event_projection|project_workflow_event": 1,
       "interfaces/services/event_projection_service.py|<module>|framework.workflow.runtime.event_projection|WorkflowEventProjection,WorkflowEventProjectionExporter": 1,
       "interfaces/services/harness_graph_service.py|<module>|framework.harness.workflow.canonical|required_text": 1,
       "interfaces/services/harness_wait_service.py|<module>|framework.harness.workflow.canonical|canonical_checksum,exact_reference,freeze_json,required_text": 1,
@@ -2564,7 +2563,7 @@
     "framework.workflow",
     "framework.harness.workflow"
   ],
-  "generation": 2,
+  "generation": 3,
   "legacy_schema_ids": [
     "newsroom.harness-checkpoint-legacy/v1",
     "newsroom.harness-decision-legacy/v1",
@@ -2750,9 +2749,15 @@
       "count": 1,
       "generation": 2,
       "key": "infrastructure/research/artifact_publication.py|<module>._validated_bundle_members|call_argument:append"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 3,
+      "key": "interfaces/services/event_migration_service.py|<module>|framework.workflow.runtime.event_projection|project_workflow_event"
     }
   ],
   "schema": "newsroom.graph-only-freeze-baseline/v1",
-  "source_commit": "1af71b58dfeec8777addced6d55b71fea9d9cd24",
-  "source_tree": "2d41bf5dd46e1e65285f98b871872b23cfae398a"
+  "source_commit": "ed0bcbe8287b74586754e0e64b7ba57e081c82b8",
+  "source_tree": "167fc911cef06b0e804abdf5d647d4e49f9a34ad"
 }
