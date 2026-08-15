@@ -6347,20 +6347,8 @@ def _invoke_worker_delegate(
 def _coerce_worker_result(value: Any) -> HarnessWorkerResult:
     to_dict = getattr(value, "to_dict", None)
     payload = to_dict() if callable(to_dict) else value
-    if not isinstance(payload, Mapping):
-        raise HarnessValidationError(
-            "worker must return a HarnessWorkerResult-compatible object"
-        )
     try:
-        return HarnessWorkerResult(
-            status=payload.get("status"),
-            output=payload.get("output", {}),
-            artifacts=payload.get("artifacts", ()),
-            diagnostics=payload.get("diagnostics", {}),
-            metrics=payload.get("metrics", {}),
-            error=payload.get("error"),
-            effect_intent=payload.get("effect_intent"),
-        )
+        return HarnessWorkerResult.from_dict(payload)
     except (TypeError, ValueError, HarnessValidationError) as exc:
         if isinstance(exc, HarnessValidationError):
             raise

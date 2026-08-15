@@ -1,6 +1,7 @@
 """Graph-native declaration, DSL, activity, and version contracts."""
 
 from framework.harness.graph.activity import (
+    HarnessLeafActivityKind,
     HarnessRetryPolicy,
     HarnessStepSpec,
     HarnessWorkerType,
@@ -132,6 +133,7 @@ __all__ = [
     "HarnessGraphNodeKind",
     "HarnessGraphSpec",
     "HarnessJoinContract",
+    "HarnessLeafActivityKind",
     "HarnessLoopContract",
     "HarnessMergeContract",
     "HarnessMergeKind",

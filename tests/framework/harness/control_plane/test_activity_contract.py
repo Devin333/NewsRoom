@@ -27,7 +27,10 @@ from framework.harness.control_plane.activity import (
     resolve_activity_result,
 )
 from framework.harness.control_plane.errors import HarnessValidationError
-from framework.harness.workers.result import HarnessWorkerResult
+from framework.harness.workers.result import (
+    HarnessWorkerEvidence,
+    HarnessWorkerResult,
+)
 from framework.shared.json import stable_json_dumps
 
 
@@ -162,6 +165,29 @@ def test_activity_result_takes_a_deeply_immutable_canonical_snapshot() -> None:
     assert record.to_dict()["result"]["output"]["nested"]["answer"] == "accepted"
     assert record.content_checksum == checksum
     assert record.to_worker_result().output["nested"]["answer"] == "accepted"
+
+
+def test_activity_result_round_trip_preserves_typed_worker_evidence() -> None:
+    evidence = HarnessWorkerEvidence(
+        evidence_type="agent_loop_iteration",
+        payload={"transcript_ref": "transcript://run-activity/iteration-1"},
+    )
+    record = HarnessActivityResultRecord(
+        activity=_activity(),
+        result=HarnessWorkerResult(
+            status="succeeded",
+            artifacts=("artifact://run-activity/candidate",),
+            evidence=(evidence,),
+        ),
+        completed_at=NOW,
+    )
+
+    restored = HarnessActivityResultRecord.from_dict(record.to_dict())
+
+    assert restored.to_worker_result().evidence == (evidence,)
+    assert restored.to_worker_result().artifacts == (
+        "artifact://run-activity/candidate",
+    )
 
 
 def test_activity_result_records_ordered_lifecycle_times() -> None:

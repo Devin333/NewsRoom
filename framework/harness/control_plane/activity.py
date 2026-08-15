@@ -414,29 +414,7 @@ def validate_activity_call_marker(
 
 
 def _worker_result_from_dict(value: Mapping[str, Any]) -> HarnessWorkerResult:
-    output = value.get("output", {})
-    artifacts = value.get("artifacts", ())
-    diagnostics = value.get("diagnostics", {})
-    metrics = value.get("metrics", {})
-    effect_intent = value.get("effect_intent")
-    if not isinstance(output, Mapping):
-        raise HarnessValidationError("worker result output must be an object")
-    if not isinstance(artifacts, list | tuple):
-        raise HarnessValidationError("worker result artifacts must be an array")
-    if not isinstance(diagnostics, Mapping) or not isinstance(metrics, Mapping):
-        raise HarnessValidationError(
-            "worker result diagnostics and metrics must be objects"
-        )
-    error = value.get("error")
-    return HarnessWorkerResult(
-        status=value.get("status"),
-        output=dict(output),
-        artifacts=tuple(str(item) for item in artifacts),
-        diagnostics=dict(diagnostics),
-        metrics=dict(metrics),
-        error=None if error is None else str(error),
-        effect_intent=effect_intent,
-    )
+    return HarnessWorkerResult.from_dict(value)
 
 
 def _is_checksum(value: str) -> bool:

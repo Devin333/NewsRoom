@@ -11,6 +11,9 @@ from framework.shared.json import to_jsonable
 
 
 class HarnessWorkerType(StrEnum):
+    FUNCTION = "function"
+    TOOL = "tool"
+    AGENT_LOOP = "agent_loop"
     TASK_PLAN = "task_plan"
     LLM = "llm"
     SKILL = "skill"
@@ -22,6 +25,16 @@ class HarnessWorkerType(StrEnum):
     QUALITY_GATE = "quality_gate"
     ARTIFACT = "artifact"
     SCRIPT = "script"
+
+
+class HarnessLeafActivityKind(StrEnum):
+    """Semantic kind pinned by a Graph executable leaf binding."""
+
+    FUNCTION = "function"
+    TOOL = "tool"
+    SKILL = "skill"
+    SUBAGENT = "subagent"
+    AGENT_LOOP = "agent_loop"
 
 
 _FORBIDDEN_OUTER_AUTHORITY_METADATA_KEYS = frozenset(
@@ -200,4 +213,9 @@ def _outer_authority_metadata_paths(metadata: Mapping[str, Any]) -> tuple[str, .
     return tuple(sorted(violations))
 
 
-__all__ = ["HarnessRetryPolicy", "HarnessStepSpec", "HarnessWorkerType"]
+__all__ = [
+    "HarnessLeafActivityKind",
+    "HarnessRetryPolicy",
+    "HarnessStepSpec",
+    "HarnessWorkerType",
+]

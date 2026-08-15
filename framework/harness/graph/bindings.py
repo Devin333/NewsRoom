@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import inspect
 import re
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from enum import StrEnum
 from typing import cast
@@ -20,7 +20,10 @@ from framework.harness.graph.model import (
     HarnessContractKind,
     HarnessContractReference,
 )
-from framework.harness.graph.activity import HarnessWorkerType
+from framework.harness.graph.activity import (
+    HarnessLeafActivityKind,
+    HarnessWorkerType,
+)
 
 
 _CONTRACT_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/+-]*$")
@@ -151,6 +154,97 @@ class HarnessActivityContractBinding:
 
 
 @dataclass(frozen=True, slots=True)
+class HarnessLeafActivityBinding:
+    """Composition-owned registration for one exact executable leaf pair."""
+
+    leaf_activity_kind: HarnessLeafActivityKind | str
+    worker_ref: HarnessContractReference | str
+    activity_ref: HarnessContractReference | str
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "leaf_activity_kind",
+            _coerce_leaf_activity_kind(
+                self.leaf_activity_kind,
+                field="leaf_activity_kind",
+            ),
+        )
+        object.__setattr__(
+            self,
+            "worker_ref",
+            _coerce_reference(HarnessContractKind.WORKER, self.worker_ref),
+        )
+        object.__setattr__(
+            self,
+            "activity_ref",
+            _coerce_reference(HarnessContractKind.ACTIVITY, self.activity_ref),
+        )
+
+    @property
+    def expected_worker_type(self) -> HarnessWorkerType:
+        return HarnessWorkerType(self.leaf_activity_kind.value)
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "leaf_activity_kind": self.leaf_activity_kind.value,
+            "worker_ref": self.worker_ref.to_dict(),
+            "activity_ref": self.activity_ref.to_dict(),
+        }
+
+    @classmethod
+    def from_dict(
+        cls,
+        value: Mapping[str, object],
+    ) -> "HarnessLeafActivityBinding":
+        if not isinstance(value, Mapping) or set(value) != {
+            "leaf_activity_kind",
+            "worker_ref",
+            "activity_ref",
+        }:
+            raise _authority_error(
+                "invalid_leaf_activity_binding",
+                "leaf activity binding fields are invalid",
+            )
+        worker_ref = value["worker_ref"]
+        activity_ref = value["activity_ref"]
+        if not isinstance(worker_ref, Mapping) or not isinstance(
+            activity_ref,
+            Mapping,
+        ):
+            raise _authority_error(
+                "invalid_leaf_activity_binding",
+                "leaf activity binding references must be objects",
+            )
+        try:
+            return cls(
+                leaf_activity_kind=value["leaf_activity_kind"],
+                worker_ref=HarnessContractReference.from_dict(worker_ref),
+                activity_ref=HarnessContractReference.from_dict(activity_ref),
+            )
+        except (HarnessValidationError, TypeError, ValueError) as exc:
+            if isinstance(exc, HarnessValidationError) and exc.code == (
+                "invalid_leaf_activity_binding"
+            ):
+                raise
+            raise _authority_error(
+                "invalid_leaf_activity_binding",
+                "leaf activity binding is invalid",
+            ) from exc
+
+
+@dataclass(frozen=True, slots=True)
+class HarnessResolvedLeafActivityBinding:
+    registration: HarnessLeafActivityBinding
+    worker: HarnessWorkerBinding
+    activity: HarnessActivityContractBinding
+
+    @property
+    def leaf_activity_kind(self) -> HarnessLeafActivityKind:
+        return self.registration.leaf_activity_kind
+
+
+@dataclass(frozen=True, slots=True)
 class HarnessCompensationHandlerBinding:
     reference: HarnessContractReference | str
     implementation: object
@@ -221,6 +315,7 @@ class HarnessRuntimeBindingAuthority:
         *,
         workers: Iterable[HarnessWorkerBinding] = (),
         activities: Iterable[HarnessActivityContractBinding] = (),
+        leaf_activities: Iterable[HarnessLeafActivityBinding] = (),
         compensations: Iterable[HarnessCompensationHandlerBinding] = (),
         merges: Iterable[HarnessDeterministicMergeBinding] = (),
         gate_registry: DeterministicGateRegistry | None = None,
@@ -246,6 +341,23 @@ class HarnessRuntimeBindingAuthority:
             HarnessActivityContractBinding,
             activities,
         )
+        self._leaf_activities = _ExactLeafActivityBindingMap(leaf_activities)
+        for registration in self._leaf_activities.bindings:
+            worker = cast(
+                HarnessWorkerBinding,
+                self._workers.resolve(registration.worker_ref),
+            )
+            self._activities.resolve(registration.activity_ref)
+            if worker.worker_type is not registration.expected_worker_type:
+                raise _authority_error(
+                    "leaf_activity_worker_type_mismatch",
+                    "leaf activity kind does not match its worker binding",
+                    reference=registration.worker_ref,
+                    leaf_activity_kind=registration.leaf_activity_kind.value,
+                    expected_worker_type=registration.expected_worker_type.value,
+                    actual_worker_type=worker.worker_type.value,
+                    activity_reference=registration.activity_ref.exact_ref,
+                )
         self._compensations = _ExactBindingMap(
             HarnessContractKind.COMPENSATION,
             HarnessCompensationHandlerBinding,
@@ -269,6 +381,10 @@ class HarnessRuntimeBindingAuthority:
             tuple[HarnessActivityContractBinding, ...],
             self._activities.bindings,
         )
+
+    @property
+    def leaf_activity_bindings(self) -> tuple[HarnessLeafActivityBinding, ...]:
+        return self._leaf_activities.bindings
 
     @property
     def compensation_bindings(self) -> tuple[HarnessCompensationHandlerBinding, ...]:
@@ -333,6 +449,40 @@ class HarnessRuntimeBindingAuthority:
                 missing_capabilities=missing,
             )
         return binding
+
+    def resolve_leaf_activity(
+        self,
+        *,
+        worker_ref: HarnessContractReference | str,
+        activity_ref: HarnessContractReference | str,
+        expected_leaf_activity_kind: HarnessLeafActivityKind | str,
+        required_usage: HarnessActivityUsage | str = HarnessActivityUsage.SERIAL,
+    ) -> HarnessResolvedLeafActivityBinding:
+        registration = self._leaf_activities.resolve(worker_ref, activity_ref)
+        expected_kind = _coerce_leaf_activity_kind(
+            expected_leaf_activity_kind,
+            field="expected_leaf_activity_kind",
+        )
+        if registration.leaf_activity_kind is not expected_kind:
+            raise _authority_error(
+                "runtime_leaf_activity_kind_mismatch",
+                "resolved leaf activity kind does not match the frozen Graph",
+                reference=registration.activity_ref,
+                worker_reference=registration.worker_ref.exact_ref,
+                expected_leaf_activity_kind=expected_kind.value,
+                actual_leaf_activity_kind=registration.leaf_activity_kind.value,
+            )
+        return HarnessResolvedLeafActivityBinding(
+            registration=registration,
+            worker=self.resolve_worker(
+                registration.worker_ref,
+                expected_worker_type=registration.expected_worker_type,
+            ),
+            activity=self.resolve_activity(
+                registration.activity_ref,
+                required_usage=required_usage,
+            ),
+        )
 
     def resolve_compensation(
         self,
@@ -410,6 +560,59 @@ class _ExactBindingMap:
                 "unknown_runtime_contract_binding",
                 "exact runtime contract reference is not registered",
                 reference=exact,
+            )
+        return binding
+
+
+class _ExactLeafActivityBindingMap:
+    def __init__(self, bindings: Iterable[HarnessLeafActivityBinding]) -> None:
+        by_pair: dict[
+            tuple[HarnessContractReference, HarnessContractReference],
+            HarnessLeafActivityBinding,
+        ] = {}
+        for binding in tuple(bindings):
+            if not isinstance(binding, HarnessLeafActivityBinding):
+                raise TypeError(
+                    "leaf activity bindings must contain HarnessLeafActivityBinding values"
+                )
+            key = (binding.worker_ref, binding.activity_ref)
+            if key in by_pair:
+                raise _authority_error(
+                    "duplicate_leaf_activity_binding",
+                    "leaf activity pair is registered more than once",
+                    reference=binding.activity_ref,
+                    worker_reference=binding.worker_ref.exact_ref,
+                )
+            by_pair[key] = binding
+        self._by_pair = by_pair
+        self.bindings = tuple(
+            sorted(
+                by_pair.values(),
+                key=lambda item: (
+                    item.leaf_activity_kind.value,
+                    item.worker_ref.exact_ref,
+                    item.activity_ref.exact_ref,
+                ),
+            )
+        )
+
+    def resolve(
+        self,
+        worker_ref: HarnessContractReference | str,
+        activity_ref: HarnessContractReference | str,
+    ) -> HarnessLeafActivityBinding:
+        exact_worker = _coerce_reference(HarnessContractKind.WORKER, worker_ref)
+        exact_activity = _coerce_reference(
+            HarnessContractKind.ACTIVITY,
+            activity_ref,
+        )
+        binding = self._by_pair.get((exact_worker, exact_activity))
+        if binding is None:
+            raise _authority_error(
+                "unknown_leaf_activity_binding",
+                "exact worker/activity pair is not registered as a Graph leaf",
+                reference=exact_activity,
+                worker_reference=exact_worker.exact_ref,
             )
         return binding
 
@@ -558,6 +761,22 @@ def _coerce_worker_type(value: object, *, field: str) -> HarnessWorkerType:
         ) from exc
 
 
+def _coerce_leaf_activity_kind(
+    value: object,
+    *,
+    field: str,
+) -> HarnessLeafActivityKind:
+    try:
+        return HarnessLeafActivityKind(value)
+    except (TypeError, ValueError) as exc:
+        raise _authority_error(
+            "invalid_leaf_activity_kind",
+            "leaf activity kind is unsupported",
+            field=field,
+            value=str(value),
+        ) from exc
+
+
 def _authority_error(
     code: str,
     message: str,
@@ -581,6 +800,8 @@ __all__ = [
     "HarnessActivityUsage",
     "HarnessCompensationHandlerBinding",
     "HarnessDeterministicMergeBinding",
+    "HarnessLeafActivityBinding",
+    "HarnessResolvedLeafActivityBinding",
     "HarnessRuntimeBindingAuthority",
     "HarnessWorkerBinding",
 ]

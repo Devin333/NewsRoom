@@ -21,9 +21,12 @@ from framework.harness.graph.bindings import (
     HarnessActivityUsage,
     HarnessCompensationHandlerBinding,
     HarnessDeterministicMergeBinding,
+    HarnessLeafActivityBinding,
+    HarnessResolvedLeafActivityBinding,
     HarnessRuntimeBindingAuthority,
     HarnessWorkerBinding,
 )
+from framework.harness.graph.activity import HarnessLeafActivityKind
 from framework.harness.graph.model import (
     HarnessContractKind,
     HarnessContractReference,
@@ -85,7 +88,8 @@ def test_authority_resolves_pre_registered_exact_runtime_bindings() -> None:
         is activity
     )
     assert (
-        authority.resolve_compensation("research.undo@1").implementation is compensation
+        authority.resolve_compensation("research.undo@1").implementation
+        is compensation
     )
     assert authority.resolve_merge("research.merge@1").implementation is merge
     assert [
@@ -100,6 +104,133 @@ def test_authority_resolves_pre_registered_exact_runtime_bindings() -> None:
         ).handler
         is side_effect
     )
+
+
+@pytest.mark.parametrize("kind", tuple(HarnessLeafActivityKind))
+def test_authority_resolves_exact_typed_leaf_activity_pair(
+    kind: HarnessLeafActivityKind,
+) -> None:
+    worker_ref = f"worker.{kind.value}@1"
+    activity_ref = f"activity.{kind.value}@v1"
+    registration = HarnessLeafActivityBinding(
+        leaf_activity_kind=kind,
+        worker_ref=worker_ref,
+        activity_ref=activity_ref,
+    )
+    authority = HarnessRuntimeBindingAuthority(
+        workers=(
+            HarnessWorkerBinding(
+                worker_ref,
+                kind.value,
+                _Worker(
+                    worker_id=f"worker.{kind.value}",
+                    worker_type=kind.value,
+                ),
+            ),
+        ),
+        activities=(
+            HarnessActivityContractBinding(
+                activity_ref,
+                _Activity(activity_contract_id=f"activity.{kind.value}"),
+            ),
+        ),
+        leaf_activities=(registration,),
+    )
+
+    resolved = authority.resolve_leaf_activity(
+        worker_ref=worker_ref,
+        activity_ref=activity_ref,
+        expected_leaf_activity_kind=kind,
+    )
+
+    assert isinstance(resolved, HarnessResolvedLeafActivityBinding)
+    assert resolved.leaf_activity_kind is kind
+    assert resolved.worker.reference.exact_ref == worker_ref
+    assert resolved.activity.reference.exact_ref == activity_ref
+    assert authority.leaf_activity_bindings == (registration,)
+    assert HarnessLeafActivityBinding.from_dict(registration.to_dict()) == registration
+
+
+@pytest.mark.parametrize(
+    ("kind", "legacy_worker_type"),
+    (
+        (HarnessLeafActivityKind.FUNCTION, "script"),
+        (HarnessLeafActivityKind.TOOL, "mcp"),
+    ),
+)
+def test_leaf_registration_rejects_legacy_worker_type_aliases(
+    kind: HarnessLeafActivityKind,
+    legacy_worker_type: str,
+) -> None:
+    worker_ref = f"worker.{kind.value}@1"
+    activity_ref = f"activity.{kind.value}@v1"
+
+    with pytest.raises(HarnessValidationError) as captured:
+        HarnessRuntimeBindingAuthority(
+            workers=(
+                HarnessWorkerBinding(
+                    worker_ref,
+                    legacy_worker_type,
+                    _Worker(
+                        worker_id=f"worker.{kind.value}",
+                        worker_type=legacy_worker_type,
+                    ),
+                ),
+            ),
+            activities=(
+                HarnessActivityContractBinding(
+                    activity_ref,
+                    _Activity(activity_contract_id=f"activity.{kind.value}"),
+                ),
+            ),
+            leaf_activities=(
+                HarnessLeafActivityBinding(kind, worker_ref, activity_ref),
+            ),
+        )
+
+    assert captured.value.code == "leaf_activity_worker_type_mismatch"
+    assert captured.value.details["expected_worker_type"] == kind.value
+    assert captured.value.details["actual_worker_type"] == legacy_worker_type
+
+
+def test_leaf_resolution_rejects_kind_mismatch_and_unregistered_pair() -> None:
+    worker_ref = "worker.skill@1"
+    activity_ref = "activity.skill@v1"
+    authority = HarnessRuntimeBindingAuthority(
+        workers=(
+            HarnessWorkerBinding(
+                worker_ref,
+                "skill",
+                _Worker(worker_id="worker.skill", worker_type="skill"),
+            ),
+        ),
+        activities=(
+            HarnessActivityContractBinding(
+                activity_ref,
+                _Activity(activity_contract_id="activity.skill"),
+            ),
+        ),
+        leaf_activities=(
+            HarnessLeafActivityBinding("skill", worker_ref, activity_ref),
+        ),
+    )
+
+    with pytest.raises(HarnessValidationError) as mismatch:
+        authority.resolve_leaf_activity(
+            worker_ref=worker_ref,
+            activity_ref=activity_ref,
+            expected_leaf_activity_kind="subagent",
+        )
+    with pytest.raises(HarnessValidationError) as unregistered:
+        authority.resolve_leaf_activity(
+            worker_ref=worker_ref,
+            activity_ref="activity.other@v1",
+            expected_leaf_activity_kind="skill",
+        )
+
+    assert mismatch.value.code == "runtime_leaf_activity_kind_mismatch"
+    assert mismatch.value.details["actual_leaf_activity_kind"] == "skill"
+    assert unregistered.value.code == "unknown_leaf_activity_binding"
 
 
 @pytest.mark.parametrize(

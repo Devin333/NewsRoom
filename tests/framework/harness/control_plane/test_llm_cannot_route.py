@@ -10,6 +10,7 @@ from framework.harness import (
     HarnessRunSpec,
     HarnessStepSpec,
     HarnessValidationError,
+    HarnessWorkerEvidence,
     HarnessWorkerResult,
     HarnessWorkflowSpec,
     InMemoryHarnessEventPort,
@@ -115,6 +116,68 @@ def test_mutated_worker_result_is_revalidated_at_ingress(forbidden_key: str) -> 
         )
 
     assert captured.value.details["forbidden"] == [forbidden_key]
+    assert not any(
+        event.event_type.value == "worker_result_recorded"
+        for event in event_port.events
+    )
+
+
+def test_worker_ingress_preserves_typed_evidence_and_candidate_refs() -> None:
+    evidence = HarnessWorkerEvidence(
+        evidence_type="llm_candidate",
+        payload={"response_ref": "artifact://run-worker-evidence/response"},
+    )
+    candidate = HarnessWorkerResult(
+        status="succeeded",
+        output={"candidate": "bounded"},
+        artifacts=("artifact://run-worker-evidence/response",),
+        evidence=(evidence,),
+    )
+    result = HarnessControlPlane(
+        event_port=InMemoryHarnessEventPort(),
+        worker_registry={"draft": lambda task: candidate},
+    ).run(
+        HarnessRunSpec(
+            run_id="run-worker-evidence",
+            workflow=HarnessWorkflowSpec(
+                workflow_id="worker-evidence",
+                steps=(HarnessStepSpec(step_id="draft", worker_type="llm"),),
+                entry_step_id="draft",
+            ),
+        )
+    )
+
+    accepted = result.worker_results["draft"]
+    assert accepted.evidence == (evidence,)
+    assert accepted.artifacts == ("artifact://run-worker-evidence/response",)
+
+
+def test_worker_ingress_rejects_top_level_control_field() -> None:
+    class TopLevelLeakyResult:
+        def to_dict(self) -> dict[str, Any]:
+            return {
+                **HarnessWorkerResult(status="succeeded").to_dict(),
+                "next_route": "publish",
+            }
+
+    event_port = InMemoryHarnessEventPort()
+    with pytest.raises(HarnessValidationError) as captured:
+        HarnessControlPlane(
+            event_port=event_port,
+            worker_registry={"draft": lambda task: TopLevelLeakyResult()},
+        ).run(
+            HarnessRunSpec(
+                run_id="run-top-level-control-field",
+                workflow=HarnessWorkflowSpec(
+                    workflow_id="top-level-control-field",
+                    steps=(HarnessStepSpec(step_id="draft", worker_type="llm"),),
+                    entry_step_id="draft",
+                ),
+            )
+        )
+
+    assert captured.value.code == "worker_decision_field_rejected"
+    assert captured.value.details["forbidden_paths"] == ["next_route"]
     assert not any(
         event.event_type.value == "worker_result_recorded"
         for event in event_port.events

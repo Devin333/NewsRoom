@@ -254,6 +254,72 @@ class HarnessWorkerResult:
     def candidate_result_ref(self) -> str:
         return checksum_for(self.candidate_payload())
 
+    @classmethod
+    def from_dict(cls, value: Mapping[str, Any]) -> "HarnessWorkerResult":
+        """Strictly hydrate every worker ingress and preserve typed evidence."""
+        if not isinstance(value, Mapping):
+            raise HarnessValidationError(
+                "worker result must be an object",
+                code="invalid_worker_result",
+            )
+        if any(not isinstance(key, str) for key in value):
+            raise HarnessValidationError(
+                "worker result fields must be strings",
+                code="invalid_worker_result",
+            )
+        allowed = {
+            "status",
+            "output",
+            "artifacts",
+            "diagnostics",
+            "metrics",
+            "evidence",
+            "error",
+            "effect_intent",
+        }
+        unknown = set(value) - allowed
+        if unknown:
+            forbidden_paths = sorted(
+                key
+                for key in unknown
+                if key.casefold().replace("-", "_")
+                in FORBIDDEN_WORKER_RESULT_KEYS
+            )
+            if forbidden_paths:
+                raise HarnessValidationError(
+                    "worker result must not contain executable decision fields",
+                    code="worker_decision_field_rejected",
+                    details={
+                        "code": "worker_decision_field_rejected",
+                        "forbidden": sorted(
+                            key.casefold().replace("-", "_")
+                            for key in forbidden_paths
+                        ),
+                        "forbidden_paths": forbidden_paths,
+                        "matrix_version": FORBIDDEN_WORKER_DECISION_PATHS_VERSION,
+                    },
+                )
+            raise HarnessValidationError(
+                "worker result fields are invalid",
+                code="invalid_worker_result",
+                details={"unknown_fields": sorted(unknown)},
+            )
+        if "status" not in value:
+            raise HarnessValidationError(
+                "worker result status is required",
+                code="invalid_worker_result",
+            )
+        return cls(
+            status=value["status"],
+            output=value.get("output", {}),
+            artifacts=value.get("artifacts", ()),
+            diagnostics=value.get("diagnostics", {}),
+            metrics=value.get("metrics", {}),
+            evidence=value.get("evidence", ()),
+            error=value.get("error"),
+            effect_intent=value.get("effect_intent"),
+        )
+
 
 def _require_mapping(value: Any, field_name: str) -> dict[str, Any]:
     if not isinstance(value, Mapping):

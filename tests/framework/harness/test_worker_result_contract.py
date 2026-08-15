@@ -54,6 +54,50 @@ def test_worker_result_adds_typed_evidence_only_when_present() -> None:
     assert harness_worker_candidate_ref(result.to_dict()) == result.candidate_result_ref
 
 
+def test_worker_result_strict_hydration_preserves_candidate_evidence() -> None:
+    evidence = HarnessWorkerEvidence(
+        evidence_type="tool_observation",
+        payload={"receipt_ref": "receipt://tool/run-1/call-1"},
+    )
+    original = HarnessWorkerResult(
+        status="succeeded",
+        output={"candidate": "bounded"},
+        artifacts=("artifact://run-1/candidate",),
+        evidence=(evidence,),
+    )
+
+    hydrated = HarnessWorkerResult.from_dict(original.to_dict())
+
+    assert hydrated.to_dict() == original.to_dict()
+    assert hydrated.evidence == (evidence,)
+    assert hydrated.artifacts == ("artifact://run-1/candidate",)
+
+
+@pytest.mark.parametrize("field_name", ("next_route", "quality-score", "publish"))
+def test_worker_result_strict_hydration_rejects_top_level_control_fields(
+    field_name: str,
+) -> None:
+    payload = HarnessWorkerResult(status="succeeded").to_dict()
+    payload[field_name] = "worker-choice"
+
+    with pytest.raises(HarnessValidationError) as captured:
+        HarnessWorkerResult.from_dict(payload)
+
+    assert captured.value.code == "worker_decision_field_rejected"
+    assert captured.value.details["forbidden_paths"] == [field_name]
+
+
+def test_worker_result_strict_hydration_rejects_unknown_top_level_fields() -> None:
+    payload = HarnessWorkerResult(status="succeeded").to_dict()
+    payload["untyped_candidate"] = {"value": 1}
+
+    with pytest.raises(HarnessValidationError) as captured:
+        HarnessWorkerResult.from_dict(payload)
+
+    assert captured.value.code == "invalid_worker_result"
+    assert captured.value.details["unknown_fields"] == ["untyped_candidate"]
+
+
 def test_candidate_ref_preserves_legacy_payload_shape_without_evidence() -> None:
     legacy = {
         "status": "succeeded",
