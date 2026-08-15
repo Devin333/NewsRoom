@@ -43,6 +43,8 @@ from business.research.domain.reader_repair import (
     ReaderRepairResult,
     ReaderRepairSkillCandidateSeed,
     ReaderRepairStrategy,
+    ReaderRepairVerificationCandidate,
+    ReaderRepairVerificationObservation,
 )
 from business.research.domain.run_disposition import (
     REQUIRED_ACCEPTED_ARTIFACT_TYPES,
@@ -81,6 +83,8 @@ __all__ = [
     "ReaderRepairResult",
     "ReaderRepairSkillCandidateSeed",
     "ReaderRepairStrategy",
+    "ReaderRepairVerificationCandidate",
+    "ReaderRepairVerificationObservation",
     "REQUIRED_ACCEPTED_ARTIFACT_TYPES",
     "ResearchRunDisposition",
     "ResearchRunDispositionDecision",

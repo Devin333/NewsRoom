@@ -13,6 +13,15 @@ READER_REPAIR_NAMESPACE = "research.reader_repair"
 FORBIDDEN_REPAIR_CANDIDATE_KEYS = frozenset(
     {"next_step", "quality_passed", "write_memory", "publish", "publish_artifact", "promote_skill"}
 )
+FORBIDDEN_REPAIR_VERIFICATION_KEYS = FORBIDDEN_REPAIR_CANDIDATE_KEYS | frozenset(
+    {
+        "accepted",
+        "decision",
+        "passed",
+        "quality_verdict",
+        "verdict",
+    }
+)
 
 ReaderIssueType: TypeAlias = Literal[
     "pdf_text_extraction_error",
@@ -124,6 +133,64 @@ class ReaderRepairCandidate(PrimitiveModel):
             forbidden.update(str(key) for key in operation if key in FORBIDDEN_REPAIR_CANDIDATE_KEYS)
         if forbidden:
             raise ValueError(f"repair candidate contains forbidden flow-control fields: {sorted(forbidden)}")
+        return self
+
+
+class ReaderRepairVerificationObservation(PrimitiveModel):
+    check_id: str
+    finding: str
+    evidence_refs: list[str]
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("check_id", "finding")
+    @classmethod
+    def _required_text(cls, value: str) -> str:
+        return require_text(value, "repair verification observation fields")
+
+    @model_validator(mode="after")
+    def _remain_observational(self) -> "ReaderRepairVerificationObservation":
+        object.__setattr__(self, "evidence_refs", unique_texts(self.evidence_refs))
+        if not self.evidence_refs:
+            raise ValueError("repair verification observation requires evidence refs")
+        forbidden = _forbidden_nested_keys(
+            self.metadata,
+            FORBIDDEN_REPAIR_VERIFICATION_KEYS,
+        )
+        if forbidden:
+            raise ValueError(
+                "repair verification observation contains decision fields: "
+                f"{sorted(forbidden)}"
+            )
+        return self
+
+
+class ReaderRepairVerificationCandidate(PrimitiveModel):
+    candidate_id: str
+    observations: list[ReaderRepairVerificationObservation]
+    source_refs: list[str]
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("candidate_id")
+    @classmethod
+    def _required_candidate_id(cls, value: str) -> str:
+        return require_text(value, "repair verification candidate id")
+
+    @model_validator(mode="after")
+    def _remain_observational(self) -> "ReaderRepairVerificationCandidate":
+        object.__setattr__(self, "source_refs", unique_texts(self.source_refs))
+        if not self.observations:
+            raise ValueError("repair verification candidate requires observations")
+        if not self.source_refs:
+            raise ValueError("repair verification candidate requires source refs")
+        forbidden = _forbidden_nested_keys(
+            self.metadata,
+            FORBIDDEN_REPAIR_VERIFICATION_KEYS,
+        )
+        if forbidden:
+            raise ValueError(
+                "repair verification candidate contains decision fields: "
+                f"{sorted(forbidden)}"
+            )
         return self
 
 
@@ -421,8 +488,25 @@ def _unique_strategies(strategies: list[ReaderRepairStrategy]) -> list[ReaderRep
     return result
 
 
+def _forbidden_nested_keys(value: Any, forbidden_keys: frozenset[str]) -> set[str]:
+    matches: set[str] = set()
+    pending = [value]
+    while pending:
+        current = pending.pop()
+        if isinstance(current, dict):
+            for key, item in current.items():
+                normalized = str(key).casefold()
+                if normalized in forbidden_keys:
+                    matches.add(normalized)
+                pending.append(item)
+        elif isinstance(current, list | tuple):
+            pending.extend(current)
+    return matches
+
+
 __all__ = [
     "FORBIDDEN_REPAIR_CANDIDATE_KEYS",
+    "FORBIDDEN_REPAIR_VERIFICATION_KEYS",
     "READER_REPAIR_NAMESPACE",
     "ReaderIssue",
     "ReaderIssueSignature",
@@ -438,4 +522,6 @@ __all__ = [
     "ReaderRepairSkillCandidateSeed",
     "ReaderRepairStrategy",
     "ReaderRepairStrategyStatus",
+    "ReaderRepairVerificationCandidate",
+    "ReaderRepairVerificationObservation",
 ]

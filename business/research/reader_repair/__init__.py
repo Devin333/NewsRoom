@@ -21,7 +21,7 @@ from business.research.reader_repair.repair_context import ReaderRepairContextBu
 from business.research.reader_repair.repair_gates import ReaderRepairGateSuite
 from business.research.reader_repair.repair_memory import InMemoryReaderRepairMemory, ReaderRepairMemoryService
 from business.research.reader_repair.repair_service import ReaderRepairPreconditionError, ReaderRepairService
-from business.research.reader_repair.workflow import build_reader_repair_subagent_specs
+from business.research.graphs.reader_repair import build_reader_repair_subagent_specs
 
 __all__ = [
     "InMemoryReaderRepairMemory",
