@@ -739,6 +739,63 @@ def test_graph_reader_rejects_legacy_schema_and_fields() -> None:
     assert field_error.value.code == "invalid_graph_definition"
 
 
+def test_graph_reader_rejects_missing_root_without_partial_definition() -> None:
+    payload = _definition().to_dict()
+    payload.pop("root")
+
+    with pytest.raises(HarnessValidationError) as raised:
+        HarnessGraphDefinitionReader().read_for_execution(
+            payload,
+            source_schema=HARNESS_GRAPH_DEFINITION_SCHEMA,
+        )
+
+    assert raised.value.code == "invalid_graph_definition"
+    assert raised.value.details == {"missing": ["root"], "unexpected": []}
+
+
+@pytest.mark.parametrize(
+    ("field_name", "value"),
+    (
+        ("workflow", {}),
+        ("workflow_id", "legacy-workflow"),
+        ("workflow_version", "1"),
+        ("steps", []),
+        ("entry_step_id", "load_source"),
+        ("routing_rules", []),
+        ("declaration_mode", "graph"),
+    ),
+)
+def test_graph_reader_rejects_explicit_graph_with_legacy_declaration_field(
+    field_name: str,
+    value: object,
+) -> None:
+    payload = _definition().to_dict()
+    payload[field_name] = value
+
+    with pytest.raises(HarnessValidationError) as raised:
+        HarnessGraphDefinitionReader().read_for_execution(
+            payload,
+            source_schema=HARNESS_GRAPH_DEFINITION_SCHEMA,
+        )
+
+    assert raised.value.code == "invalid_graph_definition"
+    assert raised.value.details == {"missing": [], "unexpected": [field_name]}
+
+
+def test_graph_reader_rejects_unknown_construct_without_fallback() -> None:
+    payload = _definition().to_dict()
+    payload["root"]["root"]["kind"] = "future_control"
+
+    with pytest.raises(HarnessValidationError) as raised:
+        HarnessGraphDefinitionReader().read_for_execution(
+            payload,
+            source_schema=HARNESS_GRAPH_DEFINITION_SCHEMA,
+        )
+
+    assert raised.value.code == "unsupported_graph_node_kind"
+    assert raised.value.details == {"kind": "future_control"}
+
+
 def test_graph_reader_rejects_payload_schema_mismatch() -> None:
     payload = _definition().to_dict()
     payload["schema_version"] = "newsroom.harness-graph-definition/v1"
