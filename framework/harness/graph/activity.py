@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any
@@ -21,6 +22,44 @@ class HarnessWorkerType(StrEnum):
     QUALITY_GATE = "quality_gate"
     ARTIFACT = "artifact"
     SCRIPT = "script"
+
+
+_FORBIDDEN_OUTER_AUTHORITY_METADATA_KEYS = frozenset(
+    {
+        "activate",
+        "activate_node",
+        "activation",
+        "activation_decision",
+        "entry_step_id",
+        "next_node",
+        "next_node_id",
+        "next_route",
+        "next_step",
+        "next_step_id",
+        "node_readiness",
+        "node_ready",
+        "publication",
+        "publication_approved",
+        "publication_decision",
+        "publication_policy",
+        "published",
+        "publish",
+        "publish_artifact",
+        "readiness",
+        "readiness_decision",
+        "ready",
+        "route",
+        "route_to",
+        "route_to_repair",
+        "routing_decision",
+        "routing_rules",
+        "should_publish",
+        "successor_node_id",
+        "successor_node_ids",
+        "target_node_id",
+        "terminal_publication_policy",
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -98,7 +137,15 @@ class HarnessStepSpec:
                 "side_effect_handler",
                 HarnessSideEffectHandlerReference.parse(self.side_effect_handler),
             )
-        object.__setattr__(self, "metadata", dict(self.metadata))
+        metadata = dict(self.metadata)
+        forbidden_paths = _outer_authority_metadata_paths(metadata)
+        if forbidden_paths:
+            raise HarnessValidationError(
+                "activity metadata cannot express outer Graph authority",
+                code="activity_outer_authority_forbidden",
+                details={"paths": list(forbidden_paths)},
+            )
+        object.__setattr__(self, "metadata", metadata)
 
     @property
     def side_effect_ref(self) -> HarnessSideEffectHandlerReference | None:
@@ -117,6 +164,40 @@ class HarnessStepSpec:
         if self.side_effect_handler is not None:
             payload["side_effect_handler"] = self.side_effect_handler.to_dict()
         return payload
+
+
+def _outer_authority_metadata_paths(metadata: Mapping[str, Any]) -> tuple[str, ...]:
+    violations: set[str] = set()
+    pending: list[tuple[str, Any]] = [("metadata", metadata)]
+    visited: set[int] = set()
+
+    while pending:
+        path, value = pending.pop()
+        if isinstance(value, Mapping):
+            identity = id(value)
+            if identity in visited:
+                continue
+            visited.add(identity)
+            for raw_key, item in value.items():
+                key = str(raw_key)
+                item_path = f"{path}.{key}"
+                if key.casefold() in _FORBIDDEN_OUTER_AUTHORITY_METADATA_KEYS:
+                    violations.add(item_path)
+                pending.append((item_path, item))
+            continue
+        if isinstance(value, Sequence) and not isinstance(
+            value,
+            (str, bytes, bytearray),
+        ):
+            identity = id(value)
+            if identity in visited:
+                continue
+            visited.add(identity)
+            pending.extend(
+                (f"{path}[{index}]", item) for index, item in enumerate(value)
+            )
+
+    return tuple(sorted(violations))
 
 
 __all__ = ["HarnessRetryPolicy", "HarnessStepSpec", "HarnessWorkerType"]
