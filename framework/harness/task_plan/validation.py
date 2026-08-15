@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections import Counter, deque
-from collections.abc import Mapping, Sequence
+from collections.abc import Mapping
 from dataclasses import dataclass, field as dataclass_field
 from typing import Any
 
@@ -27,6 +27,7 @@ from framework.harness.task_plan.models import (
     ValidatedTaskPlan,
 )
 from framework.harness.task_plan.policy import TaskPlanPolicy
+from framework.harness.task_plan.stage_binding import TaskPlanStageBinding
 
 
 TASK_PLAN_VALIDATOR_VERSION = "newsroom.harness-task-plan-validator/v1"
@@ -35,20 +36,17 @@ TASK_PLAN_VALIDATOR_VERSION = "newsroom.harness-task-plan-validator/v1"
 @dataclass(frozen=True, slots=True)
 class TaskPlanValidationContext:
     run_id: str
-    workflow_id: str
-    stage_id: str
-    graph_checksum: str
+    stage_binding: TaskPlanStageBinding
     available_input_refs: tuple[str, ...]
     future_stage_input_refs: tuple[str, ...] = ()
     registered_gate_refs: tuple[str, ...] = ()
     registered_aggregator_refs: tuple[str, ...] = ()
     remaining_task_budget: TaskBudget | Mapping[str, Any] | None = None
-    dynamic_stage_declared: bool = True
 
     def __post_init__(self) -> None:
-        for name in ("run_id", "workflow_id", "stage_id"):
-            object.__setattr__(self, name, identifier(getattr(self, name), name))
-        object.__setattr__(self, "graph_checksum", checksum(self.graph_checksum, "graph_checksum"))
+        object.__setattr__(self, "run_id", identifier(self.run_id, "run_id"))
+        if not isinstance(self.stage_binding, TaskPlanStageBinding):
+            raise TypeError("stage_binding must be TaskPlanStageBinding")
         object.__setattr__(self, "available_input_refs", stable_text_tuple(self.available_input_refs, "available_input_refs", item_kind="reference"))
         object.__setattr__(self, "future_stage_input_refs", stable_text_tuple(self.future_stage_input_refs, "future_stage_input_refs", item_kind="reference"))
         object.__setattr__(self, "registered_gate_refs", stable_text_tuple(self.registered_gate_refs, "registered_gate_refs", item_kind="exact_reference"))
@@ -59,8 +57,18 @@ class TaskPlanValidationContext:
                 raise HarnessValidationError("remaining_task_budget must be TaskBudget", code="invalid_task_plan_validation_context")
             budget = TaskBudget.from_dict(budget)
         object.__setattr__(self, "remaining_task_budget", budget)
-        if not isinstance(self.dynamic_stage_declared, bool):
-            raise HarnessValidationError("dynamic_stage_declared must be a boolean", code="invalid_task_plan_validation_context")
+
+    @property
+    def workflow_id(self) -> str:
+        return self.stage_binding.workflow_id
+
+    @property
+    def stage_id(self) -> str:
+        return self.stage_binding.stage_id
+
+    @property
+    def graph_checksum(self) -> str:
+        return self.stage_binding.graph_checksum
 
 
 @dataclass(frozen=True, slots=True)
@@ -166,8 +174,20 @@ class TaskPlanValidator:
         if not isinstance(context, TaskPlanValidationContext):
             raise TypeError("context must be TaskPlanValidationContext")
         diagnostics: list[TaskPlanDiagnostic] = []
-        if not context.dynamic_stage_declared:
-            diagnostics.append(_diag("stage_not_dynamic", "stage is not declared dynamic", "identity"))
+        if (
+            policy.exact_ref != context.stage_binding.policy_ref
+            or policy.stage_id != context.stage_binding.stage_id
+            or policy.required_output_roles
+            != context.stage_binding.required_output_roles
+        ):
+            diagnostics.append(
+                _diag(
+                    "task_plan_policy_mismatch",
+                    "policy does not match the frozen Graph stage binding",
+                    "identity",
+                    field="policy_ref",
+                )
+            )
         for name in ("run_id", "workflow_id", "stage_id", "graph_checksum"):
             if getattr(candidate, name) != getattr(context, name):
                 diagnostics.append(_diag(f"candidate_{name}_mismatch", f"candidate {name} does not match stage context", "identity", field=name))
@@ -235,24 +255,13 @@ class TaskPlanValidator:
         policy: TaskPlanPolicy,
         capabilities: TaskPlanCapabilityRegistry,
         *,
-        graph_checksum: str | None = None,
-        stage_input_refs: Mapping[str, str] | Sequence[str] = (),
         plan_id: str | None = None,
         accepted_at: str,
-        context: TaskPlanValidationContext | None = None,
+        context: TaskPlanValidationContext,
         aggregator_registered: bool = True,
     ) -> ValidatedTaskPlan:
-        if context is None:
-            refs = tuple(stage_input_refs.keys()) if isinstance(stage_input_refs, Mapping) else tuple(stage_input_refs)
-            context = TaskPlanValidationContext(
-                run_id=candidate.run_id,
-                workflow_id=candidate.workflow_id,
-                stage_id=candidate.stage_id,
-                graph_checksum=graph_checksum or candidate.graph_checksum,
-                available_input_refs=refs or candidate.input_context_refs,
-                registered_gate_refs=policy.allowed_gate_refs,
-                dynamic_stage_declared=True,
-            )
+        if not isinstance(context, TaskPlanValidationContext):
+            raise TypeError("context must be TaskPlanValidationContext")
         result = self.validate(candidate, policy=policy, capabilities=capabilities, context=context)
         if not aggregator_registered:
             raise HarnessValidationError("deterministic aggregator is unavailable", code="task_plan_aggregator_unavailable")

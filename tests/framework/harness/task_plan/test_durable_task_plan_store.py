@@ -41,12 +41,12 @@ from framework.harness.task_plan import (
     ValidatedTaskPlan,
     task_instance_for_attempt,
 )
-from framework.harness.task_plan.canonical import canonical_payload_checksum
 from framework.harness.task_plan.patches import TaskPlanPatchValidator
 from framework.harness.task_plan.policy import TaskPlanPolicy
 from framework.harness.graph.bindings import HarnessWorkerBinding
 from framework.harness.graph.model import HarnessContractKind, HarnessContractReference
 from framework.harness.graph.activity import HarnessWorkerType
+from tests.fixtures.task_plan import build_task_plan_stage_binding
 
 
 FIXED_NOW = datetime(2026, 8, 2, 0, 0, tzinfo=UTC)
@@ -319,14 +319,13 @@ def _task(task_id: str, *, capability: str = "research.structure", role: str = "
     )
 
 
-def _candidate(tasks: tuple[TaskSpec, ...], *, two_tasks: bool = False) -> PlanCandidate:
-    graph_checksum = canonical_payload_checksum({"graph": "durable-task-plan"})
+def _candidate(tasks: tuple[TaskSpec, ...], *, stage_binding, two_tasks: bool = False) -> PlanCandidate:
     return PlanCandidate(
         candidate_id="candidate-1" if not two_tasks else "candidate-2",
         run_id="durable-run",
         workflow_id="research.dynamic",
         stage_id="dynamic_analysis_stage",
-        graph_checksum=graph_checksum,
+        graph_checksum=stage_binding.graph_checksum,
         input_context_refs=("document",),
         tasks=tasks,
         required_output_roles=("analysis.structure",),
@@ -337,15 +336,23 @@ def _candidate(tasks: tuple[TaskSpec, ...], *, two_tasks: bool = False) -> PlanC
 
 def _accepted_plan(tasks: tuple[TaskSpec, ...], *, two_tasks: bool = False):
     policy, registry = _policy_and_registry(two_tasks=two_tasks)
-    candidate = _candidate(tasks, two_tasks=two_tasks)
+    stage_binding = build_task_plan_stage_binding(
+        workflow_id="research.dynamic",
+        stage_id=policy.stage_id,
+        policy_ref=policy.exact_ref,
+        required_output_roles=policy.required_output_roles,
+        input_keys=("document",),
+    )
+    candidate = _candidate(
+        tasks,
+        stage_binding=stage_binding,
+        two_tasks=two_tasks,
+    )
     context = TaskPlanValidationContext(
         run_id=candidate.run_id,
-        workflow_id=candidate.workflow_id,
-        stage_id=candidate.stage_id,
-        graph_checksum=candidate.graph_checksum,
+        stage_binding=stage_binding,
         available_input_refs=("document",),
         registered_gate_refs=policy.allowed_gate_refs,
-        dynamic_stage_declared=True,
     )
     plan = TaskPlanValidator().accept(candidate, policy, registry, context=context, accepted_at="2026-08-02T00:00:00Z")
     return candidate, plan, policy, registry

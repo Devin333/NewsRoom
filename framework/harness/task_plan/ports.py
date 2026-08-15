@@ -6,7 +6,6 @@ from typing import Any, Mapping, Protocol, runtime_checkable
 from framework.harness.control_plane.errors import HarnessValidationError
 from framework.harness.control_plane.policy import HarnessBudgetSnapshot
 from framework.harness.task_plan.canonical import (
-    checksum,
     exact_reference,
     frozen_mapping,
     identifier,
@@ -16,6 +15,7 @@ from framework.harness.task_plan.canonical import (
 )
 from framework.harness.task_plan.models import PlanCandidate
 from framework.harness.task_plan.policy import TaskPlanPolicy
+from framework.harness.task_plan.stage_binding import TaskPlanStageBinding
 from framework.harness.task_plan.store import TaskResultRecord
 from framework.harness.workers.result import HarnessWorkerResult
 
@@ -23,25 +23,23 @@ from framework.harness.workers.result import HarnessWorkerResult
 @dataclass(frozen=True, slots=True)
 class PlanBuildRequest:
     run_id: str
-    workflow_id: str
-    stage_id: str
-    graph_checksum: str
+    stage_binding: TaskPlanStageBinding
     context_refs: Mapping[str, str]
     policy: TaskPlanPolicy
     budget: HarnessBudgetSnapshot | Mapping[str, Any] | None = None
     metadata: Mapping[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        for field_name in ("run_id", "workflow_id", "stage_id"):
-            object.__setattr__(self, field_name, identifier(getattr(self, field_name), field_name))
-        object.__setattr__(self, "graph_checksum", checksum(self.graph_checksum, "graph_checksum"))
+        object.__setattr__(self, "run_id", identifier(self.run_id, "run_id"))
+        if not isinstance(self.stage_binding, TaskPlanStageBinding):
+            raise TypeError("stage_binding must be TaskPlanStageBinding")
         if not isinstance(self.policy, TaskPlanPolicy):
             raise TypeError("policy must be TaskPlanPolicy")
-        if self.policy.stage_id != self.stage_id:
-            raise HarnessValidationError(
-                "plan builder policy is pinned to another stage",
-                code="task_plan_policy_mismatch",
-            )
+        _require_stage_policy_binding(
+            self.policy,
+            self.stage_binding,
+            owner="plan builder",
+        )
         if not isinstance(self.context_refs, Mapping):
             raise HarnessValidationError(
                 "plan builder context_refs must be an object of logical names to references",
@@ -72,6 +70,18 @@ class PlanBuildRequest:
             object.__setattr__(self, "budget", frozen_mapping(self.budget, "plan_build.budget"))
         object.__setattr__(self, "metadata", frozen_mapping(self.metadata, "plan_build.metadata"))
 
+    @property
+    def workflow_id(self) -> str:
+        return self.stage_binding.workflow_id
+
+    @property
+    def stage_id(self) -> str:
+        return self.stage_binding.stage_id
+
+    @property
+    def graph_checksum(self) -> str:
+        return self.stage_binding.graph_checksum
+
     def to_dict(self) -> dict[str, Any]:
         budget = self.budget.to_dict() if hasattr(self.budget, "to_dict") else thaw_mapping(self.budget or {})
         return {
@@ -79,6 +89,7 @@ class PlanBuildRequest:
             "workflow_id": self.workflow_id,
             "stage_id": self.stage_id,
             "graph_checksum": self.graph_checksum,
+            "stage_binding_ref": self.stage_binding.binding_checksum,
             "context_refs": thaw_mapping(self.context_refs),
             "policy_ref": self.policy.exact_ref,
             "budget": budget,
@@ -151,9 +162,7 @@ class FakePlanCandidateBuilder:
 @dataclass(frozen=True, slots=True)
 class TaskPlanStageRequest:
     run_id: str
-    workflow_id: str
-    stage_id: str
-    graph_checksum: str
+    stage_binding: TaskPlanStageBinding
     context_refs: Mapping[str, str]
     policy: TaskPlanPolicy
     accepted_at: str
@@ -163,23 +172,25 @@ class TaskPlanStageRequest:
     policy_ref: str | None = None
 
     def __post_init__(self) -> None:
-        for field_name in ("run_id", "workflow_id", "stage_id"):
-            object.__setattr__(self, field_name, identifier(getattr(self, field_name), field_name))
-        object.__setattr__(self, "graph_checksum", checksum(self.graph_checksum, "graph_checksum"))
+        object.__setattr__(self, "run_id", identifier(self.run_id, "run_id"))
+        if not isinstance(self.stage_binding, TaskPlanStageBinding):
+            raise TypeError("stage_binding must be TaskPlanStageBinding")
         if not isinstance(self.policy, TaskPlanPolicy):
             raise TypeError("policy must be TaskPlanPolicy")
-        if self.policy.stage_id != self.stage_id:
-            raise HarnessValidationError(
-                "TaskPlan stage request policy is pinned to another stage",
-                code="task_plan_policy_mismatch",
-            )
+        _require_stage_policy_binding(
+            self.policy,
+            self.stage_binding,
+            owner="TaskPlan stage request",
+        )
         if self.policy_ref is not None:
             object.__setattr__(self, "policy_ref", exact_reference(self.policy_ref, "policy_ref"))
-            if self.policy_ref != self.policy.exact_ref:
+            if self.policy_ref != self.stage_binding.policy_ref:
                 raise HarnessValidationError(
                     "TaskPlan stage request policy ref is not pinned to supplied policy",
                     code="task_plan_policy_mismatch",
                 )
+        else:
+            object.__setattr__(self, "policy_ref", self.stage_binding.policy_ref)
         context = self.context_refs
         if not isinstance(context, Mapping):
             raise HarnessValidationError(
@@ -221,7 +232,34 @@ class TaskPlanStageRequest:
             object.__setattr__(self, "budget", frozen_mapping(self.budget, "task_plan.budget"))
         if self.candidate is not None and not isinstance(self.candidate, PlanCandidate):
             raise TypeError("candidate must be PlanCandidate")
+        if self.candidate is not None and (
+            self.candidate.run_id,
+            self.candidate.workflow_id,
+            self.candidate.stage_id,
+            self.candidate.graph_checksum,
+        ) != (
+            self.run_id,
+            self.workflow_id,
+            self.stage_id,
+            self.graph_checksum,
+        ):
+            raise HarnessValidationError(
+                "TaskPlan candidate is outside the frozen Graph stage binding",
+                code="task_plan_candidate_scope_mismatch",
+            )
         object.__setattr__(self, "metadata", frozen_mapping(self.metadata, "task_plan.metadata"))
+
+    @property
+    def workflow_id(self) -> str:
+        return self.stage_binding.workflow_id
+
+    @property
+    def stage_id(self) -> str:
+        return self.stage_binding.stage_id
+
+    @property
+    def graph_checksum(self) -> str:
+        return self.stage_binding.graph_checksum
 
 
 @runtime_checkable
@@ -257,6 +295,32 @@ def _planner_policy_projection(policy: TaskPlanPolicy) -> dict[str, Any]:
         "aggregated_output_roles": sorted(policy.deterministic_aggregator_refs),
         "limits": policy.limits.to_dict(),
     }
+
+
+def _require_stage_policy_binding(
+    policy: TaskPlanPolicy,
+    stage_binding: TaskPlanStageBinding,
+    *,
+    owner: str,
+) -> None:
+    if (
+        policy.stage_id != stage_binding.stage_id
+        or policy.exact_ref != stage_binding.policy_ref
+        or policy.required_output_roles != stage_binding.required_output_roles
+    ):
+        raise HarnessValidationError(
+            f"{owner} policy is not pinned to the frozen Graph stage",
+            code="task_plan_policy_mismatch",
+            details={
+                "stage_binding_ref": stage_binding.binding_checksum,
+                "expected_policy_ref": stage_binding.policy_ref,
+                "actual_policy_ref": policy.exact_ref,
+                "expected_required_output_roles": list(
+                    stage_binding.required_output_roles
+                ),
+                "actual_required_output_roles": list(policy.required_output_roles),
+            },
+        )
 
 
 __all__ = [

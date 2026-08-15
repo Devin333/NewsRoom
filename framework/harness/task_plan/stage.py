@@ -74,6 +74,7 @@ class TaskPlanStageRunner(TaskPlanStageRunnerPort):
         current = self.store.plan(request.run_id, request.stage_id)
         if current is None:
             raise HarnessValidationError("cannot patch a stage without an accepted plan", code="task_plan_missing_plan")
+        _require_plan_stage_binding(current, request)
         self.patch_validator.require_policy_identity(current, request.policy)
         projection = self.store.load_projection(request.run_id, request.stage_id)
         self.store.append_patch(patch, accepted=False)
@@ -177,15 +178,12 @@ class TaskPlanStageRunner(TaskPlanStageRunnerPort):
             raise HarnessValidationError("TaskPlan request policy ref is not pinned to the supplied policy", code="task_plan_policy_mismatch")
         existing = self.store.plan(request.run_id, request.stage_id)
         if existing is not None:
-            if existing.graph_checksum != request.graph_checksum:
-                raise HarnessValidationError("existing TaskPlan is pinned to an incompatible graph", code="task_plan_pinned_version_mismatch")
+            _require_plan_stage_binding(existing, request)
             self.patch_validator.require_policy_identity(existing, request.policy)
             return existing
         candidate = request.candidate or self.candidate_builder.build_candidate(PlanBuildRequest(
             run_id=request.run_id,
-            workflow_id=request.workflow_id,
-            stage_id=request.stage_id,
-            graph_checksum=request.graph_checksum,
+            stage_binding=request.stage_binding,
             context_refs=request.context_refs,
             policy=request.policy,
             budget=request.budget,
@@ -194,13 +192,10 @@ class TaskPlanStageRunner(TaskPlanStageRunnerPort):
         self.store.append_candidate(candidate)
         context = TaskPlanValidationContext(
             run_id=request.run_id,
-            workflow_id=request.workflow_id,
-            stage_id=request.stage_id,
-            graph_checksum=request.graph_checksum,
+            stage_binding=request.stage_binding,
             available_input_refs=tuple(request.context_refs.values()),
             registered_gate_refs=request.policy.allowed_gate_refs,
             registered_aggregator_refs=self.aggregator.registry.refs,
-            dynamic_stage_declared=True,
         )
         missing_aggregators = sorted({ref for ref in request.policy.deterministic_aggregator_refs.values() if not self.aggregator.registry.contains(ref)})
         if missing_aggregators:
@@ -473,6 +468,34 @@ def _required_observation_time(request: TaskPlanStageRequest) -> str:
             code="task_plan_observation_time_required",
         )
     return value
+
+
+def _require_plan_stage_binding(
+    plan: ValidatedTaskPlan,
+    request: TaskPlanStageRequest,
+) -> None:
+    expected = (
+        request.workflow_id,
+        request.stage_id,
+        request.graph_checksum,
+        request.stage_binding.policy_ref,
+    )
+    actual = (
+        plan.workflow_id,
+        plan.stage_id,
+        plan.graph_checksum,
+        plan.policy_ref,
+    )
+    if actual != expected:
+        raise HarnessValidationError(
+            "existing TaskPlan is outside the frozen Graph stage binding",
+            code="task_plan_pinned_version_mismatch",
+            details={
+                "expected_stage_binding_ref": request.stage_binding.binding_checksum,
+                "expected": expected,
+                "actual": actual,
+            },
+        )
 
 
 __all__ = ["TaskPlanStageRunner"]

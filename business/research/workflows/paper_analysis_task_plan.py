@@ -34,6 +34,7 @@ from framework.harness.task_plan.ports import (
 )
 from framework.harness.task_plan.policy import TaskPlanPolicy, TaskPlanPolicyRegistry
 from framework.harness.task_plan.stage import TaskPlanStageRunner
+from framework.harness.task_plan.stage_binding import TaskPlanStageBinding
 from framework.harness.task_plan.store import (
     InMemoryTaskPlanStore,
     TaskPlanStorePort,
@@ -367,7 +368,7 @@ class ResearchAnalysisTaskPlanStageWorker:
     def __init__(
         self,
         *,
-        graph_checksum: str,
+        stage_binding: TaskPlanStageBinding,
         accepted_at: str,
         candidate_builder: PlanCandidateBuilderPort,
         capability_registry: TaskCapabilityRegistry,
@@ -380,6 +381,8 @@ class ResearchAnalysisTaskPlanStageWorker:
     ) -> None:
         if not isinstance(store, TaskPlanStorePort):
             raise TypeError("store must implement TaskPlanStorePort")
+        if not isinstance(stage_binding, TaskPlanStageBinding):
+            raise TypeError("stage_binding must be TaskPlanStageBinding")
         if isinstance(store, InMemoryTaskPlanStore) and not allow_test_store:
             raise HarnessValidationError(
                 "Research production TaskPlan requires a durable store",
@@ -390,12 +393,19 @@ class ResearchAnalysisTaskPlanStageWorker:
         if not isinstance(result_verifier, TaskPlanResultVerifierPort):
             raise TypeError("result_verifier must implement TaskPlanResultVerifierPort")
         actual_policy = policy or build_research_analysis_task_plan_policy()
-        if actual_policy.exact_ref != RESEARCH_DYNAMIC_POLICY_REF:
+        if (
+            actual_policy.exact_ref != RESEARCH_DYNAMIC_POLICY_REF
+            or stage_binding.policy_ref != actual_policy.exact_ref
+            or stage_binding.workflow_id != RESEARCH_DYNAMIC_WORKFLOW_ID
+            or stage_binding.stage_id != RESEARCH_DYNAMIC_STAGE_ID
+            or stage_binding.required_output_roles
+            != actual_policy.required_output_roles
+        ):
             raise HarnessValidationError(
-                "Research TaskPlan stage worker requires the pinned policy",
+                "Research TaskPlan stage worker requires the pinned Graph stage",
                 code="research_task_plan_policy_mismatch",
             )
-        self._graph_checksum = str(graph_checksum)
+        self._stage_binding = stage_binding
         self._accepted_at = str(accepted_at)
         self._policy = actual_policy
         self._runner = TaskPlanStageRunner(
@@ -439,9 +449,7 @@ class ResearchAnalysisTaskPlanStageWorker:
         return self._runner.run(
             TaskPlanStageRequest(
                 run_id=run_id,
-                workflow_id=RESEARCH_DYNAMIC_WORKFLOW_ID,
-                stage_id=RESEARCH_DYNAMIC_STAGE_ID,
-                graph_checksum=self._graph_checksum,
+                stage_binding=self._stage_binding,
                 context_refs={name: name for name in RESEARCH_DYNAMIC_INPUT_REFS},
                 policy=self._policy,
                 policy_ref=self._policy.exact_ref,

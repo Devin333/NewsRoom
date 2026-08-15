@@ -42,6 +42,7 @@ from framework.harness.graph.bindings import HarnessWorkerBinding
 from framework.harness.graph.model import HarnessContractKind, HarnessContractReference
 from framework.harness.graph.activity import HarnessWorkerType
 from framework.harness.workers.result import HarnessWorkerResult
+from tests.fixtures.task_plan import build_task_plan_stage_binding
 
 
 ACCEPTED_AT = "2026-08-01T00:00:00Z"
@@ -64,8 +65,18 @@ class _CountingWorker:
         )
 
 
-def _graph_checksum() -> str:
-    return canonical_payload_checksum({"graph": "task-plan-contract-matrix"})
+def _stage_binding(policy: TaskPlanPolicy | None = None):
+    selected = policy or _policy()
+    return build_task_plan_stage_binding(
+        workflow_id="research.paper-analysis.dynamic",
+        stage_id=selected.stage_id,
+        policy_ref=selected.exact_ref,
+        required_output_roles=selected.required_output_roles,
+    )
+
+
+def _graph_checksum(policy: TaskPlanPolicy | None = None) -> str:
+    return _stage_binding(policy).graph_checksum
 
 
 def _policy(
@@ -162,13 +173,14 @@ def _candidate(
     tasks: tuple[TaskSpec, ...],
     *,
     required_roles: tuple[str, ...] = ("analysis.structure",),
+    policy: TaskPlanPolicy | None = None,
 ) -> PlanCandidate:
     return PlanCandidate(
         candidate_id="candidate-1",
         run_id="run-1",
         workflow_id="research.paper-analysis.dynamic",
         stage_id="dynamic_analysis_stage",
-        graph_checksum=_graph_checksum(),
+        graph_checksum=_graph_checksum(policy),
         input_context_refs=("document", "evidence_pack"),
         tasks=tasks,
         required_output_roles=required_roles,
@@ -181,14 +193,11 @@ def _candidate(
 def _context(policy: TaskPlanPolicy, *, future_refs: tuple[str, ...] = ()) -> TaskPlanValidationContext:
     return TaskPlanValidationContext(
         run_id="run-1",
-        workflow_id="research.paper-analysis.dynamic",
-        stage_id="dynamic_analysis_stage",
-        graph_checksum=_graph_checksum(),
+        stage_binding=_stage_binding(policy),
         available_input_refs=("document", "evidence_pack"),
         future_stage_input_refs=future_refs,
         registered_gate_refs=policy.allowed_gate_refs,
         registered_aggregator_refs=tuple(policy.deterministic_aggregator_refs.values()),
-        dynamic_stage_declared=True,
     )
 
 
@@ -199,7 +208,11 @@ def _accepted_plan(
 ) -> tuple[ValidatedTaskPlan, TaskPlanPolicy, TaskCapabilityRegistry, dict[str, _CountingWorker]]:
     selected_policy = policy or _policy()
     registry, workers = _registry(selected_policy)
-    candidate = _candidate(tasks, required_roles=selected_policy.required_output_roles)
+    candidate = _candidate(
+        tasks,
+        required_roles=selected_policy.required_output_roles,
+        policy=selected_policy,
+    )
     plan = TaskPlanValidator().accept(
         candidate,
         selected_policy,
@@ -299,6 +312,8 @@ def test_contracts_are_immutable_canonical_and_fail_closed_on_tamper():
         {"diagnostics": [{"quality_passed": True}]},
         {"deep": {"publish_artifact": "artifact://unsafe"}},
         {"tool_authorization": {"research.read": True}},
+        {"graph_patch": {"nodes": ["attacker-node"]}},
+        {"outer_graph": {"route": "attacker-node"}},
     ),
 )
 def test_candidate_forbidden_control_fields_are_rejected_recursively(nested):
@@ -320,6 +335,64 @@ def test_policy_registry_requires_exact_unique_compatible_versions():
     with pytest.raises(HarnessValidationError) as error:
         TaskPlanPolicyRegistry((policy, policy))
     assert error.value.code == "duplicate_task_plan_policy"
+
+
+def test_validator_requires_the_exact_policy_from_the_stage_binding() -> None:
+    policy = _policy()
+    registry, _ = _registry(policy)
+    candidate = _candidate((_task("structure"),), policy=policy)
+    result = TaskPlanValidator().validate(
+        candidate,
+        policy=replace(policy, policy_id="unregistered-policy"),
+        capabilities=registry,
+        context=_context(policy),
+    )
+
+    assert not result.accepted
+    assert "task_plan_policy_mismatch" in {
+        item.code for item in result.diagnostics
+    }
+
+
+def test_validator_does_not_resolve_an_unregistered_worker_capability() -> None:
+    policy = _policy()
+    candidate = _candidate((_task("structure"),), policy=policy)
+    result = TaskPlanValidator().validate(
+        candidate,
+        policy=policy,
+        capabilities=TaskCapabilityRegistry(),
+        context=_context(policy),
+    )
+
+    assert not result.accepted
+    assert "missing_task_capability_binding" in {
+        item.code for item in result.diagnostics
+    }
+
+
+def test_plan_patch_payload_cannot_express_outer_graph_changes() -> None:
+    plan, _, _, _ = _accepted_plan((_task("structure"),))
+    payload = PlanPatch(
+        patch_id="stage-local-only",
+        run_id=plan.run_id,
+        stage_id=plan.stage_id,
+        base_plan_id=plan.plan_id,
+        base_plan_version=plan.version,
+        reason_code="repair",
+        source_candidate_ref="candidate://stage-local-only",
+        operations=(
+            PlanPatchOperation(
+                PlanPatchOperationType.SKIP_PENDING_TASK,
+                target_task_id="structure",
+            ),
+        ),
+    ).to_dict()
+    payload["outer_graph_patch"] = {"target_node_id": "attacker-node"}
+
+    with pytest.raises(HarnessValidationError) as error:
+        PlanPatch.from_dict(payload)
+
+    assert error.value.code == "invalid_task_plan_payload_fields"
 
 
 def test_validated_plan_policy_checksum_is_durable_and_legacy_replay_is_read_only() -> None:
@@ -389,6 +462,7 @@ def test_validator_accepts_optional_required_role_but_rejects_implicit_task_data
             _task("helper", capability="research.helper", role="analysis.helper"),
         ),
         required_roles=("analysis.structure", "analysis.helper"),
+        policy=policy,
     )
     accepted = TaskPlanValidator().validate(
         valid,
@@ -410,6 +484,7 @@ def test_validator_accepts_optional_required_role_but_rejects_implicit_task_data
             ),
         ),
         required_roles=("analysis.structure", "analysis.helper"),
+        policy=policy,
     )
     rejected = TaskPlanValidator().validate(
         implicit,
@@ -447,6 +522,7 @@ def test_validator_normalizes_task_reference_forms(task_ref: str) -> None:
             ),
         ),
         required_roles=policy.required_output_roles,
+        policy=policy,
     )
 
     result = TaskPlanValidator().validate(
@@ -478,6 +554,7 @@ def test_validator_authorizes_each_mixed_input_reference_independently() -> None
             ),
         ),
         required_roles=policy.required_output_roles,
+        policy=policy,
     )
     context = replace(
         _context(policy),
@@ -526,6 +603,7 @@ def test_initial_candidate_rejects_dependency_depth_beyond_policy() -> None:
             ),
         ),
         required_roles=policy.required_output_roles,
+        policy=policy,
     )
 
     result = TaskPlanValidator().validate(
@@ -552,7 +630,11 @@ def test_scheduler_queue_projection_and_result_identity_are_deterministic():
         ),
         policy=policy,
     )
-    candidate = _candidate(tuple(item.task for item in plan.tasks), required_roles=policy.required_output_roles)
+    candidate = _candidate(
+        tuple(item.task for item in plan.tasks),
+        required_roles=policy.required_output_roles,
+        policy=policy,
+    )
     store = InMemoryTaskPlanStore()
     store.append_candidate(candidate)
     plan = replace(plan, source_candidate_ref=candidate.candidate_checksum)
@@ -615,6 +697,7 @@ def test_harness_scheduler_and_store_commit_terminal_result_with_budget_parity()
     candidate = _candidate(
         tuple(item.task for item in plan.tasks),
         required_roles=policy.required_output_roles,
+        policy=policy,
     )
     store = InMemoryTaskPlanStore()
     store.append_candidate(candidate)
@@ -709,7 +792,11 @@ def test_patch_history_is_immutable_and_running_tasks_cannot_be_edited():
         ),
         policy=policy,
     )
-    candidate = _candidate(tuple(item.task for item in plan.tasks), required_roles=policy.required_output_roles)
+    candidate = _candidate(
+        tuple(item.task for item in plan.tasks),
+        required_roles=policy.required_output_roles,
+        policy=policy,
+    )
     store = InMemoryTaskPlanStore()
     store.append_candidate(candidate)
     plan = replace(plan, source_candidate_ref=candidate.candidate_checksum)
@@ -874,6 +961,7 @@ def test_patch_rejects_dependency_depth_beyond_policy_with_shared_memo() -> None
     candidate = _candidate(
         tuple(item.task for item in plan.tasks),
         required_roles=policy.required_output_roles,
+        policy=policy,
     )
     store.append_candidate(candidate)
     plan = replace(plan, source_candidate_ref=candidate.candidate_checksum)
@@ -927,7 +1015,11 @@ def test_patch_rejects_dependency_depth_beyond_policy_with_shared_memo() -> None
 
 def test_replay_uses_only_recorded_evidence_and_matches_projection_checksum():
     plan, policy, _, workers = _accepted_plan((_task("structure"),))
-    candidate = _candidate(tuple(item.task for item in plan.tasks), required_roles=policy.required_output_roles)
+    candidate = _candidate(
+        tuple(item.task for item in plan.tasks),
+        required_roles=policy.required_output_roles,
+        policy=policy,
+    )
     store = InMemoryTaskPlanStore()
     store.append_candidate(candidate)
     plan = replace(plan, source_candidate_ref=candidate.candidate_checksum)

@@ -50,6 +50,7 @@ from framework.harness.task_plan.schema import (
     TASK_PLAN_POLICY_SCHEMA,
     TASK_PLAN_PROJECTION_SCHEMA,
     TASK_PLAN_RUNTIME_VERSION,
+    TASK_PLAN_STAGE_BINDING_SCHEMA,
     TASK_PROJECTION_SCHEMA,
     TASK_RESULT_REFERENCE_SCHEMA,
     VALIDATED_TASK_PLAN_SCHEMA,
@@ -57,6 +58,7 @@ from framework.harness.task_plan.schema import (
     TaskPlanSchemaRegistration,
     TaskPlanSchemaRegistry,
 )
+from framework.harness.task_plan.stage_binding import TaskPlanStageBinding
 from framework.harness.task_plan.validation import (
     TASK_PLAN_VALIDATOR_VERSION,
     TaskPlanDiagnostic,
@@ -140,6 +142,7 @@ __all__ = [
     "TASK_PLAN_POLICY_SCHEMA",
     "TASK_PLAN_PROJECTION_SCHEMA",
     "TASK_PLAN_RUNTIME_VERSION",
+    "TASK_PLAN_STAGE_BINDING_SCHEMA",
     "TASK_PLAN_VALIDATOR_VERSION",
     "TASK_PROJECTION_SCHEMA",
     "TASK_RESULT_REFERENCE_SCHEMA",
@@ -158,6 +161,7 @@ __all__ = [
     "TaskPlanProjection",
     "TaskPlanSchemaRegistration",
     "TaskPlanSchemaRegistry",
+    "TaskPlanStageBinding",
     "TaskPlanValidationContext",
     "TaskPlanValidationResult",
     "TaskPlanValidator",

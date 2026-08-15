@@ -17,6 +17,7 @@ from business.research.application.single_paper_runtime import (
 )
 from business.research.workflows import (
     RESEARCH_DYNAMIC_CAPABILITIES,
+    RESEARCH_DYNAMIC_STAGE_ID,
     RESEARCH_DYNAMIC_SUBAGENT_IDS,
     ResearchAnalysisPlanCandidateBuilder,
     ResearchAnalysisTaskPlanStageWorker,
@@ -42,6 +43,7 @@ from framework.harness import (
     TaskLifecycle,
     TaskPlanResultVerifier,
     TaskPlanReplayReducer,
+    TaskPlanStageBinding,
     subagent_attempt_evidence,
 )
 from framework.harness.control_plane.gates import GateContext
@@ -309,7 +311,7 @@ class _DynamicTaskPlanFactory:
             build_dynamic_paper_analysis_workflow_spec()
         ).graph
         stage_worker = ResearchAnalysisTaskPlanStageWorker(
-            graph_checksum=graph.checksum,
+            stage_binding=TaskPlanStageBinding(graph, RESEARCH_DYNAMIC_STAGE_ID),
             accepted_at="2026-08-01T00:00:00Z",
             candidate_builder=ResearchAnalysisPlanCandidateBuilder(outline_worker),
             capability_registry=registry,
@@ -613,10 +615,13 @@ def test_dynamic_task_plan_recovers_post_receipt_crash_without_duplicate_worker(
 
 def test_production_shaped_stage_worker_rejects_in_memory_store_by_default() -> None:
     policy = build_research_analysis_task_plan_policy()
+    graph = HarnessWorkflowGraphCompiler().compile(
+        build_dynamic_paper_analysis_workflow_spec()
+    ).graph
 
     with pytest.raises(Exception) as exc_info:
         ResearchAnalysisTaskPlanStageWorker(
-            graph_checksum="sha256:" + "1" * 64,
+            stage_binding=TaskPlanStageBinding(graph, RESEARCH_DYNAMIC_STAGE_ID),
             accepted_at="2026-08-01T00:00:00Z",
             candidate_builder=ResearchAnalysisPlanCandidateBuilder(
                 FakeResearchLLMWorker()

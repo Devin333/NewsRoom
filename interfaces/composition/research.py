@@ -94,6 +94,7 @@ from framework.harness.graph import HarnessWorkerType
 from framework.harness.workflow import HarnessWorkflowGraphCompiler
 from framework.harness.graph.bindings import HarnessWorkerBinding
 from framework.harness.graph.model import HarnessContractKind, HarnessContractReference
+from framework.harness.task_plan.stage_binding import TaskPlanStageBinding
 from framework.harness.control_plane.gates import GateContext
 from framework.harness.control_plane.graph_application import (
     HarnessGraphControlPlaneRuntime,
@@ -141,6 +142,7 @@ from infrastructure.storage.harness import (
 )
 from business.research.workflows import (
     RESEARCH_DYNAMIC_CAPABILITIES,
+    RESEARCH_DYNAMIC_STAGE_ID,
     RESEARCH_DYNAMIC_SUBAGENT_IDS,
     build_dynamic_paper_analysis_workflow_spec,
     build_paper_analysis_gate_registry,
@@ -1289,6 +1291,10 @@ def _build_configured_composition(
             workflow_graph = HarnessWorkflowGraphCompiler().compile(
                 build_dynamic_paper_analysis_workflow_spec()
             ).graph
+            stage_binding = TaskPlanStageBinding(
+                workflow_graph,
+                RESEARCH_DYNAMIC_STAGE_ID,
+            )
             policy = build_research_analysis_task_plan_policy()
             task_workers: dict[str, Any] = {}
             bindings: dict[str, HarnessWorkerBinding] = {}
@@ -1521,7 +1527,7 @@ def _build_configured_composition(
                 )
 
             return ResearchAnalysisTaskPlanStageWorker(
-                graph_checksum=workflow_graph.checksum,
+                stage_binding=stage_binding,
                 accepted_at=utc_now().isoformat().replace("+00:00", "Z"),
                 candidate_builder=ResearchAnalysisPlanCandidateBuilder(candidate_worker),
                 capability_registry=capability_registry,

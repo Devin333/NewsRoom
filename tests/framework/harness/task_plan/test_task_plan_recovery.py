@@ -33,6 +33,7 @@ from framework.harness.graph.bindings import HarnessWorkerBinding
 from framework.harness.graph.model import HarnessContractKind, HarnessContractReference
 from framework.harness.graph.activity import HarnessWorkerType
 from framework.harness.workers.result import HarnessWorkerResult
+from tests.fixtures.task_plan import build_task_plan_stage_binding
 
 
 class _NeverCalledWorker:
@@ -49,7 +50,6 @@ class _NeverCalledWorker:
 
 
 def _history_fixture():
-    graph_checksum = canonical_payload_checksum({"graph": "task-plan-recovery"})
     policy = TaskPlanPolicy(
         policy_id="recovery.task-plan",
         version="1",
@@ -76,6 +76,13 @@ def _history_fixture():
         max_plan_build_tool_calls=0,
         per_task_budget=TaskBudget(max_turns=1, max_output_tokens=64),
         aggregate_task_budget=TaskBudget(max_turns=2, max_output_tokens=128),
+    )
+    stage_binding = build_task_plan_stage_binding(
+        workflow_id="recovery-workflow",
+        stage_id=policy.stage_id,
+        policy_ref=policy.exact_ref,
+        required_output_roles=policy.required_output_roles,
+        input_keys=("document",),
     )
     worker = _NeverCalledWorker()
     registry = TaskCapabilityRegistry(
@@ -115,7 +122,7 @@ def _history_fixture():
         run_id="recovery-run",
         workflow_id="recovery-workflow",
         stage_id="dynamic_stage",
-        graph_checksum=graph_checksum,
+        graph_checksum=stage_binding.graph_checksum,
         input_context_refs=("document",),
         tasks=(task,),
         required_output_roles=("analysis.result",),
@@ -128,12 +135,9 @@ def _history_fixture():
         registry,
         context=TaskPlanValidationContext(
             run_id=candidate.run_id,
-            workflow_id=candidate.workflow_id,
-            stage_id=candidate.stage_id,
-            graph_checksum=graph_checksum,
+            stage_binding=stage_binding,
             available_input_refs=("document",),
             registered_gate_refs=policy.allowed_gate_refs,
-            dynamic_stage_declared=True,
         ),
         accepted_at="2026-08-01T00:00:00Z",
     )

@@ -11,9 +11,11 @@ from business.research.workflows import (
     RESEARCH_DYNAMIC_GATES_BY_CAPABILITY,
     RESEARCH_DYNAMIC_OUTPUT_ROLES_BY_CAPABILITY,
     RESEARCH_DYNAMIC_OUTPUT_SCHEMA_REFS,
+    RESEARCH_DYNAMIC_STAGE_ID,
     RESEARCH_DYNAMIC_WORKER_CONTRACT_REFS,
     RESEARCH_DYNAMIC_WORKER_REFS,
     ResearchAnalysisPlanCandidateBuilder,
+    build_dynamic_paper_analysis_workflow_spec,
     build_paper_analysis_gate_registry,
     build_research_analysis_capability_registry,
     build_research_analysis_task_plan_aggregator,
@@ -28,6 +30,7 @@ from framework.harness.task_plan import (
     TaskBudget,
     TaskLifecycle,
     TaskResultRecord,
+    TaskPlanStageBinding,
 )
 from framework.harness.task_plan.canonical import canonical_payload_checksum
 from framework.harness.graph.bindings import HarnessWorkerBinding
@@ -37,6 +40,7 @@ from framework.harness.graph.model import (
 )
 from framework.harness.graph.activity import HarnessWorkerType
 from framework.harness.workers.result import HarnessWorkerResult
+from framework.harness.workflow import HarnessWorkflowGraphCompiler
 
 
 class _BoundResearchWorker:
@@ -224,11 +228,12 @@ def _worker_bindings() -> dict[str, HarnessWorkerBinding]:
 
 
 def _plan_build_request(policy) -> PlanBuildRequest:
+    graph = HarnessWorkflowGraphCompiler().compile(
+        build_dynamic_paper_analysis_workflow_spec()
+    ).graph
     return PlanBuildRequest(
         run_id="research-run",
-        workflow_id="research.paper_analysis.dynamic",
-        stage_id="dynamic_analysis_stage",
-        graph_checksum=canonical_payload_checksum({"graph": "research-dynamic"}),
+        stage_binding=TaskPlanStageBinding(graph, RESEARCH_DYNAMIC_STAGE_ID),
         context_refs={"document": "document", "evidence_pack": "evidence_pack"},
         policy=policy,
     )

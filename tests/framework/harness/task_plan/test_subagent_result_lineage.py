@@ -56,6 +56,7 @@ from framework.harness.graph.model import (
 )
 from infrastructure.storage.harness import FilesystemSubAgentTranscriptStore
 from infrastructure.storage.events import SQLiteEventStore
+from tests.fixtures.task_plan import build_task_plan_stage_binding
 
 
 ACCEPTED_AT = "2026-08-13T00:00:00Z"
@@ -104,7 +105,6 @@ def _fixture(
     worker_artifacts: tuple[str, ...] = (),
     artifact_reference_verifier=None,
 ):
-    graph_checksum = canonical_payload_checksum({"graph": "subagent-lineage"})
     spec = SubAgentSpec(
         subagent_id="lineage-subagent",
         role="analysis.lineage",
@@ -183,6 +183,13 @@ def _fixture(
             max_output_tokens=128,
         ),
     )
+    stage_binding = build_task_plan_stage_binding(
+        workflow_id="lineage-workflow",
+        stage_id=policy.stage_id,
+        policy_ref=policy.exact_ref,
+        required_output_roles=policy.required_output_roles,
+        input_keys=("document",),
+    )
     task = TaskSpec(
         task_id="lineage-task",
         objective="Verify durable subagent lineage.",
@@ -203,7 +210,7 @@ def _fixture(
         run_id="lineage-run",
         workflow_id="lineage-workflow",
         stage_id="dynamic_stage",
-        graph_checksum=graph_checksum,
+        graph_checksum=stage_binding.graph_checksum,
         input_context_refs=("document",),
         tasks=(task,),
         required_output_roles=("analysis.lineage",),
@@ -216,12 +223,9 @@ def _fixture(
         registry,
         context=TaskPlanValidationContext(
             run_id=candidate.run_id,
-            workflow_id=candidate.workflow_id,
-            stage_id=candidate.stage_id,
-            graph_checksum=graph_checksum,
+            stage_binding=stage_binding,
             available_input_refs=("document",),
             registered_gate_refs=policy.allowed_gate_refs,
-            dynamic_stage_declared=True,
         ),
         accepted_at=ACCEPTED_AT,
     )
@@ -286,9 +290,7 @@ def _fixture(
 
     request = TaskPlanStageRequest(
         run_id=plan.run_id,
-        workflow_id=plan.workflow_id,
-        stage_id=plan.stage_id,
-        graph_checksum=plan.graph_checksum,
+        stage_binding=stage_binding,
         context_refs={"document": "document"},
         policy=policy,
         policy_ref=policy.exact_ref,

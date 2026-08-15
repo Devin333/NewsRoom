@@ -21,6 +21,7 @@ TASK_PROJECTION_SCHEMA = "newsroom.harness-task-projection/v1"
 TASK_PLAN_PROJECTION_SCHEMA = "newsroom.harness-task-plan-projection/v1"
 TASK_RESULT_REFERENCE_SCHEMA = "newsroom.harness-task-result-reference/v1"
 TASK_CAPABILITY_BINDING_SCHEMA = "newsroom.harness-task-capability-binding/v1"
+TASK_PLAN_STAGE_BINDING_SCHEMA = "newsroom.harness-task-plan-stage-binding/v1"
 
 
 class TaskPlanContractKind(StrEnum):
@@ -35,6 +36,7 @@ class TaskPlanContractKind(StrEnum):
     PLAN_PROJECTION = "plan_projection"
     RESULT_REFERENCE = "result_reference"
     CAPABILITY_BINDING = "capability_binding"
+    STAGE_BINDING = "stage_binding"
 
 
 @dataclass(frozen=True, slots=True)
@@ -158,6 +160,7 @@ _WRITERS: Mapping[TaskPlanContractKind, str] = MappingProxyType(
         TaskPlanContractKind.PLAN_PROJECTION: TASK_PLAN_PROJECTION_SCHEMA,
         TaskPlanContractKind.RESULT_REFERENCE: TASK_RESULT_REFERENCE_SCHEMA,
         TaskPlanContractKind.CAPABILITY_BINDING: TASK_CAPABILITY_BINDING_SCHEMA,
+        TaskPlanContractKind.STAGE_BINDING: TASK_PLAN_STAGE_BINDING_SCHEMA,
     }
 )
 
@@ -185,6 +188,7 @@ __all__ = [
     "TASK_PLAN_POLICY_SCHEMA",
     "TASK_PLAN_PROJECTION_SCHEMA",
     "TASK_PLAN_RUNTIME_VERSION",
+    "TASK_PLAN_STAGE_BINDING_SCHEMA",
     "TASK_PROJECTION_SCHEMA",
     "TASK_RESULT_REFERENCE_SCHEMA",
     "VALIDATED_TASK_PLAN_SCHEMA",

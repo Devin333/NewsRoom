@@ -44,6 +44,7 @@ from framework.harness.graph.bindings import HarnessWorkerBinding
 from framework.harness.graph.model import HarnessContractKind, HarnessContractReference
 from framework.harness.graph.activity import HarnessWorkerType
 from framework.harness.workers.result import HarnessWorkerResult
+from tests.fixtures.task_plan import build_task_plan_stage_binding
 
 
 class _Worker:
@@ -83,7 +84,6 @@ class _AcceptingResultVerifier:
 
 
 def _setup(*, roles=("role",), capabilities=("cap",)):
-    graph = canonical_payload_checksum({"graph": "test"})
     policy = TaskPlanPolicy(
         policy_id="test.task-plan",
         version="1",
@@ -111,6 +111,12 @@ def _setup(*, roles=("role",), capabilities=("cap",)):
         per_task_budget=TaskBudget(max_turns=2),
         aggregate_task_budget=TaskBudget(max_turns=8),
     )
+    stage_binding = build_task_plan_stage_binding(
+        workflow_id="workflow",
+        stage_id=policy.stage_id,
+        policy_ref=policy.exact_ref,
+        required_output_roles=policy.required_output_roles,
+    )
     registrations = []
     for capability in capabilities:
         worker = _Worker()
@@ -127,7 +133,7 @@ def _setup(*, roles=("role",), capabilities=("cap",)):
             "schema://input@1",
             "schema://result@1",
         ))
-    return graph, policy, TaskCapabilityRegistry(registrations)
+    return stage_binding, policy, TaskCapabilityRegistry(registrations)
 
 
 def _task(task_id: str, capability: str = "cap", role: str = "role", depends_on=()):
@@ -144,13 +150,13 @@ def _task(task_id: str, capability: str = "cap", role: str = "role", depends_on=
     )
 
 
-def _candidate(graph, tasks, roles=("role",)):
+def _candidate(stage_binding, tasks, roles=("role",)):
     return PlanCandidate(
         candidate_id="candidate",
         run_id="run",
         workflow_id="workflow",
         stage_id="dynamic_stage",
-        graph_checksum=graph,
+        graph_checksum=stage_binding.graph_checksum,
         input_context_refs=("document",),
         tasks=tuple(tasks),
         required_output_roles=roles,
@@ -219,9 +225,7 @@ def test_ready_task_is_durably_committed_before_worker_invocation() -> None:
     ).run(
         TaskPlanStageRequest(
             run_id="run",
-            workflow_id="workflow",
-            stage_id="dynamic_stage",
-            graph_checksum=graph,
+            stage_binding=graph,
             context_refs={"document": "document"},
             policy=policy,
             policy_ref=policy.exact_ref,
@@ -266,12 +270,14 @@ def test_store_accepts_duplicate_identical_result_once():
     assert len(store.results_for("run", "dynamic_stage", plan.plan_id, 1)) == 1
 
 
-def validator_context(graph):
+def validator_context(stage_binding):
     from framework.harness.task_plan import TaskPlanValidationContext
 
     return TaskPlanValidationContext(
-        run_id="run", workflow_id="workflow", stage_id="dynamic_stage", graph_checksum=graph,
-        available_input_refs=("document",), registered_gate_refs=("gate@1",), dynamic_stage_declared=True,
+        run_id="run",
+        stage_binding=stage_binding,
+        available_input_refs=("document",),
+        registered_gate_refs=("gate@1",),
     )
 
 
@@ -451,9 +457,7 @@ def test_stage_runner_rejects_policy_drift_before_recording_patch() -> None:
     )
     request = TaskPlanStageRequest(
         run_id="run",
-        workflow_id="workflow",
-        stage_id="dynamic_stage",
-        graph_checksum=graph,
+        stage_binding=graph,
         context_refs={"document": "document"},
         policy=drifted_policy,
         policy_ref=drifted_policy.exact_ref,
@@ -466,6 +470,81 @@ def test_stage_runner_rejects_policy_drift_before_recording_patch() -> None:
     assert error.value.code == "task_plan_policy_mismatch"
     assert store.read_events("run", "dynamic_stage") == events_before
     assert store.load_projection("run", "dynamic_stage") == projection_before
+
+
+def test_stage_request_rejects_required_role_drift_from_frozen_graph() -> None:
+    stage_binding, policy, _ = _setup()
+    drifted_policy = replace(
+        policy,
+        allowed_output_roles=("other-role",),
+        required_output_roles=("other-role",),
+    )
+
+    with pytest.raises(HarnessValidationError) as error:
+        TaskPlanStageRequest(
+            run_id="run",
+            stage_binding=stage_binding,
+            context_refs={"document": "document"},
+            policy=drifted_policy,
+            accepted_at="2026-08-01T00:01:00Z",
+        )
+
+    assert error.value.code == "task_plan_policy_mismatch"
+
+
+def test_stage_runner_rejects_existing_plan_from_another_frozen_graph() -> None:
+    stage_binding, policy, registry = _setup()
+    candidate = _candidate(stage_binding, (_task("a"),))
+    plan = TaskPlanValidator().accept(
+        candidate,
+        policy,
+        registry,
+        context=validator_context(stage_binding),
+        accepted_at="2026-08-01T00:00:00Z",
+    )
+    store = InMemoryTaskPlanStore()
+    store.append_candidate(candidate)
+    store.accept_plan(plan)
+    events_before = store.read_events("run", "dynamic_stage")
+    alternate_binding = build_task_plan_stage_binding(
+        workflow_id="workflow",
+        stage_id=policy.stage_id,
+        policy_ref=policy.exact_ref,
+        required_output_roles=policy.required_output_roles,
+        metadata_overrides={"graph_revision": "2"},
+    )
+    request = TaskPlanStageRequest(
+        run_id="run",
+        stage_binding=alternate_binding,
+        context_refs={"document": "document"},
+        policy=policy,
+        accepted_at="2026-08-01T00:01:00Z",
+    )
+    patch = PlanPatch(
+        patch_id="wrong-frozen-graph",
+        run_id="run",
+        stage_id="dynamic_stage",
+        base_plan_id=plan.plan_id,
+        base_plan_version=plan.version,
+        reason_code="repair",
+        source_candidate_ref="candidate://wrong-frozen-graph",
+        operations=(
+            PlanPatchOperation(
+                PlanPatchOperationType.SKIP_PENDING_TASK,
+                target_task_id="a",
+            ),
+        ),
+    )
+
+    with pytest.raises(HarnessValidationError) as error:
+        TaskPlanStageRunner(
+            candidate_builder=FakePlanCandidateBuilder(candidate),
+            capability_registry=registry,
+            store=store,
+        ).apply_patch(request, patch)
+
+    assert error.value.code == "task_plan_pinned_version_mismatch"
+    assert store.read_events("run", "dynamic_stage") == events_before
 
 
 def test_stage_runner_fails_closed_when_halt_event_cannot_be_persisted() -> None:
@@ -482,9 +561,7 @@ def test_stage_runner_fails_closed_when_halt_event_cannot_be_persisted() -> None
     )
     request = TaskPlanStageRequest(
         run_id="run",
-        workflow_id="workflow",
-        stage_id="dynamic_stage",
-        graph_checksum=graph,
+        stage_binding=graph,
         context_refs={"document": "document"},
         policy=policy,
         policy_ref=policy.exact_ref,
