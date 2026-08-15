@@ -68,6 +68,12 @@ from framework.harness.control_plane.graph_checkpoint import (
     quarantine_graph_replay_failure,
 )
 from framework.harness.control_plane.graph_inspection import HarnessGraphInspection
+from framework.harness.control_plane.graph_operations import (
+    HARNESS_GRAPH_RUN_OPERATION_CONTRACT_ID,
+    HARNESS_GRAPH_RUN_OPERATION_CONTRACT_VERSION,
+    HARNESS_GRAPH_RUN_OPERATION_NODE_ID,
+    HarnessGraphRunOperation,
+)
 from framework.harness.control_plane.graph_evaluator import (
     HarnessAcceptedGraphObservation,
     HarnessGraphEvaluationContext,
@@ -1185,10 +1191,18 @@ class HarnessControlPlane:
         *,
         occurred_at,
     ) -> HarnessGraphState:
-        if observation.observation_type is HarnessGraphObservationType.WAIT_CAUSE:
+        if observation.observation_type in {
+            HarnessGraphObservationType.WAIT_CAUSE,
+            HarnessGraphObservationType.RUN_OPERATION,
+        }:
             raise HarnessValidationError(
-                "Wait causes must use the typed authorization boundary",
-                code="graph_wait_typed_boundary_required",
+                "Graph control observations must use their typed authorization boundary",
+                code=(
+                    "graph_wait_typed_boundary_required"
+                    if observation.observation_type
+                    is HarnessGraphObservationType.WAIT_CAUSE
+                    else "graph_run_operation_typed_boundary_required"
+                ),
             )
         self._prepare_run_spec(run_spec)
         graph = self._prepared_graphs[run_spec.run_id]
@@ -1290,6 +1304,73 @@ class HarnessControlPlane:
             run_spec_checksum=self._prepared_run_specs[run_spec.run_id],
             occurred_at=occurred_at,
         )
+
+    def accept_graph_run_operation(
+        self,
+        run_spec: HarnessRunSpec,
+        operation: HarnessGraphRunOperation,
+        *,
+        occurred_at,
+    ) -> HarnessGraphRunOperation:
+        """Commit one typed run operation before the scheduler can act on it."""
+
+        if not isinstance(operation, HarnessGraphRunOperation):
+            raise TypeError("operation must be HarnessGraphRunOperation")
+        if operation.run_id != run_spec.run_id:
+            raise HarnessValidationError(
+                "Graph run operation belongs to another run",
+                code="graph_run_operation_run_mismatch",
+            )
+        if operation.accepted_sequence != 0:
+            raise HarnessValidationError(
+                "new Graph run operation must not supply a stream sequence",
+                code="graph_run_operation_sequence_invalid",
+            )
+        self._prepare_run_spec(run_spec)
+        runtime = self._require_graph_runtime()
+        recovery = runtime.transition_port.recover_graph(run_spec.run_id)
+        existing = _matching_graph_run_operation(recovery, operation)
+        if existing is not None:
+            return existing
+        state = self.recover_graph(run_spec)
+        if state.lifecycle in {RunLifecycle.COMPLETED, RunLifecycle.HALTED}:
+            raise HarnessValidationError(
+                "terminal Graph run cannot accept a new operation",
+                code="graph_run_operation_terminal",
+            )
+        accepted = replace(
+            operation,
+            accepted_sequence=recovery.expected_last_sequence + 1,
+        )
+        observation = HarnessAcceptedGraphObservation(
+            HarnessGraphObservationType.RUN_OPERATION,
+            HARNESS_GRAPH_RUN_OPERATION_NODE_ID,
+            run_spec.run_id,
+            0,
+            accepted.accepted_sequence,
+            HarnessContractReference(
+                HarnessContractKind.RUN_OPERATION,
+                HARNESS_GRAPH_RUN_OPERATION_CONTRACT_ID,
+                HARNESS_GRAPH_RUN_OPERATION_CONTRACT_VERSION,
+            ),
+            accepted.operation_ref,
+            payload={"record": accepted.to_dict()},
+        )
+        try:
+            runtime.accept_observation(
+                observation,
+                run_id=run_spec.run_id,
+                graph=self._prepared_graphs[run_spec.run_id],
+                run_spec_checksum=self._prepared_run_specs[run_spec.run_id],
+                occurred_at=occurred_at,
+            )
+        except (EventReplayMismatchError, EventStreamVersionConflictError):
+            refreshed = runtime.transition_port.recover_graph(run_spec.run_id)
+            existing = _matching_graph_run_operation(refreshed, operation)
+            if existing is not None:
+                return existing
+            raise
+        return accepted
 
     def inspect_graph_wait_scope(
         self,
@@ -1804,6 +1885,11 @@ class HarnessControlPlane:
             result_commit = result_commits.get(activity.activity_id)
             if result_commit is None:
                 continue
+            if (
+                result_commit.result.status
+                is HarnessGraphActivityResultStatus.CANCELLED
+            ):
+                continue
             definition = _graph_definition_by_id(
                 recovery.graph,
                 activity.node_id,
@@ -2204,7 +2290,13 @@ class HarnessControlPlane:
                 item.attempt,
             ),
         ):
-            if activity.activity_id not in result_by_activity:
+            result_commit = result_by_activity.get(activity.activity_id)
+            if result_commit is None:
+                continue
+            if (
+                result_commit.result.status
+                is HarnessGraphActivityResultStatus.CANCELLED
+            ):
                 continue
             recorded = self.event_port.resolve_graph_replay_activity(
                 activity,
@@ -3623,6 +3715,7 @@ class HarnessControlPlane:
             if observation.observation_type in {
                 HarnessGraphObservationType.MERGE_RESULT,
                 HarnessGraphObservationType.WAIT_CAUSE,
+                HarnessGraphObservationType.RUN_OPERATION,
             }:
                 continue
             instance = instances.get(observation.node_instance_id)
@@ -6631,6 +6724,36 @@ def _wait_cause_identity_conflict_code(
     if isinstance(cause, HarnessWaitSignal):
         return "wait_signal_identity_conflict"
     return "graph_wait_cause_identity_conflict"
+
+
+def _matching_graph_run_operation(
+    recovery: HarnessGraphRecovery,
+    requested: HarnessGraphRunOperation,
+) -> HarnessGraphRunOperation | None:
+    for commit in recovery.observation_commits:
+        observation = commit.observation
+        if observation.observation_type is not HarnessGraphObservationType.RUN_OPERATION:
+            continue
+        raw_record = observation.payload.get("record")
+        if not isinstance(raw_record, Mapping):
+            raise EventStoreCorruptionError(
+                "Graph run operation observation is missing its typed record"
+            )
+        try:
+            existing = HarnessGraphRunOperation.from_dict(raw_record)
+        except (HarnessValidationError, TypeError, ValueError) as exc:
+            raise EventStoreCorruptionError(
+                "Graph run operation observation violates its typed contract"
+            ) from exc
+        if existing.operation_identity_ref != requested.operation_identity_ref:
+            continue
+        if existing.idempotency_projection() != requested.idempotency_projection():
+            raise HarnessValidationError(
+                "Graph run operation identity was reused with conflicting content",
+                code="graph_run_operation_identity_conflict",
+            )
+        return existing
+    return None
 
 
 def _restore_cache_value(

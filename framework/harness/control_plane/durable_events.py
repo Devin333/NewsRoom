@@ -70,6 +70,7 @@ from framework.harness.control_plane.activity import (
 from framework.harness.control_plane.graph_decision import HarnessGraphDecision
 from framework.harness.control_plane.graph_evaluator import (
     HarnessAcceptedGraphObservation,
+    HarnessGraphObservationType,
 )
 from framework.harness.control_plane.graph_runtime import (
     HARNESS_GRAPH_COMMIT_SCHEMA,
@@ -1371,27 +1372,30 @@ class DurableHarnessTransitionPort(DurableHarnessEventPort):
                 )
             return parsed.commit
 
-        node_event = self._graph_event_by_id(
-            _graph_node_event_id(observation.node_instance_id)
-        )
-        if node_event is None:
-            raise HarnessValidationError(
-                "graph node instance identity is unknown or ambiguous",
-                code="graph_observation_node_identity_mismatch",
+        if observation.observation_type is HarnessGraphObservationType.RUN_OPERATION:
+            run_id = observation.node_instance_id
+        else:
+            node_event = self._graph_event_by_id(
+                _graph_node_event_id(observation.node_instance_id)
             )
-        parsed_node = _stored_graph_commit(node_event, adapter=self._adapter)
-        if not isinstance(
-            parsed_node.commit,
-            (HarnessGraphProjectionCommit, _HarnessGraphProjectionRecord),
-        ):
-            raise EventStoreCorruptionError(
-                "graph node index does not reference an activation projection"
-            )
-        run_id = _graph_commit_run_id(parsed_node.commit)
-        if run_id is None:
-            raise EventStoreCorruptionError(
-                "graph node index does not reference a run"
-            )
+            if node_event is None:
+                raise HarnessValidationError(
+                    "graph node instance identity is unknown or ambiguous",
+                    code="graph_observation_node_identity_mismatch",
+                )
+            parsed_node = _stored_graph_commit(node_event, adapter=self._adapter)
+            if not isinstance(
+                parsed_node.commit,
+                (HarnessGraphProjectionCommit, _HarnessGraphProjectionRecord),
+            ):
+                raise EventStoreCorruptionError(
+                    "graph node index does not reference an activation projection"
+                )
+            run_id = _graph_commit_run_id(parsed_node.commit)
+            if run_id is None:
+                raise EventStoreCorruptionError(
+                    "graph node index does not reference a run"
+                )
         recovery, canonical_head = self._recover_graph_snapshot(run_id)
         _require_graph_stream_head(recovery, expected_last_sequence)
         _, state = _require_initialized_graph(recovery)
@@ -1400,23 +1404,24 @@ class DurableHarnessTransitionPort(DurableHarnessEventPort):
                 sequence=recovery.expected_last_sequence,
                 reason="graph observation sequence is not contiguous",
             )
-        node = next(
-            (
-                item
-                for item in state.node_instances
-                if item.instance_id == observation.node_instance_id
-            ),
-            None,
-        )
-        if (
-            node is None
-            or node.identity.node_id != observation.node_id
-            or node.attempt != observation.attempt
-        ):
-            raise EventReplayMismatchError(
-                sequence=recovery.expected_last_sequence,
-                reason="graph observation does not match the current node attempt",
+        if observation.observation_type is not HarnessGraphObservationType.RUN_OPERATION:
+            node = next(
+                (
+                    item
+                    for item in state.node_instances
+                    if item.instance_id == observation.node_instance_id
+                ),
+                None,
             )
+            if (
+                node is None
+                or node.identity.node_id != observation.node_id
+                or node.attempt != observation.attempt
+            ):
+                raise EventReplayMismatchError(
+                    sequence=recovery.expected_last_sequence,
+                    reason="graph observation does not match the current node attempt",
+                )
         _require_no_pending_graph_cause(recovery)
         commit = HarnessGraphObservationCommit(
             observation,

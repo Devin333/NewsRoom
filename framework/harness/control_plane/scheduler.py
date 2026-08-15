@@ -20,6 +20,7 @@ from framework.harness.control_plane.graph_evaluator import (
     HarnessGraphEvaluationContext,
     WorkflowGraphEvaluator,
 )
+from framework.harness.control_plane.graph_operations import HarnessGraphRunOperation
 from framework.harness.control_plane.graph_state import (
     HarnessEvidenceKind,
     HarnessGraphReference,
@@ -387,7 +388,8 @@ class HarnessScheduler:
             )
             if option is not None:
                 options.append(option)
-        terminal_observation_override = any(
+        run_operation_override = state.metadata.get("pending_run_operation") is not None
+        terminal_observation_override = run_operation_override or any(
             candidate.candidate_type is HarnessGraphCandidateType.COMPLETE_RUN
             and candidate.reason_code
             in {"approval_cancelled", "side_effect_retry_exhausted"}
@@ -759,6 +761,11 @@ def _accepted_graph_candidate_evidence_refs(
             references.add(entry.outcome_ref)
     if state.terminal_evidence_ref is not None:
         references.add(state.terminal_evidence_ref)
+    pending_operation = state.metadata.get("pending_run_operation")
+    if isinstance(pending_operation, Mapping):
+        references.add(
+            HarnessGraphRunOperation.from_dict(pending_operation).operation_ref
+        )
     for observation in context.observations:
         references.add(observation.evidence_ref)
         references.add(observation.payload_ref)
@@ -888,6 +895,11 @@ def _graph_candidate_rank(candidate: HarnessGraphCandidate) -> int:
         candidate.candidate_type is HarnessGraphCandidateType.COMPLETE_RUN
         and candidate.reason_code
         in {"approval_cancelled", "side_effect_retry_exhausted"}
+    ):
+        return _ARBITRATION_SAFETY
+    if (
+        candidate.candidate_type is HarnessGraphCandidateType.COMPLETE_RUN
+        and isinstance(candidate.payload.get("run_operation"), Mapping)
     ):
         return _ARBITRATION_SAFETY
     if candidate.candidate_type is HarnessGraphCandidateType.ACTIVATE_NODE:

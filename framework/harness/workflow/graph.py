@@ -71,6 +71,7 @@ class HarnessContractKind(StrEnum):
     MERGE = "merge"
     WAIT = "wait"
     TERMINAL_POLICY = "terminal_policy"
+    RUN_OPERATION = "run_operation"
 
 
 class HarnessMergeKind(StrEnum):

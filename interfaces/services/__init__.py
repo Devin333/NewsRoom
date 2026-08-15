@@ -28,6 +28,8 @@ from interfaces.services.event_reader_service import (
 from interfaces.services.event_replay_service import EventReplayService
 from interfaces.services.harness_graph_service import (
     HarnessGraphApplicationService,
+    HarnessGraphReplayResult,
+    HarnessGraphRunOperationResult,
 )
 from interfaces.services.harness_wait_service import (
     HarnessWaitApplicationService,
@@ -69,6 +71,8 @@ __all__ = [
     "EventStreamReadResult",
     "HarnessWaitApplicationService",
     "HarnessGraphApplicationService",
+    "HarnessGraphReplayResult",
+    "HarnessGraphRunOperationResult",
     "HarnessWaitInspectionResult",
     "HarnessWaitOperationResult",
     "ArtifactInspectionService",

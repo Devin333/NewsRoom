@@ -13,6 +13,7 @@ from framework.harness.control_plane.harness import (
     HarnessControlPlane,
     InMemoryHarnessEventPort,
 )
+from framework.harness.control_plane.graph_runtime import HarnessGraphActivity
 from framework.harness.control_plane.state import HarnessRunSpec
 from framework.harness.workflow.dsl import HarnessGraphSpec, StepRef
 from framework.harness.workflow.spec import HarnessWorkflowSpec
@@ -24,6 +25,7 @@ from interfaces.services.harness_graph_service import (
     HarnessGraphApplicationService,
     HarnessGraphAuthorizationError,
     HarnessGraphNotFoundError,
+    HarnessGraphRequestError,
     HarnessGraphRuntimeBinding,
 )
 
@@ -31,6 +33,19 @@ from interfaces.services.harness_graph_service import (
 _NOW = datetime(2026, 7, 31, tzinfo=UTC)
 _TENANT_REF = checksum_for("tenant-inspection")
 _IDENTITY_REF = checksum_for("identity-inspection")
+_ACTOR_REF = checksum_for("actor-inspection")
+
+
+class _Dispatcher:
+    def __init__(self) -> None:
+        self.activities: list[HarnessGraphActivity] = []
+        self.cancellations: list[object] = []
+
+    def dispatch(self, activity: HarnessGraphActivity) -> None:
+        self.activities.append(activity)
+
+    def request_cancellation(self, request: object) -> None:
+        self.cancellations.append(request)
 
 
 class _RuntimeResolver:
@@ -117,6 +132,7 @@ def test_graph_service_hides_scope_mismatch_and_denies_missing_permission() -> N
         actor_scope=HarnessGraphActorScope(
             checksum_for("another-tenant"),
             _IDENTITY_REF,
+            _ACTOR_REF,
         ),
     )
     denied, _, denied_spec = _service(
@@ -138,11 +154,80 @@ def test_graph_service_hides_scope_mismatch_and_denies_missing_permission() -> N
     assert forbidden.value.code == "graph_inspection_permission_denied"
 
 
+def test_graph_service_exposes_safe_verified_replay_projection() -> None:
+    service, _, run_spec = _service("run-graph-replay")
+
+    result = service.replay_run(run_spec.run_id)
+    payload = result.to_dict()
+
+    assert payload["status"] == "verified"
+    assert payload["through_sequence"] > 0
+    assert payload["projection_checksum"].startswith("sha256:")
+    assert payload["quarantine_reason"] is None
+    assert "raw-secret-value" not in str(payload)
+    with pytest.raises(HarnessGraphRequestError) as invalid:
+        service.replay_run(run_spec.run_id, through_sequence=0)
+    assert invalid.value.code == "graph_replay_sequence_invalid"
+
+
+def test_graph_service_submits_cancel_to_harness_after_scope_authorization() -> None:
+    dispatcher = _Dispatcher()
+    service, control_plane, run_spec = _service(
+        "run-graph-cancel",
+        actor=ActorContext(
+            actor_id="operator-1",
+            actor_type="user",
+            roles=["operator"],
+            request_id="request-run-graph-cancel",
+        ),
+        dispatcher=dispatcher,
+    )
+
+    result = service.cancel_run(
+        run_spec.run_id,
+        cancellation_id="cancel-service-1",
+        reason_code="operator_cancelled",
+    )
+    payload = result.to_dict()
+
+    assert payload["operation"] == "cancel"
+    assert payload["operation_id"] == "cancel-service-1"
+    assert payload["operation_ref"].startswith("sha256:")
+    assert payload["run"]["lifecycle"] == "running"
+    assert payload["run"]["node_instances"][0]["status"] == "cancel_requested"
+    assert len(dispatcher.cancellations) == 1
+    recovery = control_plane.graph_transition_port.recover_graph(run_spec.run_id)
+    assert len(recovery.observation_commits) >= 1
+    assert "operator-1" not in str(payload)
+
+
+def test_graph_cancel_requires_write_permission_before_runtime_mutation() -> None:
+    dispatcher = _Dispatcher()
+    service, control_plane, run_spec = _service(
+        "run-graph-cancel-denied",
+        dispatcher=dispatcher,
+    )
+    before = control_plane.graph_transition_port.recover_graph(run_spec.run_id)
+
+    with pytest.raises(HarnessGraphAuthorizationError) as captured:
+        service.cancel_run(
+            run_spec.run_id,
+            cancellation_id="cancel-denied",
+            reason_code="operator_cancelled",
+        )
+
+    after = control_plane.graph_transition_port.recover_graph(run_spec.run_id)
+    assert captured.value.code == "graph_run_operation_permission_denied"
+    assert after == before
+    assert dispatcher.cancellations == []
+
+
 def _service(
     run_id: str,
     *,
     actor: ActorContext | None = None,
     actor_scope: HarnessGraphActorScope | None = None,
+    dispatcher: _Dispatcher | None = None,
 ) -> tuple[HarnessGraphApplicationService, HarnessControlPlane, HarnessRunSpec]:
     workflow = HarnessWorkflowSpec(
         workflow_id=f"workflow-{run_id}",
@@ -169,6 +254,7 @@ def _service(
                 output={"secret": "raw-secret-value"},
             )
         },
+        graph_activity_dispatcher=dispatcher,
     )
     control_plane.run(run_spec)
     binding = HarnessGraphRuntimeBinding(run_spec, control_plane)
@@ -184,7 +270,10 @@ def _service(
         ),
         runtime_resolver=_RuntimeResolver(binding),
         actor_scope_resolver=_ScopeResolver(
-            actor_scope or HarnessGraphActorScope(_TENANT_REF, _IDENTITY_REF)
+            actor_scope
+            if actor_scope is not None
+            else HarnessGraphActorScope(_TENANT_REF, _IDENTITY_REF, _ACTOR_REF)
         ),
+        clock=lambda: _NOW,
     )
     return service, control_plane, run_spec

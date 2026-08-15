@@ -25,6 +25,7 @@ from framework.harness.control_plane.graph_evaluator import (
     HarnessAcceptedGraphObservation,
     HarnessGraphObservationType,
 )
+from framework.harness.control_plane.graph_operations import HarnessGraphRunOperation
 from framework.harness.control_plane.graph_runtime import (
     HarnessGraphActivity,
     HarnessGraphActivityResult,
@@ -757,6 +758,12 @@ class HarnessGraphDecisionApplier:
             raise HarnessValidationError(
                 "graph observation sequence does not match its causal commit",
                 code="graph_observation_sequence_mismatch",
+            )
+        if observation.observation_type is HarnessGraphObservationType.RUN_OPERATION:
+            return _apply_run_operation_observation(
+                state,
+                observation,
+                projection_sequence=projection_sequence,
             )
         node = _node_instance(state, observation.node_instance_id)
         definition = _definition(graph, observation.node_id)
@@ -4165,6 +4172,77 @@ def _validate_pure_merge_manifest(
     )
 
 
+def _apply_run_operation_observation(
+    state: HarnessGraphState,
+    observation: HarnessAcceptedGraphObservation,
+    *,
+    projection_sequence: int,
+) -> HarnessGraphState:
+    payload = thaw_json(observation.payload)
+    if not isinstance(payload, Mapping) or not isinstance(
+        payload.get("record"),
+        Mapping,
+    ):
+        raise HarnessValidationError(
+            "run operation observation is missing its typed record",
+            code="invalid_graph_observation_payload",
+        )
+    try:
+        operation = HarnessGraphRunOperation.from_dict(payload["record"])
+    except (HarnessValidationError, TypeError, ValueError) as exc:
+        raise HarnessValidationError(
+            "run operation observation violates its typed contract",
+            code="invalid_graph_observation_payload",
+        ) from exc
+    if (
+        operation.run_id != state.run_id
+        or operation.accepted_sequence != observation.event_sequence
+        or operation.operation_ref != observation.evidence_ref
+    ):
+        raise HarnessValidationError(
+            "run operation observation does not match its Graph stream",
+            code="graph_run_operation_identity_mismatch",
+        )
+    if state.lifecycle in {RunLifecycle.COMPLETED, RunLifecycle.HALTED}:
+        raise HarnessValidationError(
+            "terminal Graph run cannot accept a new operation",
+            code="graph_run_operation_terminal",
+        )
+    metadata = thaw_json(state.metadata)
+    existing_value = metadata.get("pending_run_operation")
+    if existing_value is not None:
+        if not isinstance(existing_value, Mapping):
+            raise HarnessValidationError(
+                "pending Graph run operation is invalid",
+                code="invalid_pending_graph_run_operation",
+            )
+        existing = HarnessGraphRunOperation.from_dict(existing_value)
+        if (
+            existing.operation_identity_ref != operation.operation_identity_ref
+            or existing.idempotency_projection() != operation.idempotency_projection()
+        ):
+            raise HarnessValidationError(
+                "Graph run already has another pending operation",
+                code="graph_run_operation_conflict",
+            )
+        raise HarnessValidationError(
+            "Graph run operation was committed more than once",
+            code="duplicate_graph_run_operation",
+        )
+    metadata["pending_run_operation"] = operation.to_dict()
+    return replace(
+        state,
+        lifecycle=(
+            RunLifecycle.RUNNING
+            if state.lifecycle is RunLifecycle.CREATED
+            else state.lifecycle
+        ),
+        metadata=metadata,
+        last_event_sequence=projection_sequence,
+        projection_checksum=None,
+    )
+
+
 def _request_branch_cancel(
     state: HarnessGraphState,
     decision: HarnessGraphDecision,
@@ -5216,9 +5294,12 @@ def _apply_run_decision(
                 side_effect_outcome_ref=side_effect_outcome_ref,
             )
         state_metadata = thaw_json(state.metadata)
+        raw_run_operation = state_metadata.get("pending_run_operation")
         state_metadata.pop("pending_terminal_side_effect", None)
+        state_metadata.pop("pending_run_operation", None)
         node_instances = state.node_instances
         loop_counters = state.loop_counters
+        wait_registrations = state.wait_registrations
         if outcome in {RunOutcome.CANCELLED, RunOutcome.FAILED} and any(
             not item.is_terminal for item in state.node_instances
         ):
@@ -5266,12 +5347,38 @@ def _apply_run_decision(
                 )
                 for item in state.loop_counters
             )
+        if outcome is RunOutcome.CANCELLED and any(
+            item.unresolved for item in state.wait_registrations
+        ):
+            if not isinstance(raw_run_operation, Mapping):
+                raise HarnessValidationError(
+                    "run cancellation requires durable Wait resolution evidence",
+                    code="graph_run_cancellation_wait_resolution_missing",
+                )
+            operation = HarnessGraphRunOperation.from_dict(raw_run_operation)
+            if operation.operation_ref not in decision.evidence_refs:
+                raise HarnessValidationError(
+                    "run cancellation decision does not reference its operation",
+                    code="graph_run_cancellation_wait_evidence_mismatch",
+                )
+            wait_registrations = tuple(
+                replace(
+                    item,
+                    status=HarnessWaitStatus.CANCELLED,
+                    resolution_event_ref=operation.operation_ref,
+                    last_event_sequence=projection_sequence,
+                )
+                if item.unresolved
+                else item
+                for item in state.wait_registrations
+            )
         return replace(
             state,
             lifecycle=RunLifecycle.COMPLETED,
             outcome=outcome,
             node_instances=node_instances,
             loop_counters=loop_counters,
+            wait_registrations=wait_registrations,
             metadata=state_metadata,
             last_event_sequence=projection_sequence,
             terminal_reason_code=(

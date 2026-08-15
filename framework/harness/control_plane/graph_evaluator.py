@@ -25,6 +25,13 @@ from framework.harness.control_plane.graph_state import (
     HarnessWaitStatus,
     RunLifecycle,
 )
+from framework.harness.control_plane.graph_operations import (
+    HARNESS_GRAPH_RUN_OPERATION_CONTRACT_ID,
+    HARNESS_GRAPH_RUN_OPERATION_CONTRACT_VERSION,
+    HARNESS_GRAPH_RUN_OPERATION_NODE_ID,
+    HarnessGraphRunOperation,
+    HarnessGraphRunOperationType,
+)
 from framework.harness.control_plane.state import HarnessStepStatus
 from framework.harness.workflow.canonical import (
     canonical_checksum,
@@ -111,6 +118,7 @@ class HarnessGraphObservationType(StrEnum):
     SIDE_EFFECT_FAILURE = "side_effect_failure"
     MERGE_RESULT = "merge_result"
     WAIT_CAUSE = "wait_cause"
+    RUN_OPERATION = "run_operation"
 
 
 @dataclass(frozen=True, slots=True)
@@ -141,6 +149,7 @@ class HarnessAcceptedGraphObservation:
                 HarnessGraphObservationType.GATE_RESULT,
                 HarnessGraphObservationType.MERGE_RESULT,
                 HarnessGraphObservationType.WAIT_CAUSE,
+                HarnessGraphObservationType.RUN_OPERATION,
             }
             else 1
         )
@@ -254,6 +263,34 @@ class HarnessAcceptedGraphObservation:
                     code="graph_observation_contract_mismatch",
                 )
             _validate_wait_cause_payload(payload)
+        elif observation_type is HarnessGraphObservationType.RUN_OPERATION:
+            if (
+                self.contract_ref.contract_kind
+                is not HarnessContractKind.RUN_OPERATION
+                or self.contract_ref.contract_id
+                != HARNESS_GRAPH_RUN_OPERATION_CONTRACT_ID
+                or self.contract_ref.version
+                != HARNESS_GRAPH_RUN_OPERATION_CONTRACT_VERSION
+            ):
+                raise HarnessValidationError(
+                    "run operation requires the exact Graph operation contract",
+                    code="graph_observation_contract_mismatch",
+                )
+            operation = _validate_run_operation_payload(payload)
+            if (
+                node_id != HARNESS_GRAPH_RUN_OPERATION_NODE_ID
+                or node_instance_id != operation.run_id
+                or self.attempt != 0
+            ):
+                raise HarnessValidationError(
+                    "run operation observation does not match its Graph run",
+                    code="graph_run_operation_identity_mismatch",
+                )
+            if evidence_ref != operation.operation_ref:
+                raise HarnessValidationError(
+                    "run operation evidence does not match its canonical record",
+                    code="graph_run_operation_evidence_mismatch",
+                )
         if (
             observation_type is not HarnessGraphObservationType.VERIFIED_OUTPUT
             and control_fact_paths
@@ -590,43 +627,47 @@ class WorkflowGraphEvaluator:
         instances_by_scope = _instances_by_definition_scope(state.node_instances)
         candidates: list[HarnessGraphCandidate] = []
 
-        terminal_observation = _terminal_observation_candidate(
-            state,
-            accepted_context,
-        )
-        if terminal_observation is not None:
-            candidates.append(terminal_observation)
+        pending_run_operation = _pending_run_operation(state)
+        if pending_run_operation is not None:
+            candidates.extend(_run_operation_candidates(state, pending_run_operation))
+        else:
+            terminal_observation = _terminal_observation_candidate(
+                state,
+                accepted_context,
+            )
+            if terminal_observation is not None:
+                candidates.append(terminal_observation)
 
-        if terminal_observation is None:
-            candidates.extend(
-                self._compensation_candidates(
-                    graph,
-                    state,
-                    nodes_by_id,
+            if terminal_observation is None:
+                candidates.extend(
+                    self._compensation_candidates(
+                        graph,
+                        state,
+                        nodes_by_id,
+                    )
                 )
-            )
-        compensation_mode = _compensation_mode(state)
-        if terminal_observation is None and not compensation_mode:
-            candidates.extend(self._join_candidates(graph, state, nodes_by_id))
-            candidates.extend(
-                self._control_candidates(
-                    graph,
-                    state,
-                    accepted_context,
-                    nodes_by_id,
+            compensation_mode = _compensation_mode(state)
+            if terminal_observation is None and not compensation_mode:
+                candidates.extend(self._join_candidates(graph, state, nodes_by_id))
+                candidates.extend(
+                    self._control_candidates(
+                        graph,
+                        state,
+                        accepted_context,
+                        nodes_by_id,
+                    )
                 )
-            )
-            candidates.extend(
-                self._activation_candidates(
-                    graph,
-                    state,
-                    nodes_by_id,
-                    instances_by_definition,
-                    instances_by_scope,
+                candidates.extend(
+                    self._activation_candidates(
+                        graph,
+                        state,
+                        nodes_by_id,
+                        instances_by_definition,
+                        instances_by_scope,
+                    )
                 )
-            )
 
-        if not candidates:
+        if not candidates and pending_run_operation is None:
             completion = self._run_projection_candidate(graph, state)
             if completion is not None:
                 candidates.append(completion)
@@ -2106,6 +2147,86 @@ def _instances_by_definition_scope(
     }
 
 
+def _pending_run_operation(
+    state: HarnessGraphState,
+) -> HarnessGraphRunOperation | None:
+    raw_operation = state.metadata.get("pending_run_operation")
+    if raw_operation is None:
+        return None
+    if not isinstance(raw_operation, Mapping):
+        raise HarnessValidationError(
+            "pending Graph run operation is not a typed record",
+            code="invalid_pending_graph_run_operation",
+        )
+    try:
+        operation = HarnessGraphRunOperation.from_dict(raw_operation)
+    except (HarnessValidationError, TypeError, ValueError) as exc:
+        raise HarnessValidationError(
+            "pending Graph run operation is invalid",
+            code="invalid_pending_graph_run_operation",
+        ) from exc
+    if operation.run_id != state.run_id:
+        raise HarnessValidationError(
+            "pending Graph run operation belongs to another run",
+            code="graph_run_operation_run_mismatch",
+        )
+    return operation
+
+
+def _run_operation_candidates(
+    state: HarnessGraphState,
+    operation: HarnessGraphRunOperation,
+) -> tuple[HarnessGraphCandidate, ...]:
+    if operation.operation_type is not HarnessGraphRunOperationType.CANCEL:
+        raise HarnessValidationError(
+            "unsupported pending Graph run operation",
+            code="unsupported_graph_run_operation",
+        )
+    nodes = {item.instance_id: item for item in state.node_instances}
+    cancel_targets = tuple(
+        sorted(
+            (
+                nodes[item.node_instance_id]
+                for item in state.active_activities
+                if nodes[item.node_instance_id].status
+                is not HarnessNodeInstanceStatus.CANCEL_REQUESTED
+            ),
+            key=lambda item: (
+                item.identity.activation_ordinal,
+                item.instance_id,
+            ),
+        )
+    )
+    payload = {
+        "run_operation": operation.to_dict(),
+        "outcome": "cancelled",
+    }
+    if cancel_targets:
+        return tuple(
+            HarnessGraphCandidate(
+                HarnessGraphCandidateType.REQUEST_BRANCH_CANCEL,
+                operation.reason_code,
+                0,
+                node_id=item.identity.node_id,
+                node_instance_id=item.instance_id,
+                evidence_refs=(operation.operation_ref,),
+                payload=payload,
+            )
+            for item in cancel_targets
+        )
+    if state.active_activities:
+        return ()
+    return (
+        HarnessGraphCandidate(
+            HarnessGraphCandidateType.COMPLETE_RUN,
+            operation.reason_code,
+            0,
+            evidence_refs=(operation.operation_ref,),
+            payload=payload,
+        ),
+    )
+
+
 def _validate_accepted_observations(
     graph: NormalizedHarnessGraph,
     state: HarnessGraphState,
@@ -2115,6 +2236,11 @@ def _validate_accepted_observations(
     instances_by_id = {item.instance_id: item for item in state.node_instances}
     logical_identities: set[tuple[str, int, str, str]] = set()
     for observation in context.observations:
+        if observation.observation_type is HarnessGraphObservationType.RUN_OPERATION:
+            raise HarnessValidationError(
+                "run operations are reduced from durable Graph state, not node context",
+                code="graph_run_operation_context_rejected",
+            )
         instance = instances_by_id.get(observation.node_instance_id)
         if instance is None:
             raise HarnessValidationError(
@@ -3706,6 +3832,25 @@ def _validate_wait_cause_payload(payload: Mapping[str, Any]) -> None:
         HarnessWaitCancellationRecord.from_dict(record)
     else:  # pragma: no cover - enum exhaustiveness guard
         raise AssertionError(f"unsupported Wait cause kind: {cause_kind.value}")
+
+
+def _validate_run_operation_payload(
+    payload: Mapping[str, Any],
+) -> HarnessGraphRunOperation:
+    _exact_payload_keys(payload, {"record"}, "run operation")
+    record = payload["record"]
+    if not isinstance(record, Mapping):
+        raise HarnessValidationError(
+            "run operation record must be an object",
+            code="invalid_graph_observation_payload",
+        )
+    try:
+        return HarnessGraphRunOperation.from_dict(record)
+    except (HarnessValidationError, TypeError, ValueError) as exc:
+        raise HarnessValidationError(
+            "run operation record violates its typed contract",
+            code="invalid_graph_observation_payload",
+        ) from exc
 
 
 def _validate_side_effect_failure_payload(payload: Mapping[str, Any]) -> None:

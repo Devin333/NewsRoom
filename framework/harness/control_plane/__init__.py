@@ -70,6 +70,11 @@ from framework.harness.control_plane.graph_checkpoint import (
     quarantine_graph_replay_failure,
 )
 from framework.harness.control_plane.graph_inspection import HarnessGraphInspection
+from framework.harness.control_plane.graph_operations import (
+    HARNESS_GRAPH_RUN_OPERATION_SCHEMA,
+    HarnessGraphRunOperation,
+    HarnessGraphRunOperationType,
+)
 from framework.harness.control_plane.graph_observability import (
     HarnessGraphDiagnosticSeverity,
     HarnessGraphHealthReport,
@@ -226,6 +231,7 @@ __all__ = [
     "GateRegistration",
     "GraphEvaluation",
     "HARNESS_LEGACY_EVENT_EVIDENCE_SCHEMA",
+    "HARNESS_GRAPH_RUN_OPERATION_SCHEMA",
     "HarnessAcceptedGraphObservation",
     "HarnessBudgetSnapshot",
     "HarnessCumulativeBudgetFact",
@@ -280,6 +286,8 @@ __all__ = [
     "HarnessGraphMetricSample",
     "HarnessGraphOperatorDiagnostic",
     "HarnessGraphObservationType",
+    "HarnessGraphRunOperation",
+    "HarnessGraphRunOperationType",
     "HarnessGraphReference",
     "HarnessGraphProjectionCommit",
     "HarnessGraphRecovery",

@@ -17,6 +17,7 @@ from framework.harness.control_plane.graph_decision import (
 )
 from framework.harness.control_plane.graph_evaluator import (
     HarnessAcceptedGraphObservation,
+    HarnessGraphObservationType,
 )
 from framework.harness.control_plane.graph_result_lineage import (
     HarnessGraphResultLineage,
@@ -1543,7 +1544,12 @@ class InMemoryHarnessGraphTransitionPort:
         if not isinstance(observation, HarnessAcceptedGraphObservation):
             raise TypeError("observation must be HarnessAcceptedGraphObservation")
         with self._lock:
-            journal = self._journal_for_node_instance(observation.node_instance_id)
+            journal = (
+                self._require_journal(observation.node_instance_id)
+                if observation.observation_type
+                is HarnessGraphObservationType.RUN_OPERATION
+                else self._journal_for_node_instance(observation.node_instance_id)
+            )
             existing = next(
                 (
                     item
@@ -1565,23 +1571,24 @@ class InMemoryHarnessGraphTransitionPort:
                     sequence=journal.last_sequence,
                     reason="graph observation sequence is not contiguous",
                 )
-            node = next(
-                (
-                    item
-                    for item in journal.state.node_instances
-                    if item.instance_id == observation.node_instance_id
-                ),
-                None,
-            )
-            if (
-                node is None
-                or node.identity.node_id != observation.node_id
-                or node.attempt != observation.attempt
-            ):
-                raise EventReplayMismatchError(
-                    sequence=journal.last_sequence,
-                    reason="graph observation does not match the current node attempt",
+            if observation.observation_type is not HarnessGraphObservationType.RUN_OPERATION:
+                node = next(
+                    (
+                        item
+                        for item in journal.state.node_instances
+                        if item.instance_id == observation.node_instance_id
+                    ),
+                    None,
                 )
+                if (
+                    node is None
+                    or node.identity.node_id != observation.node_id
+                    or node.attempt != observation.attempt
+                ):
+                    raise EventReplayMismatchError(
+                        sequence=journal.last_sequence,
+                        reason="graph observation does not match the current node attempt",
+                    )
             recovery = self._recovery(journal.state.run_id, journal)
             if (
                 recovery.pending_decisions

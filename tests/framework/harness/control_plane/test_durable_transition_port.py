@@ -26,6 +26,10 @@ from framework.harness.control_plane.graph_evaluator import (
     HarnessAcceptedGraphObservation,
     HarnessGraphObservationType,
 )
+from framework.harness.control_plane.graph_operations import (
+    HarnessGraphRunOperation,
+    HarnessGraphRunOperationType,
+)
 from framework.harness.control_plane.graph_runtime import (
     HarnessGraphActivity,
     HarnessGraphActivityResult,
@@ -53,9 +57,13 @@ NOW = datetime(2026, 7, 16, 10, 30, tzinfo=UTC)
 class _RecordingGraphDispatcher:
     def __init__(self) -> None:
         self.activities: list[HarnessGraphActivity] = []
+        self.cancellations: list[object] = []
 
     def dispatch(self, activity: HarnessGraphActivity) -> None:
         self.activities.append(activity)
+
+    def request_cancellation(self, request: object) -> None:
+        self.cancellations.append(request)
 
 
 class _TamperingReader:
@@ -232,6 +240,56 @@ def _runtime(tmp_path):
         schema_catalog=default_event_schema_catalog(),
     )
     return store, runtime
+
+
+def test_durable_graph_round_trips_run_operation_before_cancellation_dispatch(
+    tmp_path,
+) -> None:
+    store, runtime = _runtime(tmp_path)
+    port = DurableHarnessTransitionPort(runtime, store)
+    dispatcher = _RecordingGraphDispatcher()
+    control_plane = _graph_control_plane(port, dispatcher=dispatcher)
+    run_spec = _run_spec()
+    running, _ = _dispatch_graph_activity(
+        control_plane,
+        port,
+        run_spec,
+        dispatcher,
+    )
+    operation = HarnessGraphRunOperation(
+        HarnessGraphRunOperationType.CANCEL,
+        "durable-cancel-1",
+        run_spec.run_id,
+        _sha("durable-operation-actor"),
+        "operator_cancelled",
+        0,
+    )
+
+    accepted = control_plane.accept_graph_run_operation(
+        run_spec,
+        operation,
+        occurred_at=NOW + timedelta(microseconds=4),
+    )
+    recovered_port = DurableHarnessTransitionPort(runtime, store)
+    recovered = recovered_port.recover_graph(run_spec.run_id)
+
+    assert recovered.state is not None
+    assert recovered.state.last_event_sequence > running.last_event_sequence
+    assert recovered.state.metadata["pending_run_operation"]["operation_ref"] == (
+        accepted.operation_ref
+    )
+    assert recovered.observation_commits[-1].observation.evidence_ref == (
+        accepted.operation_ref
+    )
+    assert dispatcher.cancellations == []
+
+    pending = control_plane.recover_and_run(run_spec)
+
+    assert pending.graph_state is not None
+    assert pending.graph_state.node_instances[0].status.value == "cancel_requested"
+    assert len(dispatcher.cancellations) == 1
+    verified = control_plane.verify_graph_history(run_spec)
+    assert verified.projection_checksum == pending.graph_state.projection_checksum
 
 
 def test_durable_graph_recovers_open_parallel_join_scope(tmp_path) -> None:
