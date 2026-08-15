@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from framework.harness.control_plane.errors import HarnessValidationError
 from framework.harness.mcp.policy import MCPToolDefinition, MCPToolRequest, evaluate_mcp_policy
 from framework.harness.workers.result import HarnessWorkerResult
 
@@ -41,7 +42,11 @@ class FakeMCPToolPort:
         for tool in self.tools:
             if tool.name == tool_name:
                 return tool
-        return MCPToolDefinition(name=tool_name, side_effect=False, requires_approval=False)
+        raise HarnessValidationError(
+            "MCP tool is not registered",
+            code="unknown_mcp_tool",
+            details={"code": "unknown_mcp_tool", "tool_name": tool_name},
+        )
 
 
 __all__ = ["FakeMCPToolPort"]

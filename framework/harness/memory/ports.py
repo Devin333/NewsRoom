@@ -10,8 +10,6 @@ from framework.shared.json import to_jsonable
 
 class MemoryWriteStatus(StrEnum):
     PROPOSED = "proposed"
-    COMMITTED = "committed"
-    REJECTED = "rejected"
 
 
 @dataclass(frozen=True)
@@ -50,9 +48,6 @@ class MemoryPort(Protocol):
         ...
 
     def propose_write(self, candidate: MemoryWriteCandidate) -> MemoryWriteCandidate:
-        ...
-
-    def commit_write(self, approved_write: MemoryWriteCandidate) -> MemoryWriteCandidate:
         ...
 
 

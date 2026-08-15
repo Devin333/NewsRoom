@@ -46,7 +46,7 @@ def test_research_rag_memory_port_maps_episodic_runtime_hits_by_namespace() -> N
     assert hits[0]["relevance"] > 0
 
 
-def test_research_rag_memory_port_is_recall_only_for_writes() -> None:
+def test_research_rag_memory_port_exposes_candidate_only_write_surface() -> None:
     store = InMemoryMemoryStore()
     runtime = MemoryRuntime(store)
     port = ResearchRAGMemoryPort(runtime)
@@ -57,9 +57,7 @@ def test_research_rag_memory_port_is_recall_only_for_writes() -> None:
     )
 
     proposed = port.propose_write(candidate)
-    committed = port.commit_write(proposed)
 
     assert proposed.status == MemoryWriteStatus.PROPOSED
-    assert committed.status == MemoryWriteStatus.REJECTED
-    assert committed.metadata["rejected_reason"] == "research RAG memory adapter is recall-only"
+    assert not hasattr(port, "commit_write")
     assert store.records() == []

@@ -72,16 +72,6 @@ class ResearchRAGMemoryPort:
     def propose_write(self, candidate: MemoryWriteCandidate) -> MemoryWriteCandidate:
         return replace(candidate, status=MemoryWriteStatus.PROPOSED)
 
-    def commit_write(self, approved_write: MemoryWriteCandidate) -> MemoryWriteCandidate:
-        return replace(
-            approved_write,
-            status=MemoryWriteStatus.REJECTED,
-            metadata={
-                **dict(approved_write.metadata),
-                "rejected_reason": "research RAG memory adapter is recall-only",
-            },
-        )
-
 
 def _memory_ref(namespace: str | None, memory_id: str) -> str:
     if namespace:

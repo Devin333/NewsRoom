@@ -11,8 +11,6 @@ from framework.shared.json import to_jsonable
 class MCPApprovalStatus(StrEnum):
     NOT_REQUIRED = "not_required"
     REQUIRED = "required"
-    APPROVED = "approved"
-    DENIED = "denied"
 
 
 @dataclass(frozen=True)
@@ -41,7 +39,6 @@ class MCPToolDefinition:
 class MCPToolRequest:
     tool_name: str
     arguments: dict[str, Any] = field(default_factory=dict)
-    approved: bool = False
     timeout_seconds: float | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
 
@@ -58,7 +55,6 @@ class MCPToolRequest:
         return {
             "tool_name": self.tool_name,
             "arguments": to_jsonable(self.arguments),
-            "approved": self.approved,
             "timeout_seconds": self.timeout_seconds,
             "metadata": to_jsonable(self.metadata),
         }
@@ -83,17 +79,26 @@ class MCPPolicyDecision:
         }
 
 
-def evaluate_mcp_policy(definition: MCPToolDefinition, request: MCPToolRequest, *, audit_ref: str | None = None) -> MCPPolicyDecision:
-    if definition.side_effect and definition.requires_approval and not request.approved:
+def evaluate_mcp_policy(
+    definition: MCPToolDefinition,
+    request: MCPToolRequest,
+    *,
+    audit_ref: str | None = None,
+) -> MCPPolicyDecision:
+    if definition.side_effect:
         return MCPPolicyDecision(
             allowed=False,
-            approval_status=MCPApprovalStatus.REQUIRED,
-            reason="side effect tool requires approval",
+            approval_status=(
+                MCPApprovalStatus.REQUIRED
+                if definition.requires_approval
+                else MCPApprovalStatus.NOT_REQUIRED
+            ),
+            reason="side effect tool requires Harness side-effect authorization",
             audit_ref=audit_ref,
         )
     return MCPPolicyDecision(
         allowed=True,
-        approval_status=MCPApprovalStatus.APPROVED if request.approved else MCPApprovalStatus.NOT_REQUIRED,
+        approval_status=MCPApprovalStatus.NOT_REQUIRED,
         audit_ref=audit_ref,
     )
 

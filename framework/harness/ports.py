@@ -53,10 +53,6 @@ class HarnessMemoryPort(Protocol):
         self, candidate: MemoryWriteCandidate
     ) -> MemoryWriteCandidate: ...
 
-    def commit_write(
-        self, approved_write: MemoryWriteCandidate
-    ) -> MemoryWriteCandidate: ...
-
 
 @runtime_checkable
 class HarnessSkillPort(Protocol):

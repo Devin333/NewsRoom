@@ -6,6 +6,7 @@ from uuid import uuid4
 
 from framework.harness.memory.ports import MemoryPort
 from framework.harness.mcp.policy import MCPToolRequest
+from framework.harness.mcp.ports import MCPToolPort
 from framework.harness.rag.answer_gate import RAGAnswerGate, unsupported_claims_from_answer_gate
 from framework.harness.rag.answer_worker import AnswerWorkerPort
 from framework.harness.rag.context_pack_assembler import RAGContextPackAssembler
@@ -94,7 +95,7 @@ class BoundedRAGSessionController(RAGSessionController):
         *,
         retrieval: RetrievalPort,
         memory: MemoryPort | None = None,
-        tool_port: Any | None = None,
+        tool_port: MCPToolPort | None = None,
         planner: RAGPlanner | None = None,
         source_verifier: SourceVerifier | None = None,
         context_pack_assembler: RAGContextPackAssembler | None = None,
@@ -662,7 +663,6 @@ class BoundedRAGSessionController(RAGSessionController):
             request = MCPToolRequest(
                 tool_name=str(step.metadata["tool_name"]),
                 arguments={"source_refs": list(step.source_refs), "query": step.query},
-                approved=bool(step.metadata.get("approved", False)),
                 timeout_seconds=step.timeout_seconds,
                 metadata={"rag_step_id": step.step_id},
             )

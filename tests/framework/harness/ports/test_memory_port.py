@@ -3,7 +3,7 @@ from __future__ import annotations
 from framework.harness import FakeMemoryPort, MemoryWriteCandidate, MemoryWriteStatus
 
 
-def test_memory_candidate_is_not_committed_until_harness_approves() -> None:
+def test_memory_port_exposes_candidate_only_write_surface() -> None:
     memory = FakeMemoryPort()
     candidate = MemoryWriteCandidate(
         candidate_id="memory-candidate-1",
@@ -15,9 +15,5 @@ def test_memory_candidate_is_not_committed_until_harness_approves() -> None:
     proposed = memory.propose_write(candidate)
 
     assert proposed.status == MemoryWriteStatus.PROPOSED
-    assert memory.committed == {}
-
-    committed = memory.commit_write(proposed)
-
-    assert committed.status == MemoryWriteStatus.COMMITTED
-    assert memory.committed["memory-candidate-1"].content["repair"] == "prefer source refs"
+    assert memory.proposed["memory-candidate-1"].content["repair"] == "prefer source refs"
+    assert not hasattr(memory, "commit_write")
