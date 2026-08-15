@@ -103,7 +103,7 @@ def test_control_node_contract_cannot_carry_executable_bindings() -> None:
 def test_research_workers_and_gates_do_not_own_harness_routing() -> None:
     worker_and_gate_sources = (
         Path("business/research/application/single_paper_runtime.py"),
-        Path("business/research/workflows/paper_analysis_gates.py"),
+        Path("business/research/graphs/gates.py"),
     )
     violations: list[str] = []
 

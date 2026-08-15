@@ -6,7 +6,7 @@ import pytest
 
 from framework.harness import DeterministicGate
 
-from business.research.workflows.paper_analysis_gates import (
+from business.research.graphs.gates import (
     PAPER_ANALYSIS_GATE_REFERENCES,
     build_paper_analysis_gate_registry,
 )

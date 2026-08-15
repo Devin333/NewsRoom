@@ -7,7 +7,9 @@ from pathlib import Path
 import pytest
 
 import business.research.workflows as research_workflows
-from business.research.workflows import build_paper_analysis_workflow_spec
+from business.research.workflows.paper_analysis_workflow import (
+    build_paper_analysis_workflow_spec,
+)
 from framework.harness.control_plane.gate_registry import GateReference
 from framework.harness.graph import HarnessWorkerType
 

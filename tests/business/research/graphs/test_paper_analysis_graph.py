@@ -22,7 +22,7 @@ from business.research.ports.artifact_publication import (
     RESEARCH_ARTIFACT_EFFECT_KIND,
     RESEARCH_ARTIFACT_HANDLER_REF,
 )
-from business.research.workflows.paper_analysis_gates import (
+from business.research.graphs.gates import (
     build_paper_analysis_gate_registry,
 )
 from framework.harness.graph import (

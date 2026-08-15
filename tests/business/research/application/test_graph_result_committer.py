@@ -10,7 +10,7 @@ from business.research.application.graph_result_committer import (
     ResearchGraphResultRequestFactory,
     ResearchGraphResultShadowObserver,
 )
-from business.research.workflows import (
+from business.research.workflows.paper_analysis_workflow import (
     build_dynamic_paper_analysis_workflow_spec,
     build_paper_analysis_workflow_spec,
 )

@@ -25,7 +25,7 @@ from business.research.application.single_paper_runtime import (
     _transcript_from_events,
 )
 from business.research.domain import PaperSourceRecord
-from business.research.workflows.paper_analysis_gates import PAPER_ANALYSIS_GATE_REFERENCES
+from business.research.graphs import PAPER_ANALYSIS_GATE_REFERENCES
 from infrastructure.research import ResearchDocumentCompilerAdapter
 from tests.business.research.fakes import (
     FakeGithubRepositoryPort,

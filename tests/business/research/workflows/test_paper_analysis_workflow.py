@@ -4,11 +4,11 @@ from business.research.ports.artifact_publication import (
     RESEARCH_ARTIFACT_EFFECT_KIND,
     RESEARCH_ARTIFACT_HANDLER_REF,
 )
-from business.research.workflows import build_paper_analysis_workflow_spec
 from business.research.workflows.paper_analysis_workflow import (
     RESEARCH_ARTIFACT_NOT_REQUIRED_EVIDENCE_REF,
     RESEARCH_ARTIFACT_TERMINAL_POLICY_ID,
     RESEARCH_ARTIFACT_TERMINAL_POLICY_VERSION,
+    build_paper_analysis_workflow_spec,
 )
 
 

@@ -87,8 +87,8 @@ from business.research.services import (
     ResearchRAGPolicyBuilder,
 )
 from business.research.taxonomy import TaxonomyAssignment, TaxonomyAssignmentBuilder, TaxonomyCandidate, TaxonomyRegistry
-from business.research.workflows import (
-    build_paper_analysis_gate_registry,
+from business.research.graphs import build_paper_analysis_gate_registry
+from business.research.workflows.paper_analysis_workflow import (
     build_dynamic_paper_analysis_workflow_spec,
     build_paper_analysis_workflow_spec,
 )

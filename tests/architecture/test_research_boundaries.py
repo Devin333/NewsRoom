@@ -1,6 +1,10 @@
 from __future__ import annotations
 
-from tests.architecture._helpers import PROJECT_ROOT, forbidden_imports
+from tests.architecture._helpers import (
+    PROJECT_ROOT,
+    forbidden_imports,
+    imported_modules,
+)
 
 
 def test_research_does_not_depend_on_legacy_or_interface_layers() -> None:
@@ -37,5 +41,29 @@ def test_research_graphs_do_not_depend_on_legacy_orchestration() -> None:
             "framework.workflow",
         ),
     )
+
+    assert violations == []
+
+
+def test_legacy_research_workflow_surface_is_declaration_only() -> None:
+    legacy_root = PROJECT_ROOT / "business" / "research" / "workflows"
+    assert {path.name for path in legacy_root.glob("*.py")} == {
+        "__init__.py",
+        "paper_analysis_workflow.py",
+    }
+
+    package_source = (legacy_root / "__init__.py").read_text(encoding="utf-8")
+    assert "from business.research" not in package_source
+    assert "__all__: list[str] = []" in package_source
+
+    allowed = "business.research.workflows.paper_analysis_workflow"
+    violations = [
+        f"{path.relative_to(PROJECT_ROOT).as_posix()}: {module}"
+        for root_name in ("business", "interfaces")
+        for path in (PROJECT_ROOT / root_name).rglob("*.py")
+        for module in imported_modules(path)
+        if module.startswith("business.research.workflows")
+        and module != allowed
+    ]
 
     assert violations == []

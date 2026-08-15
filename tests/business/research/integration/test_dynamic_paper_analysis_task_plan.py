@@ -15,17 +15,19 @@ from business.research.application import (
 from business.research.application.single_paper_runtime import (
     ResearchSinglePaperRuntime,
 )
-from business.research.workflows import (
+from business.research.graphs import (
     RESEARCH_DYNAMIC_CAPABILITIES,
     RESEARCH_DYNAMIC_STAGE_ID,
     RESEARCH_DYNAMIC_SUBAGENT_IDS,
     ResearchAnalysisPlanCandidateBuilder,
     ResearchAnalysisTaskPlanStageWorker,
-    build_dynamic_paper_analysis_workflow_spec,
     build_research_analysis_capability_registry,
     build_research_analysis_task_gate_registry,
     build_research_analysis_task_plan_policy,
     build_paper_analysis_gate_registry,
+)
+from business.research.workflows.paper_analysis_workflow import (
+    build_dynamic_paper_analysis_workflow_spec,
 )
 from framework.harness import (
     ContextEnvelope,

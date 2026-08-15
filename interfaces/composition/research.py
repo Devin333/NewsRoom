@@ -140,17 +140,19 @@ from infrastructure.storage.harness import (
     FilesystemSubAgentTranscriptStore,
     SQLiteHarnessSideEffectStore,
 )
-from business.research.workflows import (
+from business.research.graphs import (
     RESEARCH_DYNAMIC_CAPABILITIES,
     RESEARCH_DYNAMIC_STAGE_ID,
     RESEARCH_DYNAMIC_SUBAGENT_IDS,
-    build_dynamic_paper_analysis_workflow_spec,
     build_paper_analysis_gate_registry,
     build_research_analysis_capability_registry,
     build_research_analysis_task_gate_registry,
     build_research_analysis_task_plan_policy,
     ResearchAnalysisTaskPlanStageWorker,
     ResearchAnalysisPlanCandidateBuilder,
+)
+from business.research.workflows.paper_analysis_workflow import (
+    build_dynamic_paper_analysis_workflow_spec,
 )
 from interfaces.composition.research_errors import (
     ResearchCapability,

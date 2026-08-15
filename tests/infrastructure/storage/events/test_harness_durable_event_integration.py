@@ -6,7 +6,7 @@ from datetime import UTC, datetime
 import pytest
 from cryptography.fernet import Fernet
 
-from business.research.workflows.paper_analysis_gates import (
+from business.research.graphs import (
     build_paper_analysis_gate_registry,
 )
 from framework.events import (

@@ -2,10 +2,12 @@ from __future__ import annotations
 
 from dataclasses import replace
 
-from business.research.workflows import (
+from business.research.graphs import (
+    build_research_analysis_task_plan_policy,
+)
+from business.research.workflows.paper_analysis_workflow import (
     build_dynamic_paper_analysis_workflow_spec,
     build_paper_analysis_workflow_spec,
-    build_research_analysis_task_plan_policy,
 )
 from framework.harness.graph import HarnessWorkerType
 from framework.harness.workflow import HarnessWorkflowGraphCompiler

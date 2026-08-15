@@ -4,7 +4,7 @@ from dataclasses import replace
 
 import pytest
 
-from business.research.workflows import (
+from business.research.graphs import (
     RESEARCH_DYNAMIC_AGGREGATOR_REF,
     RESEARCH_DYNAMIC_CAPABILITIES,
     RESEARCH_DYNAMIC_GATE_REFS,
@@ -15,12 +15,14 @@ from business.research.workflows import (
     RESEARCH_DYNAMIC_WORKER_CONTRACT_REFS,
     RESEARCH_DYNAMIC_WORKER_REFS,
     ResearchAnalysisPlanCandidateBuilder,
-    build_dynamic_paper_analysis_workflow_spec,
     build_paper_analysis_gate_registry,
     build_research_analysis_capability_registry,
     build_research_analysis_task_plan_aggregator,
     build_research_analysis_task_plan_policy,
     validate_research_analysis_candidate,
+)
+from business.research.workflows.paper_analysis_workflow import (
+    build_dynamic_paper_analysis_workflow_spec,
 )
 from framework.harness.control_plane.errors import HarnessValidationError
 from framework.harness.task_plan import (

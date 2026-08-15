@@ -18,7 +18,7 @@ from business.research.application.single_paper_runtime import (
     ResearchAnalysisResult,
     ResearchSinglePaperRuntime,
 )
-from business.research.workflows import PAPER_ANALYSIS_GATE_REFERENCES
+from business.research.graphs import PAPER_ANALYSIS_GATE_REFERENCES
 from framework.harness import HarnessEventType, HarnessReplayReader
 from framework.llm import (
     LOCAL_STRUCTURED_OUTPUT_DIALECT,
