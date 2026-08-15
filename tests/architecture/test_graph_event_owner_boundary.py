@@ -8,6 +8,11 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 EVENT_MIGRATION_SERVICE = (
     PROJECT_ROOT / "interfaces" / "services" / "event_migration_service.py"
 )
+GRAPH_PHASE_CONTRACT = PROJECT_ROOT / "framework" / "events" / "graph_phase.py"
+ACTIVE_PHASE_WRITERS = (
+    PROJECT_ROOT / "framework" / "harness" / "control_plane" / "harness.py",
+    PROJECT_ROOT / "framework" / "harness" / "control_plane" / "durable_events.py",
+)
 
 
 def test_event_migration_service_does_not_import_workflow_projection() -> None:
@@ -50,6 +55,28 @@ def test_event_projection_mechanics_are_owned_by_framework_events() -> None:
 
     assert "EventProjectionExporter" in owner_classes
     assert legacy_bases == {"EventProjectionExporter"}
+
+
+def test_graph_phase_transition_contract_is_event_owned_and_inactive() -> None:
+    source = GRAPH_PHASE_CONTRACT.read_text(encoding="utf-8")
+    tree = ast.parse(source, filename=str(GRAPH_PHASE_CONTRACT))
+
+    assert "class GraphPhaseTransitionRecord" in source
+    assert "class GraphRunIdentity" not in source
+    assert "GraphEventContext" in source
+    assert [
+        module
+        for node in ast.walk(tree)
+        for module in _imported_modules(node)
+        if module == "framework.workflow"
+        or module.startswith("framework.workflow.")
+        or module == "framework.harness"
+        or module.startswith("framework.harness.")
+    ] == []
+    for writer in ACTIVE_PHASE_WRITERS:
+        writer_source = writer.read_text(encoding="utf-8")
+        assert "GraphPhaseTransitionRecord" not in writer_source
+        assert "GRAPH_PHASE_TRANSITION_SCHEMA" not in writer_source
 
 
 def _imported_modules(node: ast.AST) -> tuple[str, ...]:

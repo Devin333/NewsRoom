@@ -101,6 +101,12 @@ from framework.events.projection import (
     project_canonical_event,
     project_graph_event,
 )
+from framework.events.graph_phase import (
+    GRAPH_PHASE_TRANSITION_SCHEMA,
+    GraphExecutionPhase,
+    GraphPhaseBoundary,
+    GraphPhaseTransitionRecord,
+)
 from framework.events.recorder import (
     EventRecorderProtocol,
     InMemoryEventRecorder,
@@ -519,6 +525,7 @@ __all__ = [
     "GRAPH_EVENT_CONTEXT_EXTENSION",
     "GRAPH_EVENT_CONTEXT_SCHEMA",
     "GRAPH_EVENT_PROJECTION_SCHEMA",
+    "GRAPH_PHASE_TRANSITION_SCHEMA",
     "GraphEventContext",
     "GraphEventHistoryDiagnostic",
     "GraphEventHistoryDiagnosticCode",
@@ -528,6 +535,9 @@ __all__ = [
     "GraphEventProjectionApplicationResult",
     "GraphEventProjectionApplicationStatus",
     "GraphEventProjectionExporter",
+    "GraphExecutionPhase",
+    "GraphPhaseBoundary",
+    "GraphPhaseTransitionRecord",
     "GraphRunIdentity",
     "InMemoryEventBus",
     "InMemoryEventRecorder",
