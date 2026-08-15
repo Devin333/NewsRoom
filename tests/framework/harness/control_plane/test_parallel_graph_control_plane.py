@@ -45,10 +45,8 @@ from framework.harness.graph.bindings import (
     HarnessRuntimeBindingAuthority,
     HarnessWorkerBinding,
 )
-from framework.harness.workflow.validation import (
-    HarnessGraphPreflight,
-    HarnessGraphPreflightPolicy,
-)
+from framework.harness.graph.validation import HarnessGraphPreflightPolicy
+from framework.harness.workflow.validation import HarnessGraphPreflight
 
 
 _CREATED_AT = datetime(2026, 7, 31, 4, 0, tzinfo=UTC)

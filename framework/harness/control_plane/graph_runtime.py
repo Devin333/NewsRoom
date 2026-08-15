@@ -41,7 +41,7 @@ from framework.harness.graph.model import (
     HarnessContractReference,
     NormalizedHarnessGraph,
 )
-from framework.harness.workflow.validation import HarnessGraphPreflightPolicy
+from framework.harness.graph.validation import HarnessGraphPreflightPolicy
 from framework.harness.graph.versioning import HARNESS_GRAPH_RUNTIME_VERSION
 from framework.shared.time import ensure_utc, format_datetime
 

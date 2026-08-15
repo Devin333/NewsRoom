@@ -12,12 +12,12 @@ from framework.harness.graph.model import (
     HarnessGraphNodeKind,
     NormalizedHarnessGraph,
 )
-from framework.harness.workflow.validation.models import (
+from framework.harness.graph.validation.models import (
     HarnessGraphDiagnostic,
     HarnessGraphValidationPhase,
     diagnostic,
 )
-from framework.harness.workflow.validation.policy import HarnessGraphPreflightPolicy
+from framework.harness.graph.validation.policy import HarnessGraphPreflightPolicy
 
 
 @dataclass(frozen=True, slots=True)

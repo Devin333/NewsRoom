@@ -48,10 +48,8 @@ from framework.harness.graph.dsl import (
 from framework.harness.graph.model import HarnessControlNode
 from framework.harness.workflow.spec import HarnessWorkflowSpec
 from framework.harness.graph.activity import HarnessStepSpec
-from framework.harness.workflow.validation import (
-    HarnessGraphPreflight,
-    HarnessGraphPreflightPolicy,
-)
+from framework.harness.graph.validation import HarnessGraphPreflightPolicy
+from framework.harness.workflow.validation import HarnessGraphPreflight
 from framework.harness.workers.result import HarnessWorkerResult
 
 

@@ -27,7 +27,7 @@ from framework.harness.graph.model import (
     NormalizedHarnessGraph,
 )
 from framework.harness.workflow.spec import HarnessWorkflowSpec
-from framework.harness.workflow.validation.registry import HarnessGraphRegistrySnapshot
+from framework.harness.graph.validation.registry import HarnessGraphRegistrySnapshot
 
 
 @dataclass(frozen=True, slots=True)

@@ -85,10 +85,8 @@ from framework.harness.graph.model import (
 )
 from framework.harness.workflow.spec import HarnessWorkflowSpec
 from framework.harness.graph.activity import HarnessRetryPolicy, HarnessStepSpec
-from framework.harness.workflow.validation import (
-    HarnessGraphPreflight,
-    HarnessGraphPreflightPolicy,
-)
+from framework.harness.graph.validation import HarnessGraphPreflightPolicy
+from framework.harness.workflow.validation import HarnessGraphPreflight
 from framework.harness.workers.result import (
     HarnessWorkerResult,
     harness_worker_candidate_ref,

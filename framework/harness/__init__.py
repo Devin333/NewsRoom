@@ -604,16 +604,18 @@ from framework.harness.graph import (
     WaitKind,
     WaitTimeoutPolicy,
 )
+from framework.harness.graph.validation import (
+    HarnessGraphDiagnostic,
+    HarnessGraphPreflightPolicy,
+    HarnessGraphRegistrySnapshot,
+    HarnessGraphValidationPhase,
+    HarnessGraphValidationResult,
+)
 from framework.harness.workflow import (
     DEFAULT_HARNESS_GRAPH_SCHEMA_REGISTRY,
     HarnessGraphCompileResult,
-    HarnessGraphDiagnostic,
     HarnessGraphPreflight,
-    HarnessGraphPreflightPolicy,
-    HarnessGraphRegistrySnapshot,
     HarnessGraphSchemaRegistry,
-    HarnessGraphValidationPhase,
-    HarnessGraphValidationResult,
     HarnessPreparedGraph,
     HarnessRouteKind,
     HarnessRoutingRule,

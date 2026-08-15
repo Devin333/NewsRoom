@@ -4,49 +4,28 @@
       "business/research/workflows/paper_analysis_workflow.py|<module>|framework.harness.workflow|HarnessWorkflowSpec": 1,
       "framework/__init__.py|<module>|framework.workflow.runtime.run_result|RunResult": 1,
       "framework/__init__.py|<module>|framework.workflow.runtime.runner|WorkflowRunner": 1,
-      "framework/harness/__init__.py|<module>|framework.harness.workflow|DEFAULT_HARNESS_GRAPH_SCHEMA_REGISTRY,HarnessGraphCompileResult,HarnessGraphDiagnostic,HarnessGraphPreflight,HarnessGraphPreflightPolicy,HarnessGraphRegistrySnapshot,HarnessGraphSchemaRegistry,HarnessGraphValidationPhase,HarnessGraphValidationResult,HarnessPreparedGraph,HarnessRouteKind,HarnessRoutingRule,HarnessWorkflowContractReader,HarnessWorkflowGraphCompiler,HarnessWorkflowSpec": 1,
-      "framework/harness/control_plane/graph_application.py|<module>|framework.harness.workflow.validation|HarnessGraphPreflightPolicy": 1,
+      "framework/harness/__init__.py|<module>|framework.harness.workflow|DEFAULT_HARNESS_GRAPH_SCHEMA_REGISTRY,HarnessGraphCompileResult,HarnessGraphPreflight,HarnessGraphSchemaRegistry,HarnessPreparedGraph,HarnessRouteKind,HarnessRoutingRule,HarnessWorkflowContractReader,HarnessWorkflowGraphCompiler,HarnessWorkflowSpec": 1,
       "framework/harness/control_plane/graph_checkpoint.py|<module>|framework.harness.workflow.versioning|LEGACY_CHECKPOINT_SCHEMA,LEGACY_EVENT_SCHEMA,LEGACY_STATE_SCHEMA": 1,
-      "framework/harness/control_plane/graph_runtime.py|<module>|framework.harness.workflow.validation|HarnessGraphPreflightPolicy": 1,
       "framework/harness/control_plane/graph_state.py|<module>|framework.harness.workflow.versioning|LEGACY_STATE_SCHEMA": 1,
       "framework/harness/control_plane/harness.py|<module>|framework.harness.workflow.compiler|HarnessWorkflowGraphCompiler": 1,
       "framework/harness/control_plane/harness.py|<module>|framework.harness.workflow.runtime_resolution|HarnessGraphRuntimeResolver,HarnessResolvedRuntimeBindings": 1,
       "framework/harness/control_plane/harness.py|<module>|framework.harness.workflow.spec|HarnessRouteKind": 1,
-      "framework/harness/control_plane/harness.py|<module>|framework.harness.workflow.validation|HarnessGraphPreflight,HarnessGraphPreflightPolicy": 1,
+      "framework/harness/control_plane/harness.py|<module>|framework.harness.workflow.validation|HarnessGraphPreflight": 1,
       "framework/harness/control_plane/state.py|<module>|framework.harness.workflow.spec|HarnessWorkflowSpec": 1,
       "framework/harness/workflow/__init__.py|<module>|framework.harness.workflow.compiler|HarnessGraphCompileResult,HarnessWorkflowGraphCompiler": 1,
       "framework/harness/workflow/__init__.py|<module>|framework.harness.workflow.reader|HarnessWorkflowContractReader": 1,
       "framework/harness/workflow/__init__.py|<module>|framework.harness.workflow.spec|HarnessRouteKind,HarnessRoutingRule,HarnessWorkflowSpec": 1,
-      "framework/harness/workflow/__init__.py|<module>|framework.harness.workflow.validation|HarnessGraphDiagnostic,HarnessGraphPreflight,HarnessGraphPreflightPolicy,HarnessGraphRegistrySnapshot,HarnessGraphValidationPhase,HarnessGraphValidationResult,HarnessPreparedGraph,graph_contract_references": 1,
+      "framework/harness/workflow/__init__.py|<module>|framework.harness.workflow.validation|HarnessGraphPreflight,HarnessPreparedGraph": 1,
       "framework/harness/workflow/__init__.py|<module>|framework.harness.workflow.versioning|DEFAULT_HARNESS_GRAPH_SCHEMA_REGISTRY,HarnessGraphSchemaRegistry": 1,
       "framework/harness/workflow/compiler.py|<module>|framework.harness.workflow.spec|HarnessRouteKind,HarnessRoutingRule,HarnessWorkflowSpec": 1,
       "framework/harness/workflow/reader.py|<module>|framework.harness.workflow.spec|HarnessRoutingRule,HarnessWorkflowSpec": 1,
       "framework/harness/workflow/reader.py|<module>|framework.harness.workflow.versioning|DEFAULT_HARNESS_GRAPH_SCHEMA_REGISTRY,HarnessGraphContractKind,HarnessGraphSchemaRegistry,LEGACY_WORKFLOW_SCHEMA": 1,
       "framework/harness/workflow/runtime_resolution.py|<module>|framework.harness.workflow.spec|HarnessWorkflowSpec": 1,
-      "framework/harness/workflow/runtime_resolution.py|<module>|framework.harness.workflow.validation.registry|HarnessGraphRegistrySnapshot": 1,
       "framework/harness/workflow/spec.py|<module>|framework.harness.workflow.versioning|LEGACY_WORKFLOW_SCHEMA": 1,
-      "framework/harness/workflow/validation/__init__.py|<module>|framework.harness.workflow.validation.dataflow|validate_dataflow": 1,
-      "framework/harness/workflow/validation/__init__.py|<module>|framework.harness.workflow.validation.models|HarnessGraphDiagnostic,HarnessGraphValidationPhase,HarnessGraphValidationResult": 1,
-      "framework/harness/workflow/validation/__init__.py|<module>|framework.harness.workflow.validation.policy|HarnessGraphPreflightPolicy,validate_policy": 1,
       "framework/harness/workflow/validation/__init__.py|<module>|framework.harness.workflow.validation.preflight|HarnessGraphPreflight,HarnessPreparedGraph": 1,
-      "framework/harness/workflow/validation/__init__.py|<module>|framework.harness.workflow.validation.registry|HarnessGraphRegistrySnapshot,graph_contract_references,validate_registry": 1,
-      "framework/harness/workflow/validation/__init__.py|<module>|framework.harness.workflow.validation.semantic|validate_semantics": 1,
-      "framework/harness/workflow/validation/__init__.py|<module>|framework.harness.workflow.validation.structural|validate_structure": 1,
-      "framework/harness/workflow/validation/dataflow.py|<module>|framework.harness.workflow.validation.models|HarnessGraphDiagnostic,HarnessGraphValidationPhase,diagnostic": 1,
-      "framework/harness/workflow/validation/policy.py|<module>|framework.harness.workflow.validation.models|HarnessGraphDiagnostic,HarnessGraphValidationPhase,diagnostic": 1,
       "framework/harness/workflow/validation/preflight.py|<module>|framework.harness.workflow.compiler|HarnessGraphCompileResult,HarnessWorkflowGraphCompiler": 1,
       "framework/harness/workflow/validation/preflight.py|<module>|framework.harness.workflow.spec|HarnessWorkflowSpec": 1,
-      "framework/harness/workflow/validation/preflight.py|<module>|framework.harness.workflow.validation.dataflow|validate_dataflow": 1,
-      "framework/harness/workflow/validation/preflight.py|<module>|framework.harness.workflow.validation.models|HarnessGraphDiagnostic,HarnessGraphValidationPhase,HarnessGraphValidationResult": 1,
-      "framework/harness/workflow/validation/preflight.py|<module>|framework.harness.workflow.validation.policy|HarnessGraphPreflightPolicy,validate_policy": 1,
-      "framework/harness/workflow/validation/preflight.py|<module>|framework.harness.workflow.validation.registry|HarnessGraphRegistrySnapshot,validate_registry": 1,
-      "framework/harness/workflow/validation/preflight.py|<module>|framework.harness.workflow.validation.semantic|validate_semantics": 1,
-      "framework/harness/workflow/validation/preflight.py|<module>|framework.harness.workflow.validation.structural|validate_structure": 1,
       "framework/harness/workflow/validation/preflight.py|<module>|framework.harness.workflow.versioning|DEFAULT_HARNESS_GRAPH_SCHEMA_REGISTRY,HarnessGraphContractKind": 1,
-      "framework/harness/workflow/validation/registry.py|<module>|framework.harness.workflow.validation.models|HarnessGraphDiagnostic,HarnessGraphValidationPhase,diagnostic": 1,
-      "framework/harness/workflow/validation/registry.py|<module>|framework.harness.workflow.validation.policy|HarnessGraphPreflightPolicy": 1,
-      "framework/harness/workflow/validation/semantic.py|<module>|framework.harness.workflow.validation.models|HarnessGraphDiagnostic,HarnessGraphValidationPhase,diagnostic": 1,
-      "framework/harness/workflow/validation/structural.py|<module>|framework.harness.workflow.validation.models|HarnessGraphDiagnostic,HarnessGraphValidationPhase,diagnostic": 1,
       "framework/workflow/__init__.py|<module>|framework.workflow.buffer|BufferDiff,BufferLineage,BufferValueSchema,BufferWriteRecord,DataBuffer,DataBufferDiff,DataBufferKeyError,DataBufferPermissionError,DataBufferReadPermissionError,DataBufferSchemaError,DataBufferSnapshot,DataBufferWritePermissionError,RedactionStatus,ScopedDataBuffer,StepDataScope,StepScopedDataBufferView,stable_hash,stable_json_dumps,step_scope_from_spec": 1,
       "framework/workflow/__init__.py|<module>|framework.workflow.checkpoint|CHECKPOINT_SCHEMA_VERSION,CHECKPOINT_SCHEMA_VERSION_V0,CheckpointCompatibilityResult,CheckpointMigration,CheckpointMigrationRegistry,CheckpointNotFoundError,CheckpointV0ToV1Migration,HumanReviewResumeDecision,LocalJsonCheckpointStore,PartialArtifactRecoveryReport,ResumeMode,ResumePatchValidationResult,WorkflowCheckpoint,WorkflowCheckpointEnvelope,WorkflowCheckpointStore,WorkflowResumePlan,WorkflowResumePlanner,WorkflowResumeRequest,attach_checkpoint_checksum,check_checkpoint_compatibility,checkpoint_checksum_payload,compute_checkpoint_checksum,default_checkpoint_migration_registry,envelope_from_checkpoint,envelope_from_payload,envelope_to_checkpoint,envelope_to_payload,inspect_checkpoint_artifacts,validate_approval_resume_binding,validate_resume_patch,verify_checkpoint_checksum": 1,
       "framework/workflow/__init__.py|<module>|framework.workflow.compiler|CompiledWorkflowGraph,StepReadWritePlan,WorkflowCompileError,WorkflowCompileIssueCode,WorkflowCompileOptions,WorkflowCompileResult,WorkflowCompileSeverity,WorkflowCompileWarning,WorkflowCompiler,WorkflowReadWritePlan": 1,
@@ -412,13 +391,7 @@
       "framework/harness/workflow/runtime_resolution.py": 1,
       "framework/harness/workflow/spec.py": 1,
       "framework/harness/workflow/validation/__init__.py": 1,
-      "framework/harness/workflow/validation/dataflow.py": 1,
-      "framework/harness/workflow/validation/models.py": 1,
-      "framework/harness/workflow/validation/policy.py": 1,
       "framework/harness/workflow/validation/preflight.py": 1,
-      "framework/harness/workflow/validation/registry.py": 1,
-      "framework/harness/workflow/validation/semantic.py": 1,
-      "framework/harness/workflow/validation/structural.py": 1,
       "framework/harness/workflow/versioning.py": 1,
       "framework/workflow/__init__.py": 1,
       "framework/workflow/buffer/__init__.py": 1,
@@ -535,20 +508,14 @@
       "framework/harness/control_plane/graph_evaluator.py|WorkflowGraphEvaluator": 1,
       "framework/harness/workflow/__init__.py|DEFAULT_HARNESS_GRAPH_SCHEMA_REGISTRY": 1,
       "framework/harness/workflow/__init__.py|HarnessGraphCompileResult": 1,
-      "framework/harness/workflow/__init__.py|HarnessGraphDiagnostic": 1,
       "framework/harness/workflow/__init__.py|HarnessGraphPreflight": 1,
-      "framework/harness/workflow/__init__.py|HarnessGraphPreflightPolicy": 1,
-      "framework/harness/workflow/__init__.py|HarnessGraphRegistrySnapshot": 1,
       "framework/harness/workflow/__init__.py|HarnessGraphSchemaRegistry": 1,
-      "framework/harness/workflow/__init__.py|HarnessGraphValidationPhase": 1,
-      "framework/harness/workflow/__init__.py|HarnessGraphValidationResult": 1,
       "framework/harness/workflow/__init__.py|HarnessPreparedGraph": 1,
       "framework/harness/workflow/__init__.py|HarnessRouteKind": 1,
       "framework/harness/workflow/__init__.py|HarnessRoutingRule": 1,
       "framework/harness/workflow/__init__.py|HarnessWorkflowContractReader": 1,
       "framework/harness/workflow/__init__.py|HarnessWorkflowGraphCompiler": 1,
       "framework/harness/workflow/__init__.py|HarnessWorkflowSpec": 1,
-      "framework/harness/workflow/__init__.py|graph_contract_references": 1,
       "framework/harness/workflow/compiler.py|HarnessGraphCompileResult": 1,
       "framework/harness/workflow/compiler.py|HarnessWorkflowGraphCompiler": 1,
       "framework/harness/workflow/reader.py|HarnessWorkflowContractReader": 1,
@@ -557,33 +524,10 @@
       "framework/harness/workflow/spec.py|HarnessRouteKind": 1,
       "framework/harness/workflow/spec.py|HarnessRoutingRule": 1,
       "framework/harness/workflow/spec.py|HarnessWorkflowSpec": 1,
-      "framework/harness/workflow/validation/__init__.py|HarnessGraphDiagnostic": 1,
       "framework/harness/workflow/validation/__init__.py|HarnessGraphPreflight": 1,
-      "framework/harness/workflow/validation/__init__.py|HarnessGraphPreflightPolicy": 1,
-      "framework/harness/workflow/validation/__init__.py|HarnessGraphRegistrySnapshot": 1,
-      "framework/harness/workflow/validation/__init__.py|HarnessGraphValidationPhase": 1,
-      "framework/harness/workflow/validation/__init__.py|HarnessGraphValidationResult": 1,
       "framework/harness/workflow/validation/__init__.py|HarnessPreparedGraph": 1,
-      "framework/harness/workflow/validation/__init__.py|graph_contract_references": 1,
-      "framework/harness/workflow/validation/__init__.py|validate_dataflow": 1,
-      "framework/harness/workflow/validation/__init__.py|validate_policy": 1,
-      "framework/harness/workflow/validation/__init__.py|validate_registry": 1,
-      "framework/harness/workflow/validation/__init__.py|validate_semantics": 1,
-      "framework/harness/workflow/validation/__init__.py|validate_structure": 1,
-      "framework/harness/workflow/validation/dataflow.py|validate_dataflow": 1,
-      "framework/harness/workflow/validation/models.py|HarnessGraphDiagnostic": 1,
-      "framework/harness/workflow/validation/models.py|HarnessGraphValidationPhase": 1,
-      "framework/harness/workflow/validation/models.py|HarnessGraphValidationResult": 1,
-      "framework/harness/workflow/validation/models.py|diagnostic": 1,
-      "framework/harness/workflow/validation/policy.py|HarnessGraphPreflightPolicy": 1,
-      "framework/harness/workflow/validation/policy.py|validate_policy": 1,
       "framework/harness/workflow/validation/preflight.py|HarnessGraphPreflight": 1,
       "framework/harness/workflow/validation/preflight.py|HarnessPreparedGraph": 1,
-      "framework/harness/workflow/validation/registry.py|HarnessGraphRegistrySnapshot": 1,
-      "framework/harness/workflow/validation/registry.py|graph_contract_references": 1,
-      "framework/harness/workflow/validation/registry.py|validate_registry": 1,
-      "framework/harness/workflow/validation/semantic.py|validate_semantics": 1,
-      "framework/harness/workflow/validation/structural.py|validate_structure": 1,
       "framework/harness/workflow/versioning.py|DEFAULT_HARNESS_GRAPH_SCHEMA_REGISTRY": 1,
       "framework/harness/workflow/versioning.py|HARNESS_CONDITION_POLICY_VERSION": 1,
       "framework/harness/workflow/versioning.py|HARNESS_GRAPH_CHECKPOINT_SCHEMA": 1,
@@ -2277,7 +2221,7 @@
     "framework.workflow",
     "framework.harness.workflow"
   ],
-  "generation": 5,
+  "generation": 6,
   "legacy_schema_ids": [
     "newsroom.harness-checkpoint-legacy/v1",
     "newsroom.harness-decision-legacy/v1",
@@ -6105,9 +6049,531 @@
       "count": 1,
       "generation": 5,
       "key": "framework/harness/workflow/graph.py|graph_node_from_dict"
+    },
+    {
+      "category": "namespace_files",
+      "count": 1,
+      "generation": 6,
+      "key": "framework/harness/workflow/validation/dataflow.py"
+    },
+    {
+      "category": "namespace_files",
+      "count": 1,
+      "generation": 6,
+      "key": "framework/harness/workflow/validation/models.py"
+    },
+    {
+      "category": "namespace_files",
+      "count": 1,
+      "generation": 6,
+      "key": "framework/harness/workflow/validation/policy.py"
+    },
+    {
+      "category": "namespace_files",
+      "count": 1,
+      "generation": 6,
+      "key": "framework/harness/workflow/validation/registry.py"
+    },
+    {
+      "category": "namespace_files",
+      "count": 1,
+      "generation": 6,
+      "key": "framework/harness/workflow/validation/semantic.py"
+    },
+    {
+      "category": "namespace_files",
+      "count": 1,
+      "generation": 6,
+      "key": "framework/harness/workflow/validation/structural.py"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 6,
+      "key": "framework/harness/__init__.py|<module>|framework.harness.workflow|HarnessGraphDiagnostic"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 6,
+      "key": "framework/harness/__init__.py|<module>|framework.harness.workflow|HarnessGraphPreflightPolicy"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 6,
+      "key": "framework/harness/__init__.py|<module>|framework.harness.workflow|HarnessGraphRegistrySnapshot"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 6,
+      "key": "framework/harness/__init__.py|<module>|framework.harness.workflow|HarnessGraphValidationPhase"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 6,
+      "key": "framework/harness/__init__.py|<module>|framework.harness.workflow|HarnessGraphValidationResult"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 6,
+      "key": "framework/harness/control_plane/graph_application.py|<module>|framework.harness.workflow.validation|HarnessGraphPreflightPolicy"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 6,
+      "key": "framework/harness/control_plane/graph_runtime.py|<module>|framework.harness.workflow.validation|HarnessGraphPreflightPolicy"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 6,
+      "key": "framework/harness/control_plane/harness.py|<module>|framework.harness.workflow.validation|HarnessGraphPreflightPolicy"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 6,
+      "key": "framework/harness/workflow/__init__.py|<module>|framework.harness.workflow.validation|HarnessGraphDiagnostic"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 6,
+      "key": "framework/harness/workflow/__init__.py|<module>|framework.harness.workflow.validation|HarnessGraphPreflightPolicy"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 6,
+      "key": "framework/harness/workflow/__init__.py|<module>|framework.harness.workflow.validation|HarnessGraphRegistrySnapshot"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 6,
+      "key": "framework/harness/workflow/__init__.py|<module>|framework.harness.workflow.validation|HarnessGraphValidationPhase"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 6,
+      "key": "framework/harness/workflow/__init__.py|<module>|framework.harness.workflow.validation|HarnessGraphValidationResult"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 6,
+      "key": "framework/harness/workflow/__init__.py|<module>|framework.harness.workflow.validation|graph_contract_references"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 6,
+      "key": "framework/harness/workflow/runtime_resolution.py|<module>|framework.harness.workflow.validation.registry|HarnessGraphRegistrySnapshot"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 6,
+      "key": "framework/harness/workflow/validation/__init__.py|<module>|framework.harness.workflow.validation.dataflow|validate_dataflow"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 6,
+      "key": "framework/harness/workflow/validation/__init__.py|<module>|framework.harness.workflow.validation.models|HarnessGraphDiagnostic"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 6,
+      "key": "framework/harness/workflow/validation/__init__.py|<module>|framework.harness.workflow.validation.models|HarnessGraphValidationPhase"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 6,
+      "key": "framework/harness/workflow/validation/__init__.py|<module>|framework.harness.workflow.validation.models|HarnessGraphValidationResult"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 6,
+      "key": "framework/harness/workflow/validation/__init__.py|<module>|framework.harness.workflow.validation.policy|HarnessGraphPreflightPolicy"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 6,
+      "key": "framework/harness/workflow/validation/__init__.py|<module>|framework.harness.workflow.validation.policy|validate_policy"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 6,
+      "key": "framework/harness/workflow/validation/__init__.py|<module>|framework.harness.workflow.validation.registry|HarnessGraphRegistrySnapshot"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 6,
+      "key": "framework/harness/workflow/validation/__init__.py|<module>|framework.harness.workflow.validation.registry|graph_contract_references"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 6,
+      "key": "framework/harness/workflow/validation/__init__.py|<module>|framework.harness.workflow.validation.registry|validate_registry"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 6,
+      "key": "framework/harness/workflow/validation/__init__.py|<module>|framework.harness.workflow.validation.semantic|validate_semantics"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 6,
+      "key": "framework/harness/workflow/validation/__init__.py|<module>|framework.harness.workflow.validation.structural|validate_structure"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 6,
+      "key": "framework/harness/workflow/validation/dataflow.py|<module>|framework.harness.workflow.validation.models|HarnessGraphDiagnostic"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 6,
+      "key": "framework/harness/workflow/validation/dataflow.py|<module>|framework.harness.workflow.validation.models|HarnessGraphValidationPhase"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 6,
+      "key": "framework/harness/workflow/validation/dataflow.py|<module>|framework.harness.workflow.validation.models|diagnostic"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 6,
+      "key": "framework/harness/workflow/validation/policy.py|<module>|framework.harness.workflow.validation.models|HarnessGraphDiagnostic"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 6,
+      "key": "framework/harness/workflow/validation/policy.py|<module>|framework.harness.workflow.validation.models|HarnessGraphValidationPhase"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 6,
+      "key": "framework/harness/workflow/validation/policy.py|<module>|framework.harness.workflow.validation.models|diagnostic"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 6,
+      "key": "framework/harness/workflow/validation/preflight.py|<module>|framework.harness.workflow.validation.dataflow|validate_dataflow"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 6,
+      "key": "framework/harness/workflow/validation/preflight.py|<module>|framework.harness.workflow.validation.models|HarnessGraphDiagnostic"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 6,
+      "key": "framework/harness/workflow/validation/preflight.py|<module>|framework.harness.workflow.validation.models|HarnessGraphValidationPhase"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 6,
+      "key": "framework/harness/workflow/validation/preflight.py|<module>|framework.harness.workflow.validation.models|HarnessGraphValidationResult"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 6,
+      "key": "framework/harness/workflow/validation/preflight.py|<module>|framework.harness.workflow.validation.policy|HarnessGraphPreflightPolicy"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 6,
+      "key": "framework/harness/workflow/validation/preflight.py|<module>|framework.harness.workflow.validation.policy|validate_policy"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 6,
+      "key": "framework/harness/workflow/validation/preflight.py|<module>|framework.harness.workflow.validation.registry|HarnessGraphRegistrySnapshot"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 6,
+      "key": "framework/harness/workflow/validation/preflight.py|<module>|framework.harness.workflow.validation.registry|validate_registry"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 6,
+      "key": "framework/harness/workflow/validation/preflight.py|<module>|framework.harness.workflow.validation.semantic|validate_semantics"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 6,
+      "key": "framework/harness/workflow/validation/preflight.py|<module>|framework.harness.workflow.validation.structural|validate_structure"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 6,
+      "key": "framework/harness/workflow/validation/registry.py|<module>|framework.harness.workflow.validation.models|HarnessGraphDiagnostic"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 6,
+      "key": "framework/harness/workflow/validation/registry.py|<module>|framework.harness.workflow.validation.models|HarnessGraphValidationPhase"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 6,
+      "key": "framework/harness/workflow/validation/registry.py|<module>|framework.harness.workflow.validation.models|diagnostic"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 6,
+      "key": "framework/harness/workflow/validation/registry.py|<module>|framework.harness.workflow.validation.policy|HarnessGraphPreflightPolicy"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 6,
+      "key": "framework/harness/workflow/validation/semantic.py|<module>|framework.harness.workflow.validation.models|HarnessGraphDiagnostic"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 6,
+      "key": "framework/harness/workflow/validation/semantic.py|<module>|framework.harness.workflow.validation.models|HarnessGraphValidationPhase"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 6,
+      "key": "framework/harness/workflow/validation/semantic.py|<module>|framework.harness.workflow.validation.models|diagnostic"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 6,
+      "key": "framework/harness/workflow/validation/structural.py|<module>|framework.harness.workflow.validation.models|HarnessGraphDiagnostic"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 6,
+      "key": "framework/harness/workflow/validation/structural.py|<module>|framework.harness.workflow.validation.models|HarnessGraphValidationPhase"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 6,
+      "key": "framework/harness/workflow/validation/structural.py|<module>|framework.harness.workflow.validation.models|diagnostic"
+    },
+    {
+      "category": "public_exports",
+      "count": 1,
+      "generation": 6,
+      "key": "framework/harness/workflow/__init__.py|HarnessGraphDiagnostic"
+    },
+    {
+      "category": "public_exports",
+      "count": 1,
+      "generation": 6,
+      "key": "framework/harness/workflow/__init__.py|HarnessGraphPreflightPolicy"
+    },
+    {
+      "category": "public_exports",
+      "count": 1,
+      "generation": 6,
+      "key": "framework/harness/workflow/__init__.py|HarnessGraphRegistrySnapshot"
+    },
+    {
+      "category": "public_exports",
+      "count": 1,
+      "generation": 6,
+      "key": "framework/harness/workflow/__init__.py|HarnessGraphValidationPhase"
+    },
+    {
+      "category": "public_exports",
+      "count": 1,
+      "generation": 6,
+      "key": "framework/harness/workflow/__init__.py|HarnessGraphValidationResult"
+    },
+    {
+      "category": "public_exports",
+      "count": 1,
+      "generation": 6,
+      "key": "framework/harness/workflow/__init__.py|graph_contract_references"
+    },
+    {
+      "category": "public_exports",
+      "count": 1,
+      "generation": 6,
+      "key": "framework/harness/workflow/validation/__init__.py|HarnessGraphDiagnostic"
+    },
+    {
+      "category": "public_exports",
+      "count": 1,
+      "generation": 6,
+      "key": "framework/harness/workflow/validation/__init__.py|HarnessGraphPreflightPolicy"
+    },
+    {
+      "category": "public_exports",
+      "count": 1,
+      "generation": 6,
+      "key": "framework/harness/workflow/validation/__init__.py|HarnessGraphRegistrySnapshot"
+    },
+    {
+      "category": "public_exports",
+      "count": 1,
+      "generation": 6,
+      "key": "framework/harness/workflow/validation/__init__.py|HarnessGraphValidationPhase"
+    },
+    {
+      "category": "public_exports",
+      "count": 1,
+      "generation": 6,
+      "key": "framework/harness/workflow/validation/__init__.py|HarnessGraphValidationResult"
+    },
+    {
+      "category": "public_exports",
+      "count": 1,
+      "generation": 6,
+      "key": "framework/harness/workflow/validation/__init__.py|graph_contract_references"
+    },
+    {
+      "category": "public_exports",
+      "count": 1,
+      "generation": 6,
+      "key": "framework/harness/workflow/validation/__init__.py|validate_dataflow"
+    },
+    {
+      "category": "public_exports",
+      "count": 1,
+      "generation": 6,
+      "key": "framework/harness/workflow/validation/__init__.py|validate_policy"
+    },
+    {
+      "category": "public_exports",
+      "count": 1,
+      "generation": 6,
+      "key": "framework/harness/workflow/validation/__init__.py|validate_registry"
+    },
+    {
+      "category": "public_exports",
+      "count": 1,
+      "generation": 6,
+      "key": "framework/harness/workflow/validation/__init__.py|validate_semantics"
+    },
+    {
+      "category": "public_exports",
+      "count": 1,
+      "generation": 6,
+      "key": "framework/harness/workflow/validation/__init__.py|validate_structure"
+    },
+    {
+      "category": "public_exports",
+      "count": 1,
+      "generation": 6,
+      "key": "framework/harness/workflow/validation/dataflow.py|validate_dataflow"
+    },
+    {
+      "category": "public_exports",
+      "count": 1,
+      "generation": 6,
+      "key": "framework/harness/workflow/validation/models.py|HarnessGraphDiagnostic"
+    },
+    {
+      "category": "public_exports",
+      "count": 1,
+      "generation": 6,
+      "key": "framework/harness/workflow/validation/models.py|HarnessGraphValidationPhase"
+    },
+    {
+      "category": "public_exports",
+      "count": 1,
+      "generation": 6,
+      "key": "framework/harness/workflow/validation/models.py|HarnessGraphValidationResult"
+    },
+    {
+      "category": "public_exports",
+      "count": 1,
+      "generation": 6,
+      "key": "framework/harness/workflow/validation/models.py|diagnostic"
+    },
+    {
+      "category": "public_exports",
+      "count": 1,
+      "generation": 6,
+      "key": "framework/harness/workflow/validation/policy.py|HarnessGraphPreflightPolicy"
+    },
+    {
+      "category": "public_exports",
+      "count": 1,
+      "generation": 6,
+      "key": "framework/harness/workflow/validation/policy.py|validate_policy"
+    },
+    {
+      "category": "public_exports",
+      "count": 1,
+      "generation": 6,
+      "key": "framework/harness/workflow/validation/registry.py|HarnessGraphRegistrySnapshot"
+    },
+    {
+      "category": "public_exports",
+      "count": 1,
+      "generation": 6,
+      "key": "framework/harness/workflow/validation/registry.py|graph_contract_references"
+    },
+    {
+      "category": "public_exports",
+      "count": 1,
+      "generation": 6,
+      "key": "framework/harness/workflow/validation/registry.py|validate_registry"
+    },
+    {
+      "category": "public_exports",
+      "count": 1,
+      "generation": 6,
+      "key": "framework/harness/workflow/validation/semantic.py|validate_semantics"
+    },
+    {
+      "category": "public_exports",
+      "count": 1,
+      "generation": 6,
+      "key": "framework/harness/workflow/validation/structural.py|validate_structure"
     }
   ],
   "schema": "newsroom.graph-only-freeze-baseline/v1",
-  "source_commit": "d6f3075edecf34006469265136a3c5f0e3757103",
-  "source_tree": "b0969b8852b115b5b8603da61017904c11bba1ac"
+  "source_commit": "ffdefb730c2e495e809cba8c1460955e61f8202a",
+  "source_tree": "a9fb8ca9a72ea958f98e6b0f61c915c7588bad38"
 }

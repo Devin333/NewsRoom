@@ -31,12 +31,12 @@ from framework.harness.graph.model import (
 )
 from framework.harness.workflow.spec import HarnessWorkflowSpec
 from framework.harness.graph.activity import HarnessStepSpec
-from framework.harness.workflow.validation import (
-    HarnessGraphPreflight,
+from framework.harness.graph.validation import (
     HarnessGraphPreflightPolicy,
     HarnessGraphRegistrySnapshot,
     graph_contract_references,
 )
+from framework.harness.workflow.validation import HarnessGraphPreflight
 
 
 def test_valid_sequence_graph_passes_every_preflight_phase() -> None:

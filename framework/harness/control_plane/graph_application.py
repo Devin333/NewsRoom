@@ -98,7 +98,7 @@ from framework.harness.graph.model import (
     NormalizedHarnessGraph,
 )
 from framework.harness.graph.dsl import WaitKind
-from framework.harness.workflow.validation import HarnessGraphPreflightPolicy
+from framework.harness.graph.validation import HarnessGraphPreflightPolicy
 from framework.harness.waits.models import (
     HarnessSignalInboxEntry,
     HarnessSignalInboxEntryStatus,

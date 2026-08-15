@@ -16,9 +16,16 @@ _MOVED_MODULES = {
     "dsl.py": "dsl.py",
     "graph.py": "model.py",
     "step.py": "activity.py",
+    "validation/dataflow.py": "validation/dataflow.py",
+    "validation/models.py": "validation/models.py",
+    "validation/policy.py": "validation/policy.py",
+    "validation/registry.py": "validation/registry.py",
+    "validation/semantic.py": "validation/semantic.py",
+    "validation/structural.py": "validation/structural.py",
 }
 _MOVED_IMPORTS = tuple(
-    f"framework.harness.workflow.{name.removesuffix('.py')}"
+    "framework.harness.workflow."
+    + name.removesuffix(".py").replace("/", ".")
     for name in _MOVED_MODULES
 )
 _MOVED_PUBLIC_NAMES = {
@@ -46,7 +53,12 @@ _MOVED_PUBLIC_NAMES = {
     "HarnessGraphEdgeKind",
     "HarnessGraphNode",
     "HarnessGraphNodeKind",
+    "HarnessGraphDiagnostic",
+    "HarnessGraphPreflightPolicy",
+    "HarnessGraphRegistrySnapshot",
     "HarnessGraphSpec",
+    "HarnessGraphValidationPhase",
+    "HarnessGraphValidationResult",
     "HarnessJoinContract",
     "HarnessLoopContract",
     "HarnessMergeContract",
@@ -64,6 +76,12 @@ _MOVED_PUBLIC_NAMES = {
     "Sequence",
     "StepRef",
     "Wait",
+    "graph_contract_references",
+    "validate_dataflow",
+    "validate_policy",
+    "validate_registry",
+    "validate_semantics",
+    "validate_structure",
 }
 
 

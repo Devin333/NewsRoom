@@ -11,22 +11,22 @@ from framework.harness.workflow.compiler import (
 from framework.harness.graph.model import HarnessExecutableNode, NormalizedHarnessGraph
 from framework.harness.workflow.spec import HarnessWorkflowSpec
 from framework.harness.graph.activity import HarnessWorkerType
-from framework.harness.workflow.validation.dataflow import validate_dataflow
-from framework.harness.workflow.validation.models import (
+from framework.harness.graph.validation.dataflow import validate_dataflow
+from framework.harness.graph.validation.models import (
     HarnessGraphDiagnostic,
     HarnessGraphValidationPhase,
     HarnessGraphValidationResult,
 )
-from framework.harness.workflow.validation.policy import (
+from framework.harness.graph.validation.policy import (
     HarnessGraphPreflightPolicy,
     validate_policy,
 )
-from framework.harness.workflow.validation.registry import (
+from framework.harness.graph.validation.registry import (
     HarnessGraphRegistrySnapshot,
     validate_registry,
 )
-from framework.harness.workflow.validation.semantic import validate_semantics
-from framework.harness.workflow.validation.structural import validate_structure
+from framework.harness.graph.validation.semantic import validate_semantics
+from framework.harness.graph.validation.structural import validate_structure
 from framework.harness.graph.versioning import (
     NORMALIZED_HARNESS_GRAPH_SCHEMA,
 )
