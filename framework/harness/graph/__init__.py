@@ -20,6 +20,8 @@ from framework.harness.graph.definition import (
     HarnessGraphDefinition,
     HarnessGraphDefinitionReader,
     HarnessGraphLeafBinding,
+    HarnessGraphRepairBinding,
+    HarnessGraphRepairTrigger,
     HarnessGraphTaskPlanStageBinding,
     MAX_GRAPH_DEFINITION_ACTIVITIES,
 )
@@ -129,6 +131,8 @@ __all__ = [
     "HarnessGraphDefinition",
     "HarnessGraphDefinitionReader",
     "HarnessGraphLeafBinding",
+    "HarnessGraphRepairBinding",
+    "HarnessGraphRepairTrigger",
     "HarnessGraphTaskPlanStageBinding",
     "HarnessGraphEdge",
     "HarnessGraphEdgeKind",

@@ -13,14 +13,20 @@ from framework.harness.graph import (
     HarnessGraphDefinition,
     HarnessGraphDefinitionReader,
     HarnessGraphLeafBinding,
+    HarnessGraphRepairBinding,
+    HarnessGraphRepairTrigger,
     HarnessGraphSpec,
     HarnessGraphTaskPlanStageBinding,
     HarnessLeafActivityKind,
+    HarnessRetryPolicy,
     HarnessStepSpec,
     HarnessTerminalSideEffectPolicy,
     HarnessWorkerType,
+    ParallelAny,
+    ParallelBranch,
     Sequence,
     StepRef,
+    Wait,
 )
 
 
@@ -38,11 +44,13 @@ def test_graph_definition_round_trips_with_canonical_checksum() -> None:
 
     assert restored == definition
     assert restored.schema_version == HARNESS_GRAPH_DEFINITION_SCHEMA
+    assert restored.schema_version == "newsroom.harness-graph-definition/v4"
     assert restored.activity_ids == ("compose_report", "load_source")
     assert tuple(
         binding.activity_id for binding in restored.leaf_activity_bindings
     ) == ("compose_report", "load_source")
     assert restored.task_plan_stage_bindings == ()
+    assert restored.repair_bindings == ()
     load_source_binding = restored.leaf_activity_binding("load_source")
     compose_report = restored.activity("compose_report")
     assert load_source_binding is not None
@@ -114,6 +122,16 @@ def test_graph_definition_rejects_task_plan_binding_tampering() -> None:
     payload["task_plan_stage_bindings"][0]["support_refs"][
         "candidate_builder_ref"
     ] = "research.plan-builder@2"
+
+    with pytest.raises(HarnessValidationError) as raised:
+        HarnessGraphDefinition.from_dict(payload)
+
+    assert raised.value.code == "graph_definition_checksum_mismatch"
+
+
+def test_graph_definition_rejects_repair_binding_tampering() -> None:
+    payload = _repair_definition().to_dict()
+    payload["repair_bindings"][0]["repair_node_id"] = "repair:other"
 
     with pytest.raises(HarnessValidationError) as raised:
         HarnessGraphDefinition.from_dict(payload)
@@ -343,6 +361,297 @@ def test_graph_task_plan_binding_requires_unique_output_roles() -> None:
     assert raised.value.code == "invalid_graph_task_plan_stage_binding"
 
 
+def test_graph_definition_repair_binding_round_trips_canonically() -> None:
+    definition = _repair_definition()
+    same_activities_without_route = _repair_definition(repair_bindings=())
+
+    restored = HarnessGraphDefinitionReader().read_for_execution(
+        json.loads(json.dumps(definition.to_dict())),
+        source_schema=HARNESS_GRAPH_DEFINITION_SCHEMA,
+    )
+
+    assert restored == definition
+    assert restored.definition_checksum != (
+        same_activities_without_route.definition_checksum
+    )
+    binding = restored.repair_binding("repair-compose-report")
+    assert binding is not None
+    assert binding.source_node_id == "compose_report"
+    assert binding.repair_node_id == "repair:compose_report"
+    assert binding.repair_activity_id == "repair_report"
+    assert binding.triggers == (
+        HarnessGraphRepairTrigger.VERIFICATION_FAILURE,
+        HarnessGraphRepairTrigger.WORKER_FAILURE_AFTER_RETRY_EXHAUSTION,
+    )
+    restored.verify_integrity()
+
+
+def test_graph_definition_repair_binding_order_does_not_change_checksum() -> None:
+    first = _repair_binding(
+        binding_id="repair-load-source",
+        source_node_id="load_source",
+        repair_node_id="repair:load_source",
+        triggers=(HarnessGraphRepairTrigger.VERIFICATION_FAILURE,),
+    )
+    second = _repair_binding(
+        triggers=(
+            HarnessGraphRepairTrigger.VERIFICATION_FAILURE,
+            HarnessGraphRepairTrigger.WORKER_FAILURE_AFTER_RETRY_EXHAUSTION,
+        )
+    )
+
+    forward = _repair_definition(repair_bindings=(first, second))
+    reverse = _repair_definition(repair_bindings=(second, first))
+
+    assert forward.repair_bindings == reverse.repair_bindings
+    assert forward.definition_checksum == reverse.definition_checksum
+
+
+@pytest.mark.parametrize(
+    "triggers",
+    (
+        (),
+        (
+            HarnessGraphRepairTrigger.VERIFICATION_FAILURE,
+            HarnessGraphRepairTrigger.VERIFICATION_FAILURE,
+        ),
+        ("worker_requested_route",),
+    ),
+)
+def test_graph_repair_binding_rejects_invalid_triggers(
+    triggers: tuple[HarnessGraphRepairTrigger | str, ...],
+) -> None:
+    with pytest.raises(HarnessValidationError) as raised:
+        _repair_binding(triggers=triggers)
+
+    assert raised.value.code == "invalid_graph_repair_binding"
+    assert raised.value.details == {"field": "repair_binding.triggers"}
+
+
+def test_graph_definition_rejects_duplicate_repair_binding_identity() -> None:
+    binding = _repair_binding()
+
+    with pytest.raises(HarnessValidationError) as raised:
+        _repair_definition(repair_bindings=(binding, binding))
+
+    assert raised.value.code == "graph_duplicate_identity"
+    assert raised.value.details == {
+        "field": "repair_bindings.binding_id",
+        "duplicates": ["repair-compose-report"],
+    }
+
+
+def test_graph_definition_rejects_duplicate_repair_node_identity() -> None:
+    first = _repair_binding(
+        binding_id="repair-load-source",
+        source_node_id="load_source",
+        triggers=(HarnessGraphRepairTrigger.VERIFICATION_FAILURE,),
+    )
+    second = _repair_binding(
+        triggers=(
+            HarnessGraphRepairTrigger.WORKER_FAILURE_AFTER_RETRY_EXHAUSTION,
+        )
+    )
+
+    with pytest.raises(HarnessValidationError) as raised:
+        _repair_definition(repair_bindings=(first, second))
+
+    assert raised.value.code == "graph_repair_node_identity_conflict"
+    assert raised.value.details == {
+        "duplicate_repair_node_ids": ["repair:compose_report"],
+        "root_collisions": [],
+    }
+
+
+def test_graph_definition_rejects_ambiguous_repair_trigger_route() -> None:
+    first = _repair_binding(
+        triggers=(HarnessGraphRepairTrigger.VERIFICATION_FAILURE,),
+    )
+    second = _repair_binding(
+        binding_id="repair-compose-report-again",
+        repair_node_id="repair:compose_report:again",
+        triggers=(HarnessGraphRepairTrigger.VERIFICATION_FAILURE,),
+    )
+
+    with pytest.raises(HarnessValidationError) as raised:
+        _repair_definition(repair_bindings=(first, second))
+
+    assert raised.value.code == "graph_repair_trigger_ambiguous"
+    assert raised.value.details == {
+        "source_node_id": "compose_report",
+        "trigger": "verification_failure",
+        "binding_ids": [
+            "repair-compose-report",
+            "repair-compose-report-again",
+        ],
+        "repair_node_ids": [
+            "repair:compose_report",
+            "repair:compose_report:again",
+        ],
+    }
+
+
+@pytest.mark.parametrize(
+    ("source_node_id", "reason"),
+    (
+        ("missing", "unknown"),
+        ("await_review", "not_executable"),
+    ),
+)
+def test_graph_definition_repair_source_must_be_executable(
+    source_node_id: str,
+    reason: str,
+) -> None:
+    root = HarnessGraphSpec(
+        graph_id="research.paper-analysis",
+        root=Sequence(
+            (
+                StepRef("load_source"),
+                _wait("await_review"),
+                StepRef("compose_report"),
+            )
+        ),
+    )
+
+    with pytest.raises(HarnessValidationError) as raised:
+        _repair_definition(
+            root=root,
+            repair_bindings=(_repair_binding(source_node_id=source_node_id),),
+        )
+
+    assert raised.value.code == "graph_repair_source_node_invalid"
+    assert raised.value.details["source_node_id"] == source_node_id
+    assert raised.value.details["reason"] == reason
+
+
+def test_graph_definition_rejects_ambiguous_repair_source_identity() -> None:
+    root = HarnessGraphSpec(
+        graph_id="research.paper-analysis",
+        root=Sequence(
+            (
+                StepRef("load_source", node_id="shared"),
+                StepRef("compose_report", node_id="shared"),
+            )
+        ),
+    )
+
+    with pytest.raises(HarnessValidationError) as raised:
+        _repair_definition(
+            root=root,
+            repair_bindings=(_repair_binding(source_node_id="shared"),),
+        )
+
+    assert raised.value.code == "graph_repair_source_node_invalid"
+    assert raised.value.details["reason"] == "ambiguous"
+
+
+def test_graph_definition_repair_source_uses_exact_node_identity() -> None:
+    root = HarnessGraphSpec(
+        graph_id="research.paper-analysis",
+        root=Sequence(
+            (
+                StepRef("load_source", node_id="load:primary"),
+                StepRef("compose_report", node_id="compose:primary"),
+            )
+        ),
+    )
+    definition = _repair_definition(
+        root=root,
+        repair_bindings=(
+            _repair_binding(source_node_id="compose:primary"),
+        ),
+    )
+
+    assert definition.repair_bindings[0].source_node_id == "compose:primary"
+
+    with pytest.raises(HarnessValidationError) as raised:
+        _repair_definition(root=root)
+
+    assert raised.value.code == "graph_repair_source_node_invalid"
+    assert raised.value.details["source_node_id"] == "compose_report"
+    assert raised.value.details["reason"] == "unknown"
+
+
+def test_graph_definition_rejects_unknown_repair_activity() -> None:
+    with pytest.raises(HarnessValidationError) as raised:
+        _repair_definition(
+            repair_bindings=(
+                _repair_binding(repair_activity_id="missing_activity"),
+            )
+        )
+
+    assert raised.value.code == "graph_repair_activity_unknown"
+    assert raised.value.details == {
+        "binding_id": "repair-compose-report",
+        "repair_activity_id": "missing_activity",
+    }
+
+
+def test_graph_definition_rejects_repair_node_collision_with_root() -> None:
+    with pytest.raises(HarnessValidationError) as raised:
+        _repair_definition(
+            repair_bindings=(
+                _repair_binding(repair_node_id="compose_report"),
+            )
+        )
+
+    assert raised.value.code == "graph_repair_node_identity_conflict"
+    assert raised.value.details == {
+        "duplicate_repair_node_ids": [],
+        "root_collisions": ["compose_report"],
+    }
+
+
+def test_graph_definition_rejects_repair_node_collision_with_control_node() -> None:
+    root = HarnessGraphSpec(
+        graph_id="research.paper-analysis",
+        root=ParallelAny(
+            fork_id="drafts:fork",
+            join_id="drafts:join",
+            branches=(
+                ParallelBranch(
+                    branch_id="source",
+                    child=StepRef("load_source"),
+                    output_namespace="drafts.source",
+                ),
+                ParallelBranch(
+                    branch_id="report",
+                    child=StepRef("compose_report"),
+                    output_namespace="drafts.report",
+                ),
+            ),
+        ),
+    )
+
+    with pytest.raises(HarnessValidationError) as raised:
+        _repair_definition(
+            root=root,
+            repair_bindings=(
+                _repair_binding(repair_node_id="drafts:join"),
+            ),
+        )
+
+    assert raised.value.code == "graph_repair_node_identity_conflict"
+    assert raised.value.details["root_collisions"] == ["drafts:join"]
+
+
+def test_graph_definition_rejects_leaf_owned_repair_routing() -> None:
+    load_source, _ = _activities()
+    compose_report = HarnessStepSpec(
+        step_id="compose_report",
+        worker_type=HarnessWorkerType.AGENT_LOOP,
+        input_keys=("paper_source",),
+        output_key="report_draft",
+        retry_policy=HarnessRetryPolicy(repair_step_id="repair_report"),
+    )
+
+    with pytest.raises(HarnessValidationError) as raised:
+        _definition(activities=(load_source, compose_report))
+
+    assert raised.value.code == "graph_activity_repair_routing_forbidden"
+    assert raised.value.details == {"activities": ["compose_report"]}
+
+
 def test_graph_definition_rejects_leaf_kind_worker_type_mismatch() -> None:
     _, second = _leaf_activity_bindings()
     mismatched = _leaf_binding(
@@ -471,6 +780,20 @@ def test_graph_reader_rejects_v2_payload_without_task_plan_bindings() -> None:
     assert raised.value.code == "unsupported_graph_definition_schema"
 
 
+def test_graph_reader_rejects_v3_payload_without_repair_bindings() -> None:
+    payload = _definition().to_dict()
+    payload.pop("repair_bindings")
+    payload["schema_version"] = "newsroom.harness-graph-definition/v3"
+
+    with pytest.raises(HarnessValidationError) as raised:
+        HarnessGraphDefinitionReader().read(
+            payload,
+            source_schema="newsroom.harness-graph-definition/v3",
+        )
+
+    assert raised.value.code == "unsupported_graph_definition_schema"
+
+
 def _definition(
     *,
     graph_version: str = "1",
@@ -480,6 +803,7 @@ def _definition(
     task_plan_stage_bindings: (
         tuple[HarnessGraphTaskPlanStageBinding, ...] | None
     ) = None,
+    repair_bindings: tuple[HarnessGraphRepairBinding, ...] = (),
 ) -> HarnessGraphDefinition:
     selected_activities = _activities() if activities is None else activities
     return HarnessGraphDefinition(
@@ -519,6 +843,7 @@ def _definition(
             if task_plan_stage_bindings is None
             else task_plan_stage_bindings
         ),
+        repair_bindings=repair_bindings,
         terminal_side_effect_policy=HarnessTerminalSideEffectPolicy(
             policy_id="research.artifact.publication",
             version="1",
@@ -528,6 +853,30 @@ def _definition(
             retry_limit=2,
             not_required_evidence_ref=_SHA_A,
             inherited_gate_refs=("ResearchQualityGate@1",),
+        ),
+    )
+
+
+def _repair_definition(
+    *,
+    root: HarnessGraphSpec | None = None,
+    repair_bindings: tuple[HarnessGraphRepairBinding, ...] | None = None,
+) -> HarnessGraphDefinition:
+    return _definition(
+        root=root,
+        activities=(
+            *_activities(),
+            HarnessStepSpec(
+                step_id="repair_report",
+                worker_type=HarnessWorkerType.FUNCTION,
+                input_keys=("report_draft",),
+                output_key="repaired_report",
+            ),
+        ),
+        repair_bindings=(
+            (_repair_binding(),)
+            if repair_bindings is None
+            else repair_bindings
         ),
     )
 
@@ -634,6 +983,38 @@ def _task_plan_binding(
         support_refs=(
             _task_plan_support_refs() if support_refs is None else support_refs
         ),
+    )
+
+
+def _repair_binding(
+    *,
+    binding_id: str = "repair-compose-report",
+    source_node_id: str = "compose_report",
+    repair_node_id: str = "repair:compose_report",
+    repair_activity_id: str = "repair_report",
+    triggers: tuple[HarnessGraphRepairTrigger | str, ...] = (
+        HarnessGraphRepairTrigger.WORKER_FAILURE_AFTER_RETRY_EXHAUSTION,
+        HarnessGraphRepairTrigger.VERIFICATION_FAILURE,
+    ),
+) -> HarnessGraphRepairBinding:
+    return HarnessGraphRepairBinding(
+        binding_id=binding_id,
+        source_node_id=source_node_id,
+        repair_node_id=repair_node_id,
+        repair_activity_id=repair_activity_id,
+        triggers=triggers,
+    )
+
+
+def _wait(wait_id: str) -> Wait:
+    return Wait(
+        wait_id=wait_id,
+        kind="signal",
+        correlation={"run_id_path": "$.run_id"},
+        signal_type="research.review.completed",
+        signal_version="1",
+        tenant_scope_path="$.tenant_id",
+        identity_scope_path="$.actor_id",
     )
 
 

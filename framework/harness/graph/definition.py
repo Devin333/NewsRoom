@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import re
+from collections import Counter
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
+from enum import StrEnum
 from typing import Any, Self, cast
 
 from framework.harness.control_plane.errors import HarnessValidationError
@@ -16,7 +18,18 @@ from framework.harness.graph.canonical import (
     canonical_checksum,
     freeze_json,
 )
-from framework.harness.graph.dsl import HarnessGraphSpec
+from framework.harness.graph.dsl import (
+    BoundedLoop,
+    Choice,
+    HarnessGraphExpression,
+    HarnessGraphSpec,
+    ParallelAll,
+    ParallelAny,
+    Sequence as GraphSequence,
+    StepRef,
+    VerifiedAggregation,
+    Wait,
+)
 from framework.harness.graph.model import (
     HarnessContractKind,
     HarnessContractReference,
@@ -228,6 +241,85 @@ class HarnessGraphTaskPlanStageBinding:
         )
 
 
+class HarnessGraphRepairTrigger(StrEnum):
+    """Deterministic failures that may activate an explicit repair node."""
+
+    WORKER_FAILURE_AFTER_RETRY_EXHAUSTION = (
+        "worker_failure_after_retry_exhaustion"
+    )
+    VERIFICATION_FAILURE = "verification_failure"
+
+
+@dataclass(frozen=True, slots=True)
+class HarnessGraphRepairBinding:
+    """Checksum-bound repair route owned by the outer Graph declaration."""
+
+    binding_id: str
+    source_node_id: str
+    repair_node_id: str
+    repair_activity_id: str
+    triggers: tuple[HarnessGraphRepairTrigger | str, ...]
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "binding_id",
+            _identifier(self.binding_id, "repair_binding.binding_id"),
+        )
+        object.__setattr__(
+            self,
+            "source_node_id",
+            _identifier(self.source_node_id, "repair_binding.source_node_id"),
+        )
+        object.__setattr__(
+            self,
+            "repair_node_id",
+            _identifier(self.repair_node_id, "repair_binding.repair_node_id"),
+        )
+        object.__setattr__(
+            self,
+            "repair_activity_id",
+            _identifier(
+                self.repair_activity_id,
+                "repair_binding.repair_activity_id",
+            ),
+        )
+        object.__setattr__(self, "triggers", _repair_triggers(self.triggers))
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "binding_id": self.binding_id,
+            "source_node_id": self.source_node_id,
+            "repair_node_id": self.repair_node_id,
+            "repair_activity_id": self.repair_activity_id,
+            "triggers": [trigger.value for trigger in self.triggers],
+        }
+
+    @classmethod
+    def from_dict(
+        cls,
+        value: Mapping[str, Any],
+    ) -> "HarnessGraphRepairBinding":
+        payload = _exact_mapping(
+            value,
+            {
+                "binding_id",
+                "source_node_id",
+                "repair_node_id",
+                "repair_activity_id",
+                "triggers",
+            },
+            "Graph repair binding",
+        )
+        return cls(
+            binding_id=payload["binding_id"],
+            source_node_id=payload["source_node_id"],
+            repair_node_id=payload["repair_node_id"],
+            repair_activity_id=payload["repair_activity_id"],
+            triggers=_repair_triggers(payload["triggers"]),
+        )
+
+
 @dataclass(frozen=True, slots=True)
 class HarnessGraphDefinition:
     """Immutable, canonical Graph declaration before compiler preflight."""
@@ -238,6 +330,7 @@ class HarnessGraphDefinition:
     activities: tuple[HarnessStepSpec, ...]
     leaf_activity_bindings: tuple[HarnessGraphLeafBinding, ...]
     task_plan_stage_bindings: tuple[HarnessGraphTaskPlanStageBinding, ...]
+    repair_bindings: tuple[HarnessGraphRepairBinding, ...]
     terminal_side_effect_policy: (
         HarnessTerminalSideEffectPolicy | Mapping[str, Any]
     )
@@ -271,6 +364,7 @@ class HarnessGraphDefinition:
         task_plan_stage_bindings = _task_plan_stage_bindings(
             self.task_plan_stage_bindings
         )
+        repair_bindings = _repair_bindings(self.repair_bindings)
         policy = self.terminal_side_effect_policy
         if not isinstance(policy, HarnessTerminalSideEffectPolicy):
             if not isinstance(policy, Mapping):
@@ -299,6 +393,7 @@ class HarnessGraphDefinition:
             "task_plan_stage_bindings",
             task_plan_stage_bindings,
         )
+        object.__setattr__(self, "repair_bindings", repair_bindings)
         object.__setattr__(self, "terminal_side_effect_policy", policy)
         expected = canonical_checksum(self.checksum_projection())
         if self.definition_checksum is not None:
@@ -318,6 +413,12 @@ class HarnessGraphDefinition:
         )
         _validate_task_plan_stage_bindings(
             task_plan_stage_bindings,
+            activities=activities,
+        )
+        _validate_activity_repair_routing(activities)
+        _validate_repair_bindings(
+            repair_bindings,
+            root=root,
             activities=activities,
         )
 
@@ -352,6 +453,16 @@ class HarnessGraphDefinition:
                 return binding
         return None
 
+    def repair_binding(
+        self,
+        binding_id: str,
+    ) -> HarnessGraphRepairBinding | None:
+        normalized = _identifier(binding_id, "binding_id")
+        for binding in self.repair_bindings:
+            if binding.binding_id == normalized:
+                return binding
+        return None
+
     def checksum_projection(self) -> dict[str, Any]:
         return {
             "schema_version": self.schema_version,
@@ -364,6 +475,9 @@ class HarnessGraphDefinition:
             ],
             "task_plan_stage_bindings": [
                 binding.to_dict() for binding in self.task_plan_stage_bindings
+            ],
+            "repair_bindings": [
+                binding.to_dict() for binding in self.repair_bindings
             ],
             "terminal_side_effect_policy": (
                 self.terminal_side_effect_policy.to_dict()
@@ -397,6 +511,7 @@ class HarnessGraphDefinition:
                 "activities",
                 "leaf_activity_bindings",
                 "task_plan_stage_bindings",
+                "repair_bindings",
                 "terminal_side_effect_policy",
                 "definition_checksum",
             },
@@ -426,6 +541,13 @@ class HarnessGraphDefinition:
                 for item in _mapping_array(
                     payload["task_plan_stage_bindings"],
                     "task_plan_stage_bindings",
+                )
+            ),
+            repair_bindings=tuple(
+                HarnessGraphRepairBinding.from_dict(item)
+                for item in _mapping_array(
+                    payload["repair_bindings"],
+                    "repair_bindings",
                 )
             ),
             terminal_side_effect_policy=_mapping(
@@ -598,6 +720,51 @@ def _task_plan_stage_bindings(
     return snapshots
 
 
+def _repair_bindings(
+    values: Sequence[HarnessGraphRepairBinding],
+) -> tuple[HarnessGraphRepairBinding, ...]:
+    if isinstance(values, (str, bytes, bytearray)) or not isinstance(
+        values,
+        Sequence,
+    ):
+        raise HarnessValidationError(
+            "repair_bindings must be an array",
+            code="invalid_graph_definition",
+        )
+    if len(values) > MAX_GRAPH_DEFINITION_ACTIVITIES or any(
+        not isinstance(value, HarnessGraphRepairBinding) for value in values
+    ):
+        raise HarnessValidationError(
+            "repair_bindings must contain HarnessGraphRepairBinding values",
+            code="invalid_graph_definition",
+        )
+    snapshots = tuple(
+        sorted(
+            (
+                HarnessGraphRepairBinding.from_dict(value.to_dict())
+                for value in values
+            ),
+            key=lambda item: item.binding_id,
+        )
+    )
+    binding_ids = tuple(binding.binding_id for binding in snapshots)
+    duplicate_binding_ids = sorted(
+        identity
+        for identity, count in Counter(binding_ids).items()
+        if count > 1
+    )
+    if duplicate_binding_ids:
+        raise HarnessValidationError(
+            "Graph repair binding identities must be unique",
+            code="graph_duplicate_identity",
+            details={
+                "field": "repair_bindings.binding_id",
+                "duplicates": duplicate_binding_ids,
+            },
+        )
+    return snapshots
+
+
 def _validate_leaf_activity_bindings(
     bindings: tuple[HarnessGraphLeafBinding, ...],
     *,
@@ -690,6 +857,159 @@ def _validate_task_plan_stage_bindings(
             code="graph_task_plan_stage_side_effect_forbidden",
             details={"activities": effectful},
         )
+
+
+def _validate_activity_repair_routing(
+    activities: tuple[HarnessStepSpec, ...],
+) -> None:
+    activity_ids = sorted(
+        activity.step_id
+        for activity in activities
+        if activity.retry_policy.repair_step_id is not None
+    )
+    if activity_ids:
+        raise HarnessValidationError(
+            "Graph activities cannot own repair routing",
+            code="graph_activity_repair_routing_forbidden",
+            details={"activities": activity_ids},
+        )
+
+
+def _validate_repair_bindings(
+    bindings: tuple[HarnessGraphRepairBinding, ...],
+    *,
+    root: HarnessGraphSpec,
+    activities: tuple[HarnessStepSpec, ...],
+) -> None:
+    root_node_ids, executable_node_ids = _root_node_identities(root.root)
+    root_counts = Counter(root_node_ids)
+    executable_counts = Counter(executable_node_ids)
+    activities_by_id = {activity.step_id: activity for activity in activities}
+
+    repair_node_ids = tuple(binding.repair_node_id for binding in bindings)
+    duplicate_repair_node_ids = sorted(
+        node_id
+        for node_id, count in Counter(repair_node_ids).items()
+        if count > 1
+    )
+    root_collisions = sorted(set(repair_node_ids).intersection(root_counts))
+    if duplicate_repair_node_ids or root_collisions:
+        raise HarnessValidationError(
+            "Graph repair node identities must be independent and unique",
+            code="graph_repair_node_identity_conflict",
+            details={
+                "duplicate_repair_node_ids": duplicate_repair_node_ids,
+                "root_collisions": root_collisions,
+            },
+        )
+
+    routes: dict[
+        tuple[str, HarnessGraphRepairTrigger],
+        HarnessGraphRepairBinding,
+    ] = {}
+    for binding in bindings:
+        source_occurrences = executable_counts[binding.source_node_id]
+        root_occurrences = root_counts[binding.source_node_id]
+        if source_occurrences != 1 or root_occurrences != 1:
+            if source_occurrences == 0:
+                reason = (
+                    "not_executable"
+                    if root_occurrences > 0
+                    else "unknown"
+                )
+            else:
+                reason = "ambiguous"
+            raise HarnessValidationError(
+                "Graph repair source must identify one exact executable node",
+                code="graph_repair_source_node_invalid",
+                details={
+                    "binding_id": binding.binding_id,
+                    "source_node_id": binding.source_node_id,
+                    "reason": reason,
+                },
+            )
+        if binding.repair_activity_id not in activities_by_id:
+            raise HarnessValidationError(
+                "Graph repair activity must be registered by the definition",
+                code="graph_repair_activity_unknown",
+                details={
+                    "binding_id": binding.binding_id,
+                    "repair_activity_id": binding.repair_activity_id,
+                },
+            )
+        for trigger in binding.triggers:
+            route_key = (binding.source_node_id, trigger)
+            previous = routes.get(route_key)
+            if previous is not None:
+                raise HarnessValidationError(
+                    "Graph repair source trigger resolves to multiple targets",
+                    code="graph_repair_trigger_ambiguous",
+                    details={
+                        "source_node_id": binding.source_node_id,
+                        "trigger": trigger.value,
+                        "binding_ids": sorted(
+                            (previous.binding_id, binding.binding_id)
+                        ),
+                        "repair_node_ids": sorted(
+                            (previous.repair_node_id, binding.repair_node_id)
+                        ),
+                    },
+                )
+            routes[route_key] = binding
+
+
+def _root_node_identities(
+    expression: HarnessGraphExpression,
+) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    node_ids: list[str] = []
+    executable_node_ids: list[str] = []
+
+    def visit(current: HarnessGraphExpression) -> None:
+        if isinstance(current, StepRef):
+            node_id = current.node_id or current.step_id
+            node_ids.append(node_id)
+            executable_node_ids.append(node_id)
+            return
+        if isinstance(current, GraphSequence):
+            for child in current.children:
+                visit(child)
+            return
+        if isinstance(current, Choice):
+            node_ids.extend((current.choice_id, f"{current.choice_id}:join"))
+            for branch in current.branches:
+                visit(branch.child)
+            return
+        if isinstance(current, ParallelAll):
+            node_ids.extend((current.fork_id, current.join_id))
+            for branch in current.branches:
+                visit(branch.child)
+            if current.merge is not None:
+                node_ids.append(f"{current.join_id}:merge")
+            if isinstance(current.merge, VerifiedAggregation):
+                visit(current.merge.step)
+            return
+        if isinstance(current, ParallelAny):
+            node_ids.extend((current.fork_id, current.join_id))
+            for branch in current.branches:
+                visit(branch.child)
+            return
+        if isinstance(current, BoundedLoop):
+            node_ids.extend((current.loop_id, f"{current.loop_id}:join"))
+            visit(current.body)
+            if current.exit is not None:
+                visit(current.exit)
+            if current.exhaustion is not None:
+                visit(current.exhaustion)
+            return
+        if isinstance(current, Wait):
+            node_ids.append(current.wait_id)
+            return
+        raise AssertionError(
+            f"unsupported HarnessGraphExpression: {type(current).__name__}"
+        )
+
+    visit(expression)
+    return tuple(node_ids), tuple(executable_node_ids)
 
 
 def _activity_from_dict(value: Mapping[str, Any]) -> HarnessStepSpec:
@@ -891,6 +1211,34 @@ def _unique_text_tuple(value: Any, field: str) -> tuple[str, ...]:
     return tuple(sorted(normalized))
 
 
+def _repair_triggers(value: Any) -> tuple[HarnessGraphRepairTrigger, ...]:
+    field = "repair_binding.triggers"
+    if isinstance(value, (str, bytes, bytearray)) or not isinstance(
+        value,
+        Sequence,
+    ):
+        raise HarnessValidationError(
+            f"{field} must be an array",
+            code="invalid_graph_repair_binding",
+            details={"field": field},
+        )
+    try:
+        triggers = tuple(HarnessGraphRepairTrigger(item) for item in value)
+    except (TypeError, ValueError) as exc:
+        raise HarnessValidationError(
+            f"{field} contains an unsupported trigger",
+            code="invalid_graph_repair_binding",
+            details={"field": field},
+        ) from exc
+    if not triggers or len(triggers) != len(set(triggers)):
+        raise HarnessValidationError(
+            f"{field} must contain unique supported triggers",
+            code="invalid_graph_repair_binding",
+            details={"field": field},
+        )
+    return tuple(sorted(triggers, key=lambda item: item.value))
+
+
 def _task_plan_required_text(value: Any, field: str) -> str:
     if not isinstance(value, str) or not value or value != value.strip():
         raise HarnessValidationError(
@@ -977,6 +1325,8 @@ __all__ = [
     "HarnessGraphDefinition",
     "HarnessGraphDefinitionReader",
     "HarnessGraphLeafBinding",
+    "HarnessGraphRepairBinding",
+    "HarnessGraphRepairTrigger",
     "HarnessGraphTaskPlanStageBinding",
     "MAX_GRAPH_DEFINITION_ACTIVITIES",
 ]
