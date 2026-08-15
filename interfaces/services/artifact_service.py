@@ -3,11 +3,19 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, NoReturn
 
+from framework.agent.artifacts import (
+    ArtifactChecksumMismatchError,
+    ArtifactNotFoundError,
+    ArtifactStoreMetadataError,
+)
 from framework.harness.artifacts import (
     GraphArtifactStrictContentReader,
     GraphTerminalArtifact,
+    GraphTerminalManifestError,
+    GraphTerminalManifestErrorCode,
+    GraphTerminalManifestHistoryError,
 )
 from infrastructure.storage.artifacts import FilesystemGraphTerminalArtifactReader
 
@@ -79,7 +87,10 @@ class ArtifactInspectionService:
         self.content_reader = GraphArtifactStrictContentReader(self.terminal_reader)
 
     def list_artifacts(self, run_id: str) -> ArtifactListResult:
-        manifest = self.terminal_reader.read_terminal_manifest(run_id)
+        try:
+            manifest = self.terminal_reader.read_terminal_manifest(run_id)
+        except GraphTerminalManifestError as exc:
+            _raise_inspection_contract_error(exc)
         artifacts = [
             self._summary(artifact)
             for artifact in sorted(
@@ -90,8 +101,11 @@ class ArtifactInspectionService:
         return ArtifactListResult(run_id=manifest.run_id, artifacts=artifacts)
 
     def get_artifact(self, run_id: str, artifact_key: str) -> ArtifactDetail:
-        manifest = self.terminal_reader.read_terminal_manifest(run_id)
-        record = self.content_reader.read(manifest, artifact_key, redact=True)
+        try:
+            manifest = self.terminal_reader.read_terminal_manifest(run_id)
+            record = self.content_reader.read(manifest, artifact_key, redact=True)
+        except GraphTerminalManifestError as exc:
+            _raise_inspection_contract_error(exc)
         content = record.content
         if record.media_type == "application/x-ndjson" and isinstance(content, list):
             content = _jsonl_values_to_text(content)
@@ -117,3 +131,18 @@ class ArtifactInspectionService:
 def _jsonl_values_to_text(values: list[Any]) -> str:
     lines = [json.dumps(value, ensure_ascii=False, sort_keys=True) for value in values]
     return "\n".join(lines) + ("\n" if lines else "")
+
+
+def _raise_inspection_contract_error(
+    exc: GraphTerminalManifestError,
+) -> NoReturn:
+    if isinstance(exc, GraphTerminalManifestHistoryError):
+        raise exc
+    if exc.code in {
+        GraphTerminalManifestErrorCode.ARTIFACT_CHECKSUM_MISMATCH,
+        GraphTerminalManifestErrorCode.ARTIFACT_SIZE_MISMATCH,
+    }:
+        raise ArtifactChecksumMismatchError(str(exc)) from exc
+    if exc.code is GraphTerminalManifestErrorCode.ARTIFACT_NOT_FOUND:
+        raise ArtifactNotFoundError(str(exc)) from exc
+    raise ArtifactStoreMetadataError(str(exc)) from exc

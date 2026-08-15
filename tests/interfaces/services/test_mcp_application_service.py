@@ -14,6 +14,10 @@ from interfaces.services.artifact_service import ArtifactInspectionService
 from interfaces.services.mcp_service import MCPApplicationService
 from interfaces.services.report_service import ReportApplicationService
 from interfaces.services.run_inspection_service import RunInspectionService
+from tests.fixtures.graph_runs import (
+    rewrite_graph_terminal_manifest,
+    write_graph_terminal_run,
+)
 from tests.fixtures.workflow_runs import rewrite_manifest, write_canonical_terminal_run
 
 
@@ -365,12 +369,19 @@ def test_mcp_unknown_tool_resource_and_prompt_exceptions_are_sanitized() -> None
 
 
 def test_mcp_artifact_path_failures_preserve_typed_failure_envelopes(tmp_path) -> None:
-    fixture = write_canonical_terminal_run(tmp_path, "run-unsafe")
+    workflow_fixture = write_canonical_terminal_run(
+        tmp_path,
+        "run-workflow-unsafe",
+    )
+    graph_fixture = write_graph_terminal_run(tmp_path, "run-graph-unsafe")
     (tmp_path / "outside.txt").write_text("artifact-secret", encoding="utf-8")
-    manifest = dict(fixture.manifest)
-    manifest["artifacts"] = dict(fixture.manifest["artifacts"])
-    manifest["artifacts"]["output"] = "../outside.txt"
-    rewrite_manifest(fixture, manifest)
+    workflow_manifest = dict(workflow_fixture.manifest)
+    workflow_manifest["artifacts"] = dict(workflow_fixture.manifest["artifacts"])
+    workflow_manifest["artifacts"]["output"] = "../outside.txt"
+    rewrite_manifest(workflow_fixture, workflow_manifest)
+    graph_manifest = graph_fixture.manifest.to_dict()
+    graph_manifest["artifacts"][0]["relative_path"] = "../outside.txt"
+    rewrite_graph_terminal_manifest(graph_fixture, graph_manifest)
     service = MCPApplicationService(
         run_inspection_service_factory=lambda: RunInspectionService(tmp_path),
         artifact_service_factory=lambda: ArtifactInspectionService(tmp_path),
@@ -379,9 +390,12 @@ def test_mcp_artifact_path_failures_preserve_typed_failure_envelopes(tmp_path) -
     results = [
         service.read_resource("news://runs/run:stream/artifacts/output"),
         service.call_tool("news.run.replay", {"run_id": "run:stream"}),
-        service.read_resource("news://runs/run-unsafe/artifacts/output"),
-        service.read_resource("news://runs/run-unsafe/replay"),
-        service.call_tool("news.run.replay", {"run_id": "run-unsafe"}),
+        service.read_resource("news://runs/run-graph-unsafe/artifacts/output"),
+        service.read_resource("news://runs/run-workflow-unsafe/replay"),
+        service.call_tool(
+            "news.run.replay",
+            {"run_id": "run-workflow-unsafe"},
+        ),
     ]
 
     for result in results[:2]:
@@ -426,20 +440,29 @@ def test_mcp_integrity_failures_preserve_typed_failure_envelopes(error_type) -> 
 
 
 def test_mcp_real_filesystem_integrity_failures_preserve_typed_envelopes(tmp_path) -> None:
-    fixture = write_canonical_terminal_run(tmp_path)
+    workflow_fixture = write_canonical_terminal_run(tmp_path, "run-replay")
+    graph_fixture = write_graph_terminal_run(
+        tmp_path,
+        "run-artifact",
+        files={"output": ("output.json", {"token": "fixture-secret-token"})},
+    )
     service = MCPApplicationService(
         run_inspection_service_factory=lambda: RunInspectionService(tmp_path),
         artifact_service_factory=lambda: ArtifactInspectionService(tmp_path),
     )
-    fixture.artifact_path("output").write_text(
+    workflow_fixture.artifact_path("output").write_text(
+        json.dumps({"result": "tampered-mcp-secret"}),
+        encoding="utf-8",
+    )
+    graph_fixture.artifact_path("output").write_text(
         json.dumps({"result": "tampered-mcp-secret"}),
         encoding="utf-8",
     )
 
     replay_results = [
-        service.call_tool("news.run.replay", {"run_id": "run-1"}),
-        service.read_resource("news://runs/run-1/replay"),
-        service.read_resource("news://runs/run-1/artifacts/output"),
+        service.call_tool("news.run.replay", {"run_id": "run-replay"}),
+        service.read_resource("news://runs/run-replay/replay"),
+        service.read_resource("news://runs/run-artifact/artifacts/output"),
     ]
     for result in replay_results:
         assert result.success is False
@@ -447,13 +470,12 @@ def test_mcp_real_filesystem_integrity_failures_preserve_typed_envelopes(tmp_pat
         assert result.data is None
         assert "tampered-mcp-secret" not in json.dumps(result.to_dict())
 
-    manifest = dict(fixture.manifest)
-    manifest["artifact_metadata"] = {
-        key: dict(value) for key, value in fixture.manifest["artifact_metadata"].items()
-    }
-    manifest["artifact_metadata"]["output"].pop("checksum")
-    rewrite_manifest(fixture, manifest)
-    missing_checksum = service.read_resource("news://runs/run-1/artifacts/output")
+    manifest = graph_fixture.manifest.to_dict()
+    manifest["artifacts"][0].pop("content_checksum")
+    rewrite_graph_terminal_manifest(graph_fixture, manifest)
+    missing_checksum = service.read_resource(
+        "news://runs/run-artifact/artifacts/output"
+    )
 
     assert missing_checksum.success is False
     assert missing_checksum.error_type == "ArtifactStoreMetadataError"

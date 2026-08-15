@@ -5,6 +5,7 @@ from interfaces.mcp.stdio_server import handle_jsonrpc_request, run_stdio
 from interfaces.services.artifact_service import ArtifactInspectionService
 from interfaces.services.mcp_service import MCPApplicationService
 from interfaces.services.run_inspection_service import RunInspectionService
+from tests.fixtures.graph_runs import write_graph_terminal_run
 from tests.fixtures.workflow_runs import write_canonical_terminal_run
 
 
@@ -175,8 +176,13 @@ def test_stdio_preserves_typed_artifact_integrity_failure_envelopes() -> None:
 
 
 def test_stdio_real_filesystem_integrity_failure_has_no_tampered_data(tmp_path) -> None:
-    fixture = write_canonical_terminal_run(tmp_path)
-    fixture.artifact_path("output").write_text(
+    replay_fixture = write_canonical_terminal_run(tmp_path, "run-replay")
+    artifact_fixture = write_graph_terminal_run(tmp_path, "run-artifact")
+    replay_fixture.artifact_path("output").write_text(
+        '{"result":"tampered-stdio-secret"}',
+        encoding="utf-8",
+    )
+    artifact_fixture.artifact_path("output").write_text(
         '{"result":"tampered-stdio-secret"}',
         encoding="utf-8",
     )
@@ -189,13 +195,16 @@ def test_stdio_real_filesystem_integrity_failure_has_no_tampered_data(tmp_path) 
             "jsonrpc": "2.0",
             "id": "real-tool-tamper",
             "method": "tools/call",
-            "params": {"name": "news.run.replay", "arguments": {"run_id": "run-1"}},
+            "params": {
+                "name": "news.run.replay",
+                "arguments": {"run_id": "run-replay"},
+            },
         },
         {
             "jsonrpc": "2.0",
             "id": "real-resource-tamper",
             "method": "resources/read",
-            "params": {"uri": "news://runs/run-1/artifacts/output"},
+            "params": {"uri": "news://runs/run-artifact/artifacts/output"},
         },
     ]
 

@@ -10,7 +10,10 @@ from framework.agent.artifacts import (
     ArtifactStoreRequiredError,
 )
 from interfaces.cli.commands import artifacts as artifact_commands
-from tests.fixtures.workflow_runs import rewrite_manifest, write_canonical_terminal_run
+from tests.fixtures.graph_runs import (
+    rewrite_graph_terminal_manifest,
+    write_graph_terminal_run,
+)
 
 
 def test_news_cli_artifacts_list_json(monkeypatch, capsys) -> None:
@@ -114,13 +117,13 @@ def test_news_cli_artifacts_show_real_missing_checksum_does_not_print_content(
     tmp_path,
     capsys,
 ) -> None:
-    fixture = write_canonical_terminal_run(tmp_path)
-    manifest = dict(fixture.manifest)
-    manifest["artifact_metadata"] = {
-        key: dict(value) for key, value in fixture.manifest["artifact_metadata"].items()
-    }
-    manifest["artifact_metadata"]["output"].pop("checksum")
-    rewrite_manifest(fixture, manifest)
+    fixture = write_graph_terminal_run(
+        tmp_path,
+        files={"output": ("output.json", {"token": "fixture-secret-token"})},
+    )
+    manifest = fixture.manifest.to_dict()
+    manifest["artifacts"][0].pop("content_checksum")
+    rewrite_graph_terminal_manifest(fixture, manifest)
 
     exit_code = news_cli.main(
         [
@@ -139,7 +142,7 @@ def test_news_cli_artifacts_show_real_missing_checksum_does_not_print_content(
     captured = capsys.readouterr()
     assert exit_code == 1
     assert captured.out == ""
-    assert "invalid canonical run manifest" in captured.err
+    assert "GraphTerminalArtifact" in captured.err
     assert "fixture-secret-token" not in captured.err
 
 

@@ -3,7 +3,7 @@ import json
 import interfaces.services.memory_service as memory_service_module
 from interfaces.services.memory_service import MemoryApplicationService
 from infrastructure.storage.vector import InMemoryVectorStore, VectorCollectionStatus, VectorSearchResult
-from tests.fixtures.workflow_runs import write_canonical_terminal_run
+from tests.fixtures.graph_runs import write_graph_terminal_run
 
 
 def test_memory_application_service_searches_vector_store() -> None:
@@ -236,10 +236,10 @@ class _FakeIngestionResult:
 
 
 def _write_run_artifacts(root, run_id, *, request, report, evidence_bundle) -> None:
-    write_canonical_terminal_run(
+    write_graph_terminal_run(
         root,
         run_id,
-        extra_artifacts={
+        files={
             "request": ("request.json", _json_bytes(request)),
             "report_json": ("report.json", _json_bytes(report)),
             "evidence_bundle": (

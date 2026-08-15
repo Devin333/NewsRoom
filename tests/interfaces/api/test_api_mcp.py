@@ -8,6 +8,7 @@ from interfaces.services.artifact_service import ArtifactInspectionService
 from interfaces.services.event_projection_service import EventProjectionConflictError
 from interfaces.services.mcp_service import MCPApplicationService
 from interfaces.services.run_inspection_service import RunInspectionService
+from tests.fixtures.graph_runs import write_graph_terminal_run
 from tests.fixtures.workflow_runs import write_canonical_terminal_run
 
 
@@ -269,8 +270,13 @@ def test_api_mcp_normalizes_event_contract_subclasses_before_http_mapping() -> N
 
 
 def test_api_mcp_default_service_maps_real_filesystem_tamper_without_data(tmp_path) -> None:
-    fixture = write_canonical_terminal_run(tmp_path)
-    fixture.artifact_path("output").write_text(
+    replay_fixture = write_canonical_terminal_run(tmp_path, "run-replay")
+    artifact_fixture = write_graph_terminal_run(tmp_path, "run-artifact")
+    replay_fixture.artifact_path("output").write_text(
+        '{"result":"tampered-mcp-http-secret"}',
+        encoding="utf-8",
+    )
+    artifact_fixture.artifact_path("output").write_text(
         '{"result":"tampered-mcp-http-secret"}',
         encoding="utf-8",
     )
@@ -285,11 +291,11 @@ def test_api_mcp_default_service_maps_real_filesystem_tamper_without_data(tmp_pa
     responses = [
         client.post(
             "/api/v1/mcp/tools/news.run.replay/call",
-            json={"arguments": {"run_id": "run-1"}},
+            json={"arguments": {"run_id": "run-replay"}},
         ),
         client.post(
             "/api/v1/mcp/resources/read",
-            json={"uri": "news://runs/run-1/artifacts/output"},
+            json={"uri": "news://runs/run-artifact/artifacts/output"},
         ),
     ]
 

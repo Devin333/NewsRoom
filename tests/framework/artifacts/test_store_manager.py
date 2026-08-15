@@ -29,8 +29,8 @@ from framework.agent.artifacts.observability import (
     ARTIFACT_OBSERVABILITY_LOGGER,
 )
 from framework.agent.artifacts.stores import local as local_store_module
-from framework.agent.artifacts.runtime import manager as manager_module
 from framework.agent.artifacts.stores import filesystem as filesystem_store_module
+from framework.agent.artifacts.stores import fs_safety as fs_safety_module
 from framework.agent.artifacts.stores.errors import artifact_observability_was_emitted
 
 
@@ -97,7 +97,7 @@ def test_run_relative_write_is_atomic_and_cleans_owned_temp_on_replace_failure(
     def fail_replace(_source, _target) -> None:
         raise OSError("injected replace failure")
 
-    monkeypatch.setattr(manager_module.os, "replace", fail_replace)
+    monkeypatch.setattr(fs_safety_module.os, "replace", fail_replace)
 
     with pytest.raises(OSError, match="injected replace failure"):
         manager.write_text("run-1", "payload.txt", "uncommitted")

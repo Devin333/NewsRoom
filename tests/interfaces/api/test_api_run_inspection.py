@@ -8,6 +8,10 @@ from fastapi.testclient import TestClient
 from interfaces.api import create_app
 from interfaces.services.artifact_service import ArtifactInspectionService
 from interfaces.services.run_inspection_service import RunInspectionService
+from tests.fixtures.graph_runs import (
+    rewrite_graph_terminal_manifest,
+    write_graph_terminal_run,
+)
 from tests.fixtures.workflow_runs import rewrite_manifest, write_canonical_terminal_run
 
 
@@ -161,9 +165,12 @@ def test_run_inspection_api_includes_llm_trace_preview(tmp_path) -> None:
 
 
 def test_run_inspection_api_lists_artifacts(tmp_path) -> None:
-    write_canonical_terminal_run(
+    write_graph_terminal_run(
         tmp_path,
-        extra_artifacts={"report_markdown": ("report.md", b"# Report\n")},
+        files={
+            "output": ("output.json", {"status": "ok"}),
+            "report_markdown": ("report.md", "# Report\n"),
+        },
     )
     client = TestClient(_app(tmp_path))
 
@@ -177,10 +184,10 @@ def test_run_inspection_api_lists_artifacts(tmp_path) -> None:
 
 
 def test_run_inspection_api_distinguishes_invalid_artifact_path_from_missing(tmp_path) -> None:
-    write_canonical_terminal_run(
+    write_graph_terminal_run(
         tmp_path,
         "run-1",
-        extra_artifacts={"report_markdown": ("report.md", b"# Report\n")},
+        files={"report_markdown": ("report.md", "# Report\n")},
     )
     client = TestClient(_app(tmp_path))
 
@@ -236,13 +243,10 @@ def test_run_inspection_api_real_replay_rejects_tampered_artifact_without_data(
 def test_run_inspection_api_real_artifact_detail_rejects_missing_checksum_without_content(
     tmp_path,
 ) -> None:
-    fixture = write_canonical_terminal_run(tmp_path)
-    manifest = dict(fixture.manifest)
-    manifest["artifact_metadata"] = {
-        key: dict(value) for key, value in fixture.manifest["artifact_metadata"].items()
-    }
-    manifest["artifact_metadata"]["output"].pop("checksum")
-    rewrite_manifest(fixture, manifest)
+    fixture = write_graph_terminal_run(tmp_path)
+    manifest = fixture.manifest.to_dict()
+    manifest["artifacts"][0].pop("content_checksum")
+    rewrite_graph_terminal_manifest(fixture, manifest)
     client = TestClient(_app(tmp_path))
 
     response = client.get("/api/v1/runs/run-1/artifacts/output")
@@ -277,11 +281,10 @@ def test_run_inspection_api_real_replay_rejects_invalid_canonical_manifest_witho
 def test_run_inspection_api_real_artifact_detail_wraps_unsafe_manifest_path_as_metadata(
     tmp_path,
 ) -> None:
-    fixture = write_canonical_terminal_run(tmp_path)
-    manifest = dict(fixture.manifest)
-    manifest["artifacts"] = dict(fixture.manifest["artifacts"])
-    manifest["artifacts"]["output"] = "../outside.json"
-    rewrite_manifest(fixture, manifest)
+    fixture = write_graph_terminal_run(tmp_path)
+    manifest = fixture.manifest.to_dict()
+    manifest["artifacts"][0]["relative_path"] = "../outside.json"
+    rewrite_graph_terminal_manifest(fixture, manifest)
     client = TestClient(_app(tmp_path))
 
     response = client.get("/api/v1/runs/run-1/artifacts/output")
@@ -297,7 +300,7 @@ def test_run_inspection_api_real_artifact_detail_wraps_unsafe_manifest_path_as_m
 def test_run_inspection_api_real_artifact_detail_maps_missing_file_without_content(
     tmp_path,
 ) -> None:
-    fixture = write_canonical_terminal_run(tmp_path)
+    fixture = write_graph_terminal_run(tmp_path)
     fixture.artifact_path("output").unlink()
     client = TestClient(_app(tmp_path))
 

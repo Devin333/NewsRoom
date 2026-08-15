@@ -3,13 +3,12 @@ import json
 import pytest
 
 from framework.agent.artifacts import (
+    ArtifactChecksumMismatchError,
     ArtifactNotFoundError,
     ArtifactPathError,
     ArtifactStoreMetadataError,
 )
 from framework.harness.artifacts import (
-    GraphTerminalManifestError,
-    GraphTerminalManifestErrorCode,
     GraphTerminalManifestHistoryError,
 )
 from interfaces.services.artifact_service import ArtifactInspectionService
@@ -101,13 +100,8 @@ def test_artifact_service_rejects_tampered_content(tmp_path) -> None:
         encoding="utf-8",
     )
 
-    with pytest.raises(GraphTerminalManifestError) as raised:
+    with pytest.raises(ArtifactChecksumMismatchError):
         ArtifactInspectionService(tmp_path).get_artifact("run-1", "output")
-
-    assert raised.value.code in {
-        GraphTerminalManifestErrorCode.ARTIFACT_SIZE_MISMATCH,
-        GraphTerminalManifestErrorCode.ARTIFACT_CHECKSUM_MISMATCH,
-    }
 
 
 @pytest.mark.parametrize("checksum", [None, "invalid", "sha256:" + "A" * 64])
@@ -120,7 +114,7 @@ def test_artifact_service_rejects_missing_or_invalid_checksum(tmp_path, checksum
         manifest["artifacts"][0]["content_checksum"] = checksum
     rewrite_graph_terminal_manifest(fixture, manifest)
 
-    with pytest.raises(GraphTerminalManifestError):
+    with pytest.raises(ArtifactStoreMetadataError):
         ArtifactInspectionService(tmp_path).get_artifact("run-1", "output")
 
 
@@ -135,10 +129,8 @@ def test_artifact_service_rejects_manifest_listed_missing_file(tmp_path) -> None
 def test_artifact_service_rejects_unknown_artifact_key(tmp_path) -> None:
     write_graph_terminal_run(tmp_path, files={})
 
-    with pytest.raises(GraphTerminalManifestError) as raised:
+    with pytest.raises(ArtifactNotFoundError):
         ArtifactInspectionService(tmp_path).get_artifact("run-1", "missing")
-
-    assert raised.value.code is GraphTerminalManifestErrorCode.ARTIFACT_NOT_FOUND
 
 
 def test_artifact_service_rejects_invalid_graph_manifest_before_artifact_read(
@@ -150,10 +142,8 @@ def test_artifact_service_rejects_invalid_graph_manifest_before_artifact_read(
     rewrite_graph_terminal_manifest(fixture, manifest)
     fixture.artifact_path("output").unlink()
 
-    with pytest.raises(GraphTerminalManifestError) as raised:
+    with pytest.raises(ArtifactStoreMetadataError):
         ArtifactInspectionService(tmp_path).get_artifact("run-1", "output")
-
-    assert raised.value.code is GraphTerminalManifestErrorCode.SCHEMA_INVALID
 
 
 def test_artifact_service_returns_typed_history_diagnostic_without_reading_content(
@@ -201,10 +191,8 @@ def test_artifact_service_rejects_unsafe_manifest_path(tmp_path, relative_path) 
     manifest["manifest_hash"] = None
     rewrite_graph_terminal_manifest(fixture, manifest)
 
-    with pytest.raises(GraphTerminalManifestError) as raised:
+    with pytest.raises(ArtifactStoreMetadataError):
         ArtifactInspectionService(tmp_path).get_artifact("run-1", "output")
-
-    assert raised.value.code is GraphTerminalManifestErrorCode.SCHEMA_INVALID
 
 
 def test_artifact_service_rejects_symlink_escape(tmp_path) -> None:
