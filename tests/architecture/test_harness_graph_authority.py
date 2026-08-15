@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import ast
+from dataclasses import fields
 from pathlib import Path
 
 from business.research.workflows.paper_analysis_workflow import (
     build_paper_analysis_workflow_spec,
 )
+from framework.harness.graph.model import HarnessControlNode, HarnessExecutableNode
 
 
 _FORBIDDEN_FRAMEWORK_IMPORTS = ("business", "interfaces", "infrastructure")
@@ -58,6 +60,15 @@ _LEGACY_RUNTIME_AUTHORITY_MARKERS = (
     "HarnessRunStatus.REPLANNING",
     "routing_rules=",
 )
+_EXECUTABLE_BINDING_FIELDS = frozenset(
+    {
+        "step_ref",
+        "worker_ref",
+        "activity_ref",
+        "gate_refs",
+        "side_effect_ref",
+    }
+)
 
 
 def test_harness_graph_modules_do_not_import_outer_layers() -> None:
@@ -79,6 +90,14 @@ def test_harness_graph_modules_do_not_import_outer_layers() -> None:
                 violations.append(f"{path.as_posix()}: {imported}")
 
     assert violations == []
+
+
+def test_control_node_contract_cannot_carry_executable_bindings() -> None:
+    control_fields = {field.name for field in fields(HarnessControlNode)}
+    executable_fields = {field.name for field in fields(HarnessExecutableNode)}
+
+    assert _EXECUTABLE_BINDING_FIELDS <= executable_fields
+    assert control_fields.isdisjoint(_EXECUTABLE_BINDING_FIELDS)
 
 
 def test_research_workers_and_gates_do_not_own_harness_routing() -> None:

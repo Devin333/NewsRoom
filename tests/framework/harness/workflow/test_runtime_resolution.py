@@ -28,8 +28,11 @@ from framework.harness.graph.dsl import (
     Choice,
     ChoiceBranch,
     HarnessGraphSpec,
+    Sequence,
     StepRef,
+    Wait,
 )
+from framework.harness.graph.model import HarnessControlNode, HarnessExecutableNode
 from framework.harness.workflow.runtime_resolution import HarnessGraphRuntimeResolver
 from framework.harness.workflow.spec import HarnessWorkflowSpec
 from framework.harness.graph.activity import HarnessStepSpec
@@ -69,6 +72,72 @@ def test_resolver_builds_preflight_snapshot_only_from_live_bindings() -> None:
     assert ("gate", "quality@1") in references
     assert ("side_effect", "publication.commit@2") in references
     assert ("terminal_policy", "publication@4") in references
+
+
+def test_resolver_never_registers_control_nodes_as_worker_activities() -> None:
+    workflow = HarnessWorkflowSpec(
+        workflow_id="control-binding-boundary",
+        steps=(
+            HarnessStepSpec("primary", "script"),
+            HarnessStepSpec("fallback", "script"),
+        ),
+        entry_step_id="primary",
+        graph=HarnessGraphSpec(
+            graph_id="control-binding-boundary",
+            root=Sequence(
+                (
+                    Choice(
+                        choice_id="route",
+                        branches=(
+                            ChoiceBranch(
+                                "primary",
+                                StepRef("primary"),
+                                priority=0,
+                                condition=ConditionPredicate(
+                                    path="graph.inputs.use_primary",
+                                    operator="equals",
+                                    expected=True,
+                                ),
+                            ),
+                            ChoiceBranch(
+                                "fallback",
+                                StepRef("fallback"),
+                                priority=1,
+                                is_default=True,
+                            ),
+                        ),
+                    ),
+                    Wait(
+                        wait_id="approval",
+                        kind="approval",
+                        correlation={"run": "graph.inputs.run_id"},
+                        signal_type="control.approval",
+                        signal_version="1",
+                        tenant_scope_path="graph.inputs.tenant_id",
+                        identity_scope_path="graph.inputs.actor_id",
+                    ),
+                )
+            ),
+            input_keys=("actor_id", "run_id", "tenant_id", "use_primary"),
+        ),
+    )
+    graph = HarnessWorkflowGraphCompiler().compile(workflow).graph
+    resolved = HarnessGraphRuntimeResolver(
+        _authority(worker_ids=("primary", "fallback"))
+    ).resolve(workflow, graph)
+    executable_ids = {
+        node.node_id for node in graph.nodes if isinstance(node, HarnessExecutableNode)
+    }
+    control_ids = {
+        node.node_id for node in graph.nodes if isinstance(node, HarnessControlNode)
+    }
+
+    assert control_ids == {"approval", "route", "route:join"}
+    assert set(resolved.workers_by_node) == executable_ids
+    assert set(resolved.activities_by_node) == executable_ids
+    assert set(resolved.gates_by_node) == executable_ids
+    assert control_ids.isdisjoint(resolved.workers_by_node)
+    assert control_ids.isdisjoint(resolved.activities_by_node)
 
 
 def test_resolver_rejects_missing_worker_before_graph_can_self_authorize() -> None:

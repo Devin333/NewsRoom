@@ -35,6 +35,17 @@ from framework.harness.graph.activity import HarnessRetryPolicy, HarnessStepSpec
 from framework.harness.graph.versioning import HARNESS_GRAPH_COMPILER_VERSION
 
 
+_EXECUTABLE_BINDING_FIELDS = frozenset(
+    {
+        "step_ref",
+        "worker_ref",
+        "activity_ref",
+        "gate_refs",
+        "side_effect_ref",
+    }
+)
+
+
 def test_legacy_linear_workflow_lowers_to_dependency_edges_without_fake_control_workers() -> (
     None
 ):
@@ -307,6 +318,61 @@ def test_explicit_dsl_lowers_all_control_constructs_and_compensation() -> None:
     assert any(
         edge.edge_kind == HarnessGraphEdgeKind.COMPENSATION for edge in graph.edges
     )
+    control_nodes = tuple(
+        node for node in graph.nodes if isinstance(node, HarnessControlNode)
+    )
+    assert control_nodes
+    assert all(
+        _EXECUTABLE_BINDING_FIELDS.isdisjoint(node.to_dict())
+        for node in control_nodes
+    )
+
+
+@pytest.mark.parametrize(
+    ("wait_kind", "deadline_input_path"),
+    (
+        ("signal", None),
+        ("timer", "graph.inputs.deadline"),
+        ("approval", None),
+    ),
+)
+def test_wait_kinds_compile_only_as_control_nodes(
+    wait_kind: str,
+    deadline_input_path: str | None,
+) -> None:
+    workflow = HarnessWorkflowSpec(
+        workflow_id=f"{wait_kind}-control",
+        steps=_steps("after_wait"),
+        entry_step_id="after_wait",
+        graph=HarnessGraphSpec(
+            graph_id=f"{wait_kind}-control",
+            root=Sequence(
+                (
+                    Wait(
+                        wait_id=f"{wait_kind}-wait",
+                        kind=wait_kind,
+                        correlation={"run": "graph.inputs.run_id"},
+                        signal_type=f"control.{wait_kind}",
+                        signal_version="1",
+                        tenant_scope_path="graph.inputs.tenant_id",
+                        identity_scope_path="graph.inputs.actor_id",
+                        deadline_input_path=deadline_input_path,
+                    ),
+                    StepRef("after_wait"),
+                )
+            ),
+            input_keys=("actor_id", "deadline", "run_id", "tenant_id"),
+        ),
+    )
+
+    graph = HarnessWorkflowGraphCompiler().compile(workflow).graph
+    wait = next(node for node in graph.nodes if node.node_id == f"{wait_kind}-wait")
+
+    assert isinstance(wait, HarnessControlNode)
+    assert wait.node_kind is HarnessGraphNodeKind.WAIT
+    assert wait.wait is not None
+    assert wait.wait.kind.value == wait_kind
+    assert _EXECUTABLE_BINDING_FIELDS.isdisjoint(wait.to_dict())
 
 
 def test_compiler_retains_retry_repair_and_marks_inferred_legacy_versions() -> None:
