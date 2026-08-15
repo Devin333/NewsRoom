@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import Any, Self
+from typing import Any, Self, cast
 
 from framework.harness.control_plane.errors import HarnessValidationError
 from framework.harness.graph.activity import (
@@ -34,6 +34,23 @@ MAX_GRAPH_DEFINITION_ACTIVITIES = 10_000
 _GRAPH_ID_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:/+-]*\Z")
 _GRAPH_VERSION_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._+-]*\Z")
 _MOVING_VERSIONS = frozenset({"current", "default", "latest", "stable"})
+_EXACT_REFERENCE_PATTERN = re.compile(
+    r"([A-Za-z0-9][A-Za-z0-9._:/+-]*)@([A-Za-z0-9][A-Za-z0-9._+-]*)\Z"
+)
+_EXACT_SCHEMA_PATTERN = re.compile(
+    r"[A-Za-z0-9][A-Za-z0-9._:/+-]*/v[1-9][0-9]*\Z"
+)
+_TASK_PLAN_SUPPORT_REFERENCE_FIELDS = (
+    "candidate_builder_ref",
+    "capability_registry_ref",
+    "gate_registry_ref",
+    "aggregator_ref",
+    "checkpoint_ref",
+    "result_store_ref",
+)
+_TASK_PLAN_SUPPORT_FIELDS = frozenset(
+    (*_TASK_PLAN_SUPPORT_REFERENCE_FIELDS, "event_schema")
+)
 _TYPED_LEAF_WORKER_TYPES = frozenset(
     HarnessWorkerType(kind.value) for kind in HarnessLeafActivityKind
 )
@@ -110,6 +127,108 @@ class HarnessGraphLeafBinding:
 
 
 @dataclass(frozen=True, slots=True)
+class HarnessGraphTaskPlanStageBinding:
+    """Checksum-bound declaration for one internal dynamic TaskPlan stage."""
+
+    activity_id: str
+    worker_ref: HarnessContractReference | Mapping[str, Any]
+    activity_ref: HarnessContractReference | Mapping[str, Any]
+    policy_ref: str
+    task_plan_schema: str
+    required_output_roles: tuple[str, ...]
+    support_refs: Mapping[str, str]
+
+    def __post_init__(self) -> None:
+        activity_id = _identifier(
+            self.activity_id,
+            "task_plan_binding.activity_id",
+        )
+        worker_ref = _contract_reference(
+            self.worker_ref,
+            expected_kind=HarnessContractKind.WORKER,
+            field="task_plan_binding.worker_ref",
+            invalid_code="invalid_graph_task_plan_stage_binding",
+            kind_mismatch_code="graph_task_plan_contract_kind_mismatch",
+        )
+        activity_ref = _contract_reference(
+            self.activity_ref,
+            expected_kind=HarnessContractKind.ACTIVITY,
+            field="task_plan_binding.activity_ref",
+            invalid_code="invalid_graph_task_plan_stage_binding",
+            kind_mismatch_code="graph_task_plan_contract_kind_mismatch",
+        )
+        policy_ref = _exact_reference_text(
+            self.policy_ref,
+            "task_plan_binding.policy_ref",
+        )
+        task_plan_schema = _exact_schema(
+            self.task_plan_schema,
+            "task_plan_binding.task_plan_schema",
+        )
+        required_output_roles = _unique_text_tuple(
+            self.required_output_roles,
+            "task_plan_binding.required_output_roles",
+        )
+        support_refs = _task_plan_support_refs(self.support_refs)
+        object.__setattr__(self, "activity_id", activity_id)
+        object.__setattr__(self, "worker_ref", worker_ref)
+        object.__setattr__(self, "activity_ref", activity_ref)
+        object.__setattr__(self, "policy_ref", policy_ref)
+        object.__setattr__(self, "task_plan_schema", task_plan_schema)
+        object.__setattr__(
+            self,
+            "required_output_roles",
+            required_output_roles,
+        )
+        object.__setattr__(self, "support_refs", support_refs)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "activity_id": self.activity_id,
+            "worker_ref": self.worker_ref.to_dict(),
+            "activity_ref": self.activity_ref.to_dict(),
+            "policy_ref": self.policy_ref,
+            "task_plan_schema": self.task_plan_schema,
+            "required_output_roles": list(self.required_output_roles),
+            "support_refs": dict(self.support_refs),
+        }
+
+    @classmethod
+    def from_dict(
+        cls,
+        value: Mapping[str, Any],
+    ) -> "HarnessGraphTaskPlanStageBinding":
+        payload = _exact_mapping(
+            value,
+            {
+                "activity_id",
+                "worker_ref",
+                "activity_ref",
+                "policy_ref",
+                "task_plan_schema",
+                "required_output_roles",
+                "support_refs",
+            },
+            "Graph TaskPlan stage binding",
+        )
+        return cls(
+            activity_id=payload["activity_id"],
+            worker_ref=payload["worker_ref"],
+            activity_ref=payload["activity_ref"],
+            policy_ref=payload["policy_ref"],
+            task_plan_schema=payload["task_plan_schema"],
+            required_output_roles=_unique_text_tuple(
+                payload["required_output_roles"],
+                "task_plan_binding.required_output_roles",
+            ),
+            support_refs=_mapping(
+                payload["support_refs"],
+                "task_plan_binding.support_refs",
+            ),
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class HarnessGraphDefinition:
     """Immutable, canonical Graph declaration before compiler preflight."""
 
@@ -118,6 +237,7 @@ class HarnessGraphDefinition:
     root: HarnessGraphSpec | Mapping[str, Any]
     activities: tuple[HarnessStepSpec, ...]
     leaf_activity_bindings: tuple[HarnessGraphLeafBinding, ...]
+    task_plan_stage_bindings: tuple[HarnessGraphTaskPlanStageBinding, ...]
     terminal_side_effect_policy: (
         HarnessTerminalSideEffectPolicy | Mapping[str, Any]
     )
@@ -148,6 +268,9 @@ class HarnessGraphDefinition:
         leaf_activity_bindings = _leaf_activity_bindings(
             self.leaf_activity_bindings
         )
+        task_plan_stage_bindings = _task_plan_stage_bindings(
+            self.task_plan_stage_bindings
+        )
         policy = self.terminal_side_effect_policy
         if not isinstance(policy, HarnessTerminalSideEffectPolicy):
             if not isinstance(policy, Mapping):
@@ -171,6 +294,11 @@ class HarnessGraphDefinition:
             "leaf_activity_bindings",
             leaf_activity_bindings,
         )
+        object.__setattr__(
+            self,
+            "task_plan_stage_bindings",
+            task_plan_stage_bindings,
+        )
         object.__setattr__(self, "terminal_side_effect_policy", policy)
         expected = canonical_checksum(self.checksum_projection())
         if self.definition_checksum is not None:
@@ -186,6 +314,10 @@ class HarnessGraphDefinition:
         object.__setattr__(self, "definition_checksum", expected)
         _validate_leaf_activity_bindings(
             leaf_activity_bindings,
+            activities=activities,
+        )
+        _validate_task_plan_stage_bindings(
+            task_plan_stage_bindings,
             activities=activities,
         )
 
@@ -210,6 +342,16 @@ class HarnessGraphDefinition:
                 return binding
         return None
 
+    def task_plan_stage_binding(
+        self,
+        activity_id: str,
+    ) -> HarnessGraphTaskPlanStageBinding | None:
+        normalized = _identifier(activity_id, "activity_id")
+        for binding in self.task_plan_stage_bindings:
+            if binding.activity_id == normalized:
+                return binding
+        return None
+
     def checksum_projection(self) -> dict[str, Any]:
         return {
             "schema_version": self.schema_version,
@@ -219,6 +361,9 @@ class HarnessGraphDefinition:
             "activities": [activity.to_dict() for activity in self.activities],
             "leaf_activity_bindings": [
                 binding.to_dict() for binding in self.leaf_activity_bindings
+            ],
+            "task_plan_stage_bindings": [
+                binding.to_dict() for binding in self.task_plan_stage_bindings
             ],
             "terminal_side_effect_policy": (
                 self.terminal_side_effect_policy.to_dict()
@@ -251,6 +396,7 @@ class HarnessGraphDefinition:
                 "root",
                 "activities",
                 "leaf_activity_bindings",
+                "task_plan_stage_bindings",
                 "terminal_side_effect_policy",
                 "definition_checksum",
             },
@@ -273,6 +419,13 @@ class HarnessGraphDefinition:
                 for item in _mapping_array(
                     payload["leaf_activity_bindings"],
                     "leaf_activity_bindings",
+                )
+            ),
+            task_plan_stage_bindings=tuple(
+                HarnessGraphTaskPlanStageBinding.from_dict(item)
+                for item in _mapping_array(
+                    payload["task_plan_stage_bindings"],
+                    "task_plan_stage_bindings",
                 )
             ),
             terminal_side_effect_policy=_mapping(
@@ -406,6 +559,45 @@ def _leaf_activity_bindings(
     return snapshots
 
 
+def _task_plan_stage_bindings(
+    values: Sequence[HarnessGraphTaskPlanStageBinding],
+) -> tuple[HarnessGraphTaskPlanStageBinding, ...]:
+    if isinstance(values, (str, bytes, bytearray)) or not isinstance(
+        values,
+        Sequence,
+    ):
+        raise HarnessValidationError(
+            "task_plan_stage_bindings must be an array",
+            code="invalid_graph_definition",
+        )
+    if len(values) > MAX_GRAPH_DEFINITION_ACTIVITIES or any(
+        not isinstance(value, HarnessGraphTaskPlanStageBinding)
+        for value in values
+    ):
+        raise HarnessValidationError(
+            "task_plan_stage_bindings must contain "
+            "HarnessGraphTaskPlanStageBinding values",
+            code="invalid_graph_definition",
+        )
+    snapshots = tuple(
+        sorted(
+            (
+                HarnessGraphTaskPlanStageBinding.from_dict(value.to_dict())
+                for value in values
+            ),
+            key=lambda item: item.activity_id,
+        )
+    )
+    binding_ids = tuple(binding.activity_id for binding in snapshots)
+    if len(binding_ids) != len(set(binding_ids)):
+        raise HarnessValidationError(
+            "Graph TaskPlan stage binding identities must be unique",
+            code="graph_duplicate_identity",
+            details={"field": "task_plan_stage_bindings"},
+        )
+    return snapshots
+
+
 def _validate_leaf_activity_bindings(
     bindings: tuple[HarnessGraphLeafBinding, ...],
     *,
@@ -459,6 +651,45 @@ def _validate_leaf_activity_bindings(
                     "actual_worker_type": activity.worker_type.value,
                 },
             )
+
+
+def _validate_task_plan_stage_bindings(
+    bindings: tuple[HarnessGraphTaskPlanStageBinding, ...],
+    *,
+    activities: tuple[HarnessStepSpec, ...],
+) -> None:
+    binding_ids = {binding.activity_id for binding in bindings}
+    activities_by_id = {activity.step_id: activity for activity in activities}
+    expected = {
+        activity.step_id
+        for activity in activities
+        if activity.worker_type is HarnessWorkerType.TASK_PLAN
+    }
+    unknown = sorted(binding_ids.difference(activities_by_id))
+    missing = sorted(expected.difference(binding_ids))
+    unexpected = sorted(binding_ids.difference(expected))
+    if unknown or missing or unexpected:
+        raise HarnessValidationError(
+            "Graph TaskPlan binding coverage does not match its activities",
+            code="graph_task_plan_stage_binding_coverage_mismatch",
+            details={
+                "missing": missing,
+                "unexpected": unexpected,
+                "unknown": unknown,
+            },
+        )
+    effectful = sorted(
+        activity.step_id
+        for activity in activities
+        if activity.worker_type is HarnessWorkerType.TASK_PLAN
+        and activity.side_effect_handler is not None
+    )
+    if effectful:
+        raise HarnessValidationError(
+            "Graph TaskPlan stages cannot own side-effect handlers",
+            code="graph_task_plan_stage_side_effect_forbidden",
+            details={"activities": effectful},
+        )
 
 
 def _activity_from_dict(value: Mapping[str, Any]) -> HarnessStepSpec:
@@ -590,6 +821,8 @@ def _contract_reference(
     *,
     expected_kind: HarnessContractKind,
     field: str,
+    invalid_code: str = "invalid_graph_leaf_activity_binding",
+    kind_mismatch_code: str = "graph_leaf_activity_contract_kind_mismatch",
 ) -> HarnessContractReference:
     try:
         reference = (
@@ -600,12 +833,12 @@ def _contract_reference(
     except (HarnessValidationError, TypeError, ValueError) as exc:
         raise HarnessValidationError(
             f"{field} must be an exact Graph contract reference",
-            code="invalid_graph_leaf_activity_binding",
+            code=invalid_code,
         ) from exc
     if reference.contract_kind is not expected_kind:
         raise HarnessValidationError(
             f"{field} has the wrong Graph contract kind",
-            code="graph_leaf_activity_contract_kind_mismatch",
+            code=kind_mismatch_code,
             details={
                 "field": field,
                 "expected_kind": expected_kind.value,
@@ -613,6 +846,83 @@ def _contract_reference(
             },
         )
     return reference
+
+
+def _exact_reference_text(value: Any, field: str) -> str:
+    text = _task_plan_required_text(value, field)
+    match = _EXACT_REFERENCE_PATTERN.fullmatch(text)
+    if match is None or match.group(2).casefold() in _MOVING_VERSIONS:
+        raise HarnessValidationError(
+            f"{field} must use exact '<id>@<version>' form",
+            code="invalid_graph_task_plan_stage_binding",
+            details={"field": field},
+        )
+    return text
+
+
+def _exact_schema(value: Any, field: str) -> str:
+    text = _task_plan_required_text(value, field)
+    if _EXACT_SCHEMA_PATTERN.fullmatch(text) is None:
+        raise HarnessValidationError(
+            f"{field} must use an exact versioned schema",
+            code="invalid_graph_task_plan_stage_binding",
+            details={"field": field},
+        )
+    return text
+
+
+def _unique_text_tuple(value: Any, field: str) -> tuple[str, ...]:
+    if isinstance(value, (str, bytes, bytearray)) or not isinstance(
+        value,
+        Sequence,
+    ):
+        raise HarnessValidationError(
+            f"{field} must be an array",
+            code="invalid_graph_task_plan_stage_binding",
+            details={"field": field},
+        )
+    normalized = tuple(_task_plan_required_text(item, field) for item in value)
+    if not normalized or len(normalized) != len(set(normalized)):
+        raise HarnessValidationError(
+            f"{field} must contain unique non-empty values",
+            code="invalid_graph_task_plan_stage_binding",
+            details={"field": field},
+        )
+    return tuple(sorted(normalized))
+
+
+def _task_plan_required_text(value: Any, field: str) -> str:
+    if not isinstance(value, str) or not value or value != value.strip():
+        raise HarnessValidationError(
+            f"{field} must be non-empty trimmed text",
+            code="invalid_graph_task_plan_stage_binding",
+            details={"field": field},
+        )
+    return value
+
+
+def _task_plan_support_refs(value: Any) -> Mapping[str, str]:
+    field = "task_plan_binding.support_refs"
+    if not isinstance(value, Mapping) or set(value) != _TASK_PLAN_SUPPORT_FIELDS:
+        actual = set(value) if isinstance(value, Mapping) else set()
+        raise HarnessValidationError(
+            f"{field} fields are invalid",
+            code="invalid_graph_task_plan_stage_binding",
+            details={
+                "missing": sorted(_TASK_PLAN_SUPPORT_FIELDS.difference(actual)),
+                "unexpected": sorted(actual.difference(_TASK_PLAN_SUPPORT_FIELDS)),
+            },
+        )
+    normalized = {
+        name: _exact_reference_text(value[name], f"{field}.{name}")
+        for name in _TASK_PLAN_SUPPORT_REFERENCE_FIELDS
+    }
+    normalized["event_schema"] = _exact_schema(
+        value["event_schema"],
+        f"{field}.event_schema",
+    )
+    frozen = freeze_json(dict(sorted(normalized.items())), field)
+    return cast(Mapping[str, str], frozen)
 
 
 def _mapping_array(value: Any, field_name: str) -> tuple[Mapping[str, Any], ...]:
@@ -667,5 +977,6 @@ __all__ = [
     "HarnessGraphDefinition",
     "HarnessGraphDefinitionReader",
     "HarnessGraphLeafBinding",
+    "HarnessGraphTaskPlanStageBinding",
     "MAX_GRAPH_DEFINITION_ACTIVITIES",
 ]
