@@ -123,6 +123,7 @@
       "business/research/workflows/paper_analysis_workflow.py",
       "interfaces/composition/research.py",
       "tests/business/research/application/test_graph_result_committer.py",
+      "tests/business/research/graphs/test_paper_analysis_graph.py",
       "tests/business/research/integration/test_dynamic_paper_analysis_task_plan.py",
       "tests/business/research/workflows/test_paper_analysis_workflow.py",
       "tests/framework/harness/workflow/test_graph_migration_goldens.py",

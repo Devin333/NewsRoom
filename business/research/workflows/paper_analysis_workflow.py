@@ -2,8 +2,6 @@ from __future__ import annotations
 
 from dataclasses import replace
 
-from framework.events.canonical import checksum_for
-from framework.harness.side_effects import HarnessTerminalSideEffectPolicy
 from framework.harness.graph import (
     HarnessGraphSpec,
     HarnessStepSpec,
@@ -17,10 +15,12 @@ from framework.harness.graph import (
 from framework.harness.workflow import HarnessWorkflowSpec
 
 from business.research.ports.artifact_publication import (
-    RESEARCH_ARTIFACT_EFFECT_KIND,
     RESEARCH_ARTIFACT_HANDLER_REF,
 )
-from business.research.workflows.paper_analysis_task_plan import (
+from business.research.graphs.contracts import (
+    RESEARCH_ARTIFACT_NOT_REQUIRED_EVIDENCE_REF,
+    RESEARCH_ARTIFACT_TERMINAL_POLICY_ID,
+    RESEARCH_ARTIFACT_TERMINAL_POLICY_VERSION,
     RESEARCH_DYNAMIC_AGGREGATOR_REF,
     RESEARCH_DYNAMIC_CAPABILITY_REGISTRY_REF,
     RESEARCH_DYNAMIC_CANDIDATE_BUILDER_REF,
@@ -29,18 +29,7 @@ from business.research.workflows.paper_analysis_task_plan import (
     RESEARCH_DYNAMIC_POLICY_REF,
     RESEARCH_DYNAMIC_RESULT_STORE_REF,
     RESEARCH_DYNAMIC_STAGE_ID,
-)
-
-
-RESEARCH_ARTIFACT_TERMINAL_POLICY_ID = "research.artifact.publication"
-RESEARCH_ARTIFACT_TERMINAL_POLICY_VERSION = "1"
-RESEARCH_ARTIFACT_NOT_REQUIRED_EVIDENCE_REF = checksum_for(
-    {
-        "policy": "not_required",
-        "handler": RESEARCH_ARTIFACT_HANDLER_REF,
-        "policy_id": RESEARCH_ARTIFACT_TERMINAL_POLICY_ID,
-        "version": RESEARCH_ARTIFACT_TERMINAL_POLICY_VERSION,
-    }
+    build_research_artifact_terminal_policy,
 )
 
 
@@ -170,16 +159,7 @@ def build_paper_analysis_workflow_spec() -> HarnessWorkflowSpec:
             ),
         ),
         terminal_policies={"publish_requires_verify": True},
-        terminal_side_effect_policy=HarnessTerminalSideEffectPolicy(
-            policy_id=RESEARCH_ARTIFACT_TERMINAL_POLICY_ID,
-            version=RESEARCH_ARTIFACT_TERMINAL_POLICY_VERSION,
-            handler=RESEARCH_ARTIFACT_HANDLER_REF,
-            kind=RESEARCH_ARTIFACT_EFFECT_KIND,
-            requires_approval=False,
-            retry_limit=2,
-            not_required_evidence_ref=RESEARCH_ARTIFACT_NOT_REQUIRED_EVIDENCE_REF,
-            inherited_gate_refs=("ResearchQualityGate@1",),
-        ),
+        terminal_side_effect_policy=build_research_artifact_terminal_policy(),
         metadata={"scope": "harness_side_effect_authority"},
     )
 
