@@ -24,6 +24,7 @@ from framework.harness.task_plan import (
     TaskPlanStageRequest,
     TaskPlanStageRunner,
     TaskPlanValidator,
+    TaskResultRecord,
     TaskSpec,
     TaskLifecycle,
 )
@@ -52,6 +53,33 @@ class _Worker:
 
     def execute(self, task):
         return HarnessWorkerResult(status="succeeded", output={"value": task["task_id"] if "task_id" in task else "ok"})
+
+
+class _AcceptingResultVerifier:
+    def verify(self, result, *, task, request, workflow_id=None):
+        instance = request.instance
+        return TaskResultRecord(
+            run_id=instance.run_id,
+            workflow_id=request.workflow_id,
+            stage_id=instance.stage_id,
+            plan_id=instance.plan_id,
+            plan_version=instance.plan_version,
+            task_id=instance.task_id,
+            task_instance_id=instance.task_instance_id,
+            attempt=instance.attempt,
+            worker_ref=instance.worker_ref,
+            task_checksum=instance.task_definition_checksum,
+            binding_checksum=task.binding_checksum,
+            status=TaskLifecycle.SUCCEEDED,
+            result_ref=f"result://{instance.task_id}",
+            output_roles=(task.output_role,),
+            output_schema_ref=task.task.output_contract.schema_ref,
+            verified_gate_refs=task.gate_refs,
+            gate_evidence_refs=tuple(
+                f"evidence://gate/{index}"
+                for index, _gate_ref in enumerate(task.gate_refs, start=1)
+            ),
+        )
 
 
 def _setup(*, roles=("role",), capabilities=("cap",)):
@@ -167,6 +195,47 @@ def test_scheduler_orders_ready_tasks_and_honors_parallelism():
         available_input_refs=("document",),
     )
     assert [item.task_id for item in decision.task_instances] == ["a"]
+
+
+def test_ready_task_is_durably_committed_before_worker_invocation() -> None:
+    graph, policy, registry = _setup()
+    candidate = _candidate(graph, (_task("a"),))
+    store = InMemoryTaskPlanStore()
+    event_types_at_worker_call: list[str] = []
+
+    def execute(_binding, _request):
+        event_types_at_worker_call.extend(
+            event.event_type
+            for event in store.read_events("run", "dynamic_stage")
+        )
+        return HarnessWorkerResult(status="succeeded", output={"value": "accepted"})
+
+    result = TaskPlanStageRunner(
+        candidate_builder=FakePlanCandidateBuilder(candidate),
+        capability_registry=registry,
+        store=store,
+        result_verifier=_AcceptingResultVerifier(),
+        worker_executor=execute,
+    ).run(
+        TaskPlanStageRequest(
+            run_id="run",
+            workflow_id="workflow",
+            stage_id="dynamic_stage",
+            graph_checksum=graph,
+            context_refs={"document": "document"},
+            policy=policy,
+            policy_ref=policy.exact_ref,
+            candidate=candidate,
+            accepted_at="2026-08-01T00:00:00Z",
+        )
+    )
+
+    assert result.status.value == "succeeded"
+    assert event_types_at_worker_call[-3:] == [
+        "TASK_READY",
+        "TASK_DISPATCHED",
+        "TASK_STARTED",
+    ]
 
 
 def test_store_accepts_duplicate_identical_result_once():

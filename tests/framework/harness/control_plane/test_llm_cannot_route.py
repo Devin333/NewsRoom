@@ -42,7 +42,14 @@ def test_worker_result_contract_rejects_next_step_field() -> None:
         HarnessWorkerResult(status="succeeded", output={"next_step": "publish"})
 
 
-def test_fake_llm_next_step_output_is_rejected_at_worker_ingress() -> None:
+@pytest.mark.parametrize(
+    ("forbidden_key", "forbidden_value"),
+    (("next_step", "publish"), ("quality_score", 0.99)),
+)
+def test_fake_llm_control_output_is_rejected_at_worker_ingress(
+    forbidden_key: str,
+    forbidden_value: object,
+) -> None:
     workflow = HarnessWorkflowSpec(
         workflow_id="llm-route",
         steps=(
@@ -59,7 +66,7 @@ def test_fake_llm_next_step_output_is_rejected_at_worker_ingress() -> None:
         worker_registry={
             "draft": lambda task: LeakyWorkerResult(
                 status=HarnessWorkerStatus.SUCCEEDED,
-                output={"next_step": "publish", "body": "candidate text"},
+                output={forbidden_key: forbidden_value, "body": "candidate text"},
             ),
             "review": lambda task: downstream_calls.append("review"),
             "publish": lambda task: downstream_calls.append("publish"),
@@ -67,9 +74,14 @@ def test_fake_llm_next_step_output_is_rejected_at_worker_ingress() -> None:
     )
 
     with pytest.raises(HarnessValidationError) as captured:
-        control_plane.run(HarnessRunSpec(run_id="run-llm-route", workflow=workflow))
+        control_plane.run(
+            HarnessRunSpec(
+                run_id=f"run-llm-forbidden-{forbidden_key}",
+                workflow=workflow,
+            )
+        )
 
-    assert captured.value.details["forbidden"] == ["next_step"]
+    assert captured.value.details["forbidden"] == [forbidden_key]
     assert downstream_calls == []
     assert not any(
         event.event_type.value == "worker_result_recorded"
