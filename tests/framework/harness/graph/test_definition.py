@@ -8,6 +8,7 @@ import pytest
 from framework.harness.control_plane.errors import HarnessValidationError
 from framework.harness.graph import (
     HARNESS_GRAPH_DEFINITION_SCHEMA,
+    CompensationBinding,
     HarnessContractKind,
     HarnessContractReference,
     HarnessGraphDefinition,
@@ -28,6 +29,7 @@ from framework.harness.graph import (
     StepRef,
     Wait,
 )
+from framework.harness.graph.canonical import canonical_checksum
 
 
 _SHA_A = "sha256:" + "a" * 64
@@ -363,7 +365,6 @@ def test_graph_task_plan_binding_requires_unique_output_roles() -> None:
 
 def test_graph_definition_repair_binding_round_trips_canonically() -> None:
     definition = _repair_definition()
-    same_activities_without_route = _repair_definition(repair_bindings=())
 
     restored = HarnessGraphDefinitionReader().read_for_execution(
         json.loads(json.dumps(definition.to_dict())),
@@ -371,9 +372,9 @@ def test_graph_definition_repair_binding_round_trips_canonically() -> None:
     )
 
     assert restored == definition
-    assert restored.definition_checksum != (
-        same_activities_without_route.definition_checksum
-    )
+    assert restored.checksum_projection()["repair_bindings"] == [
+        binding.to_dict() for binding in restored.repair_bindings
+    ]
     binding = restored.repair_binding("repair-compose-report")
     assert binding is not None
     assert binding.source_node_id == "compose_report"
@@ -384,6 +385,121 @@ def test_graph_definition_repair_binding_round_trips_canonically() -> None:
         HarnessGraphRepairTrigger.WORKER_FAILURE_AFTER_RETRY_EXHAUSTION,
     )
     restored.verify_integrity()
+
+
+def test_graph_definition_rejects_unused_repair_activity() -> None:
+    with pytest.raises(HarnessValidationError) as raised:
+        _repair_definition(repair_bindings=())
+
+    assert raised.value.code == "graph_activity_topology_coverage_mismatch"
+    assert raised.value.details == {
+        "missing": [],
+        "unused": ["repair_report"],
+    }
+
+
+def test_graph_definition_rejects_unknown_root_activity() -> None:
+    with pytest.raises(HarnessValidationError) as raised:
+        _definition(
+            root=HarnessGraphSpec(
+                graph_id="research.paper-analysis",
+                root=Sequence(
+                    (StepRef("load_source"), StepRef("missing_activity"))
+                ),
+            ),
+        )
+
+    assert raised.value.code == "graph_activity_topology_coverage_mismatch"
+    assert raised.value.details == {
+        "missing": ["missing_activity"],
+        "unused": ["compose_report"],
+    }
+
+
+def test_graph_reader_rejects_checksum_valid_unknown_root_activity() -> None:
+    payload = _definition().to_dict()
+    payload["root"]["root"]["children"][1]["step_id"] = "missing_activity"
+    payload["definition_checksum"] = canonical_checksum(
+        {
+            key: value
+            for key, value in payload.items()
+            if key != "definition_checksum"
+        }
+    )
+
+    with pytest.raises(HarnessValidationError) as raised:
+        HarnessGraphDefinitionReader().read_for_execution(
+            payload,
+            source_schema=HARNESS_GRAPH_DEFINITION_SCHEMA,
+        )
+
+    assert raised.value.code == "graph_activity_topology_coverage_mismatch"
+    assert raised.value.details == {
+        "missing": ["missing_activity"],
+        "unused": ["compose_report"],
+    }
+
+
+def test_graph_definition_accepts_compensation_only_activity() -> None:
+    compensation_activity = HarnessStepSpec(
+        step_id="rollback_report",
+        worker_type=HarnessWorkerType.FUNCTION,
+        input_keys=("report_draft",),
+    )
+    definition = _definition(
+        root=HarnessGraphSpec(
+            graph_id="research.paper-analysis",
+            root=Sequence(
+                (StepRef("load_source"), StepRef("compose_report"))
+            ),
+            compensations=(
+                CompensationBinding(
+                    binding_id="rollback-compose-report",
+                    for_node_id="compose_report",
+                    compensation_step_id="rollback_report",
+                    handler_ref="research.rollback-report@1",
+                    activity_contract_ref="research.rollback-report@1",
+                ),
+            ),
+        ),
+        activities=(*_activities(), compensation_activity),
+        leaf_activity_bindings=(
+            *_leaf_activity_bindings(),
+            _leaf_binding(
+                "rollback_report",
+                HarnessLeafActivityKind.FUNCTION,
+            ),
+        ),
+    )
+
+    assert definition.activity("rollback_report") == compensation_activity
+
+
+def test_graph_definition_rejects_unknown_compensation_activity() -> None:
+    with pytest.raises(HarnessValidationError) as raised:
+        _definition(
+            root=HarnessGraphSpec(
+                graph_id="research.paper-analysis",
+                root=Sequence(
+                    (StepRef("load_source"), StepRef("compose_report"))
+                ),
+                compensations=(
+                    CompensationBinding(
+                        binding_id="rollback-compose-report",
+                        for_node_id="compose_report",
+                        compensation_step_id="missing_activity",
+                        handler_ref="research.rollback-report@1",
+                        activity_contract_ref="research.rollback-report@1",
+                    ),
+                ),
+            ),
+        )
+
+    assert raised.value.code == "graph_activity_topology_coverage_mismatch"
+    assert raised.value.details == {
+        "missing": ["missing_activity"],
+        "unused": [],
+    }
 
 
 def test_graph_definition_repair_binding_order_does_not_change_checksum() -> None:

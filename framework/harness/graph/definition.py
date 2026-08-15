@@ -421,6 +421,11 @@ class HarnessGraphDefinition:
             root=root,
             activities=activities,
         )
+        _validate_activity_topology(
+            root=root,
+            activities=activities,
+            repair_bindings=repair_bindings,
+        )
 
     @property
     def activity_ids(self) -> tuple[str, ...]:
@@ -881,7 +886,9 @@ def _validate_repair_bindings(
     root: HarnessGraphSpec,
     activities: tuple[HarnessStepSpec, ...],
 ) -> None:
-    root_node_ids, executable_node_ids = _root_node_identities(root.root)
+    root_topology = _root_topology_identities(root.root)
+    root_node_ids = root_topology.node_ids
+    executable_node_ids = root_topology.executable_node_ids
     root_counts = Counter(root_node_ids)
     executable_counts = Counter(executable_node_ids)
     activities_by_id = {activity.step_id: activity for activity in activities}
@@ -958,17 +965,49 @@ def _validate_repair_bindings(
             routes[route_key] = binding
 
 
-def _root_node_identities(
+def _validate_activity_topology(
+    *,
+    root: HarnessGraphSpec,
+    activities: tuple[HarnessStepSpec, ...],
+    repair_bindings: tuple[HarnessGraphRepairBinding, ...],
+) -> None:
+    declared = {activity.step_id for activity in activities}
+    root_topology = _root_topology_identities(root.root)
+    referenced = {
+        *root_topology.activity_ids,
+        *(binding.compensation_step_id for binding in root.compensations),
+        *(binding.repair_activity_id for binding in repair_bindings),
+    }
+    missing = sorted(referenced.difference(declared))
+    unused = sorted(declared.difference(referenced))
+    if missing or unused:
+        raise HarnessValidationError(
+            "Graph definition activity topology is incomplete",
+            code="graph_activity_topology_coverage_mismatch",
+            details={"missing": missing, "unused": unused},
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class _RootTopologyIdentities:
+    node_ids: tuple[str, ...]
+    executable_node_ids: tuple[str, ...]
+    activity_ids: tuple[str, ...]
+
+
+def _root_topology_identities(
     expression: HarnessGraphExpression,
-) -> tuple[tuple[str, ...], tuple[str, ...]]:
+) -> _RootTopologyIdentities:
     node_ids: list[str] = []
     executable_node_ids: list[str] = []
+    activity_ids: list[str] = []
 
     def visit(current: HarnessGraphExpression) -> None:
         if isinstance(current, StepRef):
             node_id = current.node_id or current.step_id
             node_ids.append(node_id)
             executable_node_ids.append(node_id)
+            activity_ids.append(current.step_id)
             return
         if isinstance(current, GraphSequence):
             for child in current.children:
@@ -1009,7 +1048,11 @@ def _root_node_identities(
         )
 
     visit(expression)
-    return tuple(node_ids), tuple(executable_node_ids)
+    return _RootTopologyIdentities(
+        node_ids=tuple(node_ids),
+        executable_node_ids=tuple(executable_node_ids),
+        activity_ids=tuple(activity_ids),
+    )
 
 
 def _activity_from_dict(value: Mapping[str, Any]) -> HarnessStepSpec:
