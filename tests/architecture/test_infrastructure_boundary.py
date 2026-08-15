@@ -47,6 +47,9 @@ ALLOWED_BUSINESS_IMPORTS = {
     "infrastructure/research/github_repository.py": {
         "business.research.domain.code_repository",
     },
+    "infrastructure/research/reader_repair_memory_side_effect.py": {
+        "business.research.ports.repair_memory",
+    },
     "infrastructure/research/source_provider.py": {
         "business.research.domain.paper",
     },
@@ -87,6 +90,9 @@ RESEARCH_ADAPTER_BUSINESS_IMPORTS = {
     },
     "infrastructure/research/github_repository.py": {
         "business.research.domain.code_repository",
+    },
+    "infrastructure/research/reader_repair_memory_side_effect.py": {
+        "business.research.ports.repair_memory",
     },
     "infrastructure/research/source_provider.py": {
         "business.research.domain.paper",

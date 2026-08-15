@@ -19,12 +19,14 @@ from framework.harness.graph import (
 from framework.harness.subagents import SubAgentSpec
 
 from business.research.domain.reader_repair import READER_REPAIR_NAMESPACE
+from business.research.ports.repair_memory import (
+    READER_REPAIR_MEMORY_EFFECT_KIND,
+    READER_REPAIR_MEMORY_HANDLER_REF,
+)
 
 
 READER_REPAIR_GRAPH_ID = "research.reader_repair.graph"
 READER_REPAIR_GRAPH_VERSION = "1"
-READER_REPAIR_MEMORY_HANDLER_REF = "research.reader_repair.memory.commit@1"
-READER_REPAIR_MEMORY_EFFECT_KIND = "memory_write"
 READER_REPAIR_MEMORY_POLICY_ID = "research.reader_repair.memory"
 READER_REPAIR_MEMORY_POLICY_VERSION = "1"
 READER_REPAIR_MEMORY_NOT_REQUIRED_EVIDENCE_REF = checksum_for(

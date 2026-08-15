@@ -92,3 +92,45 @@ def test_reader_repair_subagent_declarations_are_graph_owned() -> None:
         modules = imported_modules(caller)
         assert expected_owner in modules
         assert not any(module.endswith("reader_repair.workflow") for module in modules)
+
+
+def test_reader_repair_memory_side_effect_is_atomic_and_inactive() -> None:
+    handler_path = (
+        PROJECT_ROOT
+        / "infrastructure"
+        / "research"
+        / "reader_repair_memory_side_effect.py"
+    )
+    port_path = (
+        PROJECT_ROOT
+        / "business"
+        / "research"
+        / "ports"
+        / "repair_memory.py"
+    )
+    handler_source = handler_path.read_text(encoding="utf-8")
+    port_source = port_path.read_text(encoding="utf-8")
+
+    assert "class ReaderRepairMemoryCommitPort" in port_source
+    assert "class ReaderRepairMemorySideEffectHandler" in handler_source
+    assert ".write_case(" not in handler_source
+    assert ".write_strategy(" not in handler_source
+    assert "business.research.reader_repair.repair_memory" not in imported_modules(
+        handler_path
+    )
+
+    inactive_module = (
+        "infrastructure.research.reader_repair_memory_side_effect"
+    )
+    production_paths = (
+        PROJECT_ROOT / "business" / "research" / "application" / "single_paper_runtime.py",
+        PROJECT_ROOT / "interfaces" / "composition" / "research.py",
+    )
+    assert all(
+        inactive_module not in imported_modules(path)
+        for path in production_paths
+    )
+    assert all(
+        "ReaderRepairMemorySideEffectHandler" not in path.read_text(encoding="utf-8")
+        for path in production_paths
+    )

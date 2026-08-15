@@ -17,7 +17,20 @@ from business.research.ports.field_embedding_index import (
 )
 from business.research.ports.llm_worker import ResearchCandidateWorkerPort
 from business.research.ports.memory import ResearchMemoryPort
-from business.research.ports.repair_memory import ReaderRepairMemoryPort, ReaderRepairMemoryVersion
+from business.research.ports.repair_memory import (
+    READER_REPAIR_MEMORY_EFFECT_KIND,
+    READER_REPAIR_MEMORY_HANDLER_ID,
+    READER_REPAIR_MEMORY_HANDLER_REF,
+    READER_REPAIR_MEMORY_HANDLER_VERSION,
+    READER_REPAIR_MEMORY_SCHEMA_VERSION,
+    READER_REPAIR_MEMORY_STEP_ID,
+    ReaderRepairMemoryCandidateProjection,
+    ReaderRepairMemoryCommitPort,
+    ReaderRepairMemoryCommitReceipt,
+    ReaderRepairMemoryCommitRequest,
+    ReaderRepairMemoryPort,
+    ReaderRepairMemoryVersion,
+)
 from business.research.ports.repositories import (
     EvidencePackRepository,
     PaperCardRepository,
@@ -50,6 +63,16 @@ __all__ = [
     "GithubRepositoryPort",
     "PaperCardRepository",
     "PaperSourceProvider",
+    "READER_REPAIR_MEMORY_EFFECT_KIND",
+    "READER_REPAIR_MEMORY_HANDLER_ID",
+    "READER_REPAIR_MEMORY_HANDLER_REF",
+    "READER_REPAIR_MEMORY_HANDLER_VERSION",
+    "READER_REPAIR_MEMORY_SCHEMA_VERSION",
+    "READER_REPAIR_MEMORY_STEP_ID",
+    "ReaderRepairMemoryCandidateProjection",
+    "ReaderRepairMemoryCommitPort",
+    "ReaderRepairMemoryCommitReceipt",
+    "ReaderRepairMemoryCommitRequest",
     "ReaderRepairMemoryPort",
     "ReaderRepairMemoryVersion",
     "ReadingSessionRepository",
