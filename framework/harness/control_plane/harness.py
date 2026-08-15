@@ -172,7 +172,7 @@ from framework.harness.graph.model import (
     HarnessMergeKind,
     NormalizedHarnessGraph,
 )
-from framework.harness.workflow.runtime_resolution import (
+from framework.harness.graph.runtime_resolution import (
     HarnessGraphRuntimeResolver,
     HarnessResolvedRuntimeBindings,
 )
@@ -847,7 +847,6 @@ class HarnessControlPlane:
                 self._graph_dispatch_queue.resolve_parallel_capabilities(activity_refs)
             )
         resolved = HarnessGraphRuntimeResolver(authority).resolve(
-            run_spec.workflow,
             graph,
             parallel_activity_capabilities=dispatcher_capabilities,
             fenced_side_effect_store=isinstance(

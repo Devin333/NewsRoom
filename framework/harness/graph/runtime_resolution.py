@@ -26,7 +26,6 @@ from framework.harness.graph.model import (
     HarnessGraphNodeKind,
     NormalizedHarnessGraph,
 )
-from framework.harness.workflow.spec import HarnessWorkflowSpec
 from framework.harness.graph.validation.registry import HarnessGraphRegistrySnapshot
 
 
@@ -69,7 +68,6 @@ class HarnessGraphRuntimeResolver:
 
     def resolve(
         self,
-        workflow: HarnessWorkflowSpec,
         graph: NormalizedHarnessGraph,
         *,
         parallel_activity_capabilities: Mapping[
@@ -79,15 +77,11 @@ class HarnessGraphRuntimeResolver:
         | None = None,
         fenced_side_effect_store: bool = False,
     ) -> HarnessResolvedRuntimeBindings:
-        if not isinstance(workflow, HarnessWorkflowSpec):
-            raise TypeError("workflow must be HarnessWorkflowSpec")
         if not isinstance(graph, NormalizedHarnessGraph):
             raise TypeError("graph must be NormalizedHarnessGraph")
         if not isinstance(fenced_side_effect_store, bool):
             raise TypeError("fenced_side_effect_store must be boolean")
-        _validate_workflow_reference(workflow, graph)
 
-        steps_by_id = {step.step_id: step for step in workflow.steps}
         references: set[HarnessContractReference] = {graph.workflow_ref}
         workers: dict[str, HarnessWorkerBinding] = {}
         activities: dict[str, HarnessActivityContractBinding] = {}
@@ -98,21 +92,11 @@ class HarnessGraphRuntimeResolver:
         for node in graph.nodes:
             if not isinstance(node, HarnessExecutableNode):
                 continue
-            try:
-                step = steps_by_id[node.step_id]
-            except KeyError as exc:
-                raise _resolution_error(
-                    "unknown_graph_step_binding",
-                    "compiled executable node does not resolve to a workflow step",
-                    node_id=node.node_id,
-                    step_id=node.step_id,
-                ) from exc
-            _validate_step_reference(workflow, step, node)
             references.add(node.step_ref)
 
             worker = self._authority.resolve_worker(
                 node.worker_ref,
-                expected_worker_type=step.worker_type,
+                expected_worker_type=node.metadata.get("worker_type"),
             )
             activity = self._authority.resolve_activity(node.activity_ref)
             workers[node.node_id] = worker
@@ -161,7 +145,6 @@ class HarnessGraphRuntimeResolver:
             references.add(binding.reference)
 
         terminal_binding, terminal_gate_refs = self._resolve_terminal_policy(
-            workflow,
             graph,
             references,
         )
@@ -202,39 +185,25 @@ class HarnessGraphRuntimeResolver:
 
     def _resolve_terminal_policy(
         self,
-        workflow: HarnessWorkflowSpec,
         graph: NormalizedHarnessGraph,
         references: set[HarnessContractReference],
     ) -> tuple[HarnessSideEffectHandlerBinding | None, frozenset[str]]:
-        policy = workflow.terminal_side_effect_policy
+        policy = graph.terminal_policy
         graph_ref = graph.terminal_policy_ref
         if policy is None:
             if graph_ref is not None:
                 raise _resolution_error(
-                    "terminal_policy_reference_mismatch",
-                    "graph pins a terminal policy absent from the workflow",
-                    graph_reference=graph_ref.exact_ref,
+                    "terminal_policy_snapshot_missing",
+                    "graph pins a terminal policy without its immutable snapshot",
+                    reference=graph_ref.exact_ref,
                 )
             return None, frozenset()
-        expected_ref = HarnessContractReference(
-            HarnessContractKind.TERMINAL_POLICY,
-            policy.policy_id,
-            policy.version,
-        )
-        if graph_ref != expected_ref:
+        if graph_ref is None:
             raise _resolution_error(
-                "terminal_policy_reference_mismatch",
-                "graph terminal policy reference does not match the workflow policy",
-                expected_reference=expected_ref.exact_ref,
-                graph_reference=None if graph_ref is None else graph_ref.exact_ref,
+                "terminal_policy_reference_missing",
+                "graph terminal policy snapshot lacks its exact reference",
             )
-        if graph.terminal_policy != policy:
-            raise _resolution_error(
-                "terminal_policy_snapshot_mismatch",
-                "normalized graph terminal policy snapshot does not match the workflow policy",
-                reference=expected_ref.exact_ref,
-            )
-        references.add(expected_ref)
+        references.add(graph_ref)
         handler_ref = HarnessContractReference(
             HarnessContractKind.SIDE_EFFECT,
             policy.handler.handler_id,
@@ -254,40 +223,6 @@ class HarnessGraphRuntimeResolver:
                 references.add(_gate_reference(gate_binding))
             required_gate_refs.add(graph_gate_ref.exact_ref)
         return binding, frozenset(required_gate_refs)
-
-
-def _validate_workflow_reference(
-    workflow: HarnessWorkflowSpec,
-    graph: NormalizedHarnessGraph,
-) -> None:
-    expected = HarnessContractReference(
-        HarnessContractKind.WORKFLOW,
-        workflow.workflow_id,
-        workflow.workflow_version or "1",
-    )
-    if graph.workflow_ref != expected:
-        raise _resolution_error(
-            "workflow_reference_mismatch",
-            "compiled graph workflow reference does not match the run workflow",
-            expected_reference=expected.exact_ref,
-            graph_reference=graph.workflow_ref.exact_ref,
-        )
-
-
-def _validate_step_reference(workflow, step, node: HarnessExecutableNode) -> None:
-    expected = HarnessContractReference(
-        HarnessContractKind.STEP,
-        f"{workflow.workflow_id}:{step.step_id}",
-        str(step.metadata.get("step_version", "1")),
-    )
-    if node.step_ref != expected:
-        raise _resolution_error(
-            "step_reference_mismatch",
-            "compiled node step reference does not match the workflow step",
-            node_id=node.node_id,
-            expected_reference=expected.exact_ref,
-            graph_reference=node.step_ref.exact_ref,
-        )
 
 
 def _merge_references(
