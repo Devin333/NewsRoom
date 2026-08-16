@@ -9,6 +9,10 @@ from business.research.graphs import (
     READER_REPAIR_APPLICATION_VERIFICATION_STEP_ID,
     READER_REPAIR_COMMITTED_OUTPUT_BINDING_ID,
     READER_REPAIR_COMMITTED_OUTPUT_RECEIPT_KEY,
+    READER_REPAIR_FAILURE_DIAGNOSTIC_EFFECT_KIND,
+    READER_REPAIR_FAILURE_DIAGNOSTIC_HANDLER_REF,
+    READER_REPAIR_FAILURE_DIAGNOSTIC_POLICY_ID,
+    READER_REPAIR_FAILURE_DIAGNOSTIC_POLICY_VERSION,
     READER_REPAIR_EXECUTION_GATE_REFERENCES,
     READER_REPAIR_GATE_REFERENCES,
     READER_REPAIR_GRAPH_ID,
@@ -218,6 +222,28 @@ def test_reader_repair_memory_and_skill_authority_stays_with_harness() -> None:
     assert terminal.kind == READER_REPAIR_MEMORY_EFFECT_KIND
     assert terminal.inherited_gate_refs == ("ReaderRepairMemoryPolicyGate@1",)
     assert terminal.requires_approval is False
+
+    failure_terminal = definition.terminal_failure_side_effect_policy
+    assert failure_terminal is not None
+    assert failure_terminal.policy_id == READER_REPAIR_FAILURE_DIAGNOSTIC_POLICY_ID
+    assert (
+        failure_terminal.version
+        == READER_REPAIR_FAILURE_DIAGNOSTIC_POLICY_VERSION
+    )
+    assert str(failure_terminal.handler) == (
+        READER_REPAIR_FAILURE_DIAGNOSTIC_HANDLER_REF
+    )
+    assert failure_terminal.kind == READER_REPAIR_FAILURE_DIAGNOSTIC_EFFECT_KIND
+    assert failure_terminal.terminal_reason_codes == (
+        "graph_terminal_failure",
+        "verification_failed_replans_exhausted",
+    )
+    assert failure_terminal.failure_record_schema == (
+        "newsroom.harness-graph-terminal-failure-record/v1"
+    )
+    assert failure_terminal.disposition.value == "quarantine"
+    assert failure_terminal.handler != terminal.handler
+    assert failure_terminal.reference != terminal.reference
 
     serialized = json.dumps(definition.to_dict(), sort_keys=True)
     assert "artifact" not in serialized.casefold()

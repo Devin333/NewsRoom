@@ -17,6 +17,18 @@ from business.research.ports.field_embedding_index import (
 )
 from business.research.ports.llm_worker import ResearchCandidateWorkerPort
 from business.research.ports.memory import ResearchMemoryPort
+from business.research.ports.reader_repair_failure_diagnostic import (
+    READER_REPAIR_FAILURE_DIAGNOSTIC_EFFECT_KIND,
+    READER_REPAIR_FAILURE_DIAGNOSTIC_HANDLER_ID,
+    READER_REPAIR_FAILURE_DIAGNOSTIC_HANDLER_REF,
+    READER_REPAIR_FAILURE_DIAGNOSTIC_HANDLER_VERSION,
+    READER_REPAIR_FAILURE_DIAGNOSTIC_SCHEMA_VERSION,
+    READER_REPAIR_FAILURE_DIAGNOSTIC_TERMINAL_ACTION,
+    ReaderRepairFailureDiagnosticCandidate,
+    ReaderRepairFailureDiagnosticCommitPort,
+    ReaderRepairFailureDiagnosticCommitReceipt,
+    ReaderRepairFailureDiagnosticCommitRequest,
+)
 from business.research.ports.repair_memory import (
     READER_REPAIR_MEMORY_EFFECT_KIND,
     READER_REPAIR_MEMORY_HANDLER_ID,
@@ -64,12 +76,22 @@ __all__ = [
     "GithubRepositoryPort",
     "PaperCardRepository",
     "PaperSourceProvider",
+    "READER_REPAIR_FAILURE_DIAGNOSTIC_EFFECT_KIND",
+    "READER_REPAIR_FAILURE_DIAGNOSTIC_HANDLER_ID",
+    "READER_REPAIR_FAILURE_DIAGNOSTIC_HANDLER_REF",
+    "READER_REPAIR_FAILURE_DIAGNOSTIC_HANDLER_VERSION",
+    "READER_REPAIR_FAILURE_DIAGNOSTIC_SCHEMA_VERSION",
+    "READER_REPAIR_FAILURE_DIAGNOSTIC_TERMINAL_ACTION",
     "READER_REPAIR_MEMORY_EFFECT_KIND",
     "READER_REPAIR_MEMORY_HANDLER_ID",
     "READER_REPAIR_MEMORY_HANDLER_REF",
     "READER_REPAIR_MEMORY_HANDLER_VERSION",
     "READER_REPAIR_MEMORY_SCHEMA_VERSION",
     "READER_REPAIR_MEMORY_STEP_ID",
+    "ReaderRepairFailureDiagnosticCandidate",
+    "ReaderRepairFailureDiagnosticCommitPort",
+    "ReaderRepairFailureDiagnosticCommitReceipt",
+    "ReaderRepairFailureDiagnosticCommitRequest",
     "ReaderRepairMemoryCandidateProjection",
     "ReaderRepairMemoryCommitPort",
     "ReaderRepairMemoryCommitReceipt",

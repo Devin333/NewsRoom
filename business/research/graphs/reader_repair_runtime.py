@@ -24,6 +24,7 @@ from framework.harness.graph.model import HarnessContractReference
 from framework.harness.side_effects.models import HarnessSideEffectOrigin
 from framework.harness.side_effects.registry import (
     HarnessSideEffectCapabilities,
+    HarnessSideEffectHandler,
     HarnessSideEffectHandlerBinding,
     HarnessSideEffectPreparationHandler,
     HarnessSideEffectRegistry,
@@ -95,6 +96,16 @@ class ReaderRepairRuntimeBindingBundle:
             kind=terminal.kind,
             origin=HarnessSideEffectOrigin.CONTROLLER_TERMINAL.value,
         )
+        failure_terminal = self.definition.terminal_failure_side_effect_policy
+        if failure_terminal is None:  # pragma: no cover - invariant
+            raise AssertionError(
+                "Reader Repair Graph lacks its failure diagnostic terminal policy"
+            )
+        failure_side_effect = self.authority.resolve_side_effect(
+            str(failure_terminal.handler),
+            kind=failure_terminal.kind,
+            origin=HarnessSideEffectOrigin.CONTROLLER_TERMINAL.value,
+        )
         return {
             "schema_version": READER_REPAIR_RUNTIME_BINDING_SCHEMA,
             "installs_runtime_authority": False,
@@ -109,6 +120,13 @@ class ReaderRepairRuntimeBindingBundle:
                 "kind": side_effect.kind,
                 "supports_origins": list(side_effect.supports_origins),
             },
+            "terminal_failure_side_effect": {
+                "reference": str(failure_side_effect.reference),
+                "kind": failure_side_effect.kind,
+                "supports_origins": list(failure_side_effect.supports_origins),
+                "disposition": failure_terminal.disposition.value,
+                "failure_record_schema": failure_terminal.failure_record_schema,
+            },
         }
 
 
@@ -117,6 +135,7 @@ def build_reader_repair_runtime_binding_bundle(
     worker_implementations: Mapping[str, object],
     activity_implementations: Mapping[str, object],
     memory_side_effect_handler: HarnessSideEffectPreparationHandler,
+    failure_diagnostic_side_effect_handler: HarnessSideEffectHandler,
 ) -> ReaderRepairRuntimeBindingBundle:
     """Build exact Reader Repair bindings without installing production authority."""
 
@@ -127,6 +146,14 @@ def build_reader_repair_runtime_binding_bundle(
         raise _registration_error(
             "Reader Repair memory handler must support prepare and terminal commit",
             registration_field="memory_side_effect_handler",
+        )
+    if not isinstance(
+        failure_diagnostic_side_effect_handler,
+        HarnessSideEffectHandler,
+    ):
+        raise _registration_error(
+            "Reader Repair failure diagnostic handler must support terminal commit",
+            registration_field="failure_diagnostic_side_effect_handler",
         )
     definition = build_reader_repair_graph_definition()
     activity_ids = {activity.step_id for activity in definition.activities}
@@ -180,12 +207,26 @@ def build_reader_repair_runtime_binding_bundle(
         ),
         capabilities=HarnessSideEffectCapabilities(stable_idempotency=True),
     )
+    failure_terminal = definition.terminal_failure_side_effect_policy
+    if failure_terminal is None:  # pragma: no cover - invariant
+        raise AssertionError(
+            "Reader Repair Graph lacks its failure diagnostic terminal policy"
+        )
+    failure_binding = HarnessSideEffectHandlerBinding(
+        reference=failure_terminal.handler,
+        kind=failure_terminal.kind,
+        handler=failure_diagnostic_side_effect_handler,
+        supports_origins=(HarnessSideEffectOrigin.CONTROLLER_TERMINAL.value,),
+        capabilities=HarnessSideEffectCapabilities(stable_idempotency=True),
+    )
     authority = HarnessRuntimeBindingAuthority(
         workers=workers,
         activities=activities,
         leaf_activities=leaves,
         gate_registry=_build_exact_gate_registry(definition),
-        side_effect_registry=HarnessSideEffectRegistry((memory_binding,)),
+        side_effect_registry=HarnessSideEffectRegistry(
+            (memory_binding, failure_binding)
+        ),
     )
     return ReaderRepairRuntimeBindingBundle(
         definition=definition,
@@ -261,6 +302,16 @@ def _verify_exact_bundle(
     authority.resolve_side_effect(
         str(terminal.handler),
         kind=terminal.kind,
+        origin=HarnessSideEffectOrigin.CONTROLLER_TERMINAL.value,
+    )
+    failure_terminal = definition.terminal_failure_side_effect_policy
+    if failure_terminal is None:  # pragma: no cover - invariant
+        raise AssertionError(
+            "Reader Repair Graph lacks its failure diagnostic terminal policy"
+        )
+    authority.resolve_side_effect(
+        str(failure_terminal.handler),
+        kind=failure_terminal.kind,
         origin=HarnessSideEffectOrigin.CONTROLLER_TERMINAL.value,
     )
 

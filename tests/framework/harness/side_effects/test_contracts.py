@@ -19,6 +19,7 @@ from framework.harness import (
     HarnessSideEffectRegistry,
     HarnessSideEffectOrigin,
     HarnessSideEffectOutcome,
+    HarnessTerminalFailureSideEffectPolicy,
     HarnessTerminalSideEffectPolicy,
     HarnessStepSpec,
     InMemoryHarnessSideEffectApprovalResolver,
@@ -477,3 +478,49 @@ def test_optional_step_and_terminal_side_effect_serialization_is_omission_compat
     )
     assert declared.terminal_side_effect_policy == policy
     assert declared.to_dict()["terminal_policies"]["side_effect"] == policy.to_dict()
+
+
+def test_terminal_failure_side_effect_policy_is_strict_quarantine_contract() -> None:
+    policy = HarnessTerminalFailureSideEffectPolicy(
+        policy_id="research.failure.diagnostic",
+        version="1",
+        handler="research.failure-diagnostic@1",
+        kind="failure_diagnostic",
+        failure_record_schema=(
+            "newsroom.harness-graph-terminal-failure-record/v1"
+        ),
+        terminal_reason_codes=("graph_terminal_failure",),
+        requires_approval=False,
+        retry_limit=2,
+        not_required_evidence_ref=checksum_for({"approval": "not_required"}),
+    )
+
+    restored = HarnessTerminalFailureSideEffectPolicy.from_dict(
+        json.loads(json.dumps(policy.to_dict()))
+    )
+
+    assert restored == policy
+    assert restored.disposition is HarnessSideEffectDisposition.QUARANTINE
+    assert restored.terminal_reason_codes == ("graph_terminal_failure",)
+
+
+def test_terminal_failure_side_effect_policy_rejects_success_disposition() -> None:
+    with pytest.raises(HarnessValidationError) as captured:
+        HarnessTerminalFailureSideEffectPolicy(
+            policy_id="research.failure.diagnostic",
+            version="1",
+            handler="research.failure-diagnostic@1",
+            kind="failure_diagnostic",
+            failure_record_schema=(
+                "newsroom.harness-graph-terminal-failure-record/v1"
+            ),
+            terminal_reason_codes=("graph_terminal_failure",),
+            requires_approval=False,
+            retry_limit=2,
+            not_required_evidence_ref=checksum_for(
+                {"approval": "not_required"}
+            ),
+            disposition=HarnessSideEffectDisposition.ACCEPTED,
+        )
+
+    assert captured.value.code == "invalid_terminal_failure_side_effect_policy"

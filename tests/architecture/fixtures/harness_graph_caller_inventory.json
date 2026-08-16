@@ -108,6 +108,7 @@
       "tests/framework/harness/control_plane/test_graph_result_committer.py",
       "tests/framework/harness/control_plane/test_replay_history.py",
       "tests/framework/harness/control_plane/test_side_effect_durable_recovery.py",
+      "tests/framework/harness/control_plane/test_terminal_failure_record.py",
       "tests/framework/harness/control_plane/test_transition_projector.py",
       "tests/framework/harness/runtime/test_checkpoint_store.py",
       "tests/framework/harness/runtime/test_graph_result_runtime.py",
@@ -127,6 +128,7 @@
       "tests/business/research/integration/test_dynamic_paper_analysis_task_plan.py",
       "tests/business/research/workflows/test_paper_analysis_workflow.py",
       "tests/framework/harness/workflow/test_graph_migration_goldens.py",
+      "tests/infrastructure/research/test_reader_repair_failure_diagnostic_side_effect.py",
       "tests/interfaces/composition/test_research_recorded_transport.py"
     ],
     "E_graph_inspection_and_public_projection": [

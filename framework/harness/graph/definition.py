@@ -39,6 +39,7 @@ from framework.harness.graph.versioning import (
 )
 from framework.harness.side_effects.models import (
     HarnessSideEffectHandlerReference,
+    HarnessTerminalFailureSideEffectPolicy,
     HarnessTerminalSideEffectPolicy,
 )
 
@@ -407,6 +408,9 @@ class HarnessGraphDefinition:
     terminal_side_effect_policy: (
         HarnessTerminalSideEffectPolicy | Mapping[str, Any]
     )
+    terminal_failure_side_effect_policy: (
+        HarnessTerminalFailureSideEffectPolicy | Mapping[str, Any] | None
+    ) = None
     schema_version: str = HARNESS_GRAPH_DEFINITION_SCHEMA
     definition_checksum: str | None = field(default=None, compare=True)
 
@@ -449,6 +453,33 @@ class HarnessGraphDefinition:
                     code="invalid_graph_definition",
                 )
             policy = HarnessTerminalSideEffectPolicy.from_dict(policy)
+        failure_policy = self.terminal_failure_side_effect_policy
+        if failure_policy is not None and not isinstance(
+            failure_policy,
+            HarnessTerminalFailureSideEffectPolicy,
+        ):
+            if not isinstance(failure_policy, Mapping):
+                raise HarnessValidationError(
+                    "terminal_failure_side_effect_policy must be a Harness failure policy",
+                    code="invalid_graph_definition",
+                )
+            failure_policy = HarnessTerminalFailureSideEffectPolicy.from_dict(
+                failure_policy
+            )
+        if failure_policy is not None and (
+            failure_policy.reference == policy.reference
+            or failure_policy.handler == policy.handler
+        ):
+            raise HarnessValidationError(
+                "terminal failure policy and handler must be distinct from success",
+                code="graph_terminal_failure_side_effect_authority_reused",
+                details={
+                    "success_policy_ref": policy.reference,
+                    "failure_policy_ref": failure_policy.reference,
+                    "success_handler_ref": str(policy.handler),
+                    "failure_handler_ref": str(failure_policy.handler),
+                },
+            )
         if self.schema_version != HARNESS_GRAPH_DEFINITION_SCHEMA:
             raise HarnessValidationError(
                 "unsupported Graph definition schema",
@@ -476,6 +507,11 @@ class HarnessGraphDefinition:
         )
         object.__setattr__(self, "repair_bindings", repair_bindings)
         object.__setattr__(self, "terminal_side_effect_policy", policy)
+        object.__setattr__(
+            self,
+            "terminal_failure_side_effect_policy",
+            failure_policy,
+        )
         expected = canonical_checksum(self.checksum_projection())
         if self.definition_checksum is not None:
             supplied = _checksum(
@@ -587,6 +623,11 @@ class HarnessGraphDefinition:
             "terminal_side_effect_policy": (
                 self.terminal_side_effect_policy.to_dict()
             ),
+            "terminal_failure_side_effect_policy": (
+                None
+                if self.terminal_failure_side_effect_policy is None
+                else self.terminal_failure_side_effect_policy.to_dict()
+            ),
         }
 
     def to_dict(self) -> dict[str, Any]:
@@ -619,6 +660,7 @@ class HarnessGraphDefinition:
                 "committed_output_bindings",
                 "repair_bindings",
                 "terminal_side_effect_policy",
+                "terminal_failure_side_effect_policy",
                 "definition_checksum",
             },
             "Graph definition",
@@ -666,6 +708,14 @@ class HarnessGraphDefinition:
             terminal_side_effect_policy=_mapping(
                 payload["terminal_side_effect_policy"],
                 "terminal_side_effect_policy",
+            ),
+            terminal_failure_side_effect_policy=(
+                None
+                if payload["terminal_failure_side_effect_policy"] is None
+                else _mapping(
+                    payload["terminal_failure_side_effect_policy"],
+                    "terminal_failure_side_effect_policy",
+                )
             ),
             definition_checksum=payload["definition_checksum"],
         )

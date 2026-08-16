@@ -3,6 +3,9 @@ from __future__ import annotations
 from types import MappingProxyType
 
 from framework.events.canonical import checksum_for
+from framework.harness.control_plane.terminal_failure import (
+    HARNESS_GRAPH_TERMINAL_FAILURE_RECORD_SCHEMA,
+)
 from framework.harness.graph import (
     HarnessContractKind,
     HarnessContractReference,
@@ -15,6 +18,7 @@ from framework.harness.graph import (
     HarnessLeafActivityKind,
     HarnessRetryPolicy,
     HarnessStepSpec,
+    HarnessTerminalFailureSideEffectPolicy,
     HarnessTerminalSideEffectPolicy,
     HarnessWorkerType,
     Sequence,
@@ -39,6 +43,10 @@ from business.research.ports.repair_memory import (
     READER_REPAIR_MEMORY_EFFECT_KIND,
     READER_REPAIR_MEMORY_HANDLER_REF,
 )
+from business.research.ports.reader_repair_failure_diagnostic import (
+    READER_REPAIR_FAILURE_DIAGNOSTIC_EFFECT_KIND,
+    READER_REPAIR_FAILURE_DIAGNOSTIC_HANDLER_REF,
+)
 
 READER_REPAIR_MEMORY_POLICY_ID = "research.reader_repair.memory"
 READER_REPAIR_MEMORY_POLICY_VERSION = "1"
@@ -48,6 +56,19 @@ READER_REPAIR_MEMORY_NOT_REQUIRED_EVIDENCE_REF = checksum_for(
         "handler": READER_REPAIR_MEMORY_HANDLER_REF,
         "policy_id": READER_REPAIR_MEMORY_POLICY_ID,
         "version": READER_REPAIR_MEMORY_POLICY_VERSION,
+    }
+)
+READER_REPAIR_FAILURE_DIAGNOSTIC_POLICY_ID = (
+    "research.reader_repair.memory.failure_diagnostic"
+)
+READER_REPAIR_FAILURE_DIAGNOSTIC_POLICY_VERSION = "1"
+READER_REPAIR_FAILURE_DIAGNOSTIC_NOT_REQUIRED_EVIDENCE_REF = checksum_for(
+    {
+        "policy": "not_required",
+        "handler": READER_REPAIR_FAILURE_DIAGNOSTIC_HANDLER_REF,
+        "policy_id": READER_REPAIR_FAILURE_DIAGNOSTIC_POLICY_ID,
+        "version": READER_REPAIR_FAILURE_DIAGNOSTIC_POLICY_VERSION,
+        "disposition": "quarantine",
     }
 )
 READER_REPAIR_SUBAGENT_IDS = MappingProxyType(
@@ -105,6 +126,9 @@ def build_reader_repair_graph_definition() -> HarnessGraphDefinition:
         ),
         repair_bindings=_repair_bindings(),
         terminal_side_effect_policy=build_reader_repair_memory_terminal_policy(),
+        terminal_failure_side_effect_policy=(
+            build_reader_repair_failure_diagnostic_terminal_policy()
+        ),
     )
 
 
@@ -192,6 +216,26 @@ def build_reader_repair_memory_terminal_policy() -> HarnessTerminalSideEffectPol
         retry_limit=2,
         not_required_evidence_ref=READER_REPAIR_MEMORY_NOT_REQUIRED_EVIDENCE_REF,
         inherited_gate_refs=("ReaderRepairMemoryPolicyGate@1",),
+    )
+
+
+def build_reader_repair_failure_diagnostic_terminal_policy(
+) -> HarnessTerminalFailureSideEffectPolicy:
+    return HarnessTerminalFailureSideEffectPolicy(
+        policy_id=READER_REPAIR_FAILURE_DIAGNOSTIC_POLICY_ID,
+        version=READER_REPAIR_FAILURE_DIAGNOSTIC_POLICY_VERSION,
+        handler=READER_REPAIR_FAILURE_DIAGNOSTIC_HANDLER_REF,
+        kind=READER_REPAIR_FAILURE_DIAGNOSTIC_EFFECT_KIND,
+        failure_record_schema=HARNESS_GRAPH_TERMINAL_FAILURE_RECORD_SCHEMA,
+        terminal_reason_codes=(
+            "graph_terminal_failure",
+            "verification_failed_replans_exhausted",
+        ),
+        requires_approval=False,
+        retry_limit=2,
+        not_required_evidence_ref=(
+            READER_REPAIR_FAILURE_DIAGNOSTIC_NOT_REQUIRED_EVIDENCE_REF
+        ),
     )
 
 
@@ -359,6 +403,8 @@ __all__ = [
     "READER_REPAIR_APPLICATION_VERIFICATION_STEP_ID",
     "READER_REPAIR_COMMITTED_OUTPUT_BINDING_ID",
     "READER_REPAIR_COMMITTED_OUTPUT_RECEIPT_KEY",
+    "READER_REPAIR_FAILURE_DIAGNOSTIC_EFFECT_KIND",
+    "READER_REPAIR_FAILURE_DIAGNOSTIC_HANDLER_REF",
     "READER_REPAIR_GRAPH_ID",
     "READER_REPAIR_GRAPH_VERSION",
     "READER_REPAIR_MEMORY_EFFECT_KIND",
@@ -366,9 +412,13 @@ __all__ = [
     "READER_REPAIR_MEMORY_NOT_REQUIRED_EVIDENCE_REF",
     "READER_REPAIR_MEMORY_POLICY_ID",
     "READER_REPAIR_MEMORY_POLICY_VERSION",
+    "READER_REPAIR_FAILURE_DIAGNOSTIC_NOT_REQUIRED_EVIDENCE_REF",
+    "READER_REPAIR_FAILURE_DIAGNOSTIC_POLICY_ID",
+    "READER_REPAIR_FAILURE_DIAGNOSTIC_POLICY_VERSION",
     "READER_REPAIR_SUBAGENT_IDS",
     "READER_REPAIR_SUBAGENT_WORKER_REFS",
     "build_reader_repair_graph_definition",
+    "build_reader_repair_failure_diagnostic_terminal_policy",
     "build_reader_repair_memory_terminal_policy",
     "build_reader_repair_subagent_specs",
 ]

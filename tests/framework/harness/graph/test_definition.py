@@ -25,6 +25,7 @@ from framework.harness.graph import (
     HarnessLeafActivityKind,
     HarnessRetryPolicy,
     HarnessStepSpec,
+    HarnessTerminalFailureSideEffectPolicy,
     HarnessTerminalSideEffectPolicy,
     HarnessWorkerType,
     ParallelAll,
@@ -51,7 +52,7 @@ def test_graph_definition_round_trips_with_canonical_checksum() -> None:
 
     assert restored == definition
     assert restored.schema_version == HARNESS_GRAPH_DEFINITION_SCHEMA
-    assert restored.schema_version == "newsroom.harness-graph-definition/v5"
+    assert restored.schema_version == "newsroom.harness-graph-definition/v6"
     assert restored.activity_ids == ("compose_report", "load_source")
     assert tuple(
         binding.activity_id for binding in restored.leaf_activity_bindings
@@ -67,6 +68,7 @@ def test_graph_definition_round_trips_with_canonical_checksum() -> None:
     assert compose_report is not None
     assert compose_report.side_effect_handler is None
     assert restored.terminal_side_effect_policy.kind == "artifact_publication"
+    assert restored.terminal_failure_side_effect_policy is None
     assert restored.definition_checksum == definition.definition_checksum
     assert "workflow_id" not in payload
     assert "entry_step_id" not in payload
@@ -90,6 +92,39 @@ def test_graph_definition_activity_order_does_not_change_checksum() -> None:
     assert forward.activities == reverse.activities
     assert forward.leaf_activity_bindings == reverse.leaf_activity_bindings
     assert forward.definition_checksum == reverse.definition_checksum
+
+
+def test_graph_definition_round_trips_distinct_terminal_failure_policy() -> None:
+    failure_policy = _terminal_failure_policy()
+    definition = _definition(
+        terminal_failure_side_effect_policy=failure_policy,
+    )
+
+    restored = HarnessGraphDefinitionReader().read_for_execution(
+        json.loads(json.dumps(definition.to_dict())),
+        source_schema=HARNESS_GRAPH_DEFINITION_SCHEMA,
+    )
+
+    assert restored.terminal_failure_side_effect_policy == failure_policy
+    assert restored.terminal_failure_side_effect_policy.disposition.value == (
+        "quarantine"
+    )
+    assert restored.terminal_failure_side_effect_policy.handler != (
+        restored.terminal_side_effect_policy.handler
+    )
+
+
+def test_graph_definition_rejects_reused_success_failure_authority() -> None:
+    with pytest.raises(HarnessValidationError) as captured:
+        _definition(
+            terminal_failure_side_effect_policy=_terminal_failure_policy(
+                handler="research.artifact-bundle@1",
+            )
+        )
+
+    assert captured.value.code == (
+        "graph_terminal_failure_side_effect_authority_reused"
+    )
 
 
 def test_graph_definition_round_trips_committed_node_output_binding() -> None:
@@ -1184,6 +1219,9 @@ def _definition(
         HarnessGraphCommittedNodeOutputBinding, ...
     ] = (),
     repair_bindings: tuple[HarnessGraphRepairBinding, ...] = (),
+    terminal_failure_side_effect_policy: (
+        HarnessTerminalFailureSideEffectPolicy | None
+    ) = None,
 ) -> HarnessGraphDefinition:
     selected_activities = _activities() if activities is None else activities
     return HarnessGraphDefinition(
@@ -1235,6 +1273,28 @@ def _definition(
             not_required_evidence_ref=_SHA_A,
             inherited_gate_refs=("ResearchQualityGate@1",),
         ),
+        terminal_failure_side_effect_policy=(
+            terminal_failure_side_effect_policy
+        ),
+    )
+
+
+def _terminal_failure_policy(
+    *,
+    handler: str = "research.failure-diagnostic@1",
+) -> HarnessTerminalFailureSideEffectPolicy:
+    return HarnessTerminalFailureSideEffectPolicy(
+        policy_id="research.failure.diagnostic",
+        version="1",
+        handler=handler,
+        kind="failure_diagnostic",
+        failure_record_schema=(
+            "newsroom.harness-graph-terminal-failure-record/v1"
+        ),
+        terminal_reason_codes=("graph_terminal_failure",),
+        requires_approval=False,
+        retry_limit=2,
+        not_required_evidence_ref=_SHA_A,
     )
 
 

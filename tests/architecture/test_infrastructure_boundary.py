@@ -50,6 +50,9 @@ ALLOWED_BUSINESS_IMPORTS = {
     "infrastructure/research/reader_repair_memory_side_effect.py": {
         "business.research.ports.repair_memory",
     },
+    "infrastructure/research/reader_repair_failure_diagnostic_side_effect.py": {
+        "business.research.ports.reader_repair_failure_diagnostic",
+    },
     "infrastructure/research/candidate_worker.py": {
         "business.research.ports.reader_repair_candidate",
     },
@@ -96,6 +99,9 @@ RESEARCH_ADAPTER_BUSINESS_IMPORTS = {
     },
     "infrastructure/research/reader_repair_memory_side_effect.py": {
         "business.research.ports.repair_memory",
+    },
+    "infrastructure/research/reader_repair_failure_diagnostic_side_effect.py": {
+        "business.research.ports.reader_repair_failure_diagnostic",
     },
     "infrastructure/research/candidate_worker.py": {
         "business.research.ports.reader_repair_candidate",

@@ -466,8 +466,16 @@ def _validated_commit_writes(
     if any(item.object_type != "strategy" for item in strategies):
         raise ValueError("reader repair memory commit strategy write type is invalid")
     writes = (repair_case, *strategies)
-    if any(item.operation != "harness_commit" for item in writes):
-        raise ValueError("reader repair memory bundle writes require harness_commit")
+    operations = {item.operation for item in writes}
+    if operations == {"harness_failure_diagnostic"}:
+        if strategies or repair_case.successful is not False:
+            raise ValueError(
+                "reader repair failure diagnostic must contain one failed case only"
+            )
+    elif operations != {"harness_commit"}:
+        raise ValueError(
+            "reader repair memory bundle writes require one supported Harness operation"
+        )
     identities = tuple((item.object_type, item.object_id) for item in writes)
     if len(identities) != len(set(identities)):
         raise ValueError("reader repair memory commit object identities must be unique")

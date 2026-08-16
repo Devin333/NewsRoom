@@ -24,6 +24,7 @@ from framework.harness.side_effects.models import (
     HarnessSideEffectOrigin,
     HarnessSideEffectOutcome,
     HarnessSideEffectOutcomeStatus,
+    HarnessTerminalFailureSideEffectPolicy,
     HarnessTerminalSideEffectPolicy,
 )
 from framework.harness.side_effects.ports import (
@@ -68,6 +69,7 @@ __all__ = [
     "HarnessSideEffectReaderPort",
     "HarnessSideEffectRegistry",
     "HarnessSideEffectStorePort",
+    "HarnessTerminalFailureSideEffectPolicy",
     "HarnessTerminalSideEffectPolicy",
     "InMemoryHarnessSideEffectApprovalResolver",
     "InMemoryHarnessSideEffectStore",

@@ -91,6 +91,7 @@ from framework.harness.graph.versioning import (
     NORMALIZED_HARNESS_GRAPH_SCHEMA,
 )
 from framework.harness.side_effects.models import (
+    HarnessTerminalFailureSideEffectPolicy,
     HarnessTerminalSideEffectPolicy,
 )
 from framework.harness.graph.validation import HarnessGraphPreflight
@@ -151,6 +152,7 @@ __all__ = [
     "HarnessMergeKind",
     "HarnessRetryPolicy",
     "HarnessStepSpec",
+    "HarnessTerminalFailureSideEffectPolicy",
     "HarnessTerminalSideEffectPolicy",
     "HarnessWaitContract",
     "HarnessWorkerType",

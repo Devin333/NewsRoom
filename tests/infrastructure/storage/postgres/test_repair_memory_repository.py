@@ -256,6 +256,59 @@ def test_postgres_reader_repair_memory_repository_commits_bundle_atomically() ->
     assert connection.rollbacks == 0
 
 
+def test_postgres_reader_repair_memory_repository_commits_failure_diagnostic_atomically() -> None:
+    connection = FakeConnection(fetchone_rows=[None, (2,), (COMMITTED_AT,)])
+    repository = _repository(connection)
+
+    record = _commit_bundle(
+        repository,
+        repair_case=_failure_case_write(),
+        strategies=(),
+    )
+
+    executed_sql = "\n".join(sql for sql, _params in connection.calls)
+    assert record.case_object_id == "case-1"
+    assert record.case_version == 2
+    assert record.strategy_versions == ()
+    assert executed_sql.count("INSERT INTO reader_repair_memory_objects") == 1
+    assert executed_sql.count("INSERT INTO reader_repair_memory_versions") == 1
+    assert "INSERT INTO reader_repair_memory_commits" in executed_sql
+    assert executed_sql.count("INSERT INTO reader_repair_memory_commit_members") == 1
+    version_call = next(
+        params
+        for sql, params in connection.calls
+        if "INSERT INTO reader_repair_memory_versions" in sql
+    )
+    assert version_call[4] == "harness_failure_diagnostic"
+    assert connection.commits == 1
+    assert connection.rollbacks == 0
+
+
+@pytest.mark.parametrize(
+    "invalid_shape",
+    ["strategy_present", "successful_case"],
+)
+def test_postgres_reader_repair_memory_repository_rejects_invalid_failure_diagnostic_bundle(
+    invalid_shape: str,
+) -> None:
+    repository = _repository(FakeConnection())
+    repair_case = _failure_case_write(
+        successful=invalid_shape == "successful_case"
+    )
+    strategies = (
+        (_strategy_write("strategy-1", operation="harness_failure_diagnostic"),)
+        if invalid_shape == "strategy_present"
+        else ()
+    )
+
+    with pytest.raises(ValueError, match="failed case only"):
+        _commit_bundle(
+            repository,
+            repair_case=repair_case,
+            strategies=strategies,
+        )
+
+
 def test_postgres_reader_repair_memory_repository_recovers_idempotent_commit() -> None:
     header = (
         CHECKSUM_A,
@@ -389,6 +442,7 @@ def _repository(connection: FakeConnection) -> PostgresReaderRepairMemoryReposit
 def _commit_bundle(
     repository: PostgresReaderRepairMemoryRepository,
     *,
+    repair_case: PostgresReaderRepairMemoryObjectWrite | None = None,
     strategies: tuple[PostgresReaderRepairMemoryObjectWrite, ...] | None = None,
 ):
     return repository.commit_bundle(
@@ -401,7 +455,7 @@ def _commit_bundle(
         identity_scope_ref=CHECKSUM_C,
         subject_scope_ref=CHECKSUM_D,
         namespace="research.reader_repair",
-        repair_case=_case_write(),
+        repair_case=_case_write() if repair_case is None else repair_case,
         strategies=(_strategy_write("strategy-1"),)
         if strategies is None
         else strategies,
@@ -421,7 +475,28 @@ def _case_write() -> PostgresReaderRepairMemoryObjectWrite:
     )
 
 
-def _strategy_write(object_id: str) -> PostgresReaderRepairMemoryObjectWrite:
+def _failure_case_write(
+    *,
+    successful: bool = False,
+) -> PostgresReaderRepairMemoryObjectWrite:
+    return PostgresReaderRepairMemoryObjectWrite(
+        object_type="case",
+        object_id="case-1",
+        issue_type="table_parse_error",
+        error_signature="table-error",
+        successful=successful,
+        status=None,
+        memory_kind="episodic",
+        payload={"repair_case_id": "case-1", "successful": successful},
+        operation="harness_failure_diagnostic",
+    )
+
+
+def _strategy_write(
+    object_id: str,
+    *,
+    operation: str = "harness_commit",
+) -> PostgresReaderRepairMemoryObjectWrite:
     return PostgresReaderRepairMemoryObjectWrite(
         object_type="strategy",
         object_id=object_id,
@@ -431,6 +506,7 @@ def _strategy_write(object_id: str) -> PostgresReaderRepairMemoryObjectWrite:
         status="promoted_memory",
         memory_kind="procedural",
         payload={"strategy_id": object_id},
+        operation=operation,
     )
 
 

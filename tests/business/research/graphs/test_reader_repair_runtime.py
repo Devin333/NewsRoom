@@ -7,6 +7,7 @@ from typing import Any
 import pytest
 
 from business.research.graphs.reader_repair import (
+    READER_REPAIR_FAILURE_DIAGNOSTIC_HANDLER_REF,
     READER_REPAIR_MEMORY_HANDLER_REF,
     READER_REPAIR_SUBAGENT_IDS,
     build_reader_repair_graph_definition,
@@ -50,6 +51,11 @@ class _MemorySideEffectHandler:
         return intent, authorization
 
 
+class _FailureDiagnosticSideEffectHandler:
+    def commit(self, intent: object, authorization: object) -> tuple[object, object]:
+        return intent, authorization
+
+
 def test_reader_repair_runtime_bundle_closes_graph_v2_exactly_without_activation() -> None:
     workers, activities = _implementations()
 
@@ -57,6 +63,9 @@ def test_reader_repair_runtime_bundle_closes_graph_v2_exactly_without_activation
         worker_implementations=workers,
         activity_implementations=activities,
         memory_side_effect_handler=_MemorySideEffectHandler(),
+        failure_diagnostic_side_effect_handler=(
+            _FailureDiagnosticSideEffectHandler()
+        ),
     )
     manifest = bundle.to_manifest()
 
@@ -65,7 +74,7 @@ def test_reader_repair_runtime_bundle_closes_graph_v2_exactly_without_activation
     assert manifest["graph_id"] == "research.reader_repair.graph"
     assert manifest["graph_version"] == "2"
     assert manifest["graph_definition_checksum"] == (
-        "sha256:d14a1951a8493de4366e83e28c417cf9a5c68d6bdbbe60d67fc4d411f8544560"
+        "sha256:fadbddd1dfb4e0880745f23e0be136a449ae23cd92d2b855c43be17f1a5d9307"
     )
     assert set(manifest["workers"]) == set(workers)
     assert set(manifest["activities"]) == set(activities)
@@ -81,6 +90,15 @@ def test_reader_repair_runtime_bundle_closes_graph_v2_exactly_without_activation
         "reference": READER_REPAIR_MEMORY_HANDLER_REF,
         "kind": "memory_write",
         "supports_origins": ["worker", "controller_terminal"],
+    }
+    assert manifest["terminal_failure_side_effect"] == {
+        "reference": READER_REPAIR_FAILURE_DIAGNOSTIC_HANDLER_REF,
+        "kind": "memory_write_failure_diagnostic",
+        "supports_origins": ["controller_terminal"],
+        "disposition": "quarantine",
+        "failure_record_schema": (
+            "newsroom.harness-graph-terminal-failure-record/v1"
+        ),
     }
     assert "artifact" not in json.dumps(manifest, sort_keys=True).casefold()
 
@@ -106,6 +124,9 @@ def test_reader_repair_runtime_bundle_rejects_inexact_implementation_sets(
             worker_implementations=workers,
             activity_implementations=activities,
             memory_side_effect_handler=_MemorySideEffectHandler(),
+            failure_diagnostic_side_effect_handler=(
+                _FailureDiagnosticSideEffectHandler()
+            ),
         )
 
     assert captured.value.code == "reader_repair_runtime_registration_mismatch"
@@ -134,6 +155,9 @@ def test_reader_repair_runtime_bundle_rejects_substituted_exact_worker_identity(
             worker_implementations=workers,
             activity_implementations=activities,
             memory_side_effect_handler=_MemorySideEffectHandler(),
+            failure_diagnostic_side_effect_handler=(
+                _FailureDiagnosticSideEffectHandler()
+            ),
         )
 
     assert captured.value.code == "runtime_contract_implementation_mismatch"
@@ -150,11 +174,31 @@ def test_reader_repair_runtime_bundle_requires_a_real_memory_handler_contract() 
             worker_implementations=workers,
             activity_implementations=activities,
             memory_side_effect_handler=object(),  # type: ignore[arg-type]
+            failure_diagnostic_side_effect_handler=(
+                _FailureDiagnosticSideEffectHandler()
+            ),
         )
 
     assert captured.value.code == "reader_repair_runtime_registration_mismatch"
     assert captured.value.details["registration_field"] == (
         "memory_side_effect_handler"
+    )
+
+
+def test_reader_repair_runtime_bundle_requires_a_distinct_failure_handler_contract() -> None:
+    workers, activities = _implementations()
+
+    with pytest.raises(HarnessValidationError) as captured:
+        build_reader_repair_runtime_binding_bundle(
+            worker_implementations=workers,
+            activity_implementations=activities,
+            memory_side_effect_handler=_MemorySideEffectHandler(),
+            failure_diagnostic_side_effect_handler=object(),  # type: ignore[arg-type]
+        )
+
+    assert captured.value.code == "reader_repair_runtime_registration_mismatch"
+    assert captured.value.details["registration_field"] == (
+        "failure_diagnostic_side_effect_handler"
     )
 
 

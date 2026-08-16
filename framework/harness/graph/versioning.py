@@ -5,7 +5,7 @@ from typing import Mapping
 
 
 HARNESS_GRAPH_RUNTIME_VERSION = "newsroom.harness-graph-runtime/v2"
-HARNESS_GRAPH_DEFINITION_SCHEMA = "newsroom.harness-graph-definition/v5"
+HARNESS_GRAPH_DEFINITION_SCHEMA = "newsroom.harness-graph-definition/v6"
 HARNESS_GRAPH_DSL_SCHEMA = "newsroom.harness-workflow-graph/v1"
 NORMALIZED_HARNESS_GRAPH_SCHEMA = "newsroom.harness-normalized-graph/v1"
 HARNESS_GRAPH_STATE_SCHEMA = "newsroom.harness-graph-state/v1"

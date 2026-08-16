@@ -9,6 +9,8 @@ from business.research.domain.reader_repair import (
     ReaderRepairStrategy,
 )
 from business.research.ports import (
+    ReaderRepairFailureDiagnosticCommitReceipt,
+    ReaderRepairFailureDiagnosticCommitRequest,
     ReaderRepairMemoryCommitReceipt,
     ReaderRepairMemoryCommitRequest,
     ReaderRepairMemoryVersion,
@@ -16,6 +18,9 @@ from business.research.ports import (
 from business.research.ports.repair_memory import (
     reader_repair_case_memory_ref,
     reader_repair_strategy_memory_ref,
+)
+from business.research.ports.reader_repair_failure_diagnostic import (
+    diagnostic_case_memory_ref,
 )
 from infrastructure.storage.postgres import PostgresReaderRepairMemoryRepository
 from infrastructure.storage.postgres.repair_memory_repository import (
@@ -245,6 +250,70 @@ class PostgresReaderRepairMemoryCommitPort:
         )
 
 
+class PostgresReaderRepairFailureDiagnosticCommitPort:
+    """Durable case-only writer for quarantined terminal failure diagnostics."""
+
+    def __init__(self, repository: PostgresReaderRepairMemoryRepository) -> None:
+        self._repository = repository
+
+    def commit_failure_diagnostic(
+        self,
+        request: ReaderRepairFailureDiagnosticCommitRequest,
+    ) -> ReaderRepairFailureDiagnosticCommitReceipt:
+        if not isinstance(request, ReaderRepairFailureDiagnosticCommitRequest):
+            raise TypeError(
+                "request must be ReaderRepairFailureDiagnosticCommitRequest"
+            )
+        request_checksum = _failure_request_checksum(request)
+        candidate = request.candidate
+        record = self._repository.commit_bundle(
+            idempotency_key=request.idempotency_key,
+            request_checksum=request_checksum,
+            request_id=request.request_id,
+            run_id=request.run_id,
+            terminal_effect_id=request.terminal_effect_id,
+            authorization_ref=request.authorization_ref,
+            identity_scope_ref=request.identity_scope_ref,
+            subject_scope_ref=request.subject_scope_ref,
+            namespace=READER_REPAIR_NAMESPACE,
+            repair_case=PostgresReaderRepairMemoryObjectWrite(
+                object_type="case",
+                object_id=candidate.repair_case.repair_case_id,
+                issue_type=candidate.repair_case.issue.issue_type,
+                error_signature=candidate.repair_case.issue.error_signature,
+                successful=False,
+                status=None,
+                memory_kind=candidate.repair_case.memory_kind,
+                payload=candidate.repair_case.to_dict(),
+                operation="harness_failure_diagnostic",
+            ),
+            strategies=(),
+        )
+        _verify_failure_commit_record(request, record)
+        terminal_failure_ref = candidate.terminal_failure.record_checksum
+        if terminal_failure_ref is None:  # pragma: no cover - model invariant
+            raise AssertionError("terminal failure record checksum is missing")
+        return ReaderRepairFailureDiagnosticCommitReceipt(
+            receipt_id=(
+                "reader-repair-failure-diagnostic-receipt:"
+                f"{request.request_id}"
+            ),
+            request_ref=request_checksum,
+            run_id=request.run_id,
+            terminal_effect_id=request.terminal_effect_id,
+            authorization_ref=request.authorization_ref,
+            idempotency_key=request.idempotency_key,
+            namespace=READER_REPAIR_NAMESPACE,
+            diagnostic_case_ref=diagnostic_case_memory_ref(
+                candidate,
+                version=record.case_version,
+            ),
+            diagnostic_case_version=record.case_version,
+            terminal_failure_record_ref=terminal_failure_ref,
+            committed_at=record.committed_at,
+        )
+
+
 def _case_commit_write(
     repair_case: ReaderRepairCase,
 ) -> PostgresReaderRepairMemoryObjectWrite:
@@ -278,6 +347,14 @@ def _strategy_commit_write(
 def _commit_request_checksum(request: ReaderRepairMemoryCommitRequest) -> str:
     if request.checksum is None:
         raise ValueError("reader repair memory commit request has no checksum")
+    return request.checksum
+
+
+def _failure_request_checksum(
+    request: ReaderRepairFailureDiagnosticCommitRequest,
+) -> str:
+    if request.checksum is None:
+        raise ValueError("reader repair failure diagnostic request has no checksum")
     return request.checksum
 
 
@@ -326,12 +403,52 @@ def _verify_commit_record(
         )
 
 
+def _verify_failure_commit_record(
+    request: ReaderRepairFailureDiagnosticCommitRequest,
+    record: PostgresReaderRepairMemoryCommitRecord,
+) -> None:
+    if not isinstance(record, PostgresReaderRepairMemoryCommitRecord):
+        raise TypeError("reader repair memory repository returned an invalid record")
+    candidate = request.candidate
+    expected_identity = (
+        request.idempotency_key,
+        _failure_request_checksum(request),
+        request.request_id,
+        request.run_id,
+        request.terminal_effect_id,
+        request.authorization_ref,
+        request.identity_scope_ref,
+        request.subject_scope_ref,
+        READER_REPAIR_NAMESPACE,
+        candidate.repair_case.repair_case_id,
+        (),
+    )
+    actual_identity = (
+        record.idempotency_key,
+        record.request_checksum,
+        record.request_id,
+        record.run_id,
+        record.terminal_effect_id,
+        record.authorization_ref,
+        record.identity_scope_ref,
+        record.subject_scope_ref,
+        record.namespace,
+        record.case_object_id,
+        record.strategy_versions,
+    )
+    if actual_identity != expected_identity:
+        raise ValueError(
+            "reader repair failure diagnostic record conflicts with commit request"
+        )
+
+
 def _require_namespace(namespace: str) -> None:
     if namespace != READER_REPAIR_NAMESPACE:
         raise ValueError("reader repair memory can only use research.reader_repair namespace")
 
 
 __all__ = [
+    "PostgresReaderRepairFailureDiagnosticCommitPort",
     "PostgresReaderRepairMemoryCommitPort",
     "PostgresReaderRepairMemoryPort",
 ]

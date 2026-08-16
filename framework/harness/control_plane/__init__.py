@@ -115,6 +115,11 @@ from framework.harness.control_plane.graph_runtime import (
     HarnessGraphTransitionPort,
     InMemoryHarnessGraphTransitionPort,
 )
+from framework.harness.control_plane.terminal_failure import (
+    HARNESS_GRAPH_TERMINAL_FAILURE_RECORD_SCHEMA,
+    HarnessGraphFailedNodeRecord,
+    HarnessGraphTerminalFailureRecord,
+)
 from framework.harness.control_plane.node_output import (
     HARNESS_ADMITTED_GRAPH_ACTIVITY_SCHEMA,
     HARNESS_COMMITTED_NODE_OUTPUT_RECEIPT_SCHEMA,
@@ -261,6 +266,7 @@ __all__ = [
     "GraphEvaluation",
     "HARNESS_LEGACY_EVENT_EVIDENCE_SCHEMA",
     "HARNESS_GRAPH_RUN_OPERATION_SCHEMA",
+    "HARNESS_GRAPH_TERMINAL_FAILURE_RECORD_SCHEMA",
     "HarnessAcceptedGraphObservation",
     "HarnessBudgetSnapshot",
     "HarnessCumulativeBudgetFact",
@@ -309,6 +315,7 @@ __all__ = [
     "HarnessGraphCommitKind",
     "HarnessGraphControlPlaneRuntime",
     "HarnessGraphEvaluationContext",
+    "HarnessGraphFailedNodeRecord",
     "HarnessGraphHistoryReducer",
     "HarnessGraphInspection",
     "HarnessGraphDiagnosticSeverity",
@@ -329,6 +336,7 @@ __all__ = [
     "HarnessGraphStateReader",
     "HarnessGraphStepSchedulingInput",
     "HarnessGraphTransitionPort",
+    "HarnessGraphTerminalFailureRecord",
     "HARNESS_GRAPH_RESULT_LINEAGE_SCHEMA",
     "HarnessGraphArtifactRefProjection",
     "HarnessGraphCacheRefProjection",

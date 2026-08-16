@@ -120,23 +120,53 @@ def test_reader_repair_memory_side_effect_is_atomic_and_inactive() -> None:
         / "services"
         / "reader_repair_factory.py"
     )
+    failure_handler_path = (
+        PROJECT_ROOT
+        / "infrastructure"
+        / "research"
+        / "reader_repair_failure_diagnostic_side_effect.py"
+    )
+    failure_port_path = (
+        PROJECT_ROOT
+        / "business"
+        / "research"
+        / "ports"
+        / "reader_repair_failure_diagnostic.py"
+    )
     handler_source = handler_path.read_text(encoding="utf-8")
     port_source = port_path.read_text(encoding="utf-8")
     adapter_source = adapter_path.read_text(encoding="utf-8")
     factory_source = factory_path.read_text(encoding="utf-8")
+    failure_handler_source = failure_handler_path.read_text(encoding="utf-8")
+    failure_port_source = failure_port_path.read_text(encoding="utf-8")
 
     assert "class ReaderRepairMemoryCommitPort" in port_source
     assert "class ReaderRepairMemorySideEffectHandler" in handler_source
     assert "class PostgresReaderRepairMemoryCommitPort" in adapter_source
     assert "build_reader_repair_memory_commit_port_from_env" in factory_source
+    assert "class ReaderRepairFailureDiagnosticCommitPort" in failure_port_source
+    assert (
+        "class ReaderRepairFailureDiagnosticSideEffectHandler"
+        in failure_handler_source
+    )
+    assert "class PostgresReaderRepairFailureDiagnosticCommitPort" in adapter_source
+    assert (
+        "build_reader_repair_failure_diagnostic_commit_port_from_env"
+        in factory_source
+    )
     assert ".write_case(" not in handler_source
     assert ".write_strategy(" not in handler_source
+    assert ".write_case(" not in failure_handler_source
+    assert ".write_strategy(" not in failure_handler_source
     assert "business.research.reader_repair.repair_memory" not in imported_modules(
         handler_path
     )
 
     inactive_module = (
         "infrastructure.research.reader_repair_memory_side_effect"
+    )
+    inactive_failure_module = (
+        "infrastructure.research.reader_repair_failure_diagnostic_side_effect"
     )
     production_paths = (
         PROJECT_ROOT / "business" / "research" / "application" / "single_paper_runtime.py",
@@ -147,7 +177,16 @@ def test_reader_repair_memory_side_effect_is_atomic_and_inactive() -> None:
         for path in production_paths
     )
     assert all(
+        inactive_failure_module not in imported_modules(path)
+        for path in production_paths
+    )
+    assert all(
         "ReaderRepairMemorySideEffectHandler" not in path.read_text(encoding="utf-8")
+        for path in production_paths
+    )
+    assert all(
+        "ReaderRepairFailureDiagnosticSideEffectHandler"
+        not in path.read_text(encoding="utf-8")
         for path in production_paths
     )
 

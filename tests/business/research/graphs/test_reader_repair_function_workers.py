@@ -217,6 +217,11 @@ class _MemorySideEffectHandler:
         return intent, authorization
 
 
+class _FailureDiagnosticSideEffectHandler:
+    def commit(self, intent: object, authorization: object) -> tuple[object, object]:
+        return intent, authorization
+
+
 def test_reader_repair_function_workers_execute_the_verified_chain_without_activation() -> None:
     payload = _payload()
     memory = InMemoryReaderRepairMemory()
@@ -247,6 +252,9 @@ def test_reader_repair_function_workers_execute_the_verified_chain_without_activ
         worker_implementations=worker_implementations,
         activity_implementations=activity_implementations,
         memory_side_effect_handler=_MemorySideEffectHandler(),
+        failure_diagnostic_side_effect_handler=(
+            _FailureDiagnosticSideEffectHandler()
+        ),
     )
 
     outputs: dict[str, Any] = {}

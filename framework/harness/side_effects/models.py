@@ -1119,6 +1119,184 @@ class HarnessTerminalSideEffectPolicy:
         }
 
 
+@dataclass(frozen=True, slots=True)
+class HarnessTerminalFailureSideEffectPolicy:
+    """Post-terminal diagnostic policy for a durably failed Graph run.
+
+    This policy is intentionally distinct from ``HarnessTerminalSideEffectPolicy``:
+    it cannot turn a failed gate into an accepted success outcome and it cannot
+    expose public references.
+    """
+
+    policy_id: str
+    version: str
+    handler: HarnessSideEffectHandlerReference | str | Mapping[str, Any]
+    kind: str
+    failure_record_schema: str
+    terminal_reason_codes: tuple[str, ...]
+    requires_approval: bool
+    retry_limit: int
+    not_required_evidence_ref: str | None = None
+    inherit_budget: bool = True
+    disposition: HarnessSideEffectDisposition | str = (
+        HarnessSideEffectDisposition.QUARANTINE
+    )
+    schema_version: str = (
+        "newsroom.harness-terminal-failure-side-effect-policy/v1"
+    )
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "policy_id", _identifier(self.policy_id, "policy_id"))
+        object.__setattr__(self, "version", _version(self.version))
+        object.__setattr__(
+            self, "handler", HarnessSideEffectHandlerReference.parse(self.handler)
+        )
+        object.__setattr__(self, "kind", _identifier(self.kind, "kind"))
+        failure_record_schema = _required_text(
+            self.failure_record_schema,
+            "failure_record_schema",
+        )
+        if not re.fullmatch(
+            r"[A-Za-z0-9][A-Za-z0-9._:/+-]*/v[1-9][0-9]*",
+            failure_record_schema,
+        ):
+            raise _validation_error(
+                "invalid_terminal_failure_side_effect_policy",
+                "terminal failure policy requires an exact versioned record schema",
+                failure_record_schema=failure_record_schema,
+            )
+        reason_codes = _text_tuple(
+            self.terminal_reason_codes,
+            "terminal_reason_codes",
+        )
+        if not reason_codes or len(reason_codes) != len(set(reason_codes)):
+            raise _validation_error(
+                "invalid_terminal_failure_side_effect_policy",
+                "terminal failure policy requires unique terminal reason codes",
+            )
+        reason_codes = tuple(sorted(reason_codes))
+        if not isinstance(self.requires_approval, bool):
+            raise HarnessValidationError("requires_approval must be a boolean")
+        retry_limit = _positive_int(self.retry_limit, "retry_limit")
+        not_required_evidence_ref = _optional_checksum(
+            self.not_required_evidence_ref,
+            "not_required_evidence_ref",
+        )
+        if self.requires_approval and not_required_evidence_ref is not None:
+            raise HarnessValidationError(
+                "approval-required terminal failure policy cannot pin not_required evidence"
+            )
+        if not self.requires_approval and not_required_evidence_ref is None:
+            raise HarnessValidationError(
+                "no-approval terminal failure policy requires pinned not_required evidence"
+            )
+        if not isinstance(self.inherit_budget, bool):
+            raise HarnessValidationError("inherit_budget must be a boolean")
+        if not self.inherit_budget:
+            raise HarnessValidationError(
+                "terminal failure side-effect policy must inherit the run budget"
+            )
+        disposition = _enum(
+            HarnessSideEffectDisposition,
+            self.disposition,
+            "disposition",
+        )
+        if disposition is not HarnessSideEffectDisposition.QUARANTINE:
+            raise _validation_error(
+                "invalid_terminal_failure_side_effect_policy",
+                "terminal failure side-effect policy must target quarantine disposition",
+            )
+        schema_version = _required_text(self.schema_version, "schema_version")
+        if schema_version != (
+            "newsroom.harness-terminal-failure-side-effect-policy/v1"
+        ):
+            raise _validation_error(
+                "invalid_terminal_failure_side_effect_policy",
+                "terminal failure side-effect policy schema is unsupported",
+                schema_version=schema_version,
+            )
+
+        object.__setattr__(self, "failure_record_schema", failure_record_schema)
+        object.__setattr__(self, "terminal_reason_codes", reason_codes)
+        object.__setattr__(self, "retry_limit", retry_limit)
+        object.__setattr__(
+            self,
+            "not_required_evidence_ref",
+            not_required_evidence_ref,
+        )
+        object.__setattr__(self, "disposition", disposition)
+        object.__setattr__(self, "schema_version", schema_version)
+
+    @property
+    def reference(self) -> str:
+        return f"{self.policy_id}@{self.version}"
+
+    @property
+    def handler_ref(self) -> HarnessSideEffectHandlerReference:
+        return self.handler
+
+    @classmethod
+    def from_dict(
+        cls,
+        value: Mapping[str, Any],
+    ) -> HarnessTerminalFailureSideEffectPolicy:
+        if not isinstance(value, Mapping):
+            raise HarnessValidationError(
+                "terminal failure side-effect policy must be an object"
+            )
+        expected = {
+            "schema_version",
+            "policy_id",
+            "version",
+            "handler",
+            "kind",
+            "failure_record_schema",
+            "terminal_reason_codes",
+            "requires_approval",
+            "retry_limit",
+            "not_required_evidence_ref",
+            "inherit_budget",
+            "disposition",
+        }
+        if set(value) != expected:
+            raise _validation_error(
+                "invalid_terminal_failure_side_effect_policy",
+                "terminal failure side-effect policy fields are invalid",
+                missing=sorted(expected.difference(value)),
+                unexpected=sorted(set(value).difference(expected)),
+            )
+        return cls(
+            schema_version=value.get("schema_version"),
+            policy_id=value.get("policy_id"),
+            version=value.get("version"),
+            handler=value.get("handler"),
+            kind=value.get("kind"),
+            failure_record_schema=value.get("failure_record_schema"),
+            terminal_reason_codes=tuple(value.get("terminal_reason_codes", ())),
+            requires_approval=value.get("requires_approval"),
+            retry_limit=value.get("retry_limit"),
+            not_required_evidence_ref=value.get("not_required_evidence_ref"),
+            inherit_budget=value.get("inherit_budget"),
+            disposition=value.get("disposition"),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "schema_version": self.schema_version,
+            "policy_id": self.policy_id,
+            "version": self.version,
+            "handler": self.handler.to_dict(),
+            "kind": self.kind,
+            "failure_record_schema": self.failure_record_schema,
+            "terminal_reason_codes": list(self.terminal_reason_codes),
+            "requires_approval": self.requires_approval,
+            "retry_limit": self.retry_limit,
+            "not_required_evidence_ref": self.not_required_evidence_ref,
+            "inherit_budget": self.inherit_budget,
+            "disposition": self.disposition.value,
+        }
+
+
 def _identifier(value: Any, field_name: str) -> str:
     text = _required_text(value, field_name)
     if _IDENTIFIER_PATTERN.fullmatch(text) is None:
@@ -1257,5 +1435,6 @@ __all__ = [
     "HarnessSideEffectOrigin",
     "HarnessSideEffectOutcome",
     "HarnessSideEffectOutcomeStatus",
+    "HarnessTerminalFailureSideEffectPolicy",
     "HarnessTerminalSideEffectPolicy",
 ]
