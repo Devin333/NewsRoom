@@ -14,6 +14,7 @@ from framework.harness.artifacts import (
 )
 from framework.harness.control_plane.errors import HarnessValidationError
 from framework.harness.control_plane.graph_runtime import HarnessGraphActivity
+from framework.harness.runtime.activity_executor import HarnessGraphActivityTaskContext
 from framework.harness.workers.result import HarnessWorkerEvidence
 from framework.shared.redaction import redact_sensitive_values
 
@@ -156,6 +157,27 @@ class AgentLoopGraphArtifactContext:
             tenant_scope_ref=activity.tenant_scope_ref,
             identity_scope_ref=activity.identity_scope_ref,
             subject_scope_ref=activity.subject_scope_ref,
+        )
+
+    @classmethod
+    def from_task_context(
+        cls,
+        task_context: HarnessGraphActivityTaskContext,
+        *,
+        graph_version: str,
+        agent_id: str,
+        conversation_id: str | None = None,
+    ) -> AgentLoopGraphArtifactContext:
+        if not isinstance(task_context, HarnessGraphActivityTaskContext):
+            raise TypeError(
+                "task_context must be HarnessGraphActivityTaskContext"
+            )
+        return cls.from_activity(
+            task_context.activity,
+            graph_version=graph_version,
+            graph_checkpoint_ref=task_context.graph_checkpoint_ref,
+            agent_id=agent_id,
+            conversation_id=conversation_id,
         )
 
     def checksum_projection(self) -> dict[str, Any]:

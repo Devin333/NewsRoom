@@ -348,7 +348,6 @@
       "framework/harness/control_plane/durable_events.py|<module>.HarnessEventCanonicalAdapter.to_publish_request|call_keyword:data_schema": 2,
       "framework/harness/control_plane/durable_events.py|<module>._extend_graph_recovery|call_argument:append": 5,
       "framework/harness/control_plane/durable_events.py|<module>._gate_result_projections|call_argument:append": 1,
-      "framework/harness/control_plane/durable_events.py|<module>._graph_activity_from_dict|call_keyword:schema_version": 1,
       "framework/harness/control_plane/durable_events.py|<module>._graph_activity_result_commit_from_dict|call_keyword:schema_version": 1,
       "framework/harness/control_plane/durable_events.py|<module>._graph_activity_result_from_dict|call_keyword:schema_version": 1,
       "framework/harness/control_plane/durable_events.py|<module>._graph_decision_commit_from_dict|call_keyword:schema_version": 1,
@@ -2183,7 +2182,7 @@
     "framework.workflow",
     "framework.harness.workflow"
   ],
-  "generation": 9,
+  "generation": 10,
   "legacy_schema_ids": [
     "newsroom.harness-checkpoint-legacy/v1",
     "newsroom.harness-decision-legacy/v1",
@@ -6845,9 +6844,15 @@
       "count": 1,
       "generation": 9,
       "key": "framework/harness/__init__.py|HarnessWorkflowSpec"
+    },
+    {
+      "category": "legacy_schema_writers",
+      "count": 1,
+      "generation": 10,
+      "key": "framework/harness/control_plane/durable_events.py|<module>._graph_activity_from_dict|call_keyword:schema_version"
     }
   ],
   "schema": "newsroom.graph-only-freeze-baseline/v1",
-  "source_commit": "d31fef488f72bdf7aeeba6918fa8fc0bbeda78cc",
-  "source_tree": "f0edf1b14ea559abbd56122ce578ec1aeb74ca20"
+  "source_commit": "4a5a4ce57d0e601dbff6879af106215f1dc93de1",
+  "source_tree": "730ade6770458a2ef14466abab1e20c954c316f6"
 }

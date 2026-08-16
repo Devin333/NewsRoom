@@ -28,6 +28,7 @@ from framework.harness.graph.versioning import (
     HARNESS_GRAPH_COMPILER_VERSION,
     NORMALIZED_HARNESS_GRAPH_SCHEMA,
 )
+from framework.harness.runtime.activity_executor import HarnessGraphActivityTaskContext
 from framework.shared.redaction import REDACTED_VALUE
 
 
@@ -237,6 +238,26 @@ def test_context_requires_explicit_graph_checkpoint_and_rejects_tamper() -> None
             agent_id="research-agent",
         )
     assert checkpoint_error.value.code == "agent_loop_graph_artifact_context_invalid"
+
+
+def test_context_derives_graph_identity_from_harness_task_context() -> None:
+    activity = _activity()
+    task_context = HarnessGraphActivityTaskContext(
+        activity=activity,
+        graph_checkpoint_ref="checkpoint://run-1/7",
+    )
+
+    context = AgentLoopGraphArtifactContext.from_task_context(
+        task_context,
+        graph_version="2",
+        agent_id="research-agent",
+        conversation_id="conversation-1",
+    )
+
+    assert context == _context()
+    assert context.activity_id == activity.activity_id
+    assert context.normalized_graph_checksum == activity.graph_ref.checksum
+    assert context.graph_checkpoint_ref == task_context.graph_checkpoint_ref
 
 
 def _context() -> AgentLoopGraphArtifactContext:

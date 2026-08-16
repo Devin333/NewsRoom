@@ -45,7 +45,9 @@ from framework.harness.graph.versioning import (
 )
 from framework.harness.runtime.activity_executor import (
     HARNESS_GRAPH_ACTIVITY_TASK_CONTEXT_KEY,
+    HARNESS_GRAPH_ACTIVITY_TASK_CONTEXT_SCHEMA,
     HarnessGraphActivityExecutionInput,
+    HarnessGraphActivityTaskContext,
     HarnessGraphPhysicalActivityExecutor,
 )
 from framework.harness.runtime.node_output import (
@@ -75,6 +77,7 @@ _ACTIVITY_REF = HarnessContractReference(
     "test.graph-candidate-activity",
     "1",
 )
+_CHECKPOINT_REF = "checkpoint://run-1/decision-3"
 
 
 class _ActivityContract:
@@ -190,13 +193,16 @@ def test_executor_uses_exact_graph_pair_and_commits_activity_bound_output() -> N
     assert activity_contract.dispatch_calls == 0
     assert len(worker.calls) == 1
     assert "harness_activity" not in worker.calls[0]
-    assert (
+    task_context = HarnessGraphActivityTaskContext.from_dict(
         worker.calls[0][HARNESS_GRAPH_ACTIVITY_TASK_CONTEXT_KEY]
-        == activity.to_dict()
     )
+    assert task_context.schema_version == HARNESS_GRAPH_ACTIVITY_TASK_CONTEXT_SCHEMA
+    assert task_context.activity == activity
+    assert task_context.graph_checkpoint_ref == _CHECKPOINT_REF
     assert HarnessGraphActivityExecutionInput.from_dict(
         execution_input.to_dict()
     ) == execution_input
+    assert HarnessGraphActivity.from_dict(activity.to_dict()) == activity
 
 
 def test_deadline_rejection_emits_no_lease_worker_call_or_result() -> None:
@@ -281,6 +287,7 @@ def test_resolved_input_checksum_mismatch_fails_before_binding_admission() -> No
         task={**task, "inputs": {"source": "forged"}},
         leaf_activity_kind=HarnessLeafActivityKind.FUNCTION,
         required_usage=HarnessActivityUsage.SERIAL,
+        graph_checkpoint_ref=_CHECKPOINT_REF,
         output_keys=("report",),
     )
     worker = _Worker()
@@ -494,10 +501,43 @@ def test_execution_input_rejects_caller_supplied_harness_context() -> None:
             task={**task, HARNESS_GRAPH_ACTIVITY_TASK_CONTEXT_KEY: {}},
             leaf_activity_kind=HarnessLeafActivityKind.FUNCTION,
             required_usage=HarnessActivityUsage.SERIAL,
+            graph_checkpoint_ref=_CHECKPOINT_REF,
             output_keys=("report",),
         )
 
     assert captured.value.code == "graph_activity_task_context_reserved"
+
+
+def test_checkpoint_bound_context_and_activity_reject_checksum_tamper() -> None:
+    activity, task = _activity_and_task()
+    execution_input = _execution_input(activity, task)
+    context = HarnessGraphActivityTaskContext.for_execution_input(
+        activity,
+        execution_input,
+    )
+
+    assert HarnessGraphActivityTaskContext.from_dict(context.to_dict()) == context
+
+    tampered_context = context.to_dict()
+    tampered_context["graph_checkpoint_ref"] = "checkpoint://run-1/forged"
+    with pytest.raises(HarnessValidationError) as context_error:
+        HarnessGraphActivityTaskContext.from_dict(tampered_context)
+    assert (
+        context_error.value.code
+        == "graph_activity_task_context_checksum_invalid"
+    )
+
+    tampered_input = execution_input.to_dict()
+    tampered_input["graph_checkpoint_ref"] = "checkpoint://run-1/forged"
+    with pytest.raises(HarnessValidationError) as input_error:
+        HarnessGraphActivityExecutionInput.from_dict(tampered_input)
+    assert input_error.value.code == "graph_activity_execution_input_checksum_invalid"
+
+    tampered_activity = activity.to_dict()
+    tampered_activity["attempt"] = 2
+    with pytest.raises(HarnessValidationError) as activity_error:
+        HarnessGraphActivity.from_dict(tampered_activity)
+    assert activity_error.value.code == "graph_activity_checksum_invalid"
 
 
 def _executor(
@@ -556,6 +596,7 @@ def _execution_input(
         task=task,
         leaf_activity_kind=HarnessLeafActivityKind.FUNCTION,
         required_usage=required_usage,
+        graph_checkpoint_ref=_CHECKPOINT_REF,
         output_keys=("report",),
         timeout_seconds=timeout_seconds,
     )

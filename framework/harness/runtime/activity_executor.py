@@ -57,7 +57,10 @@ from framework.shared.time import utc_now
 
 
 HARNESS_GRAPH_ACTIVITY_EXECUTION_INPUT_SCHEMA = (
-    "newsroom.harness-graph-activity-execution-input/v1"
+    "newsroom.harness-graph-activity-execution-input/v2"
+)
+HARNESS_GRAPH_ACTIVITY_TASK_CONTEXT_SCHEMA = (
+    "newsroom.harness-graph-activity-task-context/v1"
 )
 HARNESS_GRAPH_ACTIVITY_FAILURE_EVIDENCE_SCHEMA = (
     "newsroom.harness-graph-activity-failure-evidence/v1"
@@ -81,6 +84,7 @@ class HarnessGraphActivityExecutionInput:
     task: Mapping[str, Any]
     leaf_activity_kind: HarnessLeafActivityKind | str
     required_usage: HarnessActivityUsage | str
+    graph_checkpoint_ref: str
     output_keys: tuple[str, ...]
     timeout_seconds: float | None = None
     schema_version: str = HARNESS_GRAPH_ACTIVITY_EXECUTION_INPUT_SCHEMA
@@ -130,6 +134,14 @@ class HarnessGraphActivityExecutionInput:
             ) from exc
         object.__setattr__(self, "leaf_activity_kind", leaf_kind)
         object.__setattr__(self, "required_usage", required_usage)
+        object.__setattr__(
+            self,
+            "graph_checkpoint_ref",
+            required_text(
+                self.graph_checkpoint_ref,
+                "activity_execution_input.graph_checkpoint_ref",
+            ),
+        )
         output_keys = _output_keys(self.output_keys)
         object.__setattr__(self, "output_keys", output_keys)
         timeout_seconds = self.timeout_seconds
@@ -167,6 +179,7 @@ class HarnessGraphActivityExecutionInput:
         task: Mapping[str, Any],
         leaf_activity_kind: HarnessLeafActivityKind | str,
         required_usage: HarnessActivityUsage | str,
+        graph_checkpoint_ref: str,
         output_keys: tuple[str, ...],
         timeout_seconds: float | None = None,
     ) -> HarnessGraphActivityExecutionInput:
@@ -178,6 +191,7 @@ class HarnessGraphActivityExecutionInput:
             task=task,
             leaf_activity_kind=leaf_activity_kind,
             required_usage=required_usage,
+            graph_checkpoint_ref=graph_checkpoint_ref,
             output_keys=output_keys,
             timeout_seconds=timeout_seconds,
         )
@@ -215,6 +229,7 @@ class HarnessGraphActivityExecutionInput:
             "task": mapping_to_dict(self.task),
             "leaf_activity_kind": self.leaf_activity_kind.value,
             "required_usage": self.required_usage.value,
+            "graph_checkpoint_ref": self.graph_checkpoint_ref,
             "output_keys": list(self.output_keys),
             "timeout_seconds": self.timeout_seconds,
             "input_ref": self.input_ref,
@@ -238,6 +253,7 @@ class HarnessGraphActivityExecutionInput:
             "task",
             "leaf_activity_kind",
             "required_usage",
+            "graph_checkpoint_ref",
             "output_keys",
             "timeout_seconds",
             "input_ref",
@@ -263,6 +279,7 @@ class HarnessGraphActivityExecutionInput:
             task=value["task"],
             leaf_activity_kind=value["leaf_activity_kind"],
             required_usage=value["required_usage"],
+            graph_checkpoint_ref=value["graph_checkpoint_ref"],
             output_keys=tuple(output_keys),
             timeout_seconds=value["timeout_seconds"],
             schema_version=value["schema_version"],
@@ -276,6 +293,101 @@ class HarnessGraphActivityExecutionInput:
                 code="graph_activity_execution_input_checksum_invalid",
             )
         return restored
+
+
+@dataclass(frozen=True, slots=True)
+class HarnessGraphActivityTaskContext:
+    """Harness-owned worker context for one checkpoint-bound Graph activity."""
+
+    activity: HarnessGraphActivity
+    graph_checkpoint_ref: str
+    schema_version: str = HARNESS_GRAPH_ACTIVITY_TASK_CONTEXT_SCHEMA
+    context_checksum: str = field(init=False)
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.activity, HarnessGraphActivity):
+            raise TypeError("activity must be HarnessGraphActivity")
+        object.__setattr__(
+            self,
+            "graph_checkpoint_ref",
+            required_text(
+                self.graph_checkpoint_ref,
+                "graph_activity_task_context.graph_checkpoint_ref",
+            ),
+        )
+        if self.schema_version != HARNESS_GRAPH_ACTIVITY_TASK_CONTEXT_SCHEMA:
+            raise HarnessValidationError(
+                "unsupported Graph activity task context schema",
+                code="unsupported_graph_activity_task_context_schema",
+            )
+        object.__setattr__(
+            self,
+            "context_checksum",
+            canonical_checksum(self.checksum_projection()),
+        )
+
+    @classmethod
+    def for_execution_input(
+        cls,
+        activity: HarnessGraphActivity,
+        execution_input: HarnessGraphActivityExecutionInput,
+    ) -> HarnessGraphActivityTaskContext:
+        if not isinstance(execution_input, HarnessGraphActivityExecutionInput):
+            raise TypeError(
+                "execution_input must be HarnessGraphActivityExecutionInput"
+            )
+        execution_input.assert_matches(activity)
+        return cls(
+            activity=activity,
+            graph_checkpoint_ref=execution_input.graph_checkpoint_ref,
+        )
+
+    def checksum_projection(self) -> dict[str, Any]:
+        return {
+            "schema_version": self.schema_version,
+            "activity": self.activity.to_dict(),
+            "graph_checkpoint_ref": self.graph_checkpoint_ref,
+        }
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            **self.checksum_projection(),
+            "context_checksum": self.context_checksum,
+        }
+
+    @classmethod
+    def from_dict(
+        cls,
+        value: Mapping[str, Any],
+    ) -> HarnessGraphActivityTaskContext:
+        expected = {
+            "schema_version",
+            "activity",
+            "graph_checkpoint_ref",
+            "context_checksum",
+        }
+        if not isinstance(value, Mapping) or set(value) != expected:
+            raise HarnessValidationError(
+                "Graph activity task context fields are invalid",
+                code="graph_activity_task_context_invalid",
+            )
+        activity = value["activity"]
+        if not isinstance(activity, Mapping):
+            raise HarnessValidationError(
+                "Graph activity task context activity must be an object",
+                code="graph_activity_task_context_invalid",
+            )
+        context = cls(
+            activity=HarnessGraphActivity.from_dict(activity),
+            graph_checkpoint_ref=value["graph_checkpoint_ref"],
+            schema_version=value["schema_version"],
+        )
+        if value["context_checksum"] != context.context_checksum:
+            raise HarnessValidationError(
+                "Graph activity task context checksum does not match",
+                code="graph_activity_task_context_checksum_invalid",
+            )
+        return context
 
 
 @runtime_checkable
@@ -645,7 +757,12 @@ def _worker_task(
 ) -> dict[str, Any]:
     return {
         **mapping_to_dict(execution_input.task),
-        HARNESS_GRAPH_ACTIVITY_TASK_CONTEXT_KEY: activity.to_dict(),
+        HARNESS_GRAPH_ACTIVITY_TASK_CONTEXT_KEY: (
+            HarnessGraphActivityTaskContext.for_execution_input(
+                activity,
+                execution_input,
+            ).to_dict()
+        ),
     }
 
 
@@ -873,9 +990,11 @@ __all__ = [
     "HARNESS_GRAPH_ACTIVITY_EXECUTION_INPUT_SCHEMA",
     "HARNESS_GRAPH_ACTIVITY_FAILURE_EVIDENCE_SCHEMA",
     "HARNESS_GRAPH_ACTIVITY_TASK_CONTEXT_KEY",
+    "HARNESS_GRAPH_ACTIVITY_TASK_CONTEXT_SCHEMA",
     "HarnessGraphActivityExecutionCommitPort",
     "HarnessGraphActivityExecutionInput",
     "HarnessGraphActivityExecutionInputResolverPort",
+    "HarnessGraphActivityTaskContext",
     "HarnessGraphPhysicalActivityExecutionResult",
     "HarnessGraphPhysicalActivityExecutor",
 ]

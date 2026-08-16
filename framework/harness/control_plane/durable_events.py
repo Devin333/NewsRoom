@@ -2023,61 +2023,12 @@ def _graph_observation_commit_from_dict(
 
 
 def _graph_activity_from_dict(value: Mapping[str, Any]) -> HarnessGraphActivity:
-    _graph_exact_keys(
-        value,
-        {
-            "schema_version",
-            "run_id",
-            "graph_ref",
-            "node_id",
-            "node_instance_id",
-            "step_ref",
-            "worker_ref",
-            "activity_ref",
-            "attempt",
-            "input_ref",
-            "causal_decision_checksum",
-            "causal_decision_sequence",
-            "fencing_generation",
-            "tenant_scope_ref",
-            "identity_scope_ref",
-            "subject_scope_ref",
-            "activity_id",
-            "idempotency_key",
-            "activity_checksum",
-        },
-        "graph activity",
-    )
-    activity = HarnessGraphActivity(
-        run_id=value["run_id"],
-        graph_ref=_graph_state_reference(value["graph_ref"]),
-        node_id=value["node_id"],
-        node_instance_id=value["node_instance_id"],
-        step_ref=_graph_contract_reference(value["step_ref"], "step_ref"),
-        worker_ref=_graph_contract_reference(value["worker_ref"], "worker_ref"),
-        activity_ref=_graph_contract_reference(
-            value["activity_ref"],
-            "activity_ref",
-        ),
-        attempt=value["attempt"],
-        input_ref=value["input_ref"],
-        causal_decision_checksum=value["causal_decision_checksum"],
-        causal_decision_sequence=value["causal_decision_sequence"],
-        fencing_generation=value["fencing_generation"],
-        tenant_scope_ref=value["tenant_scope_ref"],
-        identity_scope_ref=value["identity_scope_ref"],
-        subject_scope_ref=value["subject_scope_ref"],
-        schema_version=value["schema_version"],
-    )
-    if (
-        value["activity_id"] != activity.activity_id
-        or value["idempotency_key"] != activity.idempotency_key
-        or value["activity_checksum"] != activity.activity_checksum
-    ):
+    try:
+        return HarnessGraphActivity.from_dict(value)
+    except (HarnessValidationError, TypeError, ValueError) as exc:
         raise EventStoreCorruptionError(
-            "graph activity checksum or deterministic identity is invalid"
-        )
-    return activity
+            "graph activity contract or deterministic identity is invalid"
+        ) from exc
 
 
 def _graph_activity_result_from_dict(

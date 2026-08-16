@@ -217,6 +217,75 @@ class HarnessGraphActivity:
             "activity_checksum": self.activity_checksum,
         }
 
+    @classmethod
+    def from_dict(cls, value: Mapping[str, Any]) -> HarnessGraphActivity:
+        expected = {
+            "schema_version",
+            "run_id",
+            "graph_ref",
+            "node_id",
+            "node_instance_id",
+            "step_ref",
+            "worker_ref",
+            "activity_ref",
+            "attempt",
+            "input_ref",
+            "causal_decision_checksum",
+            "causal_decision_sequence",
+            "fencing_generation",
+            "tenant_scope_ref",
+            "identity_scope_ref",
+            "subject_scope_ref",
+            "activity_id",
+            "idempotency_key",
+            "activity_checksum",
+        }
+        if not isinstance(value, Mapping) or set(value) != expected:
+            raise HarnessValidationError(
+                "graph activity fields are invalid",
+                code="graph_activity_fields_invalid",
+            )
+        graph_ref = value["graph_ref"]
+        step_ref = value["step_ref"]
+        worker_ref = value["worker_ref"]
+        activity_ref = value["activity_ref"]
+        if not all(
+            isinstance(item, Mapping)
+            for item in (graph_ref, step_ref, worker_ref, activity_ref)
+        ):
+            raise HarnessValidationError(
+                "graph activity references must be objects",
+                code="graph_activity_fields_invalid",
+            )
+        activity = cls(
+            run_id=value["run_id"],
+            graph_ref=HarnessGraphReference.from_dict(graph_ref),
+            node_id=value["node_id"],
+            node_instance_id=value["node_instance_id"],
+            step_ref=HarnessContractReference.from_dict(step_ref),
+            worker_ref=HarnessContractReference.from_dict(worker_ref),
+            activity_ref=HarnessContractReference.from_dict(activity_ref),
+            attempt=value["attempt"],
+            input_ref=value["input_ref"],
+            causal_decision_checksum=value["causal_decision_checksum"],
+            causal_decision_sequence=value["causal_decision_sequence"],
+            fencing_generation=value["fencing_generation"],
+            tenant_scope_ref=value["tenant_scope_ref"],
+            identity_scope_ref=value["identity_scope_ref"],
+            subject_scope_ref=value["subject_scope_ref"],
+            schema_version=value["schema_version"],
+        )
+        if (
+            value["activity_id"] != activity.activity_id
+            or value["idempotency_key"] != activity.idempotency_key
+            or value["activity_checksum"] != activity.activity_checksum
+        ):
+            raise HarnessValidationError(
+                "graph activity checksum or deterministic identity is invalid",
+                code="graph_activity_checksum_invalid",
+            )
+        return activity
+
 
 @dataclass(frozen=True, slots=True)
 class HarnessGraphActivityResult:

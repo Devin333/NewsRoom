@@ -13,6 +13,7 @@ from framework.events.canonical import checksum_for
 from framework.harness import (
     HARNESS_GRAPH_ACTIVITY_TASK_CONTEXT_KEY,
     HarnessCommittedNodeOutputReceipt,
+    HarnessGraphActivityTaskContext,
     HarnessValidationError,
     HarnessWorkerResult,
     HarnessWorkerStatus,
@@ -36,7 +37,10 @@ from business.research.domain import (
     research_subject_scope_ref,
     stable_research_id,
 )
-from business.research.graphs.reader_repair import build_reader_repair_graph_definition
+from business.research.graphs.reader_repair import (
+    READER_REPAIR_GRAPH_ID,
+    build_reader_repair_graph_definition,
+)
 from business.research.graphs.reader_repair_execution_workers import (
     build_reader_repair_application_verification_worker_result,
     build_reader_repair_application_worker_result,
@@ -609,26 +613,53 @@ def _parse_task(
         run_id=run_id,
         step_id=expected_step_id,
         inputs=dict(inputs),
-        activity_attempt=_activity_attempt(value, step_id=expected_step_id),
+        activity_attempt=_activity_attempt(
+            value,
+            run_id=run_id,
+            step_id=expected_step_id,
+        ),
     )
 
 
-def _activity_attempt(value: Mapping[str, Any], *, step_id: str) -> int | None:
-    activity = value.get(HARNESS_GRAPH_ACTIVITY_TASK_CONTEXT_KEY)
-    if activity is None:
+def _activity_attempt(
+    value: Mapping[str, Any],
+    *,
+    run_id: str,
+    step_id: str,
+) -> int | None:
+    raw_context = value.get(HARNESS_GRAPH_ACTIVITY_TASK_CONTEXT_KEY)
+    if raw_context is None:
         return None
-    if not isinstance(activity, Mapping):
+    if not isinstance(raw_context, Mapping):
         raise _worker_error(
             "Reader Repair Harness activity identity must be an object",
             step_id=step_id,
         )
-    attempt = activity.get("attempt")
-    if isinstance(attempt, bool) or not isinstance(attempt, int) or attempt < 1:
+    try:
+        task_context = HarnessGraphActivityTaskContext.from_dict(raw_context)
+    except (HarnessValidationError, TypeError, ValueError) as exc:
         raise _worker_error(
-            "Reader Repair Harness activity attempt is invalid",
+            "Reader Repair Harness activity context is invalid",
             step_id=step_id,
+            error_code=getattr(exc, "code", None),
+        ) from exc
+    activity = task_context.activity
+    mismatches = tuple(
+        field_name
+        for field_name, expected, actual in (
+            ("run_id", run_id, activity.run_id),
+            ("graph_id", READER_REPAIR_GRAPH_ID, activity.graph_ref.graph_id),
+            ("node_id", step_id, activity.node_id),
         )
-    return attempt
+        if expected != actual
+    )
+    if mismatches:
+        raise _worker_error(
+            "Reader Repair Harness activity context does not match the task",
+            step_id=step_id,
+            mismatches=list(mismatches),
+        )
+    return activity.attempt
 
 
 def _model_input(

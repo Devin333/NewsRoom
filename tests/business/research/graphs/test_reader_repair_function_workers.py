@@ -13,6 +13,7 @@ from framework.harness import (
     HarnessAdmittedGraphActivityOutputAdapter,
     HarnessCommittedNodeOutputInputResolver,
     HarnessGraphActivity,
+    HarnessGraphActivityTaskContext,
     HarnessGraphReference,
     HarnessNodeOutputCandidate,
     HarnessValidationError,
@@ -20,6 +21,7 @@ from framework.harness import (
     HarnessWorkerStatus,
     InMemoryHarnessNodeOutputResource,
 )
+from framework.harness.control_plane.activity import harness_activity_input_checksum
 from framework.harness.graph import (
     HarnessContractKind,
     HarnessContractReference,
@@ -419,8 +421,8 @@ def test_reader_repair_function_workers_reject_cross_run_receipts_and_unbound_me
             "reader_repair_application_observation": observation.to_dict(),
             "reader_repair_application_verification": verification.to_dict(),
         },
+        run_id="other-run",
     )
-    result_task["run_id"] = "other-run"
 
     with pytest.raises(HarnessValidationError) as receipt_error:
         workers["build_repair_result"].execute(result_task)
@@ -508,31 +510,74 @@ def _authority(paper_id: str) -> ReaderRepairRunAuthorityContext:
     )
 
 
-def _task(definition, step_id: str, payload, outputs: dict[str, Any]):
+def _task(
+    definition,
+    step_id: str,
+    payload,
+    outputs: dict[str, Any],
+    *,
+    run_id: str = _RUN_ID,
+):
     activity = definition.activity(step_id)
     assert activity is not None
+    leaf = definition.leaf_activity_binding(step_id)
+    assert leaf is not None
     root_inputs = {
         "reader_payload": payload.to_dict(),
-        "run_id": _RUN_ID,
+        "run_id": run_id,
         "source_format": "pdf",
     }
     inputs = {
         key: outputs[key] if key in outputs else root_inputs[key]
         for key in activity.input_keys
     }
-    return {
-        "run_id": _RUN_ID,
+    task = {
+        "run_id": run_id,
         "step_id": step_id,
         "worker_type": activity.worker_type.value,
         "inputs": inputs,
         "metadata": dict(activity.metadata),
-        "harness_graph_activity": {
-            "activity_id": f"activity-{step_id}-1",
-            "idempotency_key": f"reader-repair:{step_id}:1",
-            "attempt": 1,
-            "contract_version": "1",
-        },
     }
+    definition_checksum = definition.definition_checksum
+    assert definition_checksum is not None
+    graph_activity = HarnessGraphActivity(
+        run_id=run_id,
+        graph_ref=HarnessGraphReference(
+            graph_id=definition.graph_id,
+            workflow_ref=HarnessContractReference(
+                HarnessContractKind.WORKFLOW,
+                definition.graph_id,
+                definition.graph_version,
+            ),
+            schema_version=NORMALIZED_HARNESS_GRAPH_SCHEMA,
+            compiler_version=HARNESS_GRAPH_COMPILER_VERSION,
+            condition_policy_version=HARNESS_CONDITION_POLICY_VERSION,
+            checksum=definition_checksum,
+        ),
+        node_id=step_id,
+        node_instance_id=f"{step_id}:1",
+        step_ref=HarnessContractReference(
+            HarnessContractKind.STEP,
+            f"{definition.graph_id}.{step_id}",
+            "1",
+        ),
+        worker_ref=leaf.worker_ref,
+        activity_ref=leaf.activity_ref,
+        attempt=1,
+        input_ref=harness_activity_input_checksum(task),
+        causal_decision_checksum=checksum_for(
+            {"decision": "reader-repair-test-dispatch", "step_id": step_id}
+        ),
+        causal_decision_sequence=1,
+        fencing_generation=1,
+        identity_scope_ref=_IDENTITY_SCOPE_REF,
+        subject_scope_ref=research_subject_scope_ref(payload.paper.paper_id),
+    )
+    task["harness_graph_activity"] = HarnessGraphActivityTaskContext(
+        activity=graph_activity,
+        graph_checkpoint_ref=f"checkpoint://{run_id}/{step_id}/1",
+    ).to_dict()
+    return task
 
 
 def _gate_context(
