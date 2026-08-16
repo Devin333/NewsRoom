@@ -25,6 +25,10 @@ TASK_PLAN_STAGE_BINDING_SCHEMA = "newsroom.harness-task-plan-stage-binding/v1"
 GRAPH_ONLY_TASK_PLAN_STAGE_BINDING_SCHEMA = (
     "newsroom.harness-task-plan-stage-binding/v2"
 )
+TASK_PLAN_STAGE_IDENTITY_SCHEMA = "newsroom.harness-task-plan-stage-identity/v1"
+GRAPH_ONLY_TASK_PLAN_STAGE_IDENTITY_SCHEMA = (
+    "newsroom.harness-task-plan-stage-identity/v2"
+)
 
 
 class TaskPlanContractKind(StrEnum):
@@ -40,6 +44,7 @@ class TaskPlanContractKind(StrEnum):
     RESULT_REFERENCE = "result_reference"
     CAPABILITY_BINDING = "capability_binding"
     STAGE_BINDING = "stage_binding"
+    STAGE_IDENTITY = "stage_identity"
 
 
 @dataclass(frozen=True, slots=True)
@@ -164,7 +169,21 @@ _WRITERS: Mapping[TaskPlanContractKind, str] = MappingProxyType(
         TaskPlanContractKind.RESULT_REFERENCE: TASK_RESULT_REFERENCE_SCHEMA,
         TaskPlanContractKind.CAPABILITY_BINDING: TASK_CAPABILITY_BINDING_SCHEMA,
         TaskPlanContractKind.STAGE_BINDING: TASK_PLAN_STAGE_BINDING_SCHEMA,
+        TaskPlanContractKind.STAGE_IDENTITY: TASK_PLAN_STAGE_IDENTITY_SCHEMA,
     }
+)
+
+_ADDITIONAL_SCHEMAS: Mapping[TaskPlanContractKind, tuple[str, ...]] = (
+    MappingProxyType(
+        {
+            TaskPlanContractKind.STAGE_BINDING: (
+                GRAPH_ONLY_TASK_PLAN_STAGE_BINDING_SCHEMA,
+            ),
+            TaskPlanContractKind.STAGE_IDENTITY: (
+                GRAPH_ONLY_TASK_PLAN_STAGE_IDENTITY_SCHEMA,
+            ),
+        }
+    )
 )
 
 DEFAULT_TASK_PLAN_SCHEMA_REGISTRY = TaskPlanSchemaRegistry(
@@ -172,16 +191,8 @@ DEFAULT_TASK_PLAN_SCHEMA_REGISTRY = TaskPlanSchemaRegistry(
         TaskPlanSchemaRegistration(
             contract_kind=kind,
             writer_schema=schema,
-            readable_schemas=(
-                (schema, GRAPH_ONLY_TASK_PLAN_STAGE_BINDING_SCHEMA)
-                if kind is TaskPlanContractKind.STAGE_BINDING
-                else (schema,)
-            ),
-            executable_schemas=(
-                (schema, GRAPH_ONLY_TASK_PLAN_STAGE_BINDING_SCHEMA)
-                if kind is TaskPlanContractKind.STAGE_BINDING
-                else (schema,)
-            ),
+            readable_schemas=(schema, *_ADDITIONAL_SCHEMAS.get(kind, ())),
+            executable_schemas=(schema, *_ADDITIONAL_SCHEMAS.get(kind, ())),
         )
         for kind, schema in _WRITERS.items()
     )
@@ -191,6 +202,7 @@ DEFAULT_TASK_PLAN_SCHEMA_REGISTRY = TaskPlanSchemaRegistry(
 __all__ = [
     "DEFAULT_TASK_PLAN_SCHEMA_REGISTRY",
     "GRAPH_ONLY_TASK_PLAN_STAGE_BINDING_SCHEMA",
+    "GRAPH_ONLY_TASK_PLAN_STAGE_IDENTITY_SCHEMA",
     "PLAN_CANDIDATE_SCHEMA",
     "RESOLVED_TASK_DEFINITION_SCHEMA",
     "TASK_CAPABILITY_BINDING_SCHEMA",
@@ -201,6 +213,7 @@ __all__ = [
     "TASK_PLAN_PROJECTION_SCHEMA",
     "TASK_PLAN_RUNTIME_VERSION",
     "TASK_PLAN_STAGE_BINDING_SCHEMA",
+    "TASK_PLAN_STAGE_IDENTITY_SCHEMA",
     "TASK_PROJECTION_SCHEMA",
     "TASK_RESULT_REFERENCE_SCHEMA",
     "VALIDATED_TASK_PLAN_SCHEMA",

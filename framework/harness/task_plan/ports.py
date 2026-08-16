@@ -13,6 +13,7 @@ from framework.harness.task_plan.canonical import (
     required_text,
     thaw_mapping,
 )
+from framework.harness.task_plan.identity import TaskPlanStageIdentity
 from framework.harness.task_plan.models import PlanCandidate
 from framework.harness.task_plan.policy import TaskPlanPolicy
 from framework.harness.task_plan.stage_binding import TaskPlanStageBinding
@@ -28,11 +29,17 @@ class PlanBuildRequest:
     policy: TaskPlanPolicy
     budget: HarnessBudgetSnapshot | Mapping[str, Any] | None = None
     metadata: Mapping[str, Any] = field(default_factory=dict)
+    stage_identity: TaskPlanStageIdentity = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "run_id", identifier(self.run_id, "run_id"))
         if not isinstance(self.stage_binding, TaskPlanStageBinding):
             raise TypeError("stage_binding must be TaskPlanStageBinding")
+        object.__setattr__(
+            self,
+            "stage_identity",
+            TaskPlanStageIdentity(self.run_id, self.stage_binding),
+        )
         if not isinstance(self.policy, TaskPlanPolicy):
             raise TypeError("policy must be TaskPlanPolicy")
         _require_stage_policy_binding(
@@ -72,7 +79,19 @@ class PlanBuildRequest:
 
     @property
     def workflow_id(self) -> str:
-        return self.stage_binding.workflow_id
+        return self.stage_identity.workflow_id
+
+    @property
+    def graph_id(self) -> str:
+        return self.stage_identity.graph_id
+
+    @property
+    def graph_version(self) -> str:
+        return self.stage_identity.graph_version
+
+    @property
+    def graph_ref(self) -> str:
+        return self.stage_identity.graph_ref
 
     @property
     def stage_id(self) -> str:
@@ -84,9 +103,8 @@ class PlanBuildRequest:
 
     def to_dict(self) -> dict[str, Any]:
         budget = self.budget.to_dict() if hasattr(self.budget, "to_dict") else thaw_mapping(self.budget or {})
-        return {
+        payload = {
             "run_id": self.run_id,
-            "workflow_id": self.workflow_id,
             "stage_id": self.stage_id,
             "graph_checksum": self.graph_checksum,
             "stage_binding_ref": self.stage_binding.binding_checksum,
@@ -94,6 +112,24 @@ class PlanBuildRequest:
             "policy_ref": self.policy.exact_ref,
             "budget": budget,
         }
+        if self.stage_identity.is_graph_only:
+            payload.update(
+                {
+                    "stage_identity_schema": self.stage_identity.schema_version,
+                    "stage_identity_checksum": self.stage_identity.identity_checksum,
+                    "graph_schema_version": self.stage_identity.graph_schema_version,
+                    "compiler_version": self.stage_identity.compiler_version,
+                    "condition_policy_version": (
+                        self.stage_identity.condition_policy_version
+                    ),
+                    "graph_id": self.graph_id,
+                    "graph_version": self.graph_version,
+                    "graph_ref": self.graph_ref,
+                }
+            )
+        else:
+            payload["workflow_id"] = self.workflow_id
+        return payload
 
 
 @runtime_checkable
@@ -135,6 +171,11 @@ class HarnessPlanCandidateBuilder:
             )
         payload = result.output["candidate"]
         candidate = payload if isinstance(payload, PlanCandidate) else PlanCandidate.from_dict(payload)
+        if request.stage_identity.is_graph_only:
+            raise HarnessValidationError(
+                "Graph-only TaskPlan request requires a Graph identity candidate schema",
+                code="task_plan_candidate_identity_schema_mismatch",
+            )
         if (candidate.run_id, candidate.workflow_id, candidate.stage_id, candidate.graph_checksum) != (
             request.run_id,
             request.workflow_id,
@@ -170,11 +211,17 @@ class TaskPlanStageRequest:
     candidate: PlanCandidate | None = None
     metadata: Mapping[str, Any] = field(default_factory=dict)
     policy_ref: str | None = None
+    stage_identity: TaskPlanStageIdentity = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "run_id", identifier(self.run_id, "run_id"))
         if not isinstance(self.stage_binding, TaskPlanStageBinding):
             raise TypeError("stage_binding must be TaskPlanStageBinding")
+        object.__setattr__(
+            self,
+            "stage_identity",
+            TaskPlanStageIdentity(self.run_id, self.stage_binding),
+        )
         if not isinstance(self.policy, TaskPlanPolicy):
             raise TypeError("policy must be TaskPlanPolicy")
         _require_stage_policy_binding(
@@ -232,6 +279,11 @@ class TaskPlanStageRequest:
             object.__setattr__(self, "budget", frozen_mapping(self.budget, "task_plan.budget"))
         if self.candidate is not None and not isinstance(self.candidate, PlanCandidate):
             raise TypeError("candidate must be PlanCandidate")
+        if self.candidate is not None and self.stage_identity.is_graph_only:
+            raise HarnessValidationError(
+                "Graph-only TaskPlan stage requires a Graph identity candidate schema",
+                code="task_plan_candidate_identity_schema_mismatch",
+            )
         if self.candidate is not None and (
             self.candidate.run_id,
             self.candidate.workflow_id,
@@ -251,7 +303,19 @@ class TaskPlanStageRequest:
 
     @property
     def workflow_id(self) -> str:
-        return self.stage_binding.workflow_id
+        return self.stage_identity.workflow_id
+
+    @property
+    def graph_id(self) -> str:
+        return self.stage_identity.graph_id
+
+    @property
+    def graph_version(self) -> str:
+        return self.stage_identity.graph_version
+
+    @property
+    def graph_ref(self) -> str:
+        return self.stage_identity.graph_ref
 
     @property
     def stage_id(self) -> str:

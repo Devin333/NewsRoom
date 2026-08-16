@@ -18,6 +18,7 @@ from framework.harness.task_plan.canonical import (
     thaw_mapping,
 )
 from framework.harness.task_plan.dag import task_dependency_depths
+from framework.harness.task_plan.identity import TaskPlanStageIdentity
 from framework.harness.task_plan.models import (
     PlanCandidate,
     ResolvedTaskSpec,
@@ -42,11 +43,17 @@ class TaskPlanValidationContext:
     registered_gate_refs: tuple[str, ...] = ()
     registered_aggregator_refs: tuple[str, ...] = ()
     remaining_task_budget: TaskBudget | Mapping[str, Any] | None = None
+    stage_identity: TaskPlanStageIdentity = dataclass_field(init=False, repr=False)
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "run_id", identifier(self.run_id, "run_id"))
         if not isinstance(self.stage_binding, TaskPlanStageBinding):
             raise TypeError("stage_binding must be TaskPlanStageBinding")
+        object.__setattr__(
+            self,
+            "stage_identity",
+            TaskPlanStageIdentity(self.run_id, self.stage_binding),
+        )
         object.__setattr__(self, "available_input_refs", stable_text_tuple(self.available_input_refs, "available_input_refs", item_kind="reference"))
         object.__setattr__(self, "future_stage_input_refs", stable_text_tuple(self.future_stage_input_refs, "future_stage_input_refs", item_kind="reference"))
         object.__setattr__(self, "registered_gate_refs", stable_text_tuple(self.registered_gate_refs, "registered_gate_refs", item_kind="exact_reference"))
@@ -60,7 +67,19 @@ class TaskPlanValidationContext:
 
     @property
     def workflow_id(self) -> str:
-        return self.stage_binding.workflow_id
+        return self.stage_identity.workflow_id
+
+    @property
+    def graph_id(self) -> str:
+        return self.stage_identity.graph_id
+
+    @property
+    def graph_version(self) -> str:
+        return self.stage_identity.graph_version
+
+    @property
+    def graph_ref(self) -> str:
+        return self.stage_identity.graph_ref
 
     @property
     def stage_id(self) -> str:
@@ -188,9 +207,27 @@ class TaskPlanValidator:
                     field="policy_ref",
                 )
             )
-        for name in ("run_id", "workflow_id", "stage_id", "graph_checksum"):
+        for name in ("run_id", "stage_id", "graph_checksum"):
             if getattr(candidate, name) != getattr(context, name):
                 diagnostics.append(_diag(f"candidate_{name}_mismatch", f"candidate {name} does not match stage context", "identity", field=name))
+        if context.stage_identity.is_graph_only:
+            diagnostics.append(
+                _diag(
+                    "task_plan_candidate_identity_schema_mismatch",
+                    "legacy TaskPlan candidate cannot enter a Graph-only stage",
+                    "identity",
+                    field="schema_version",
+                )
+            )
+        elif candidate.workflow_id != context.workflow_id:
+            diagnostics.append(
+                _diag(
+                    "candidate_workflow_id_mismatch",
+                    "candidate workflow_id does not match stage context",
+                    "identity",
+                    field="workflow_id",
+                )
+            )
         if candidate.stage_id != policy.stage_id:
             diagnostics.append(_diag("candidate_policy_stage_mismatch", "candidate stage does not match policy", "identity", field="stage_id"))
         if len(candidate.tasks) > policy.max_tasks:
