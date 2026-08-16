@@ -526,14 +526,7 @@ def _normalize_graph_step_inputs(
 
 
 def _graph_reference(graph: NormalizedHarnessGraph) -> HarnessGraphReference:
-    return HarnessGraphReference(
-        graph.graph_id,
-        graph.workflow_ref,
-        graph.schema_version,
-        graph.compiler_version,
-        graph.condition_policy_version,
-        graph.checksum,
-    )
+    return HarnessGraphReference.from_graph(graph)
 
 
 def _validate_graph_state_bindings(
@@ -1317,8 +1310,12 @@ def _validate_graph_step_input(
         mismatches.append("state.step_ref")
     expected_step_ref = HarnessContractReference(
         HarnessContractKind.STEP,
-        f"{graph.workflow_id}:{step.step_id}",
-        str(step.metadata.get("step_version", "1")),
+        f"{graph.identity_ref.contract_id}:{step.step_id}",
+        (
+            graph.identity_version
+            if graph.graph_ref is not None
+            else str(step.metadata.get("step_version", "1"))
+        ),
     )
     if expected_step_ref != definition.step_ref:
         mismatches.append("input.step_ref")

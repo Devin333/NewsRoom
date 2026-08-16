@@ -12,8 +12,13 @@ GRAPH_ONLY_NORMALIZED_HARNESS_GRAPH_SCHEMA = (
     "newsroom.harness-normalized-graph/v2"
 )
 HARNESS_GRAPH_STATE_SCHEMA = "newsroom.harness-graph-state/v1"
+GRAPH_ONLY_HARNESS_GRAPH_STATE_SCHEMA = "newsroom.harness-graph-state/v2"
 HARNESS_GRAPH_DECISION_SCHEMA = "newsroom.harness-graph-decision/v1"
+GRAPH_ONLY_HARNESS_GRAPH_DECISION_SCHEMA = "newsroom.harness-graph-decision/v2"
 HARNESS_GRAPH_CHECKPOINT_SCHEMA = "newsroom.harness-graph-checkpoint/v1"
+GRAPH_ONLY_HARNESS_GRAPH_CHECKPOINT_SCHEMA = (
+    "newsroom.harness-graph-checkpoint/v2"
+)
 HARNESS_GRAPH_INSPECTION_SCHEMA = "newsroom.harness-graph-inspection/v1"
 HARNESS_CONDITION_POLICY_VERSION = "newsroom.harness-graph-condition-policy/v1"
 HARNESS_GRAPH_COMPILER_VERSION = "newsroom.harness-graph-compiler/v1"
@@ -67,5 +72,8 @@ __all__ = [
     "HARNESS_STEP_LIFECYCLE_VERSION",
     "HARNESS_WORKER_ACTIVITY_SCHEMA",
     "GRAPH_ONLY_NORMALIZED_HARNESS_GRAPH_SCHEMA",
+    "GRAPH_ONLY_HARNESS_GRAPH_CHECKPOINT_SCHEMA",
+    "GRAPH_ONLY_HARNESS_GRAPH_DECISION_SCHEMA",
+    "GRAPH_ONLY_HARNESS_GRAPH_STATE_SCHEMA",
     "NORMALIZED_HARNESS_GRAPH_SCHEMA",
 ]

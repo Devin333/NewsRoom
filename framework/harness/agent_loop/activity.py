@@ -365,7 +365,7 @@ class AgentLoopGraphWaitCandidate:
         return cls(
             run_id=activity.run_id,
             graph_id=activity.graph_ref.graph_id,
-            graph_version=activity.graph_ref.workflow_ref.version,
+            graph_version=activity.graph_ref.identity_version,
             graph_checksum=activity.graph_ref.checksum,
             node_id=activity.node_id,
             node_instance_id=activity.node_instance_id,
@@ -866,7 +866,7 @@ class AgentLoopGraphWorker:
 
         artifact_context = AgentLoopGraphArtifactContext.from_task_context(
             parsed.task_context,
-            graph_version=activity.graph_ref.workflow_ref.version,
+            graph_version=activity.graph_ref.identity_version,
             agent_id=self.agent.agent_id,
             conversation_id=parsed.conversation_id,
         )

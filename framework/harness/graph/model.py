@@ -1478,6 +1478,23 @@ class NormalizedHarnessGraph:
             )
         object.__setattr__(self, "checksum", calculated)
 
+    @property
+    def identity_ref(self) -> HarnessContractReference:
+        """Return the exact declaration identity for this normalized schema."""
+
+        reference = (
+            self.graph_ref
+            if self.schema_version == GRAPH_ONLY_NORMALIZED_HARNESS_GRAPH_SCHEMA
+            else self.workflow_ref
+        )
+        if reference is None:  # pragma: no cover - constructor invariant
+            raise AssertionError("normalized graph identity is unavailable")
+        return reference
+
+    @property
+    def identity_version(self) -> str:
+        return self.identity_ref.version
+
     def checksum_projection(self) -> dict[str, Any]:
         projection = {
             "schema_version": self.schema_version,

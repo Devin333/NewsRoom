@@ -4597,7 +4597,7 @@ class HarnessControlPlane:
             **run_spec.metadata,
             "outputs": dict(outputs),
             "graph_id": state.graph_ref.graph_id,
-            "graph_version": state.graph_ref.workflow_ref.version,
+            "graph_version": state.graph_ref.identity_version,
             "graph_checksum": state.graph_ref.checksum,
             "graph_lifecycle": state.lifecycle.value,
             "graph_outcome": state.outcome.value,
@@ -5626,7 +5626,7 @@ class HarnessControlPlane:
             terminal_payload["graph_terminal_manifest_context"] = {
                 "tenant_id": tenant_id,
                 "graph_id": graph.graph_id,
-                "graph_version": graph.workflow_ref.version,
+                "graph_version": graph.identity_version,
                 "graph_schema_version": graph.schema_version,
                 "compiler_version": graph.compiler_version,
                 "normalized_graph_checksum": graph.checksum,

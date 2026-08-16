@@ -20,6 +20,8 @@ from framework.harness.graph.model import (
     HarnessContractReference,
 )
 from framework.harness.graph.versioning import (
+    GRAPH_ONLY_HARNESS_GRAPH_DECISION_SCHEMA,
+    GRAPH_ONLY_NORMALIZED_HARNESS_GRAPH_SCHEMA,
     HARNESS_GRAPH_CONTROL_POLICY_VERSION,
     HARNESS_GRAPH_DECISION_SCHEMA,
     HARNESS_GRAPH_EVALUATOR_VERSION,
@@ -119,7 +121,7 @@ class HarnessGraphDecision:
     evidence_refs: tuple[str, ...] = ()
     binding_versions: Mapping[str, Any] = field(default_factory=dict)
     payload: Mapping[str, Any] = field(default_factory=dict)
-    schema_version: str = HARNESS_GRAPH_DECISION_SCHEMA
+    schema_version: str | None = None
     scheduler_version: str = HARNESS_GRAPH_CONTROL_POLICY_VERSION
     evaluator_version: str = HARNESS_GRAPH_EVALUATOR_VERSION
     step_lifecycle_version: str = HARNESS_STEP_LIFECYCLE_VERSION
@@ -193,11 +195,43 @@ class HarnessGraphDecision:
             attempt=attempt,
             binding_versions=versions,
         )
-        if self.schema_version != HARNESS_GRAPH_DECISION_SCHEMA:
+        expected_schema = (
+            GRAPH_ONLY_HARNESS_GRAPH_DECISION_SCHEMA
+            if self.graph_ref.schema_version
+            == GRAPH_ONLY_NORMALIZED_HARNESS_GRAPH_SCHEMA
+            else HARNESS_GRAPH_DECISION_SCHEMA
+        )
+        schema_version = (
+            expected_schema if self.schema_version is None else self.schema_version
+        )
+        if schema_version not in {
+            HARNESS_GRAPH_DECISION_SCHEMA,
+            GRAPH_ONLY_HARNESS_GRAPH_DECISION_SCHEMA,
+        }:
             raise HarnessValidationError(
                 "unsupported graph decision schema",
                 code="unsupported_graph_decision_schema",
             )
+        if schema_version != expected_schema:
+            raise HarnessValidationError(
+                "graph decision schema does not match its normalized Graph reference",
+                code="graph_decision_schema_mismatch",
+            )
+        if (
+            schema_version == GRAPH_ONLY_HARNESS_GRAPH_DECISION_SCHEMA
+            and decision_type is HarnessGraphDecisionType.COMPLETE_RUN
+            and payload.get("outcome", "succeeded") == "succeeded"
+        ):
+            if not evidence_refs:
+                raise HarnessValidationError(
+                    "Graph-only successful completion requires terminal evidence",
+                    code="graph_terminal_evidence_missing",
+                )
+            if not isinstance(versions.get("terminal_policy"), str):
+                raise HarnessValidationError(
+                    "Graph-only successful completion requires a pinned terminal policy",
+                    code="graph_terminal_policy_version_missing",
+                )
         if self.scheduler_version != HARNESS_GRAPH_CONTROL_POLICY_VERSION:
             raise HarnessValidationError(
                 "unsupported graph scheduler policy version",
@@ -225,6 +259,7 @@ class HarnessGraphDecision:
         object.__setattr__(self, "evidence_refs", evidence_refs)
         object.__setattr__(self, "binding_versions", versions)
         object.__setattr__(self, "payload", payload)
+        object.__setattr__(self, "schema_version", schema_version)
         object.__setattr__(
             self,
             "decision_checksum",

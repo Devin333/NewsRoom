@@ -83,7 +83,7 @@ class HarnessGraphRuntimeResolver:
         if not isinstance(fenced_side_effect_store, bool):
             raise TypeError("fenced_side_effect_store must be boolean")
 
-        identity_ref = graph.graph_ref or graph.workflow_ref
+        identity_ref = graph.identity_ref
         if identity_ref is None:  # pragma: no cover - normalized Graph invariant
             raise AssertionError("normalized Graph identity reference is missing")
         references: set[HarnessContractReference] = {identity_ref}

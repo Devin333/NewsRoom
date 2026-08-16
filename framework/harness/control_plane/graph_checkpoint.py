@@ -48,8 +48,12 @@ from framework.harness.control_plane.state import HarnessStepStatus
 from framework.harness.graph.canonical import canonical_checksum, required_text
 from framework.harness.graph.model import NormalizedHarnessGraph
 from framework.harness.graph.versioning import (
+    GRAPH_ONLY_HARNESS_GRAPH_CHECKPOINT_SCHEMA,
+    GRAPH_ONLY_HARNESS_GRAPH_STATE_SCHEMA,
+    GRAPH_ONLY_NORMALIZED_HARNESS_GRAPH_SCHEMA,
     HARNESS_GRAPH_COMPILER_VERSION,
     HARNESS_GRAPH_CHECKPOINT_SCHEMA,
+    HARNESS_GRAPH_ONLY_COMPILER_VERSION,
     HARNESS_GRAPH_CONTROL_POLICY_VERSION,
     HARNESS_GRAPH_EVALUATOR_VERSION,
     HARNESS_GRAPH_REDUCER_VERSION,
@@ -122,7 +126,7 @@ class HarnessPinnedDecisionKernel:
 
     graph: NormalizedHarnessGraph
     verifier: DecisionVerifier = field(compare=False, repr=False)
-    compiler_version: str = HARNESS_GRAPH_COMPILER_VERSION
+    compiler_version: str | None = None
     scheduler_version: str = HARNESS_GRAPH_CONTROL_POLICY_VERSION
     evaluator_version: str = HARNESS_GRAPH_EVALUATOR_VERSION
     step_lifecycle_version: str = HARNESS_STEP_LIFECYCLE_VERSION
@@ -132,11 +136,28 @@ class HarnessPinnedDecisionKernel:
             raise TypeError("graph must be NormalizedHarnessGraph")
         if not callable(self.verifier):
             raise TypeError("verifier must be callable")
-        versions = {
-            "compiler_version": (
+        expected_compiler_version = (
+            HARNESS_GRAPH_ONLY_COMPILER_VERSION
+            if self.graph.schema_version
+            == GRAPH_ONLY_NORMALIZED_HARNESS_GRAPH_SCHEMA
+            else HARNESS_GRAPH_COMPILER_VERSION
+        )
+        compiler_version = (
+            expected_compiler_version
+            if self.compiler_version is None
+            else required_text(
                 self.compiler_version,
-                HARNESS_GRAPH_COMPILER_VERSION,
-            ),
+                "decision_kernel.compiler_version",
+            )
+        )
+        if compiler_version != expected_compiler_version:
+            raise HarnessValidationError(
+                "pinned decision kernel version is unavailable",
+                code="unsupported_pinned_decision_kernel",
+                details={"compiler_version": compiler_version},
+            )
+        object.__setattr__(self, "compiler_version", compiler_version)
+        versions = {
             "scheduler_version": (
                 self.scheduler_version,
                 HARNESS_GRAPH_CONTROL_POLICY_VERSION,
@@ -159,7 +180,7 @@ class HarnessPinnedDecisionKernel:
                     details={field_name: actual},
                 )
             object.__setattr__(self, field_name, actual)
-        if self.graph.compiler_version != self.compiler_version:
+        if self.graph.compiler_version != compiler_version:
             raise HarnessValidationError(
                 "pinned graph was produced by another compiler version",
                 code="pinned_graph_compiler_mismatch",
@@ -258,11 +279,28 @@ class HarnessGraphCheckpoint:
                 "graph checkpoint projection checksum does not match state",
                 code="graph_checkpoint_checksum_mismatch",
             )
-        if self.schema_version != HARNESS_GRAPH_CHECKPOINT_SCHEMA:
+        expected_checkpoint_schema = (
+            GRAPH_ONLY_HARNESS_GRAPH_CHECKPOINT_SCHEMA
+            if self.state.schema_version == GRAPH_ONLY_HARNESS_GRAPH_STATE_SCHEMA
+            else HARNESS_GRAPH_CHECKPOINT_SCHEMA
+        )
+        if self.schema_version not in {
+            HARNESS_GRAPH_CHECKPOINT_SCHEMA,
+            GRAPH_ONLY_HARNESS_GRAPH_CHECKPOINT_SCHEMA,
+        }:
             raise HarnessValidationError(
                 "unsupported graph checkpoint schema",
                 code="unsupported_graph_checkpoint_schema",
                 details={"schema_version": str(self.schema_version)},
+            )
+        if self.schema_version != expected_checkpoint_schema:
+            raise HarnessValidationError(
+                "graph checkpoint schema does not match its Graph state",
+                code="graph_checkpoint_schema_mismatch",
+                details={
+                    "schema_version": str(self.schema_version),
+                    "expected_schema_version": expected_checkpoint_schema,
+                },
             )
         if self.reducer_version != HARNESS_GRAPH_REDUCER_VERSION:
             raise HarnessValidationError(
@@ -306,6 +344,11 @@ class HarnessGraphCheckpoint:
             projection_checksum=state.projection_checksum,
             created_at=created_at,
             history_evidence_ref=history_evidence_ref,
+            schema_version=(
+                GRAPH_ONLY_HARNESS_GRAPH_CHECKPOINT_SCHEMA
+                if state.schema_version == GRAPH_ONLY_HARNESS_GRAPH_STATE_SCHEMA
+                else HARNESS_GRAPH_CHECKPOINT_SCHEMA
+            ),
         )
 
     def checksum_projection(self) -> dict[str, Any]:
@@ -424,7 +467,7 @@ class HarnessGraphStateReadResult:
 
 
 class HarnessGraphStateReader:
-    """Strict v2 state reader and evidence-bound legacy cursor upcaster."""
+    """Strict normalized-Graph state reader and legacy cursor upcaster."""
 
     def read(
         self,
@@ -437,7 +480,10 @@ class HarnessGraphStateReader:
                 "graph state must be an object",
                 code="invalid_graph_state_projection",
             )
-        if value.get("schema_version") != HARNESS_GRAPH_STATE_SCHEMA:
+        if value.get("schema_version") not in {
+            HARNESS_GRAPH_STATE_SCHEMA,
+            GRAPH_ONLY_HARNESS_GRAPH_STATE_SCHEMA,
+        }:
             raise HarnessValidationError(
                 "graph state requires an explicit supported schema",
                 code="unsupported_graph_state_schema",
@@ -803,7 +849,7 @@ class HarnessLegacyEventReader:
 
 
 class HarnessGraphCheckpointReader:
-    """Strict v2 reader plus evidence-bound v1 checkpoint upcaster."""
+    """Strict normalized-Graph reader plus legacy checkpoint upcaster."""
 
     def read(
         self,
@@ -817,7 +863,10 @@ class HarnessGraphCheckpointReader:
                 code="invalid_graph_checkpoint",
             )
         schema = value.get("schema_version")
-        if schema != HARNESS_GRAPH_CHECKPOINT_SCHEMA:
+        if schema not in {
+            HARNESS_GRAPH_CHECKPOINT_SCHEMA,
+            GRAPH_ONLY_HARNESS_GRAPH_CHECKPOINT_SCHEMA,
+        }:
             raise HarnessValidationError(
                 "checkpoint requires an explicit supported schema",
                 code="unsupported_graph_checkpoint_schema",
@@ -1526,6 +1575,12 @@ def _history_quarantine_code(exc: HarnessValidationError) -> str:
     code = str(exc.code)
     if code in {"", "HarnessValidationError"}:
         return "invalid_graph_history"
+    if code in {
+        "graph_history_evidence_missing",
+        "graph_terminal_evidence_missing",
+        "terminal_evidence_missing",
+    }:
+        return "graph_history_evidence_missing"
     if "schema" in code or "version" in code or "kernel" in code:
         return "unsupported_graph_history_version"
     if "mismatch" in code or "incompatible" in code:

@@ -598,14 +598,7 @@ class WorkflowGraphEvaluator:
         accepted_context = context or HarnessGraphEvaluationContext()
         if not isinstance(accepted_context, HarnessGraphEvaluationContext):
             raise TypeError("context must be HarnessGraphEvaluationContext")
-        expected_graph_ref = HarnessGraphReference(
-            graph.graph_id,
-            graph.workflow_ref,
-            graph.schema_version,
-            graph.compiler_version,
-            graph.condition_policy_version,
-            graph.checksum,
-        )
+        expected_graph_ref = HarnessGraphReference.from_graph(graph)
         if state.graph_ref != expected_graph_ref:
             raise HarnessValidationError(
                 "graph evaluator state is pinned to another graph identity",

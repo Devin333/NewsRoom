@@ -42,7 +42,12 @@ from framework.harness.graph.model import (
     NormalizedHarnessGraph,
 )
 from framework.harness.graph.validation import HarnessGraphPreflightPolicy
-from framework.harness.graph.versioning import HARNESS_GRAPH_RUNTIME_VERSION
+from framework.harness.graph.versioning import (
+    GRAPH_ONLY_HARNESS_GRAPH_STATE_SCHEMA,
+    GRAPH_ONLY_NORMALIZED_HARNESS_GRAPH_SCHEMA,
+    HARNESS_GRAPH_RUNTIME_VERSION,
+    HARNESS_GRAPH_STATE_SCHEMA,
+)
 from framework.shared.time import ensure_utc, format_datetime
 
 
@@ -1775,16 +1780,7 @@ class InMemoryHarnessGraphTransitionPort:
 
 
 def graph_reference(graph: NormalizedHarnessGraph) -> HarnessGraphReference:
-    if not isinstance(graph, NormalizedHarnessGraph):
-        raise TypeError("graph must be NormalizedHarnessGraph")
-    return HarnessGraphReference(
-        graph.graph_id,
-        graph.workflow_ref,
-        graph.schema_version,
-        graph.compiler_version,
-        graph.condition_policy_version,
-        graph.checksum,
-    )
+    return HarnessGraphReference.from_graph(graph)
 
 
 def initial_graph_state(
@@ -1824,9 +1820,12 @@ def initial_graph_state(
             ),
         )
     )
+    identity_metadata_key = (
+        "graph_ref" if graph.graph_ref is not None else "workflow_ref"
+    )
     metadata: dict[str, Any] = {
         "run_spec_checksum": run_spec_ref,
-        "workflow_ref": graph.workflow_ref.exact_ref,
+        identity_metadata_key: graph.identity_ref.exact_ref,
         "graph_runtime_version": HARNESS_GRAPH_RUNTIME_VERSION,
     }
     runtime_scopes = {} if runtime_scope_metadata is None else runtime_scope_metadata
@@ -1868,6 +1867,12 @@ def initial_graph_state(
         budgets=counters,
         last_event_sequence=event_sequence,
         metadata=metadata,
+        schema_version=(
+            GRAPH_ONLY_HARNESS_GRAPH_STATE_SCHEMA
+            if graph.schema_version
+            == GRAPH_ONLY_NORMALIZED_HARNESS_GRAPH_SCHEMA
+            else HARNESS_GRAPH_STATE_SCHEMA
+        ),
     )
 
 
@@ -1915,7 +1920,7 @@ def validate_graph_activity_result(
     lineage = result.result_lineage
     if lineage is not None:
         expected_graph_version = (
-            f"{activity.graph_ref.graph_id}@{activity.graph_ref.workflow_ref.version}"
+            f"{activity.graph_ref.graph_id}@{activity.graph_ref.identity_version}"
         )
         lineage_mismatches = tuple(
             field_name

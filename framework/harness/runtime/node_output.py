@@ -412,7 +412,7 @@ class HarnessCommittedNodeOutputInputResolver:
     ) -> None:
         if (
             graph_ref.graph_id != definition.graph_id
-            or graph_ref.workflow_ref.version != definition.graph_version
+            or graph_ref.identity_version != definition.graph_version
         ):
             raise HarnessValidationError(
                 "committed node-output resource is outside its Graph definition",
