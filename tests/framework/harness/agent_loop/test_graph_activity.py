@@ -11,6 +11,7 @@ from typing import Any
 import pytest
 
 from framework.agent.models import (
+    AgentAction,
     AgentLoopDiagnosticSeverity,
     AgentLoopDiagnostics,
     AgentLoopIssue,
@@ -219,6 +220,7 @@ def test_graph_worker_binds_agent_runner_artifacts_and_graph_identity() -> None:
     assert "step_id" not in runner.calls[0]["kwargs"]
     assert "workflow_checkpoint_id" not in runner.calls[0]["kwargs"]
     assert len(result.artifacts) == 1
+    assert result.diagnostics["requested_tools"] == ["memory.search"]
     assert len(port.requests) == 1
     assert port.manifest_calls == 0
     output = AgentLoopGraphActivityOutput.from_dict(
@@ -424,6 +426,7 @@ def test_waiting_result_produces_successful_candidate_for_explicit_graph_wait() 
 
     assert result.status is HarnessWorkerStatus.SUCCEEDED
     assert result.error is None
+    assert result.diagnostics["requested_tools"] == ["report.publish"]
     wait_evidence = next(
         item
         for item in result.evidence
@@ -480,6 +483,7 @@ def test_verified_wait_candidate_registers_and_resumes_explicit_graph_wait() -> 
         metadata={
             "step_version": "1",
             "worker_version": "1",
+            "tool_allowlist": ("report.publish",),
             "control_fact_paths": binding.control_fact_paths,
         },
     )
@@ -1102,6 +1106,7 @@ def _success_result(
         success=True,
         status=AgentLoopStatus.SUCCEEDED,
         output=output or {"summary": "done"},
+        actions=[AgentAction.tool_call("memory.search", {"query": "topic"})],
         iterations=1,
         metrics=AgentLoopMetrics(iterations=1, llm_calls=1),
         events=[
@@ -1112,7 +1117,12 @@ def _success_result(
         ],
         trace={"response": "raw-stream-secret"},
         trajectory=[{"response": "raw-stream-secret"}],
-        tool_calls=[{"arguments": {"value": "raw-stream-secret"}}],
+        tool_calls=[
+            {
+                "tool_name": "memory.search",
+                "arguments": {"value": "raw-stream-secret"},
+            }
+        ],
         llm_call_artifacts=[
             LLMCallArtifact(
                 artifact_id="research-agent:llm_call:1",

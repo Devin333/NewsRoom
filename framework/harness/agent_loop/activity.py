@@ -1543,6 +1543,7 @@ def _worker_diagnostics(
     diagnostics = result.diagnostics
     return {
         "agent_loop_status": result.status.value,
+        "requested_tools": _requested_tools(result),
         "stop_reason": (
             result.termination_reason
             or (
@@ -1558,6 +1559,30 @@ def _worker_diagnostics(
             else wait_candidate.candidate_checksum
         ),
     }
+
+
+def _requested_tools(result: AgentLoopResult) -> list[str]:
+    names = {
+        action.tool_name
+        for action in result.actions
+        if action.is_tool_call()
+        and isinstance(action.tool_name, str)
+        and action.tool_name
+    }
+    names.update(
+        str(item["tool_name"])
+        for item in result.tool_calls
+        if isinstance(item, Mapping)
+        and isinstance(item.get("tool_name"), str)
+        and item["tool_name"]
+    )
+    if result.diagnostics is not None:
+        names.update(
+            issue.tool_name
+            for issue in result.diagnostics.issues
+            if isinstance(issue.tool_name, str) and issue.tool_name
+        )
+    return sorted(names)
 
 
 def _result_error(result: AgentLoopResult) -> str | None:

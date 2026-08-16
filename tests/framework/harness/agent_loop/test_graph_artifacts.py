@@ -30,6 +30,10 @@ from framework.harness.graph.versioning import (
 )
 from framework.harness.runtime.activity_executor import HarnessGraphActivityTaskContext
 from framework.shared.redaction import REDACTED_VALUE
+from infrastructure.research.artifact_port import (
+    FilesystemHarnessArtifactPort,
+    is_verified_internal_staged_artifact,
+)
 
 
 class _ArtifactPort:
@@ -134,6 +138,13 @@ def test_recorder_persists_redacted_graph_bound_calls_without_publication() -> N
     assert persisted["payload"]["response"]["authorization"] == REDACTED_VALUE
     assert persisted["payload"]["metadata"]["client_secret"] == REDACTED_VALUE
     metadata = persisted["metadata"]
+    artifact_type = persisted["artifact_type"]
+    assert artifact_type == (
+        "graph-result-" + persisted["payload"]["call_checksum"].removeprefix("sha256:")
+    )
+    assert metadata["artifact_role"] == "agent_loop_llm_call"
+    assert metadata["graph_result_ref_only"] is True
+    assert metadata["identity_checksum"] == persisted["payload"]["call_checksum"]
     assert metadata["run_id"] == "run-1"
     assert metadata["graph_id"] == "research.graph"
     assert metadata["node_instance_id"] == "compose:1"
@@ -146,6 +157,30 @@ def test_recorder_persists_redacted_graph_bound_calls_without_publication() -> N
     evidence = receipt.worker_evidence()
     assert evidence.evidence_type == AGENT_LOOP_GRAPH_ARTIFACT_EVIDENCE_TYPE
     assert evidence.payload["receipt_checksum"] == receipt.receipt_checksum
+
+
+def test_recorder_round_trips_through_real_artifact_owner_before_terminal_commit(
+    tmp_path,
+) -> None:
+    port = FilesystemHarnessArtifactPort(tmp_path)
+
+    receipt = AgentLoopGraphArtifactRecorder(port).record(
+        context=_context(),
+        artifacts=(_call(1),),
+    )
+
+    record = receipt.records[0]
+    persisted = port.read_graph_result_artifact(
+        record.artifact_ref.ref,
+        expected_run_id="run-1",
+    )
+    staged = port.list_staged_artifacts("run-1")
+    assert persisted["payload"]["call_checksum"] == record.call_checksum
+    assert tuple(item.artifact_key for item in staged) == (
+        record.artifact_ref.artifact_type,
+    )
+    assert is_verified_internal_staged_artifact(staged[0]) is True
+    assert not (tmp_path / "run-1" / "manifest.json").exists()
 
 
 def test_receipt_round_trip_and_idempotent_recording() -> None:

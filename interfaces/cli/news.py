@@ -8,6 +8,7 @@ from interfaces.cli.commands import (
     api,
     approvals,
     artifacts,
+    dev,
     diagnose,
     entities,
     events,
@@ -26,6 +27,7 @@ from interfaces.cli.commands import (
 
 
 COMMAND_MODULES = (
+    dev,
     reports,
     subscriptions,
     entities,

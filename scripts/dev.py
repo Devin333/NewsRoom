@@ -24,6 +24,7 @@ COMPILE_PATHS = [
 ]
 
 SMOKE_TOPIC = "AI agents"
+AGENT_LOOP_SMOKE_ARTIFACT_ROOT = ".newsroom/smoke"
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -135,6 +136,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _run(_news_command("sources", "validate"), env=env)
     if args.command == "diagnose":
         return _run(_news_command("diagnose"), env=env)
+    if args.command == "smoke-test-agent-loop":
+        return _run(_agent_loop_smoke_command(args), env=env)
     if args.command == "run-cancel":
         return _run_operation(args, "cancel")
     if args.command == "run-rerun-from-step":
@@ -157,6 +160,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 "tests/architecture",
                 "-q",
             ),
+            _agent_loop_smoke_command(),
             _news_command("sources", "validate"),
         ]
         return _run_many(commands, env=env, keep_going=args.keep_going)
@@ -228,6 +232,16 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers.add_parser("web-check", help="Check Web Console skeleton files")
     subparsers.add_parser("sources-validate", help="Validate configured source registry")
     subparsers.add_parser("diagnose", help="Run local diagnostics")
+    agent_loop_smoke_parser = subparsers.add_parser(
+        "smoke-test-agent-loop",
+        help="Run the offline AgentLoop Graph smoke fixture",
+    )
+    agent_loop_smoke_parser.add_argument("--topic", default=SMOKE_TOPIC)
+    agent_loop_smoke_parser.add_argument(
+        "--artifact-root",
+        default=AGENT_LOOP_SMOKE_ARTIFACT_ROOT,
+    )
+    agent_loop_smoke_parser.add_argument("--run-id", default=None)
 
     interface_smoke_parser = subparsers.add_parser(
         "interface-smoke",
@@ -309,6 +323,30 @@ def _api_smoke_command() -> list[str]:
 
 def _mcp_smoke_command() -> list[str]:
     return [sys.executable, "-m", "scripts.smoke.mcp_smoke"]
+
+
+def _agent_loop_smoke_command(
+    args: argparse.Namespace | None = None,
+) -> list[str]:
+    command = [
+        sys.executable,
+        "-m",
+        "interfaces.cli.news",
+        "dev",
+        "run-test-agent-loop",
+        "--topic",
+        SMOKE_TOPIC if args is None else str(args.topic),
+        "--artifact-root",
+        (
+            AGENT_LOOP_SMOKE_ARTIFACT_ROOT
+            if args is None
+            else str(args.artifact_root)
+        ),
+        "--json",
+    ]
+    if args is not None and args.run_id:
+        command.extend(["--run-id", str(args.run_id)])
+    return command
 
 
 def _rag_eval_gate_command() -> list[str]:

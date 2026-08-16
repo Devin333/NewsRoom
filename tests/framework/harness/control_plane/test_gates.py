@@ -26,10 +26,19 @@ def test_tool_allowlist_gate_rejects_unauthorized_tool() -> None:
         HarnessStepSpec(
             step_id="collect",
             worker_type="llm",
-            metadata={"tool_allowlist": ("search",), "requested_tools": ("search", "shell")},
+            metadata={"tool_allowlist": ("search",)},
         )
     )
-    result = ToolAllowlistGate().evaluate(_context(state, step))
+    result = ToolAllowlistGate().evaluate(
+        _context(
+            state,
+            step,
+            HarnessWorkerResult(
+                status="succeeded",
+                diagnostics={"requested_tools": ("search", "shell")},
+            ),
+        )
+    )
 
     assert result.passed is False
     assert result.details["denied"] == ["shell"]

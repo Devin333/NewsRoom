@@ -475,9 +475,10 @@ def _write_request(
     }
     call_checksum = checksum_for(projection)
     payload = {**projection, "call_checksum": call_checksum}
-    artifact_type = _artifact_type(context, call)
+    artifact_type = _artifact_type(call_checksum)
     metadata = {
         "artifact_schema_version": AGENT_LOOP_LLM_CALL_ARTIFACT_SCHEMA,
+        "artifact_role": "agent_loop_llm_call",
         "run_id": context.run_id,
         "graph_id": context.graph_id,
         "graph_version": context.graph_version,
@@ -496,6 +497,8 @@ def _write_request(
         "source_artifact_id": call.artifact_id,
         "iteration": call.iteration,
         "call_checksum": call_checksum,
+        "graph_result_ref_only": True,
+        "identity_checksum": call_checksum,
         "required_for_replay": True,
         "required_for_publication": False,
         "redacted": True,
@@ -580,17 +583,10 @@ def _validate_written_ref(
 
 
 def _artifact_type(
-    context: AgentLoopGraphArtifactContext,
-    call: LLMCallArtifact,
+    call_checksum: str,
 ) -> str:
-    digest = checksum_for(
-        {
-            "context_checksum": context.context_checksum,
-            "source_artifact_id": call.artifact_id,
-            "iteration": call.iteration,
-        }
-    ).removeprefix("sha256:")
-    return f"agent_loop_llm_call_{digest[:24]}"
+    digest = _checksum(call_checksum, "call_checksum").removeprefix("sha256:")
+    return f"graph-result-{digest}"
 
 
 def _artifact_ref_from_dict(value: Mapping[str, Any]) -> ArtifactRef:

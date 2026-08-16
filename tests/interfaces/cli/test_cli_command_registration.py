@@ -25,6 +25,7 @@ def test_cli_build_parser_and_top_level_commands_exist() -> None:
         "sources",
         "mcp",
         "diagnose",
+        "dev",
         "storage",
         "approvals",
         "artifacts",

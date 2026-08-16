@@ -186,7 +186,8 @@
     ]
   },
   "audit_self_exclusions": [
-    "tests/architecture/_graph_only_freeze.py"
+    "tests/architecture/_graph_only_freeze.py",
+    "tests/architecture/test_agent_loop_graph_artifact_boundary.py"
   ],
   "migration_rules": [
     "A callers adopt versioned Graph contracts without changing runtime authority.",

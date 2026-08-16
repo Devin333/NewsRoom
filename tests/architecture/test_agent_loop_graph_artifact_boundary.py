@@ -12,6 +12,9 @@ _LIVE_ROOTS = (
     _PROJECT_ROOT / "interfaces",
     _PROJECT_ROOT / "infrastructure",
 )
+_APPROVED_DEV_ADAPTER_PATHS = {
+    "interfaces/services/agent_loop_smoke_service.py",
+}
 _ADAPTER_NAMES = {
     "AgentLoopGraphActivityBindingBundle",
     "AgentLoopGraphActivityContract",
@@ -68,8 +71,9 @@ def test_graph_artifact_adapter_has_no_legacy_or_publication_authority() -> None
         assert calls.isdisjoint(forbidden_calls)
 
 
-def test_production_layers_do_not_activate_gate_a_agent_loop_artifact_adapter() -> None:
+def test_only_graph_smoke_service_activates_gate_a_agent_loop_adapter() -> None:
     violations: list[str] = []
+    approved: list[str] = []
     for root in _LIVE_ROOTS:
         for path in root.rglob("*.py"):
             tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
@@ -84,9 +88,31 @@ def test_production_layers_do_not_activate_gate_a_agent_loop_artifact_adapter() 
                 )
                 for node in ast.walk(tree)
             ):
-                violations.append(str(path.relative_to(_PROJECT_ROOT)))
+                relative = path.relative_to(_PROJECT_ROOT).as_posix()
+                if relative in _APPROVED_DEV_ADAPTER_PATHS:
+                    approved.append(relative)
+                else:
+                    violations.append(relative)
 
     assert violations == []
+    assert set(approved) == _APPROVED_DEV_ADAPTER_PATHS
+
+
+def test_graph_smoke_service_does_not_restore_legacy_workflow_runtime() -> None:
+    source = (
+        _PROJECT_ROOT
+        / "interfaces"
+        / "services"
+        / "agent_loop_smoke_service.py"
+    ).read_text(encoding="utf-8")
+
+    for retired_name in (
+        "WorkflowRunner",
+        "HarnessWorkflowSpec",
+        "AgentLoopStepRunner",
+        "FunctionStepRegistry",
+    ):
+        assert retired_name not in source
 
 
 def _imported_modules(node: ast.AST) -> tuple[str, ...]:

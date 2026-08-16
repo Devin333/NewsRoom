@@ -13,6 +13,9 @@ _LIVE_ROOTS = (
     _PROJECT_ROOT / "interfaces",
     _PROJECT_ROOT / "infrastructure",
 )
+_APPROVED_DEV_ADAPTER_PATHS = {
+    "interfaces/services/agent_loop_smoke_service.py",
+}
 _FORBIDDEN_OWNER_ROOTS = (
     "business",
     "framework.workflow",
@@ -112,8 +115,9 @@ def test_physical_executor_is_graph_native_and_does_not_call_legacy_dispatch() -
     assert "Artifact" not in source
 
 
-def test_production_layers_do_not_activate_gate_a_node_output_runtime() -> None:
+def test_only_graph_smoke_service_activates_gate_a_node_output_runtime() -> None:
     violations: list[str] = []
+    approved: list[str] = []
     for root in _LIVE_ROOTS:
         for path in root.rglob("*.py"):
             tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
@@ -128,9 +132,14 @@ def test_production_layers_do_not_activate_gate_a_node_output_runtime() -> None:
                 )
                 for node in ast.walk(tree)
             ):
-                violations.append(str(path.relative_to(_PROJECT_ROOT)))
+                relative = path.relative_to(_PROJECT_ROOT).as_posix()
+                if relative in _APPROVED_DEV_ADAPTER_PATHS:
+                    approved.append(relative)
+                else:
+                    violations.append(relative)
 
     assert violations == []
+    assert set(approved) == _APPROVED_DEV_ADAPTER_PATHS
 
 
 def _imported_modules(node: ast.AST) -> tuple[str, ...]:

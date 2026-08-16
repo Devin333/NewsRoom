@@ -9,6 +9,7 @@ def test_cli_command_group_modules_exist() -> None:
         "approvals",
         "artifacts",
         "diagnose",
+        "dev",
         "dispatch",
         "entities",
         "events",
