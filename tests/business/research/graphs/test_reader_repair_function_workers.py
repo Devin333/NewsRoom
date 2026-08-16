@@ -42,6 +42,7 @@ from business.research.domain import (
     ReaderRepairContextPack,
     ReaderRepairPatchCandidate,
     ResearchDocument,
+    ResearchReaderPayload,
     ResearchSection,
     SourceLineage,
     research_subject_scope_ref,
@@ -53,7 +54,6 @@ from business.research.graphs.reader_repair import (
     READER_REPAIR_COMMITTED_OUTPUT_BINDING_ID,
     READER_REPAIR_GRAPH_ID,
     READER_REPAIR_GRAPH_VERSION,
-    READER_REPAIR_SUBAGENT_IDS,
     build_reader_repair_graph_definition,
 )
 from business.research.graphs.reader_repair_execution_gates import (
@@ -65,6 +65,11 @@ from business.research.graphs.reader_repair_function_workers import (
 )
 from business.research.graphs.reader_repair_runtime import (
     build_reader_repair_runtime_binding_bundle,
+)
+from business.research.graphs.reader_repair_subagent_workers import (
+    READER_REPAIR_APPLICATION_OBSERVATION_TASK,
+    READER_REPAIR_PATCH_CANDIDATE_TASK,
+    build_reader_repair_subagent_worker_implementations,
 )
 from business.research.reader import ReaderPayloadBuilder
 from business.research.reader_repair import (
@@ -151,14 +156,45 @@ class _DurableApplicationReceiptResolver:
         )
 
 
-@dataclass(frozen=True, slots=True)
-class _SubAgentWorker:
-    worker_id: str
-    worker_version: str
-    worker_type: HarnessWorkerType = HarnessWorkerType.SUBAGENT
+class _ReaderRepairCandidateWorker:
+    def __init__(self) -> None:
+        self.calls: list[str] = []
 
-    def execute(self, _task: dict[str, Any]) -> HarnessWorkerResult:
-        raise AssertionError("candidate outputs are supplied explicitly in this test")
+    def generate_candidate(
+        self,
+        *,
+        task: str,
+        payload: dict[str, Any],
+    ) -> dict[str, Any]:
+        self.calls.append(task)
+        if task == READER_REPAIR_PATCH_CANDIDATE_TASK:
+            reader_payload = ResearchReaderPayload.model_validate(
+                payload["reader_payload"]
+            )
+            context_pack = ReaderRepairContextPack.model_validate(
+                payload["reader_repair_context_pack"]
+            )
+            proposal = _candidate(reader_payload, context_pack).to_dict()
+            for field_name in (
+                "candidate_id",
+                "target_region_refs",
+                "metadata",
+            ):
+                proposal.pop(field_name)
+            for operation in proposal["patch_operations"]:
+                operation.pop("operation_id")
+                operation.pop("expected_before_checksum")
+            return proposal
+        if task == READER_REPAIR_APPLICATION_OBSERVATION_TASK:
+            candidate = ReaderRepairPatchCandidate.model_validate(
+                payload["reader_repair_patch_candidate"]
+            )
+            application = ReaderRepairApplicationCandidate.model_validate(
+                payload["reader_repair_application_candidate"]
+            )
+            observation = _observation(candidate, application).to_dict()
+            return {"observations": observation["observations"]}
+        raise AssertionError(f"unexpected candidate task: {task}")
 
 
 @dataclass(frozen=True, slots=True)
@@ -191,19 +227,18 @@ def test_reader_repair_function_workers_execute_the_verified_chain_without_activ
         run_authority_resolver=_RunAuthorityResolver(authority),
         committed_output_resolver=receipt_resolver,
     )
+    candidate_worker = _ReaderRepairCandidateWorker()
+    subagent_workers = build_reader_repair_subagent_worker_implementations(
+        candidate_worker=candidate_worker,
+    )
     definition = build_reader_repair_graph_definition()
-    worker_implementations = dict(function_workers)
+    worker_implementations = {**function_workers, **subagent_workers}
     activity_implementations: dict[str, object] = {}
     for step_id in _EXECUTION_ORDER:
         activity = definition.activity(step_id)
         assert activity is not None
         leaf = definition.leaf_activity_binding(activity.step_id)
         assert leaf is not None
-        if activity.step_id in READER_REPAIR_SUBAGENT_IDS:
-            worker_implementations[activity.step_id] = _SubAgentWorker(
-                worker_id=leaf.worker_ref.contract_id,
-                worker_version=leaf.worker_ref.version,
-            )
         activity_implementations[activity.step_id] = _Activity(
             activity_contract_id=leaf.activity_ref.contract_id,
             activity_contract_version=leaf.activity_ref.version,
@@ -221,39 +256,9 @@ def test_reader_repair_function_workers_execute_the_verified_chain_without_activ
     for step_id in _EXECUTION_ORDER:
         activity = definition.activity(step_id)
         assert activity is not None
-        if activity.step_id == "propose_repair_candidate":
-            context_pack = ReaderRepairContextPack.model_validate(
-                outputs["reader_repair_context_pack"]
-            )
-            result = HarnessWorkerResult(
-                status=HarnessWorkerStatus.SUCCEEDED,
-                output={
-                    "reader_repair_patch_candidate": _candidate(
-                        payload,
-                        context_pack,
-                    ).to_dict()
-                },
-            )
-        elif activity.step_id == "collect_repair_application_observation":
-            candidate = ReaderRepairPatchCandidate.model_validate(
-                outputs["reader_repair_patch_candidate"]
-            )
-            application = ReaderRepairApplicationCandidate.model_validate(
-                outputs[READER_REPAIR_APPLICATION_OUTPUT_KEY]
-            )
-            result = HarnessWorkerResult(
-                status=HarnessWorkerStatus.SUCCEEDED,
-                output={
-                    "reader_repair_application_observation": _observation(
-                        candidate,
-                        application,
-                    ).to_dict()
-                },
-            )
-        else:
-            task = _task(definition, activity.step_id, payload, outputs)
-            tasks[activity.step_id] = task
-            result = function_workers[activity.step_id].execute(task)
+        task = _task(definition, activity.step_id, payload, outputs)
+        tasks[activity.step_id] = task
+        result = worker_implementations[activity.step_id].execute(task)
         worker_results[activity.step_id] = result
         assert result.status is HarnessWorkerStatus.SUCCEEDED
 
@@ -283,6 +288,15 @@ def test_reader_repair_function_workers_execute_the_verified_chain_without_activ
         for activity in definition.activities
         if activity.worker_type is HarnessWorkerType.FUNCTION
     }
+    assert set(subagent_workers) == {
+        activity.step_id
+        for activity in definition.activities
+        if activity.worker_type is HarnessWorkerType.SUBAGENT
+    }
+    assert candidate_worker.calls == [
+        READER_REPAIR_PATCH_CANDIDATE_TASK,
+        READER_REPAIR_APPLICATION_OBSERVATION_TASK,
+    ]
     assert len(gate_results) == 10
     assert all(item.passed for item in gate_results)
     assert set(READER_REPAIR_EXECUTION_GATE_REFERENCES).issubset(
@@ -501,7 +515,7 @@ def _task(definition, step_id: str, payload, outputs: dict[str, Any]):
     return {
         "run_id": _RUN_ID,
         "step_id": step_id,
-        "worker_type": HarnessWorkerType.FUNCTION.value,
+        "worker_type": activity.worker_type.value,
         "inputs": inputs,
         "metadata": dict(activity.metadata),
         "harness_activity": {
