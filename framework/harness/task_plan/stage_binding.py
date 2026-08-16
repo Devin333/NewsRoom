@@ -8,6 +8,10 @@ from typing import Any
 from framework.harness.control_plane.errors import HarnessValidationError
 from framework.harness.graph.activity import HarnessWorkerType
 from framework.harness.graph.model import HarnessExecutableNode, NormalizedHarnessGraph
+from framework.harness.graph.versioning import (
+    GRAPH_ONLY_NORMALIZED_HARNESS_GRAPH_SCHEMA,
+    NORMALIZED_HARNESS_GRAPH_SCHEMA,
+)
 from framework.harness.task_plan.canonical import (
     canonical_payload_checksum,
     exact_reference,
@@ -17,6 +21,7 @@ from framework.harness.task_plan.canonical import (
 )
 from framework.harness.task_plan.schema import (
     DEFAULT_TASK_PLAN_SCHEMA_REGISTRY,
+    GRAPH_ONLY_TASK_PLAN_STAGE_BINDING_SCHEMA,
     TASK_PLAN_STAGE_BINDING_SCHEMA,
     TaskPlanContractKind,
 )
@@ -41,7 +46,7 @@ class TaskPlanStageBinding:
 
     graph: NormalizedHarnessGraph = field(repr=False)
     stage_id: str
-    schema_version: str = TASK_PLAN_STAGE_BINDING_SCHEMA
+    schema_version: str | None = None
     node_id: str = field(init=False)
     step_ref: str = field(init=False)
     worker_ref: str = field(init=False)
@@ -53,12 +58,31 @@ class TaskPlanStageBinding:
     binding_checksum: str = field(init=False)
 
     def __post_init__(self) -> None:
-        DEFAULT_TASK_PLAN_SCHEMA_REGISTRY.require_executable(
-            TaskPlanContractKind.STAGE_BINDING,
-            self.schema_version,
-        )
         if not isinstance(self.graph, NormalizedHarnessGraph):
             raise TypeError("graph must be NormalizedHarnessGraph")
+        expected_schema = (
+            GRAPH_ONLY_TASK_PLAN_STAGE_BINDING_SCHEMA
+            if self.graph.schema_version
+            == GRAPH_ONLY_NORMALIZED_HARNESS_GRAPH_SCHEMA
+            else TASK_PLAN_STAGE_BINDING_SCHEMA
+        )
+        schema_version = (
+            expected_schema if self.schema_version is None else self.schema_version
+        )
+        DEFAULT_TASK_PLAN_SCHEMA_REGISTRY.require_executable(
+            TaskPlanContractKind.STAGE_BINDING,
+            schema_version,
+        )
+        if schema_version != expected_schema:
+            raise HarnessValidationError(
+                "TaskPlan stage binding schema does not match its normalized Graph",
+                code="task_plan_stage_binding_schema_mismatch",
+                details={
+                    "schema_version": schema_version,
+                    "expected_schema_version": expected_schema,
+                },
+            )
+        object.__setattr__(self, "schema_version", schema_version)
         stage_id = identifier(self.stage_id, "stage_id")
         matches = tuple(
             node
@@ -76,6 +100,15 @@ class TaskPlanStageBinding:
             raise HarnessValidationError(
                 "TaskPlan stage binding requires a TASK_PLAN worker",
                 code="dynamic_task_plan_worker_type_mismatch",
+                details={"stage_id": stage_id, "node_id": node.node_id},
+            )
+        if (
+            self.graph.schema_version == GRAPH_ONLY_NORMALIZED_HARNESS_GRAPH_SCHEMA
+            and node.metadata.get("binding_source") != "graph_definition"
+        ):
+            raise HarnessValidationError(
+                "Graph-only TaskPlan stage must come from its frozen definition binding",
+                code="graph_task_plan_binding_source_invalid",
                 details={"stage_id": stage_id, "node_id": node.node_id},
             )
         declaration = node.metadata.get("step_metadata")
@@ -200,7 +233,13 @@ class TaskPlanStageBinding:
 
     @property
     def workflow_id(self) -> str:
-        return self.graph.workflow_id
+        if self.graph.schema_version != NORMALIZED_HARNESS_GRAPH_SCHEMA:
+            raise HarnessValidationError(
+                "Graph-only TaskPlan binding has no legacy orchestration identity",
+                code="legacy_task_plan_identity_forbidden",
+            )
+        assert self.graph.workflow_ref is not None
+        return self.graph.workflow_ref.contract_id
 
     @property
     def graph_id(self) -> str:
@@ -208,7 +247,7 @@ class TaskPlanStageBinding:
 
     @property
     def graph_version(self) -> str:
-        return self.graph.workflow_version
+        return self.graph.identity_version
 
     @property
     def graph_checksum(self) -> str:
@@ -216,31 +255,93 @@ class TaskPlanStageBinding:
         return self.graph.checksum
 
     def checksum_projection(self) -> dict[str, Any]:
-        return {
+        projection = {
             "schema_version": self.schema_version,
             "graph_schema_version": self.graph.schema_version,
             "compiler_version": self.graph.compiler_version,
             "graph_id": self.graph_id,
             "graph_version": self.graph_version,
             "graph_checksum": self.graph_checksum,
-            "workflow_id": self.workflow_id,
-            "workflow_ref": self.graph.workflow_ref.exact_ref,
-            "node_id": self.node_id,
-            "stage_id": self.stage_id,
-            "step_ref": self.step_ref,
-            "worker_ref": self.worker_ref,
-            "activity_ref": self.activity_ref,
-            "policy_ref": self.policy_ref,
-            "task_plan_schema": self.task_plan_schema,
-            "required_output_roles": list(self.required_output_roles),
-            "support_refs": thaw_mapping(self.support_refs),
         }
+        if self.graph.schema_version == GRAPH_ONLY_NORMALIZED_HARNESS_GRAPH_SCHEMA:
+            assert self.graph.graph_ref is not None
+            projection.update(
+                {
+                    "condition_policy_version": self.graph.condition_policy_version,
+                    "graph_ref": self.graph.graph_ref.exact_ref,
+                }
+            )
+        else:
+            assert self.graph.workflow_ref is not None
+            projection.update(
+                {
+                    "workflow_id": self.workflow_id,
+                    "workflow_ref": self.graph.workflow_ref.exact_ref,
+                }
+            )
+        projection.update(
+            {
+                "node_id": self.node_id,
+                "stage_id": self.stage_id,
+                "step_ref": self.step_ref,
+                "worker_ref": self.worker_ref,
+                "activity_ref": self.activity_ref,
+                "policy_ref": self.policy_ref,
+                "task_plan_schema": self.task_plan_schema,
+                "required_output_roles": list(self.required_output_roles),
+                "support_refs": thaw_mapping(self.support_refs),
+            }
+        )
+        return projection
 
     def to_dict(self) -> dict[str, Any]:
         return {
             **self.checksum_projection(),
             "binding_checksum": self.binding_checksum,
         }
+
+    @classmethod
+    def from_dict(
+        cls,
+        value: Mapping[str, Any],
+        *,
+        graph: NormalizedHarnessGraph,
+    ) -> "TaskPlanStageBinding":
+        if not isinstance(value, Mapping):
+            raise HarnessValidationError(
+                "TaskPlan stage binding must be an object",
+                code="task_plan_stage_binding_projection_invalid",
+            )
+        stage_id = value.get("stage_id")
+        schema_version = value.get("schema_version")
+        if not isinstance(stage_id, str) or not isinstance(schema_version, str):
+            raise HarnessValidationError(
+                "TaskPlan stage binding identity fields are invalid",
+                code="task_plan_stage_binding_projection_invalid",
+            )
+        restored = cls(
+            graph=graph,
+            stage_id=stage_id,
+            schema_version=schema_version,
+        )
+        expected = restored.to_dict()
+        if set(value) != set(expected):
+            raise HarnessValidationError(
+                "TaskPlan stage binding fields do not match its schema",
+                code="task_plan_stage_binding_projection_invalid",
+                details={
+                    "missing": sorted(set(expected).difference(value)),
+                    "unexpected": sorted(
+                        str(item) for item in set(value).difference(expected)
+                    ),
+                },
+            )
+        if dict(value) != expected:
+            raise HarnessValidationError(
+                "TaskPlan stage binding does not match its frozen Graph",
+                code="task_plan_stage_binding_checksum_invalid",
+            )
+        return restored
 
 
 __all__ = ["TaskPlanStageBinding"]

@@ -22,6 +22,9 @@ TASK_PLAN_PROJECTION_SCHEMA = "newsroom.harness-task-plan-projection/v1"
 TASK_RESULT_REFERENCE_SCHEMA = "newsroom.harness-task-result-reference/v1"
 TASK_CAPABILITY_BINDING_SCHEMA = "newsroom.harness-task-capability-binding/v1"
 TASK_PLAN_STAGE_BINDING_SCHEMA = "newsroom.harness-task-plan-stage-binding/v1"
+GRAPH_ONLY_TASK_PLAN_STAGE_BINDING_SCHEMA = (
+    "newsroom.harness-task-plan-stage-binding/v2"
+)
 
 
 class TaskPlanContractKind(StrEnum):
@@ -169,8 +172,16 @@ DEFAULT_TASK_PLAN_SCHEMA_REGISTRY = TaskPlanSchemaRegistry(
         TaskPlanSchemaRegistration(
             contract_kind=kind,
             writer_schema=schema,
-            readable_schemas=(schema,),
-            executable_schemas=(schema,),
+            readable_schemas=(
+                (schema, GRAPH_ONLY_TASK_PLAN_STAGE_BINDING_SCHEMA)
+                if kind is TaskPlanContractKind.STAGE_BINDING
+                else (schema,)
+            ),
+            executable_schemas=(
+                (schema, GRAPH_ONLY_TASK_PLAN_STAGE_BINDING_SCHEMA)
+                if kind is TaskPlanContractKind.STAGE_BINDING
+                else (schema,)
+            ),
         )
         for kind, schema in _WRITERS.items()
     )
@@ -179,6 +190,7 @@ DEFAULT_TASK_PLAN_SCHEMA_REGISTRY = TaskPlanSchemaRegistry(
 
 __all__ = [
     "DEFAULT_TASK_PLAN_SCHEMA_REGISTRY",
+    "GRAPH_ONLY_TASK_PLAN_STAGE_BINDING_SCHEMA",
     "PLAN_CANDIDATE_SCHEMA",
     "RESOLVED_TASK_DEFINITION_SCHEMA",
     "TASK_CAPABILITY_BINDING_SCHEMA",
