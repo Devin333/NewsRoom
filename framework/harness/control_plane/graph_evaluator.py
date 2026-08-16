@@ -3414,7 +3414,13 @@ def _wait_output_projection(
     payload: Mapping[str, Any],
 ) -> Mapping[str, Any]:
     if len(definition.output_keys) == 1:
-        return {definition.output_keys[0]: thaw_json(payload)}
+        output_key = definition.output_keys[0]
+        # Physical Graph workers return an exact output-key mapping. Legacy
+        # workers may still return the value directly; both shapes project to
+        # the same normalized node output without duplicating the key.
+        if set(payload) == {output_key}:
+            return {output_key: thaw_json(payload[output_key])}
+        return {output_key: thaw_json(payload)}
     projected = {
         output_key: thaw_json(payload[output_key])
         for output_key in definition.output_keys

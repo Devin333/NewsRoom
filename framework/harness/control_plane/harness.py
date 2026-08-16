@@ -4521,6 +4521,8 @@ class HarnessControlPlane:
                 )
             )
             metadata: dict[str, Any] = {}
+            if node is not None:
+                metadata["node_instance_id"] = node.instance_id
             if result is not None:
                 metadata["worker_result"] = result.to_dict()
             if node is not None and "approval_granted" in node.metadata:
@@ -4594,6 +4596,8 @@ class HarnessControlPlane:
         metadata = {
             **run_spec.metadata,
             "outputs": dict(outputs),
+            "graph_id": state.graph_ref.graph_id,
+            "graph_version": state.graph_ref.workflow_ref.version,
             "graph_checksum": state.graph_ref.checksum,
             "graph_lifecycle": state.lifecycle.value,
             "graph_outcome": state.outcome.value,

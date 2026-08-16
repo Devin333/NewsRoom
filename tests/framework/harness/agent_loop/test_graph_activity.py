@@ -24,9 +24,12 @@ from framework.agent.models import (
 from framework.agent.loop.runner import AgentRunner
 from framework.events.canonical import checksum_for
 from framework.harness.agent_loop import (
+    AGENT_LOOP_GRAPH_APPROVAL_WAIT_FACT_SCHEMA,
     AGENT_LOOP_GRAPH_ACTIVITY_TASK_SCHEMA,
     AGENT_LOOP_GRAPH_WAIT_EVIDENCE_TYPE,
     AgentLoopGraphActivityOutput,
+    AgentLoopGraphApprovalWaitBinding,
+    AgentLoopGraphApprovalWaitFact,
     AgentLoopGraphWaitCandidate,
     AgentLoopGraphArtifactRecorder,
     build_agent_loop_graph_activity_binding_bundle,
@@ -36,13 +39,44 @@ from framework.harness.control_plane.activity import (
     harness_activity_input_checksum,
 )
 from framework.harness.control_plane.errors import HarnessValidationError
-from framework.harness.control_plane.graph_runtime import HarnessGraphActivity
-from framework.harness.control_plane.graph_state import HarnessGraphReference
+from framework.harness.control_plane.gate_registry import (
+    DeterministicGateRegistry,
+)
+from framework.harness.control_plane.gates import GateContext
+from framework.harness.control_plane.harness import (
+    HarnessControlPlane,
+    InMemoryHarnessEventPort,
+)
+from framework.harness.control_plane.graph_runtime import (
+    HarnessGraphActivity,
+    graph_reference,
+)
+from framework.harness.control_plane.graph_state import (
+    HarnessGraphNodeKind,
+    HarnessGraphReference,
+    HarnessNodeInstanceIdentity,
+    HarnessNodeInstanceStatus,
+    HarnessWaitStatus,
+    RunLifecycle,
+    RunOutcome,
+)
+from framework.harness.control_plane.state import HarnessRunSpec, HarnessState
+from framework.harness.control_plane.transitions import get_step_state
 from framework.harness.control_plane.node_output import (
     InMemoryHarnessNodeOutputResource,
 )
-from framework.harness.graph.activity import HarnessLeafActivityKind
+from framework.harness.graph.activity import (
+    HarnessLeafActivityKind,
+    HarnessStepSpec,
+)
 from framework.harness.graph.bindings import HarnessActivityUsage
+from framework.harness.graph.dsl import (
+    Choice,
+    ChoiceBranch,
+    HarnessGraphSpec,
+    Sequence,
+    StepRef,
+)
 from framework.harness.graph.model import (
     HarnessContractKind,
     HarnessContractReference,
@@ -58,7 +92,12 @@ from framework.harness.runtime.activity_executor import (
     HarnessGraphActivityTaskContext,
     HarnessGraphPhysicalActivityExecutor,
 )
-from framework.harness.workers.result import HarnessWorkerStatus
+from framework.harness.workers.result import HarnessWorkerResult, HarnessWorkerStatus
+from framework.harness.waits.models import (
+    HarnessWaitApprovalEvidenceRecord,
+    HarnessWaitScope,
+)
+from framework.harness.workflow.spec import HarnessWorkflowSpec
 from framework.llm import FakeLLMClient
 from framework.shared.attempts import AttemptSupervisor
 from framework.shared.redaction import REDACTED_VALUE
@@ -78,6 +117,11 @@ _ACTIVITY_REF = HarnessContractReference(
     "1",
 )
 _CHECKPOINT_REF = "checkpoint://run-1/decision-7"
+_TENANT_SCOPE_REF = checksum_for({"tenant": "tenant-1"})
+_IDENTITY_SCOPE_REF = checksum_for({"identity": "research-agent"})
+_GRAPH_ID = "research.graph"
+_GRAPH_VERSION = "2"
+_GRAPH_CHECKSUM = checksum_for({"graph": _GRAPH_ID, "version": _GRAPH_VERSION})
 
 
 class _Runner:
@@ -181,6 +225,7 @@ def test_graph_worker_binds_agent_runner_artifacts_and_graph_identity() -> None:
         result.output["agent_loop_result"]
     )
     assert output.agent_id == "research-agent"
+    assert output.waiting is False
     assert output.artifact_refs == result.artifacts
     assert output.result["llm_call_artifact_count"] == 1
     assert "llm_call_artifacts" not in output.result
@@ -212,7 +257,7 @@ def test_binding_bundle_is_exact_serial_and_never_installs_or_dispatches() -> No
     assert resolved.worker == bundle.worker_binding
     assert resolved.activity == bundle.activity_binding
     assert bundle.to_manifest() == {
-        "schema_version": "newsroom.agent-loop-graph-activity-binding/v1",
+        "schema_version": "newsroom.agent-loop-graph-activity-binding/v2",
         "installs_runtime_authority": False,
         "worker_ref": _WORKER_REF.to_dict(),
         "activity_ref": _ACTIVITY_REF.to_dict(),
@@ -221,6 +266,10 @@ def test_binding_bundle_is_exact_serial_and_never_installs_or_dispatches() -> No
         "agent_id": "research-agent",
         "result_output_key": "agent_loop_result",
         "artifact_owner_required": True,
+        "wait_candidate_gate_ref": "agent_loop_wait_candidate@1",
+        "tenant_scope_input_key": "tenant_scope_ref",
+        "identity_scope_input_key": "identity_scope_ref",
+        "waiting_candidate_worker_status": "succeeded",
         "publishes_terminal_manifest": False,
         "registers_graph_wait": False,
     }
@@ -278,6 +327,47 @@ def test_physical_graph_executor_commits_agent_loop_candidate_output() -> None:
     assert port.manifest_calls == 0
 
 
+def test_physical_executor_commits_waiting_candidate_as_node_output() -> None:
+    raw_task = _raw_task()
+    activity = _activity(raw_task)
+    port = _ArtifactPort()
+    bundle = _bundle(_Runner(_waiting_result()), port)
+    execution_input = HarnessGraphActivityExecutionInput.for_activity(
+        activity,
+        task=raw_task,
+        leaf_activity_kind=HarnessLeafActivityKind.AGENT_LOOP,
+        required_usage=HarnessActivityUsage.SERIAL,
+        graph_checkpoint_ref=_CHECKPOINT_REF,
+        output_keys=("agent_loop_result",),
+    )
+    resource = InMemoryHarnessNodeOutputResource()
+    committer = _ResultCommitter()
+    executor = HarnessGraphPhysicalActivityExecutor(
+        binding_authority=bundle.authority,
+        input_resolver=_InputResolver(execution_input),
+        node_output_resource=resource,
+        result_committer=committer,
+        supervisor=AttemptSupervisor(clock=lambda: _NOW.timestamp()),
+        clock=lambda: _NOW,
+    )
+
+    receipt = executor.execute(activity, attempt_id="agent-loop-wait-attempt-1")
+
+    assert receipt.worker_result is not None
+    assert receipt.worker_result.status is HarnessWorkerStatus.SUCCEEDED
+    assert receipt.node_output_commit is not None
+    assert receipt.graph_result is not None
+    output = AgentLoopGraphActivityOutput.from_dict(
+        receipt.worker_result.output["agent_loop_result"]
+    )
+    assert output.approval_wait is not None
+    assert output.approval_wait.approval_id == "approval-1"
+    assert bundle.wait_gate_registration.gate.evaluate(
+        _gate_context(receipt.worker_result)
+    ).passed is True
+    assert port.manifest_calls == 0
+
+
 def test_real_agent_runner_executes_offline_through_graph_worker(tmp_path) -> None:
     raw_task = _raw_task()
     activity = _activity(raw_task)
@@ -322,7 +412,7 @@ def test_real_agent_runner_executes_offline_through_graph_worker(tmp_path) -> No
     assert port.manifest_calls == 0
 
 
-def test_waiting_result_produces_candidate_evidence_without_registering_wait() -> None:
+def test_waiting_result_produces_successful_candidate_for_explicit_graph_wait() -> None:
     raw_task = _raw_task()
     activity = _activity(raw_task)
     runner = _Runner(_waiting_result())
@@ -332,7 +422,8 @@ def test_waiting_result_produces_candidate_evidence_without_registering_wait() -
         _worker_task(raw_task, activity)
     )
 
-    assert result.status is HarnessWorkerStatus.WAITING_APPROVAL
+    assert result.status is HarnessWorkerStatus.SUCCEEDED
+    assert result.error is None
     wait_evidence = next(
         item
         for item in result.evidence
@@ -340,6 +431,9 @@ def test_waiting_result_produces_candidate_evidence_without_registering_wait() -
     )
     candidate = AgentLoopGraphWaitCandidate.from_dict(wait_evidence.payload)
     assert candidate.run_id == activity.run_id
+    assert candidate.graph_id == activity.graph_ref.graph_id
+    assert candidate.graph_version == activity.graph_ref.workflow_ref.version
+    assert candidate.graph_checksum == activity.graph_ref.checksum
     assert candidate.node_instance_id == activity.node_instance_id
     assert candidate.graph_checkpoint_ref == _CHECKPOINT_REF
     assert candidate.task_context_checksum == HarnessGraphActivityTaskContext(
@@ -348,11 +442,255 @@ def test_waiting_result_produces_candidate_evidence_without_registering_wait() -
     ).context_checksum
     assert candidate.approval_requests[0].approval_id == "approval-1"
     assert candidate.approval_requests[0].approval_kind == "tool_approval"
+    assert candidate.tenant_scope_ref == _TENANT_SCOPE_REF
+    assert candidate.identity_scope_ref == _IDENTITY_SCOPE_REF
     output = AgentLoopGraphActivityOutput.from_dict(
         result.output["agent_loop_result"]
     )
     assert output.wait_candidate_checksum == candidate.candidate_checksum
+    assert output.waiting is True
+    assert output.approval_wait == AgentLoopGraphApprovalWaitFact.from_candidate(
+        candidate
+    )
+    gate_result = _bundle(
+        _Runner(_waiting_result()),
+        _ArtifactPort(),
+    ).wait_gate_registration.gate.evaluate(_gate_context(result))
+    assert gate_result.passed is True
+    assert gate_result.details["reason_code"] == (
+        "agent_loop_wait_candidate_verified"
+    )
+    assert gate_result.details["correlation_ref"] == (
+        output.approval_wait.correlation_ref
+    )
     assert port.manifest_calls == 0
+
+
+def test_verified_wait_candidate_registers_and_resumes_explicit_graph_wait() -> None:
+    binding = AgentLoopGraphApprovalWaitBinding(
+        source_node_id="agent_loop",
+        result_output_key="agent_loop_result",
+        wait_id="agent-loop-approval",
+    )
+    source = HarnessStepSpec(
+        "agent_loop",
+        "agent_loop",
+        output_key="agent_loop_result",
+        quality_gate=binding.gate_ref,
+        metadata={
+            "step_version": "1",
+            "worker_version": "1",
+            "control_fact_paths": binding.control_fact_paths,
+        },
+    )
+    after = HarnessStepSpec(
+        "after",
+        "function",
+        metadata={"step_version": "1", "worker_version": "1"},
+    )
+    binding.assert_step_contract(source)
+    binding_manifest = binding.to_manifest()
+    assert binding_manifest["registers_graph_wait"] is False
+    assert binding_manifest["requires_deterministic_wait_branch"] is True
+    assert binding_manifest["wait"]["wait_kind"] == "approval"
+    assert binding_manifest["waiting_condition"] == (
+        binding.waiting_condition().to_dict()
+    )
+    workflow = HarnessWorkflowSpec(
+        workflow_id="agent-loop-approval-graph",
+        workflow_version="2",
+        steps=(source, after),
+        entry_step_id=source.step_id,
+        graph=HarnessGraphSpec(
+            graph_id="agent-loop-approval-graph",
+            root=Sequence(
+                (
+                    StepRef(source.step_id),
+                    Choice(
+                        "agent-loop-wait-choice",
+                        (
+                            ChoiceBranch(
+                                "wait-for-approval",
+                                Sequence(
+                                    (
+                                        binding.wait_expression(),
+                                        StepRef(
+                                            after.step_id,
+                                            node_id="after-wait",
+                                        ),
+                                    )
+                                ),
+                                priority=0,
+                                condition=binding.waiting_condition(),
+                            ),
+                            ChoiceBranch(
+                                "continue",
+                                StepRef(
+                                    after.step_id,
+                                    node_id="after-immediate",
+                                ),
+                                priority=1,
+                                is_default=True,
+                            ),
+                        ),
+                    ),
+                )
+            ),
+            input_keys=("identity_scope_ref", "tenant_scope_ref"),
+        ),
+    )
+    bundle = _bundle(_Runner(_waiting_result()), _ArtifactPort())
+    calls: list[str] = []
+    event_port = InMemoryHarnessEventPort()
+    control_plane = HarnessControlPlane(
+        event_port=event_port,
+        gate_registry=DeterministicGateRegistry(
+            (bundle.wait_gate_registration,)
+        ),
+        worker_registry={
+            "after": lambda _task: (
+                calls.append("after") or _successful_worker_result()
+            ),
+        },
+    )
+    run_spec = HarnessRunSpec(
+        "agent-loop-approval-run",
+        workflow,
+        inputs={
+            "tenant_scope_ref": _TENANT_SCOPE_REF,
+            "identity_scope_ref": _IDENTITY_SCOPE_REF,
+        },
+        metadata={
+            "tenant_scope_ref": _TENANT_SCOPE_REF,
+            "identity_scope_ref": _IDENTITY_SCOPE_REF,
+        },
+        created_at=_NOW,
+    )
+    normalized_graph = control_plane._graph_replay_recovery(
+        run_spec,
+        compile_only=True,
+    )
+    source_instance_id = HarnessNodeInstanceIdentity(
+        run_id="agent-loop-approval-run",
+        graph_checksum=normalized_graph.checksum,
+        node_id="agent_loop",
+        activation_ordinal=1,
+    ).instance_id
+    raw_task = _raw_task()
+    candidate_result = bundle.worker_binding.implementation.execute(
+        _worker_task(
+            raw_task,
+            _activity(
+                raw_task,
+                run_id="agent-loop-approval-run",
+                node_id="agent_loop",
+                node_instance_id=source_instance_id,
+                graph_ref=graph_reference(normalized_graph),
+            ),
+        )
+    )
+    activity_output = AgentLoopGraphActivityOutput.from_dict(
+        candidate_result.output["agent_loop_result"]
+    )
+    wait_fact = activity_output.approval_wait
+    assert wait_fact is not None
+    control_plane.worker_registry["agent_loop"] = lambda _task: candidate_result
+
+    waiting = control_plane.run(run_spec).graph_state
+
+    assert waiting is not None
+    assert waiting.lifecycle is RunLifecycle.WAITING
+    source_node = next(
+        item
+        for item in waiting.node_instances
+        if item.identity.node_id == source.step_id
+    )
+    assert source_node.status is HarnessNodeInstanceStatus.SUCCEEDED
+    registration = waiting.wait_registrations[0]
+    wait_node = next(
+        item
+        for item in waiting.node_instances
+        if item.instance_id == registration.node_instance_id
+    )
+    assert wait_node.node_kind is HarnessGraphNodeKind.WAIT
+    assert wait_node.identity.node_id == binding.wait_id
+    assert registration.status is HarnessWaitStatus.REGISTERED
+    assert registration.tenant_scope_ref == _TENANT_SCOPE_REF
+    assert registration.identity_scope_ref == _IDENTITY_SCOPE_REF
+    assert registration.signal_schema_ref == "newsroom.agent-loop.approval@1"
+    assert registration.correlation_ref == checksum_for(
+        {
+            **wait_fact.correlation_projection(),
+            "schema_version": AGENT_LOOP_GRAPH_APPROVAL_WAIT_FACT_SCHEMA,
+            "tenant_scope_ref": wait_fact.tenant_scope_ref,
+            "identity_scope_ref": wait_fact.identity_scope_ref,
+            "correlation_ref": wait_fact.correlation_ref,
+        }
+    )
+    assert calls == []
+    scope = HarnessWaitScope(
+        wait_id=registration.wait_id,
+        run_id=run_spec.run_id,
+        node_instance_id=registration.node_instance_id,
+        tenant_scope_ref=registration.tenant_scope_ref,
+        identity_scope_ref=registration.identity_scope_ref,
+        signal_schema_ref=registration.signal_schema_ref,
+        correlation_ref=registration.correlation_ref,
+    )
+    resumed = control_plane.accept_graph_wait_cause(
+        run_spec,
+        HarnessWaitApprovalEvidenceRecord(
+            scope=scope,
+            approval_event_ref=checksum_for(
+                {"approval_id": wait_fact.approval_id}
+            ),
+            actor_identity_scope_ref=checksum_for({"actor": "reviewer"}),
+            approved=True,
+            recorded_sequence=0,
+        ),
+        occurred_at=_NOW,
+    )
+
+    assert resumed.wait_registrations[0].status is HarnessWaitStatus.RESUMED
+    completed = control_plane.recover_and_run(run_spec).graph_state
+    assert completed is not None
+    assert completed.outcome is RunOutcome.SUCCEEDED
+    assert calls == ["after"]
+
+
+def test_approval_wait_binding_rejects_legacy_or_unverified_step_contract() -> None:
+    binding = AgentLoopGraphApprovalWaitBinding(
+        source_node_id="agent_loop",
+        result_output_key="agent_loop_result",
+        wait_id="agent-loop-approval",
+    )
+    legacy = HarnessStepSpec(
+        "agent_loop",
+        "agent_loop",
+        output_key="agent_loop_result",
+        quality_gate=binding.gate_ref,
+        metadata={
+            "control_fact_paths": binding.control_fact_paths,
+            "approval_required": True,
+        },
+    )
+    unverified = HarnessStepSpec(
+        "agent_loop",
+        "agent_loop",
+        output_key="agent_loop_result",
+        metadata={"control_fact_paths": binding.control_fact_paths},
+    )
+
+    with pytest.raises(HarnessValidationError) as legacy_error:
+        binding.assert_step_contract(legacy)
+    with pytest.raises(HarnessValidationError) as gate_error:
+        binding.assert_step_contract(unverified)
+
+    assert legacy_error.value.code == "agent_loop_graph_wait_binding_mismatch"
+    assert legacy_error.value.details["mismatches"] == [
+        "legacy_approval_required"
+    ]
+    assert gate_error.value.details["mismatches"] == ["gate_ref"]
 
 
 def test_graph_worker_rejects_task_identity_alias_or_worker_substitution() -> None:
@@ -459,6 +797,110 @@ def test_waiting_result_without_durable_approval_identity_fails_closed() -> None
     assert port.requests == {}
 
 
+def test_waiting_result_requires_scoped_single_approval_before_artifact_write() -> None:
+    raw_task = _raw_task()
+    unscoped = _activity(raw_task, include_scope=False)
+    runner = _Runner(_waiting_result())
+    port = _ArtifactPort()
+
+    with pytest.raises(HarnessValidationError) as scope_error:
+        _bundle(runner, port).worker_binding.implementation.execute(
+            _worker_task(raw_task, unscoped)
+        )
+
+    waiting = _waiting_result()
+    assert waiting.diagnostics is not None
+    duplicate = replace(
+        waiting,
+        diagnostics=replace(
+            waiting.diagnostics,
+            issues=(
+                *waiting.diagnostics.issues,
+                AgentLoopIssue(
+                    severity=AgentLoopDiagnosticSeverity.WARNING,
+                    code="tool_approval_required",
+                    message="second approval required",
+                    tool_name="second_tool",
+                    metadata={
+                        "approval_id": "approval-2",
+                        "approval_kind": "tool_approval",
+                    },
+                ),
+            ),
+        ),
+    )
+    with pytest.raises(HarnessValidationError) as count_error:
+        _bundle(_Runner(duplicate), port).worker_binding.implementation.execute(
+            _worker_task(raw_task, _activity(raw_task))
+        )
+
+    assert scope_error.value.code == "agent_loop_graph_activity_contract_invalid"
+    assert count_error.value.code == "agent_loop_graph_wait_candidate_invalid"
+    assert port.requests == {}
+
+
+def test_wait_gate_rejects_output_evidence_mismatch() -> None:
+    raw_task = _raw_task()
+    activity = _activity(raw_task)
+    bundle = _bundle(_Runner(_waiting_result()), _ArtifactPort())
+    worker_result = bundle.worker_binding.implementation.execute(
+        _worker_task(raw_task, activity)
+    )
+    raw_output = deepcopy(worker_result.output["agent_loop_result"])
+    assert isinstance(raw_output["approval_wait"], dict)
+    raw_output["approval_wait"]["approval_id"] = "forged-approval"
+    forged = replace(
+        worker_result,
+        output={"agent_loop_result": raw_output},
+    )
+
+    result = bundle.wait_gate_registration.gate.evaluate(_gate_context(forged))
+
+    assert result.passed is False
+    assert result.details["reason_code"] == "agent_loop_wait_output_invalid"
+
+    cross_run = bundle.wait_gate_registration.gate.evaluate(
+        _gate_context(worker_result, run_id="another-run")
+    )
+    cross_scope = bundle.wait_gate_registration.gate.evaluate(
+        _gate_context(
+            worker_result,
+            tenant_scope_ref=checksum_for({"tenant": "another"}),
+        )
+    )
+    cross_graph = bundle.wait_gate_registration.gate.evaluate(
+        _gate_context(
+            worker_result,
+            graph_id="another.graph",
+            graph_checksum=checksum_for({"graph": "another.graph"}),
+        )
+    )
+    cross_node_attempt = bundle.wait_gate_registration.gate.evaluate(
+        _gate_context(
+            worker_result,
+            node_instance_id="compose:2",
+            activity_attempt=2,
+        )
+    )
+    assert cross_run.passed is False
+    assert cross_run.details["reason_code"] == (
+        "agent_loop_wait_output_evidence_mismatch"
+    )
+    assert cross_run.details["mismatches"] == ["run_id"]
+    assert cross_scope.passed is False
+    assert cross_scope.details["mismatches"] == ["tenant_scope_ref"]
+    assert cross_graph.passed is False
+    assert cross_graph.details["mismatches"] == [
+        "graph_id",
+        "graph_checksum",
+    ]
+    assert cross_node_attempt.passed is False
+    assert cross_node_attempt.details["mismatches"] == [
+        "node_instance_id",
+        "activity_attempt",
+    ]
+
+
 def test_graph_activity_output_and_wait_candidate_reject_checksum_tamper() -> None:
     raw_task = _raw_task()
     activity = _activity(raw_task)
@@ -516,6 +958,66 @@ def _bundle(runner: Any, port: _ArtifactPort):
     )
 
 
+def _gate_context(
+    worker_result,
+    *,
+    run_id: str = "run-1",
+    step_id: str = "compose",
+    graph_id: str = _GRAPH_ID,
+    graph_version: str = _GRAPH_VERSION,
+    graph_checksum: str = _GRAPH_CHECKSUM,
+    node_instance_id: str = "compose:1",
+    activity_attempt: int = 1,
+    tenant_scope_ref: str = _TENANT_SCOPE_REF,
+    identity_scope_ref: str = _IDENTITY_SCOPE_REF,
+) -> GateContext:
+    step = HarnessStepSpec(
+        step_id,
+        "agent_loop",
+        output_key="agent_loop_result",
+    )
+    workflow = HarnessWorkflowSpec(
+        workflow_id=graph_id,
+        workflow_version=graph_version,
+        steps=(step,),
+        entry_step_id=step.step_id,
+    )
+    initial = HarnessState.initial(
+        HarnessRunSpec(
+            run_id,
+            workflow,
+            inputs={
+                "tenant_scope_ref": tenant_scope_ref,
+                "identity_scope_ref": identity_scope_ref,
+            },
+        )
+    )
+    step_state = replace(
+        get_step_state(initial, step.step_id),
+        attempts=activity_attempt,
+        metadata={"node_instance_id": node_instance_id},
+    )
+    state = replace(
+        initial,
+        step_states=(step_state,),
+        metadata={
+            "graph_id": graph_id,
+            "graph_version": graph_version,
+            "graph_checksum": graph_checksum,
+        },
+    )
+    return GateContext(
+        state=state,
+        step_spec=step,
+        step_state=get_step_state(state, step.step_id),
+        worker_result=worker_result,
+    )
+
+
+def _successful_worker_result() -> HarnessWorkerResult:
+    return HarnessWorkerResult(HarnessWorkerStatus.SUCCEEDED)
+
+
 def _agent() -> AgentSpec:
     return AgentSpec(
         agent_id="research-agent",
@@ -551,36 +1053,44 @@ def _activity(
     *,
     worker_ref: HarnessContractReference = _WORKER_REF,
     activity_ref: HarnessContractReference = _ACTIVITY_REF,
+    graph_ref: HarnessGraphReference | None = None,
+    include_scope: bool = True,
+    run_id: str = "run-1",
+    node_id: str = "compose",
+    node_instance_id: str = "compose:1",
+    activity_attempt: int = 1,
 ) -> HarnessGraphActivity:
-    graph_ref = HarnessGraphReference(
-        graph_id="research.graph",
+    accepted_graph_ref = graph_ref or HarnessGraphReference(
+        graph_id=_GRAPH_ID,
         workflow_ref=HarnessContractReference(
             HarnessContractKind.WORKFLOW,
-            "research.graph",
-            "2",
+            _GRAPH_ID,
+            _GRAPH_VERSION,
         ),
         schema_version=NORMALIZED_HARNESS_GRAPH_SCHEMA,
         compiler_version=HARNESS_GRAPH_COMPILER_VERSION,
         condition_policy_version=HARNESS_CONDITION_POLICY_VERSION,
-        checksum=checksum_for({"graph": "research.graph", "version": "2"}),
+        checksum=_GRAPH_CHECKSUM,
     )
     return HarnessGraphActivity(
-        run_id="run-1",
-        graph_ref=graph_ref,
-        node_id="compose",
-        node_instance_id="compose:1",
+        run_id=run_id,
+        graph_ref=accepted_graph_ref,
+        node_id=node_id,
+        node_instance_id=node_instance_id,
         step_ref=HarnessContractReference(
             HarnessContractKind.STEP,
-            "compose",
+            node_id,
             "1",
         ),
         worker_ref=worker_ref,
         activity_ref=activity_ref,
-        attempt=1,
+        attempt=activity_attempt,
         input_ref=harness_activity_input_checksum(raw_task),
         causal_decision_checksum=checksum_for({"decision": "dispatch"}),
         causal_decision_sequence=7,
         fencing_generation=3,
+        tenant_scope_ref=_TENANT_SCOPE_REF if include_scope else None,
+        identity_scope_ref=_IDENTITY_SCOPE_REF if include_scope else None,
     )
 
 

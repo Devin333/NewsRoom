@@ -17,12 +17,15 @@ _ADAPTER_NAMES = {
     "AgentLoopGraphActivityContract",
     "AgentLoopGraphActivityOutput",
     "AgentLoopGraphActivityTask",
+    "AgentLoopGraphApprovalWaitBinding",
+    "AgentLoopGraphApprovalWaitFact",
     "AgentLoopGraphApprovalRequest",
     "AgentLoopGraphWorker",
     "AgentLoopGraphArtifactContext",
     "AgentLoopGraphArtifactReceipt",
     "AgentLoopGraphArtifactRecorder",
     "AgentLoopGraphWaitCandidate",
+    "AgentLoopGraphWaitCandidateGate",
     "build_agent_loop_graph_activity_binding_bundle",
 }
 

@@ -337,7 +337,16 @@ def _wait_output_fact_exposed(
             if path == output_key or path.startswith(f"{output_key}.")
         )
     else:
-        relative = declared
+        relative = tuple(
+            (
+                ""
+                if path == output_key
+                else path.removeprefix(f"{output_key}.")
+            )
+            if path == output_key or path.startswith(f"{output_key}.")
+            else path
+            for path in declared
+        )
     if not relative:
         return False
     if not nested_path:

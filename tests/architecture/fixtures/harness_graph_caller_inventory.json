@@ -1,6 +1,6 @@
 {
   "schema": "newsroom.harness-graph-caller-inventory/v1",
-  "captured_at": "2026-08-14",
+  "captured_at": "2026-08-16",
   "task": "harness-workflow-graph-runtime:1.2",
   "search_roots": [
     "business",
@@ -69,6 +69,7 @@
       "framework/harness/control_plane/transitions.py",
       "framework/harness/task_plan/forbidden.py",
       "framework/harness/task_plan/stage.py",
+      "tests/framework/harness/agent_loop/test_graph_activity.py",
       "tests/framework/harness/control_plane/test_compensation_entry_durability.py",
       "tests/framework/harness/control_plane/test_deterministic_gate_enforcement.py",
       "tests/framework/harness/control_plane/test_gates.py",

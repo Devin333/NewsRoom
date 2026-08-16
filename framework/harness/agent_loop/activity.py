@@ -16,9 +16,19 @@ from framework.harness.agent_loop.artifacts import (
     AgentLoopGraphArtifactContext,
     AgentLoopGraphArtifactRecorder,
 )
+from framework.harness.control_plane.gate_registry import (
+    GateReference,
+    GateRegistration,
+)
+from framework.harness.control_plane.gates import (
+    DeterministicGate,
+    GateContext,
+    HarnessGateResult,
+)
 from framework.harness.control_plane.errors import HarnessValidationError
 from framework.harness.graph.activity import (
     HarnessLeafActivityKind,
+    HarnessStepSpec,
     HarnessWorkerType,
 )
 from framework.harness.graph.bindings import (
@@ -33,6 +43,8 @@ from framework.harness.graph.canonical import (
     freeze_json,
     mapping_to_dict,
 )
+from framework.harness.graph.conditions import ConditionPredicate
+from framework.harness.graph.dsl import Wait
 from framework.harness.graph.model import (
     HarnessContractKind,
     HarnessContractReference,
@@ -53,17 +65,26 @@ AGENT_LOOP_GRAPH_ACTIVITY_TASK_SCHEMA = (
     "newsroom.agent-loop-graph-activity-task/v1"
 )
 AGENT_LOOP_GRAPH_ACTIVITY_OUTPUT_SCHEMA = (
-    "newsroom.agent-loop-graph-activity-output/v1"
+    "newsroom.agent-loop-graph-activity-output/v2"
 )
 AGENT_LOOP_GRAPH_APPROVAL_REQUEST_SCHEMA = (
     "newsroom.agent-loop-graph-approval-request/v1"
 )
 AGENT_LOOP_GRAPH_WAIT_CANDIDATE_SCHEMA = (
-    "newsroom.agent-loop-graph-wait-candidate/v1"
+    "newsroom.agent-loop-graph-wait-candidate/v2"
+)
+AGENT_LOOP_GRAPH_APPROVAL_WAIT_FACT_SCHEMA = (
+    "newsroom.agent-loop-graph-approval-wait-fact/v1"
 )
 AGENT_LOOP_GRAPH_WAIT_EVIDENCE_TYPE = "agent_loop_graph_wait_candidate"
+AGENT_LOOP_GRAPH_WAIT_GATE_REF = "agent_loop_wait_candidate@1"
+AGENT_LOOP_GRAPH_APPROVAL_SIGNAL_TYPE = "newsroom.agent-loop.approval"
+AGENT_LOOP_GRAPH_APPROVAL_SIGNAL_VERSION = "1"
+AGENT_LOOP_GRAPH_APPROVAL_WAIT_BINDING_SCHEMA = (
+    "newsroom.agent-loop-graph-approval-wait-binding/v1"
+)
 AGENT_LOOP_GRAPH_BINDING_MANIFEST_SCHEMA = (
-    "newsroom.agent-loop-graph-activity-binding/v1"
+    "newsroom.agent-loop-graph-activity-binding/v2"
 )
 
 
@@ -209,12 +230,16 @@ class AgentLoopGraphWaitCandidate:
 
     run_id: str
     graph_id: str
+    graph_version: str
+    graph_checksum: str
     node_id: str
     node_instance_id: str
     activity_id: str
     activity_attempt: int
     graph_checkpoint_ref: str
     task_context_checksum: str
+    tenant_scope_ref: str
+    identity_scope_ref: str
     agent_id: str
     conversation_id: str | None
     approval_requests: tuple[AgentLoopGraphApprovalRequest, ...]
@@ -225,6 +250,7 @@ class AgentLoopGraphWaitCandidate:
         for field_name in (
             "run_id",
             "graph_id",
+            "graph_version",
             "node_id",
             "node_instance_id",
             "activity_id",
@@ -244,9 +270,20 @@ class AgentLoopGraphWaitCandidate:
             raise _wait_error("activity_attempt must be a positive integer")
         object.__setattr__(
             self,
+            "graph_checksum",
+            _checksum(self.graph_checksum, "graph_checksum"),
+        )
+        object.__setattr__(
+            self,
             "task_context_checksum",
             _checksum(self.task_context_checksum, "task_context_checksum"),
         )
+        for field_name in ("tenant_scope_ref", "identity_scope_ref"):
+            object.__setattr__(
+                self,
+                field_name,
+                _checksum(getattr(self, field_name), field_name),
+            )
         object.__setattr__(
             self,
             "conversation_id",
@@ -328,12 +365,16 @@ class AgentLoopGraphWaitCandidate:
         return cls(
             run_id=activity.run_id,
             graph_id=activity.graph_ref.graph_id,
+            graph_version=activity.graph_ref.workflow_ref.version,
+            graph_checksum=activity.graph_ref.checksum,
             node_id=activity.node_id,
             node_instance_id=activity.node_instance_id,
             activity_id=activity.activity_id,
             activity_attempt=activity.attempt,
             graph_checkpoint_ref=task.task_context.graph_checkpoint_ref,
             task_context_checksum=task.task_context.context_checksum,
+            tenant_scope_ref=activity.tenant_scope_ref,
+            identity_scope_ref=activity.identity_scope_ref,
             agent_id=agent_id,
             conversation_id=task.conversation_id,
             approval_requests=requests,
@@ -344,12 +385,16 @@ class AgentLoopGraphWaitCandidate:
             "schema_version": self.schema_version,
             "run_id": self.run_id,
             "graph_id": self.graph_id,
+            "graph_version": self.graph_version,
+            "graph_checksum": self.graph_checksum,
             "node_id": self.node_id,
             "node_instance_id": self.node_instance_id,
             "activity_id": self.activity_id,
             "activity_attempt": self.activity_attempt,
             "graph_checkpoint_ref": self.graph_checkpoint_ref,
             "task_context_checksum": self.task_context_checksum,
+            "tenant_scope_ref": self.tenant_scope_ref,
+            "identity_scope_ref": self.identity_scope_ref,
             "agent_id": self.agent_id,
             "conversation_id": self.conversation_id,
             "approval_requests": [
@@ -380,12 +425,16 @@ class AgentLoopGraphWaitCandidate:
                 "schema_version",
                 "run_id",
                 "graph_id",
+                "graph_version",
+                "graph_checksum",
                 "node_id",
                 "node_instance_id",
                 "activity_id",
                 "activity_attempt",
                 "graph_checkpoint_ref",
                 "task_context_checksum",
+                "tenant_scope_ref",
+                "identity_scope_ref",
                 "agent_id",
                 "conversation_id",
                 "approval_requests",
@@ -408,6 +457,125 @@ class AgentLoopGraphWaitCandidate:
 
 
 @dataclass(frozen=True, slots=True)
+class AgentLoopGraphApprovalWaitFact:
+    """Bounded control fact consumed only by an explicit Graph approval Wait."""
+
+    candidate_checksum: str
+    approval_id: str
+    approval_kind: str
+    tool_name: str
+    approval_request_checksum: str
+    graph_checkpoint_ref: str
+    tenant_scope_ref: str
+    identity_scope_ref: str
+    schema_version: str = AGENT_LOOP_GRAPH_APPROVAL_WAIT_FACT_SCHEMA
+    correlation_ref: str = field(init=False)
+
+    def __post_init__(self) -> None:
+        for field_name in (
+            "candidate_checksum",
+            "approval_request_checksum",
+            "tenant_scope_ref",
+            "identity_scope_ref",
+        ):
+            object.__setattr__(
+                self,
+                field_name,
+                _checksum(getattr(self, field_name), field_name),
+            )
+        for field_name in (
+            "approval_id",
+            "approval_kind",
+            "tool_name",
+            "graph_checkpoint_ref",
+        ):
+            object.__setattr__(
+                self,
+                field_name,
+                _required_text(getattr(self, field_name), field_name),
+            )
+        if self.schema_version != AGENT_LOOP_GRAPH_APPROVAL_WAIT_FACT_SCHEMA:
+            raise HarnessValidationError(
+                "unsupported AgentLoop Graph approval Wait fact schema",
+                code="unsupported_agent_loop_graph_activity_schema",
+            )
+        object.__setattr__(
+            self,
+            "correlation_ref",
+            checksum_for(self.correlation_projection()),
+        )
+
+    @classmethod
+    def from_candidate(
+        cls,
+        candidate: AgentLoopGraphWaitCandidate,
+    ) -> AgentLoopGraphApprovalWaitFact:
+        if not isinstance(candidate, AgentLoopGraphWaitCandidate):
+            raise TypeError("candidate must be AgentLoopGraphWaitCandidate")
+        if len(candidate.approval_requests) != 1:
+            raise _wait_error(
+                "Graph approval Wait requires exactly one approval request"
+            )
+        request = candidate.approval_requests[0]
+        return cls(
+            candidate_checksum=candidate.candidate_checksum,
+            approval_id=request.approval_id,
+            approval_kind=request.approval_kind,
+            tool_name=request.tool_name,
+            approval_request_checksum=checksum_for(request.to_dict()),
+            graph_checkpoint_ref=candidate.graph_checkpoint_ref,
+            tenant_scope_ref=candidate.tenant_scope_ref,
+            identity_scope_ref=candidate.identity_scope_ref,
+        )
+
+    def correlation_projection(self) -> dict[str, str]:
+        return {
+            "approval_id": self.approval_id,
+            "approval_kind": self.approval_kind,
+            "tool_name": self.tool_name,
+            "approval_request_checksum": self.approval_request_checksum,
+            "candidate_checksum": self.candidate_checksum,
+            "graph_checkpoint_ref": self.graph_checkpoint_ref,
+        }
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "schema_version": self.schema_version,
+            **self.correlation_projection(),
+            "tenant_scope_ref": self.tenant_scope_ref,
+            "identity_scope_ref": self.identity_scope_ref,
+            "correlation_ref": self.correlation_ref,
+        }
+
+    @classmethod
+    def from_dict(
+        cls,
+        value: Mapping[str, Any],
+    ) -> AgentLoopGraphApprovalWaitFact:
+        payload = _exact_mapping(
+            value,
+            {
+                "schema_version",
+                "candidate_checksum",
+                "approval_id",
+                "approval_kind",
+                "tool_name",
+                "approval_request_checksum",
+                "graph_checkpoint_ref",
+                "tenant_scope_ref",
+                "identity_scope_ref",
+                "correlation_ref",
+            },
+            "approval Wait fact",
+        )
+        supplied_correlation = payload.pop("correlation_ref")
+        fact = cls(**payload)
+        if supplied_correlation != fact.correlation_ref:
+            raise _wait_error("approval Wait correlation checksum does not match")
+        return fact
+
+
+@dataclass(frozen=True, slots=True)
 class AgentLoopGraphActivityOutput:
     task_context_checksum: str
     agent_id: str
@@ -415,8 +583,9 @@ class AgentLoopGraphActivityOutput:
     result: Mapping[str, Any]
     artifact_refs: tuple[str, ...]
     artifact_receipt_checksum: str
-    wait_candidate_checksum: str | None = None
+    approval_wait: AgentLoopGraphApprovalWaitFact | None = None
     schema_version: str = AGENT_LOOP_GRAPH_ACTIVITY_OUTPUT_SCHEMA
+    waiting: bool = field(init=False)
     output_checksum: str = field(init=False)
 
     def __post_init__(self) -> None:
@@ -452,15 +621,21 @@ class AgentLoopGraphActivityOutput:
                 "artifact_receipt_checksum",
             ),
         )
-        if self.wait_candidate_checksum is not None:
-            object.__setattr__(
-                self,
-                "wait_candidate_checksum",
-                _checksum(
-                    self.wait_candidate_checksum,
-                    "wait_candidate_checksum",
-                ),
+        if self.approval_wait is not None and not isinstance(
+            self.approval_wait,
+            AgentLoopGraphApprovalWaitFact,
+        ):
+            raise TypeError(
+                "approval_wait must be AgentLoopGraphApprovalWaitFact"
             )
+        waiting = self.approval_wait is not None
+        if (
+            result.get("status") == AgentLoopStatus.WAITING_FOR_APPROVAL.value
+        ) != waiting:
+            raise _activity_error(
+                "AgentLoop result status and approval Wait fact do not match"
+            )
+        object.__setattr__(self, "waiting", waiting)
         if self.schema_version != AGENT_LOOP_GRAPH_ACTIVITY_OUTPUT_SCHEMA:
             raise HarnessValidationError(
                 "unsupported AgentLoop Graph activity output schema",
@@ -481,7 +656,12 @@ class AgentLoopGraphActivityOutput:
             "result": mapping_to_dict(self.result),
             "artifact_refs": list(self.artifact_refs),
             "artifact_receipt_checksum": self.artifact_receipt_checksum,
-            "wait_candidate_checksum": self.wait_candidate_checksum,
+            "approval_wait": (
+                None
+                if self.approval_wait is None
+                else self.approval_wait.to_dict()
+            ),
+            "waiting": self.waiting,
         }
 
     def to_dict(self) -> dict[str, Any]:
@@ -505,20 +685,42 @@ class AgentLoopGraphActivityOutput:
                 "result",
                 "artifact_refs",
                 "artifact_receipt_checksum",
-                "wait_candidate_checksum",
+                "approval_wait",
+                "waiting",
                 "output_checksum",
             },
             "activity output",
         )
         supplied_checksum = payload.pop("output_checksum")
+        supplied_waiting = payload.pop("waiting")
+        if not isinstance(supplied_waiting, bool):
+            raise _activity_error("waiting must be a boolean")
         raw_refs = payload.get("artifact_refs")
         if not isinstance(raw_refs, list):
             raise _activity_error("artifact_refs must be an array")
         payload["artifact_refs"] = tuple(raw_refs)
+        raw_wait = payload.get("approval_wait")
+        if raw_wait is not None:
+            if not isinstance(raw_wait, Mapping):
+                raise _activity_error("approval_wait must be an object")
+            payload["approval_wait"] = AgentLoopGraphApprovalWaitFact.from_dict(
+                raw_wait
+            )
         output = cls(**payload)
-        if supplied_checksum != output.output_checksum:
+        if (
+            supplied_waiting != output.waiting
+            or supplied_checksum != output.output_checksum
+        ):
             raise _activity_error("AgentLoop activity output checksum does not match")
         return output
+
+    @property
+    def wait_candidate_checksum(self) -> str | None:
+        return (
+            None
+            if self.approval_wait is None
+            else self.approval_wait.candidate_checksum
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -636,14 +838,23 @@ class AgentLoopGraphWorker:
                 agent_id=self.agent.agent_id,
                 result=result,
             )
-            if worker_status is HarnessWorkerStatus.WAITING_APPROVAL
+            if result.status is AgentLoopStatus.WAITING_FOR_APPROVAL
             else None
+        )
+        approval_wait = (
+            None
+            if wait_candidate is None
+            else AgentLoopGraphApprovalWaitFact.from_candidate(wait_candidate)
         )
         result_projection = _agent_result_projection(result)
         preliminary_evidence = (
             () if wait_candidate is None else (wait_candidate.worker_evidence(),)
         )
-        error = _result_error(result)
+        error = (
+            None
+            if worker_status is HarnessWorkerStatus.SUCCEEDED
+            else _result_error(result)
+        )
         HarnessWorkerResult(
             status=worker_status,
             output={self.result_output_key: {"result": result_projection}},
@@ -670,11 +881,7 @@ class AgentLoopGraphWorker:
             result=result_projection,
             artifact_refs=receipt.artifact_refs,
             artifact_receipt_checksum=receipt.receipt_checksum,
-            wait_candidate_checksum=(
-                None
-                if wait_candidate is None
-                else wait_candidate.candidate_checksum
-            ),
+            approval_wait=approval_wait,
         )
         evidence = [receipt.worker_evidence()]
         if wait_candidate is not None:
@@ -688,6 +895,348 @@ class AgentLoopGraphWorker:
             evidence=tuple(evidence),
             error=error,
         )
+
+
+@dataclass(frozen=True, slots=True)
+class AgentLoopGraphWaitCandidateGate(DeterministicGate):
+    """Verify that a waiting candidate is bounded and internally consistent."""
+
+    result_output_key: str = "agent_loop_result"
+    tenant_scope_input_key: str = "tenant_scope_ref"
+    identity_scope_input_key: str = "identity_scope_ref"
+    gate_name: str = field(default="agent_loop_wait_candidate", init=False)
+    gate_version: str = field(default="1", init=False)
+    gate_dependencies: tuple[str, ...] = field(default=(), init=False)
+
+    def __post_init__(self) -> None:
+        for field_name in (
+            "result_output_key",
+            "tenant_scope_input_key",
+            "identity_scope_input_key",
+        ):
+            object.__setattr__(
+                self,
+                field_name,
+                _required_text(getattr(self, field_name), field_name),
+            )
+
+    def evaluate(self, context: GateContext) -> HarnessGateResult:
+        worker_result = context.worker_result
+        if worker_result is None:
+            return self._failure(
+                "AgentLoop worker result is required",
+                "agent_loop_wait_worker_result_missing",
+            )
+        if worker_result.status is not HarnessWorkerStatus.SUCCEEDED:
+            return self._failure(
+                "AgentLoop candidate activity did not succeed",
+                "agent_loop_wait_worker_status_invalid",
+            )
+        if worker_result.error is not None:
+            return self._failure(
+                "successful AgentLoop candidate cannot carry an error",
+                "agent_loop_wait_worker_error_present",
+            )
+        raw_output = worker_result.output.get(self.result_output_key)
+        if not isinstance(raw_output, Mapping):
+            return self._failure(
+                "AgentLoop activity output is missing",
+                "agent_loop_wait_output_missing",
+            )
+        try:
+            output = AgentLoopGraphActivityOutput.from_dict(raw_output)
+        except (HarnessValidationError, TypeError, ValueError):
+            return self._failure(
+                "AgentLoop activity output is invalid",
+                "agent_loop_wait_output_invalid",
+            )
+        evidence = tuple(
+            item
+            for item in worker_result.evidence
+            if item.evidence_type == AGENT_LOOP_GRAPH_WAIT_EVIDENCE_TYPE
+        )
+        if output.approval_wait is None:
+            if evidence:
+                return self._failure(
+                    "non-waiting AgentLoop output carries waiting evidence",
+                    "agent_loop_wait_evidence_unexpected",
+                )
+            return HarnessGateResult(
+                gate_name=self.gate_name,
+                passed=True,
+                details={
+                    "reason_code": "agent_loop_candidate_not_waiting",
+                    "waiting": False,
+                    "output_checksum": output.output_checksum,
+                },
+            )
+        if len(evidence) != 1:
+            return self._failure(
+                "waiting AgentLoop output requires one exact evidence record",
+                "agent_loop_wait_evidence_count_invalid",
+            )
+        try:
+            candidate = AgentLoopGraphWaitCandidate.from_dict(evidence[0].payload)
+            expected_fact = AgentLoopGraphApprovalWaitFact.from_candidate(candidate)
+        except (HarnessValidationError, TypeError, ValueError):
+            return self._failure(
+                "AgentLoop waiting evidence is invalid",
+                "agent_loop_wait_evidence_invalid",
+            )
+        run_inputs = context.state.run_spec.inputs
+        state_metadata = context.state.metadata
+        step_metadata = context.step_state.metadata
+        expected_tenant_scope = run_inputs.get(self.tenant_scope_input_key)
+        expected_identity_scope = run_inputs.get(self.identity_scope_input_key)
+        mismatches = tuple(
+            field_name
+            for field_name, expected, actual in (
+                ("approval_wait", expected_fact, output.approval_wait),
+                (
+                    "task_context_checksum",
+                    candidate.task_context_checksum,
+                    output.task_context_checksum,
+                ),
+                ("agent_id", candidate.agent_id, output.agent_id),
+                (
+                    "conversation_id",
+                    candidate.conversation_id,
+                    output.conversation_id,
+                ),
+                (
+                    "run_id",
+                    context.state.run_spec.run_id,
+                    candidate.run_id,
+                ),
+                (
+                    "graph_id",
+                    state_metadata.get("graph_id"),
+                    candidate.graph_id,
+                ),
+                (
+                    "graph_version",
+                    state_metadata.get("graph_version"),
+                    candidate.graph_version,
+                ),
+                (
+                    "graph_checksum",
+                    state_metadata.get("graph_checksum"),
+                    candidate.graph_checksum,
+                ),
+                (
+                    "node_id",
+                    context.step_spec.step_id,
+                    candidate.node_id,
+                ),
+                (
+                    "node_instance_id",
+                    step_metadata.get("node_instance_id"),
+                    candidate.node_instance_id,
+                ),
+                (
+                    "activity_attempt",
+                    context.step_state.attempts,
+                    candidate.activity_attempt,
+                ),
+                (
+                    "result_status",
+                    AgentLoopStatus.WAITING_FOR_APPROVAL.value,
+                    output.result.get("status"),
+                ),
+                ("result_success", False, output.result.get("success")),
+                (
+                    "tenant_scope_ref",
+                    expected_tenant_scope,
+                    output.approval_wait.tenant_scope_ref,
+                ),
+                (
+                    "identity_scope_ref",
+                    expected_identity_scope,
+                    output.approval_wait.identity_scope_ref,
+                ),
+            )
+            if expected != actual
+        )
+        if mismatches:
+            return self._failure(
+                "AgentLoop waiting output does not match its evidence",
+                "agent_loop_wait_output_evidence_mismatch",
+                mismatches=mismatches,
+            )
+        return HarnessGateResult(
+            gate_name=self.gate_name,
+            passed=True,
+            details={
+                "reason_code": "agent_loop_wait_candidate_verified",
+                "waiting": True,
+                "candidate_checksum": candidate.candidate_checksum,
+                "approval_id": output.approval_wait.approval_id,
+                "correlation_ref": output.approval_wait.correlation_ref,
+                "output_checksum": output.output_checksum,
+            },
+        )
+
+    def _failure(
+        self,
+        reason: str,
+        reason_code: str,
+        *,
+        mismatches: tuple[str, ...] = (),
+    ) -> HarnessGateResult:
+        details: dict[str, Any] = {"reason_code": reason_code}
+        if mismatches:
+            details["mismatches"] = list(mismatches)
+        return HarnessGateResult(
+            gate_name=self.gate_name,
+            passed=False,
+            reason=reason,
+            details=details,
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class AgentLoopGraphApprovalWaitBinding:
+    """Declaration-only bridge from verified AgentLoop output to Graph Wait."""
+
+    source_node_id: str
+    result_output_key: str
+    wait_id: str
+    tenant_scope_input_key: str = "tenant_scope_ref"
+    identity_scope_input_key: str = "identity_scope_ref"
+    schema_version: str = AGENT_LOOP_GRAPH_APPROVAL_WAIT_BINDING_SCHEMA
+
+    def __post_init__(self) -> None:
+        for field_name in (
+            "source_node_id",
+            "result_output_key",
+            "wait_id",
+            "tenant_scope_input_key",
+            "identity_scope_input_key",
+        ):
+            object.__setattr__(
+                self,
+                field_name,
+                _required_text(getattr(self, field_name), field_name),
+            )
+        if self.schema_version != AGENT_LOOP_GRAPH_APPROVAL_WAIT_BINDING_SCHEMA:
+            raise HarnessValidationError(
+                "unsupported AgentLoop Graph approval Wait binding schema",
+                code="unsupported_agent_loop_graph_activity_schema",
+            )
+
+    @property
+    def gate_ref(self) -> str:
+        return AGENT_LOOP_GRAPH_WAIT_GATE_REF
+
+    @property
+    def control_fact_paths(self) -> tuple[str, ...]:
+        prefix = f"{self.result_output_key}.approval_wait"
+        return tuple(
+            sorted(
+                (
+                    f"{self.result_output_key}.waiting",
+                    *(
+                        f"{prefix}.{field_name}"
+                        for field_name in (
+                            "schema_version",
+                            "candidate_checksum",
+                            "approval_id",
+                            "approval_kind",
+                            "tool_name",
+                            "approval_request_checksum",
+                            "graph_checkpoint_ref",
+                            "tenant_scope_ref",
+                            "identity_scope_ref",
+                            "correlation_ref",
+                        )
+                    ),
+                )
+            )
+        )
+
+    @property
+    def output_path(self) -> str:
+        return (
+            f"node.outputs.{self.source_node_id}."
+            f"{self.result_output_key}.approval_wait"
+        )
+
+    @property
+    def waiting_condition_path(self) -> str:
+        return f"node.outputs.{self.result_output_key}.waiting"
+
+    def waiting_condition(self) -> ConditionPredicate:
+        return ConditionPredicate(self.waiting_condition_path, "equals", True)
+
+    def wait_expression(self) -> Wait:
+        prefix = self.output_path
+        return Wait(
+            wait_id=self.wait_id,
+            kind="approval",
+            correlation={
+                field_name: f"{prefix}.{field_name}"
+                for field_name in (
+                    "schema_version",
+                    "candidate_checksum",
+                    "approval_id",
+                    "approval_kind",
+                    "tool_name",
+                    "approval_request_checksum",
+                    "graph_checkpoint_ref",
+                    "tenant_scope_ref",
+                    "identity_scope_ref",
+                    "correlation_ref",
+                )
+            },
+            signal_type=AGENT_LOOP_GRAPH_APPROVAL_SIGNAL_TYPE,
+            signal_version=AGENT_LOOP_GRAPH_APPROVAL_SIGNAL_VERSION,
+            tenant_scope_path=f"graph.inputs.{self.tenant_scope_input_key}",
+            identity_scope_path=f"graph.inputs.{self.identity_scope_input_key}",
+        )
+
+    def assert_step_contract(self, step: HarnessStepSpec) -> None:
+        if not isinstance(step, HarnessStepSpec):
+            raise TypeError("step must be HarnessStepSpec")
+        mismatches: list[str] = []
+        if getattr(step, "step_id", None) != self.source_node_id:
+            mismatches.append("source_node_id")
+        if getattr(step, "output_key", None) != self.result_output_key:
+            mismatches.append("result_output_key")
+        if getattr(step, "quality_gate", None) != self.gate_ref:
+            mismatches.append("gate_ref")
+        metadata = getattr(step, "metadata", None)
+        raw_paths = (
+            metadata.get("control_fact_paths")
+            if isinstance(metadata, Mapping)
+            else None
+        )
+        if tuple(sorted(raw_paths or ())) != self.control_fact_paths:
+            mismatches.append("control_fact_paths")
+        if isinstance(metadata, Mapping) and metadata.get("approval_required") is True:
+            mismatches.append("legacy_approval_required")
+        if mismatches:
+            raise HarnessValidationError(
+                "AgentLoop approval Wait binding does not match its Step contract",
+                code="agent_loop_graph_wait_binding_mismatch",
+                details={"mismatches": sorted(mismatches)},
+            )
+
+    def to_manifest(self) -> dict[str, Any]:
+        return {
+            "schema_version": self.schema_version,
+            "source_node_id": self.source_node_id,
+            "result_output_key": self.result_output_key,
+            "wait_id": self.wait_id,
+            "tenant_scope_input_key": self.tenant_scope_input_key,
+            "identity_scope_input_key": self.identity_scope_input_key,
+            "gate_ref": self.gate_ref,
+            "waiting_control_fact_path": f"{self.result_output_key}.waiting",
+            "waiting_condition": self.waiting_condition().to_dict(),
+            "control_fact_paths": list(self.control_fact_paths),
+            "wait": self.wait_expression().to_dict(),
+            "requires_deterministic_wait_branch": True,
+            "registers_graph_wait": False,
+        }
 
 
 @dataclass(frozen=True, slots=True)
@@ -734,6 +1283,7 @@ class AgentLoopGraphActivityBindingBundle:
     worker_binding: HarnessWorkerBinding
     activity_binding: HarnessActivityContractBinding
     leaf_binding: HarnessLeafActivityBinding
+    wait_gate_registration: GateRegistration
     authority: HarnessRuntimeBindingAuthority
 
     def __post_init__(self) -> None:
@@ -750,6 +1300,22 @@ class AgentLoopGraphActivityBindingBundle:
         ):
             raise TypeError(
                 "activity binding must contain AgentLoopGraphActivityContract"
+            )
+        if not isinstance(self.wait_gate_registration, GateRegistration):
+            raise TypeError("wait_gate_registration must be GateRegistration")
+        if (
+            str(self.wait_gate_registration.reference)
+            != AGENT_LOOP_GRAPH_WAIT_GATE_REF
+            or not isinstance(
+                self.wait_gate_registration.gate,
+                AgentLoopGraphWaitCandidateGate,
+            )
+            or self.wait_gate_registration.gate.result_output_key
+            != self.worker_binding.implementation.result_output_key
+        ):
+            raise HarnessValidationError(
+                "AgentLoop Graph wait gate binding is inconsistent",
+                code="agent_loop_graph_activity_binding_mismatch",
             )
         resolved = self.authority.resolve_leaf_activity(
             worker_ref=self.worker_binding.reference,
@@ -780,6 +1346,14 @@ class AgentLoopGraphActivityBindingBundle:
                 self.worker_binding.implementation.result_output_key
             ),
             "artifact_owner_required": True,
+            "wait_candidate_gate_ref": AGENT_LOOP_GRAPH_WAIT_GATE_REF,
+            "tenant_scope_input_key": (
+                self.wait_gate_registration.gate.tenant_scope_input_key
+            ),
+            "identity_scope_input_key": (
+                self.wait_gate_registration.gate.identity_scope_input_key
+            ),
+            "waiting_candidate_worker_status": HarnessWorkerStatus.SUCCEEDED.value,
             "publishes_terminal_manifest": False,
             "registers_graph_wait": False,
         }
@@ -793,6 +1367,8 @@ def build_agent_loop_graph_activity_binding_bundle(
     agent: AgentSpec,
     artifact_recorder: AgentLoopGraphArtifactRecorder,
     result_output_key: str = "agent_loop_result",
+    tenant_scope_input_key: str = "tenant_scope_ref",
+    identity_scope_input_key: str = "identity_scope_ref",
 ) -> AgentLoopGraphActivityBindingBundle:
     if not isinstance(worker_ref, HarnessContractReference) or (
         worker_ref.contract_kind is not HarnessContractKind.WORKER
@@ -835,10 +1411,19 @@ def build_agent_loop_graph_activity_binding_bundle(
         activities=(activity_binding,),
         leaf_activities=(leaf_binding,),
     )
+    wait_gate_registration = GateRegistration(
+        reference=GateReference.parse(AGENT_LOOP_GRAPH_WAIT_GATE_REF),
+        gate=AgentLoopGraphWaitCandidateGate(
+            result_output_key=result_output_key,
+            tenant_scope_input_key=tenant_scope_input_key,
+            identity_scope_input_key=identity_scope_input_key,
+        ),
+    )
     return AgentLoopGraphActivityBindingBundle(
         worker_binding=worker_binding,
         activity_binding=activity_binding,
         leaf_binding=leaf_binding,
+        wait_gate_registration=wait_gate_registration,
         authority=authority,
     )
 
@@ -905,7 +1490,9 @@ def _worker_status(result: AgentLoopResult) -> HarnessWorkerStatus:
             code="agent_loop_graph_activity_result_invalid",
         )
     if result.status is AgentLoopStatus.WAITING_FOR_APPROVAL:
-        return HarnessWorkerStatus.WAITING_APPROVAL
+        # The activity successfully produced a candidate. Only an explicit,
+        # deterministic Graph Wait may turn that candidate into outer waiting.
+        return HarnessWorkerStatus.SUCCEEDED
     if result.status in {AgentLoopStatus.BLOCKED, AgentLoopStatus.STALLED}:
         return HarnessWorkerStatus.BLOCKED
     return HarnessWorkerStatus.FAILED
@@ -1041,16 +1628,24 @@ def _wait_error(message: str) -> HarnessValidationError:
 __all__ = [
     "AGENT_LOOP_GRAPH_ACTIVITY_OUTPUT_SCHEMA",
     "AGENT_LOOP_GRAPH_ACTIVITY_TASK_SCHEMA",
+    "AGENT_LOOP_GRAPH_APPROVAL_SIGNAL_TYPE",
+    "AGENT_LOOP_GRAPH_APPROVAL_SIGNAL_VERSION",
+    "AGENT_LOOP_GRAPH_APPROVAL_WAIT_BINDING_SCHEMA",
+    "AGENT_LOOP_GRAPH_APPROVAL_WAIT_FACT_SCHEMA",
     "AGENT_LOOP_GRAPH_APPROVAL_REQUEST_SCHEMA",
     "AGENT_LOOP_GRAPH_BINDING_MANIFEST_SCHEMA",
     "AGENT_LOOP_GRAPH_WAIT_CANDIDATE_SCHEMA",
     "AGENT_LOOP_GRAPH_WAIT_EVIDENCE_TYPE",
+    "AGENT_LOOP_GRAPH_WAIT_GATE_REF",
     "AgentLoopGraphActivityBindingBundle",
     "AgentLoopGraphActivityContract",
     "AgentLoopGraphActivityOutput",
     "AgentLoopGraphActivityTask",
+    "AgentLoopGraphApprovalWaitBinding",
+    "AgentLoopGraphApprovalWaitFact",
     "AgentLoopGraphApprovalRequest",
     "AgentLoopGraphWaitCandidate",
+    "AgentLoopGraphWaitCandidateGate",
     "AgentLoopGraphWorker",
     "AgentLoopRunnerPort",
     "build_agent_loop_graph_activity_binding_bundle",
