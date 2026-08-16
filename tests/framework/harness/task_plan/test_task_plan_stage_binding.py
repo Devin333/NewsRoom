@@ -156,6 +156,30 @@ def test_graph_only_stage_binding_rejects_legacy_plan_schema() -> None:
     assert error.value.code == "dynamic_task_plan_schema_identity_mismatch"
 
 
+def test_graph_only_stage_binding_rejects_legacy_event_schema() -> None:
+    definition = build_dynamic_paper_analysis_graph_definition()
+    stage_binding = definition.task_plan_stage_bindings[0]
+    legacy_definition = replace(
+        definition,
+        task_plan_stage_bindings=(
+            replace(
+                stage_binding,
+                support_refs={
+                    **dict(stage_binding.support_refs),
+                    "event_schema": "newsroom.harness-task-plan-event/v1",
+                },
+            ),
+        ),
+        definition_checksum=None,
+    )
+    graph = HarnessGraphCompiler().compile(legacy_definition).graph
+
+    with pytest.raises(HarnessValidationError) as error:
+        TaskPlanStageBinding(graph, RESEARCH_DYNAMIC_STAGE_ID)
+
+    assert error.value.code == "dynamic_task_plan_event_schema_identity_mismatch"
+
+
 def test_graph_only_stage_binding_reader_rejects_aliases_and_tampering() -> None:
     binding = _graph_only_binding()
     payload = binding.to_dict()

@@ -38,6 +38,8 @@ from framework.harness.task_plan import (
     TaskPlanPatchValidator,
     TaskPlanProjection,
     TaskPlanStageRequest,
+    TASK_PLAN_EVENT_SCHEMA_V2,
+    TaskPlanEvent,
     TaskResultRecord,
     TaskPlanStageBinding,
     TaskPlanValidationContext,
@@ -283,10 +285,23 @@ def test_graph_only_candidate_validates_to_graph_only_plan() -> None:
     assert next_plan.stage_identity_checksum == plan.stage_identity_checksum
 
     store = InMemoryTaskPlanStore()
-    with pytest.raises(HarnessValidationError) as store_error:
-        store.append_candidate(candidate)
-    assert store_error.value.code == "graph_task_plan_event_schema_unavailable"
-    assert store.read_events(candidate.run_id, candidate.stage_id) == ()
+    assert store.append_candidate(candidate) == candidate.candidate_checksum
+    assert store.accept_plan(plan) == plan.plan_checksum
+    events = store.read_events(candidate.run_id, candidate.stage_id)
+    assert [event.event_type for event in events] == [
+        "PLAN_CANDIDATE_BUILT",
+        "PLAN_ACCEPTED",
+    ]
+    assert all(
+        event.schema_version == TASK_PLAN_EVENT_SCHEMA_V2 for event in events
+    )
+    assert all(event.workflow_id is None for event in events)
+    assert all(
+        event.matches_contract_identity(candidate if index == 0 else plan)
+        for index, event in enumerate(events)
+    )
+    assert all("workflow_id" not in event.to_dict() for event in events)
+    assert all(TaskPlanEvent.from_dict(event.to_dict()) == event for event in events)
 
 
 def test_graph_only_candidate_and_plan_readers_fail_closed() -> None:
@@ -322,6 +337,29 @@ def test_graph_only_candidate_and_plan_readers_fail_closed() -> None:
 
     other_request = _plan_build_request(policy, graph_version="2")
     assert not candidate.matches_stage_identity(other_request.stage_identity)
+    store = InMemoryTaskPlanStore()
+    store.append_candidate(candidate)
+    event = store.read_events(candidate.run_id, candidate.stage_id)[0]
+    event_payload = event.to_dict()
+    with pytest.raises(HarnessValidationError) as event_alias_error:
+        TaskPlanEvent.from_dict(
+            {**event_payload, "workflow_id": request.stage_identity.graph_id}
+        )
+    assert event_alias_error.value.code == "invalid_task_plan_payload_fields"
+    with pytest.raises(HarnessValidationError) as event_identity_error:
+        TaskPlanEvent.from_dict(
+            {
+                **event_payload,
+                "stage_identity_checksum": "sha256:" + "0" * 64,
+            }
+        )
+    assert event_identity_error.value.code == (
+        "task_plan_stage_identity_checksum_invalid"
+    )
+    other_candidate = ResearchAnalysisPlanCandidateBuilder(
+        _OutlineWorker(_valid_outline())
+    ).build_candidate(other_request)
+    assert not event.matches_contract_identity(other_candidate)
     with pytest.raises(HarnessValidationError) as graph_error:
         TaskPlanStageRequest(
             run_id=other_request.run_id,

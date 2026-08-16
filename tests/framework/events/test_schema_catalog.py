@@ -35,7 +35,14 @@ from framework.events.schema.catalog import (
     _run_pure_validator,
 )
 from framework.events.telemetry import EventTelemetry
-from framework.harness.task_plan.store import TASK_PLAN_EVENT_SCHEMA, TaskPlanEvent
+from framework.harness.task_plan.store import (
+    TASK_PLAN_EVENT_SCHEMA,
+    TASK_PLAN_EVENT_SCHEMA_V2,
+    TaskPlanEvent,
+)
+from framework.harness.task_plan.schema import (
+    GRAPH_ONLY_TASK_PLAN_STAGE_IDENTITY_SCHEMA,
+)
 
 
 _LEGACY_FIXTURES = Path(__file__).parents[2] / "fixtures" / "events" / "legacy"
@@ -427,6 +434,63 @@ def test_default_catalog_validates_exact_reference_only_task_plan_events() -> No
         )
 
     assert captured.value.path == "$.details"
+
+
+def test_default_catalog_reads_graph_task_plan_event_v2_without_changing_default() -> None:
+    catalog = default_event_schema_catalog()
+    graph_checksum = checksum_for({"graph": "task-plan-v2"})
+    stage_binding_checksum = checksum_for({"stage": "analysis"})
+    identity_projection = {
+        "schema_version": GRAPH_ONLY_TASK_PLAN_STAGE_IDENTITY_SCHEMA,
+        "run_id": "run-task-plan-v2",
+        "graph_schema_version": "newsroom.harness-normalized-graph/v2",
+        "compiler_version": "newsroom.harness-graph-compiler/v2",
+        "condition_policy_version": "newsroom.harness-graph-condition-policy/v1",
+        "graph_id": "research.graph",
+        "graph_version": "1",
+        "graph_checksum": graph_checksum,
+        "stage_id": "analysis",
+        "stage_binding_checksum": stage_binding_checksum,
+        "graph_ref": "research.graph@1",
+    }
+    candidate_ref = checksum_for({"candidate": "v2"})
+    event = TaskPlanEvent(
+        "PLAN_CANDIDATE_BUILT",
+        run_id="run-task-plan-v2",
+        workflow_id=None,
+        stage_id="analysis",
+        graph_checksum=graph_checksum,
+        graph_id="research.graph",
+        graph_version="1",
+        graph_ref="research.graph@1",
+        graph_schema_version="newsroom.harness-normalized-graph/v2",
+        compiler_version="newsroom.harness-graph-compiler/v2",
+        condition_policy_version="newsroom.harness-graph-condition-policy/v1",
+        stage_binding_checksum=stage_binding_checksum,
+        stage_identity_schema=GRAPH_ONLY_TASK_PLAN_STAGE_IDENTITY_SCHEMA,
+        stage_identity_checksum=checksum_for(identity_projection),
+        input_checksum=candidate_ref,
+        payload={"candidate_ref": candidate_ref},
+        schema_version=TASK_PLAN_EVENT_SCHEMA_V2,
+        sequence=1,
+    )
+    durable_payload = event.to_dict()
+    durable_payload.pop("event_type")
+    durable_payload["details"] = durable_payload.pop("payload")
+
+    assert catalog.current_schema("PLAN_CANDIDATE_BUILT") == TASK_PLAN_EVENT_SCHEMA
+    assert catalog.validate(
+        "PLAN_CANDIDATE_BUILT",
+        TASK_PLAN_EVENT_SCHEMA_V2,
+        durable_payload,
+    ) == durable_payload
+    with pytest.raises(EventSchemaValidationError) as captured:
+        catalog.validate(
+            "PLAN_CANDIDATE_BUILT",
+            TASK_PLAN_EVENT_SCHEMA_V2,
+            {**durable_payload, "workflow_id": "legacy-alias"},
+        )
+    assert captured.value.rule == "additionalProperties"
 
 
 def test_workflow_payload_fixture_covers_every_current_event_and_operation() -> None:

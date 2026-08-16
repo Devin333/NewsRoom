@@ -14,8 +14,15 @@ from framework.events.canonical import (
     thaw_canonical_json,
 )
 from framework.events.errors import (
+    EventContractError,
     EventIdentityCollisionError,
     EventStreamVersionConflictError,
+)
+from framework.events.projection import (
+    GRAPH_EVENT_CONTEXT_EXTENSION,
+    GraphEventContext,
+    GraphRunIdentity,
+    graph_event_context,
 )
 from framework.events.ports import EventReaderPort, EventRuntimePort
 from framework.events.runtime.models import StreamReadRequest
@@ -36,7 +43,7 @@ from framework.harness.task_plan.models import (
     ValidatedTaskPlan,
 )
 from framework.harness.task_plan.store import (
-    TASK_PLAN_EVENT_SCHEMA,
+    TASK_PLAN_EVENT_SCHEMAS,
     TASK_PLAN_EVENT_TYPES,
     TaskPlanEvent,
     TaskResultRecord,
@@ -44,7 +51,6 @@ from framework.harness.task_plan.store import (
     _plan_contains_task_version,
     _plan_event,
     _projection_for_plan,
-    _require_legacy_task_plan_event_identity,
     _require_subagent_result_evidence,
     _require_projection_transition_identity,
     _result_event,
@@ -245,7 +251,6 @@ class DurableTaskPlanStore:
     ) -> str:
         if not isinstance(candidate, PlanCandidate):
             raise TypeError("candidate must be PlanCandidate")
-        _require_legacy_task_plan_event_identity(candidate)
         if event_type not in {"PLAN_CANDIDATE_BUILT", "PLAN_CANDIDATE_REJECTED"}:
             raise HarnessValidationError(
                 "candidate event type is invalid",
@@ -280,7 +285,6 @@ class DurableTaskPlanStore:
     ) -> str:
         if not isinstance(candidate, PlanCandidate):
             raise TypeError("candidate must be PlanCandidate")
-        _require_legacy_task_plan_event_identity(candidate)
         candidate_ref = self._put_document(
             "candidate",
             candidate.run_id,
@@ -338,7 +342,6 @@ class DurableTaskPlanStore:
     def accept_plan(self, plan: ValidatedTaskPlan) -> str:
         if not isinstance(plan, ValidatedTaskPlan):
             raise TypeError("plan must be ValidatedTaskPlan")
-        _require_legacy_task_plan_event_identity(plan)
         events = self.read_events(plan.run_id, plan.stage_id)
         accepted = [item for item in events if item.event_type == "PLAN_ACCEPTED"]
         same_version = [item for item in accepted if item.plan_version == plan.version]
@@ -933,8 +936,7 @@ class DurableTaskPlanStore:
         if (
             plan.plan_id != event.plan_id
             or plan.version != event.plan_version
-            or plan.workflow_id != event.workflow_id
-            or plan.graph_checksum != event.graph_checksum
+            or not event.matches_contract_identity(plan)
         ):
             raise HarnessValidationError(
                 "accepted plan artifact conflicts with its event",
@@ -1260,10 +1262,13 @@ class DurableTaskPlanStore:
 
         for _ in range(_MAX_EVENT_APPEND_RETRIES):
             stored, high_watermark = self._read_snapshot(run_id)
+            restored = tuple(
+                (item, self._stored_to_domain(item)) for item in stored
+            )
             stage_history = [
-                (item, self._stored_to_domain(item))
-                for item in stored
-                if item.business_context.step_id == stage_id
+                (item, event)
+                for item, event in restored
+                if event.stage_id == stage_id
             ]
             missing: list[tuple[TaskPlanEvent, Mapping[str, _DocumentReference]]] = []
             for event, event_refs in zip(events, refs, strict=True):
@@ -1343,35 +1348,41 @@ class DurableTaskPlanStore:
         payload = event.to_dict()
         payload.pop("event_type")
         payload["details"] = payload.pop("payload")
+        extensions: dict[str, Any] = {
+            TASK_PLAN_STORAGE_EXTENSION: {
+                "schema": TASK_PLAN_STORAGE_SCHEMA,
+                "refs": {
+                    key: value.to_dict()
+                    for key, value in sorted(refs.items())
+                },
+            }
+        }
+        business_context = BusinessContext(
+            run_id=event.run_id,
+            workflow_id=event.workflow_id,
+            step_id=event.stage_id if not event.is_graph_only else None,
+            task_id=event.task_id,
+        )
+        if event.is_graph_only:
+            extensions[GRAPH_EVENT_CONTEXT_EXTENSION] = (
+                _graph_event_context_for_task_plan_event(event).to_dict()
+            )
         return EventPublishRequest(
             event_id=_event_id(event, self._tenant_id),
             event_type=event.event_type,
-            data_schema=TASK_PLAN_EVENT_SCHEMA,
+            data_schema=event.schema_version,
             source=TASK_PLAN_EVENT_SOURCE,
             occurred_at=occurred_at,
             stream_id=f"run:{event.run_id}",
             subject=event.task_id or event.stage_id,
             correlation_id=event.run_id,
             causation_id=event.causal_event_ref,
-            business_context=BusinessContext(
-                run_id=event.run_id,
-                workflow_id=event.workflow_id,
-                step_id=event.stage_id,
-                task_id=event.task_id,
-            ),
+            business_context=business_context,
             producer=self._producer,
             tenant_id=self._tenant_id,
             security_classification=self._security_classification,
             payload=payload,
-            extensions={
-                TASK_PLAN_STORAGE_EXTENSION: {
-                    "schema": TASK_PLAN_STORAGE_SCHEMA,
-                    "refs": {
-                        key: value.to_dict()
-                        for key, value in sorted(refs.items())
-                    },
-                }
-            },
+            extensions=extensions,
         )
 
     def _read_snapshot(self, run_id: str) -> tuple[tuple[StoredEvent, ...], int]:
@@ -1393,7 +1404,7 @@ class DurableTaskPlanStore:
                     limit=_EVENT_PAGE_SIZE,
                     tenant_id=self._tenant_id,
                     event_types=frozenset(TASK_PLAN_EVENT_TYPES),
-                    data_schemas=frozenset({TASK_PLAN_EVENT_SCHEMA}),
+                    data_schemas=frozenset(TASK_PLAN_EVENT_SCHEMAS),
                 )
             )
             events.extend(page.events)
@@ -1406,7 +1417,7 @@ class DurableTaskPlanStore:
         stored.verify_integrity()
         if (
             stored.event_type not in TASK_PLAN_EVENT_TYPES
-            or stored.data_schema != TASK_PLAN_EVENT_SCHEMA
+            or stored.data_schema not in TASK_PLAN_EVENT_SCHEMAS
             or stored.source != TASK_PLAN_EVENT_SOURCE
             or stored.stream_id
             != f"run:{stored.business_context.run_id or ''}"
@@ -1426,15 +1437,40 @@ class DurableTaskPlanStore:
         restored_payload["event_type"] = stored.event_type
         restored_payload["payload"] = restored_payload.pop("details", None)
         event = TaskPlanEvent.from_dict(restored_payload)
+        if stored.data_schema != event.schema_version:
+            raise HarnessValidationError(
+                "canonical TaskPlan event schema conflicts with its payload",
+                code="task_plan_event_identity_mismatch",
+            )
         if (
             stored.business_context.run_id != event.run_id
-            or stored.business_context.workflow_id != event.workflow_id
-            or stored.business_context.step_id != event.stage_id
             or stored.business_context.task_id != event.task_id
             or stored.event_type != event.event_type
         ):
             raise HarnessValidationError(
                 "canonical TaskPlan event context conflicts with its payload",
+                code="task_plan_event_identity_mismatch",
+            )
+        if event.is_graph_only:
+            try:
+                context = graph_event_context(stored)
+            except EventContractError as exc:
+                raise HarnessValidationError(
+                    "canonical Graph TaskPlan event context is invalid",
+                    code="task_plan_event_identity_mismatch",
+                ) from exc
+            if context != _graph_event_context_for_task_plan_event(event):
+                raise HarnessValidationError(
+                    "canonical Graph TaskPlan event context conflicts with its payload",
+                    code="task_plan_event_identity_mismatch",
+                )
+        elif (
+            stored.business_context.workflow_id != event.workflow_id
+            or stored.business_context.step_id != event.stage_id
+            or GRAPH_EVENT_CONTEXT_EXTENSION in stored.extensions
+        ):
+            raise HarnessValidationError(
+                "canonical legacy TaskPlan event context conflicts with its payload",
                 code="task_plan_event_identity_mismatch",
             )
         return event
@@ -1523,6 +1559,30 @@ def _event_id(event: TaskPlanEvent, tenant_id: str | None) -> str:
         )
     ).hexdigest()
     return f"task-plan-event:{digest}"
+
+
+def _graph_event_context_for_task_plan_event(
+    event: TaskPlanEvent,
+) -> GraphEventContext:
+    if not event.is_graph_only:
+        raise HarnessValidationError(
+            "legacy TaskPlan event has no Graph event context",
+            code="graph_task_plan_identity_unavailable",
+        )
+    assert event.graph_id is not None
+    assert event.graph_version is not None
+    assert event.graph_schema_version is not None
+    assert event.compiler_version is not None
+    return GraphEventContext(
+        identity=GraphRunIdentity(
+            run_id=event.run_id,
+            graph_id=event.graph_id,
+            graph_version=event.graph_version,
+            graph_schema_version=event.graph_schema_version,
+            compiler_version=event.compiler_version,
+            normalized_graph_checksum=event.graph_checksum,
+        )
+    )
 
 
 __all__ = [

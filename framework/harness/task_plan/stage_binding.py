@@ -23,6 +23,8 @@ from framework.harness.task_plan.schema import (
     DEFAULT_TASK_PLAN_SCHEMA_REGISTRY,
     GRAPH_ONLY_TASK_PLAN_STAGE_BINDING_SCHEMA,
     GRAPH_ONLY_VALIDATED_TASK_PLAN_SCHEMA,
+    TASK_PLAN_EVENT_SCHEMA_V1,
+    TASK_PLAN_EVENT_SCHEMA_V2,
     TASK_PLAN_STAGE_BINDING_SCHEMA,
     VALIDATED_TASK_PLAN_SCHEMA,
     TaskPlanContractKind,
@@ -219,6 +221,22 @@ class TaskPlanStageBinding:
                 "dynamic TaskPlan support declarations must pin exact versions",
                 code="dynamic_task_plan_support_inexact",
                 details={"stage_id": stage_id, "inexact": sorted(inexact)},
+            )
+        expected_event_schema = (
+            TASK_PLAN_EVENT_SCHEMA_V2
+            if self.graph.schema_version
+            == GRAPH_ONLY_NORMALIZED_HARNESS_GRAPH_SCHEMA
+            else TASK_PLAN_EVENT_SCHEMA_V1
+        )
+        if normalized_support["event_schema"] != expected_event_schema:
+            raise HarnessValidationError(
+                "dynamic TaskPlan event schema does not match its Graph identity",
+                code="dynamic_task_plan_event_schema_identity_mismatch",
+                details={
+                    "stage_id": stage_id,
+                    "schema": normalized_support["event_schema"],
+                    "expected_schema": expected_event_schema,
+                },
             )
         if self.graph.checksum is None:
             raise HarnessValidationError(

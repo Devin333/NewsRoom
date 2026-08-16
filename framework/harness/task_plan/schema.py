@@ -10,6 +10,12 @@ from framework.harness.task_plan.canonical import required_text
 
 
 TASK_PLAN_RUNTIME_VERSION = "newsroom.harness-task-plan-runtime/v1"
+TASK_PLAN_EVENT_SCHEMA_V1 = "newsroom.harness-task-plan-event/v1"
+TASK_PLAN_EVENT_SCHEMA_V2 = "newsroom.harness-task-plan-event/v2"
+TASK_PLAN_EVENT_SCHEMAS = (
+    TASK_PLAN_EVENT_SCHEMA_V1,
+    TASK_PLAN_EVENT_SCHEMA_V2,
+)
 TASK_DEFINITION_SCHEMA = "newsroom.harness-task-definition/v1"
 RESOLVED_TASK_DEFINITION_SCHEMA = "newsroom.harness-resolved-task-definition/v1"
 PLAN_CANDIDATE_SCHEMA = "newsroom.harness-task-plan-candidate/v1"
@@ -219,6 +225,9 @@ __all__ = [
     "TASK_DEFINITION_SCHEMA",
     "TASK_INSTANCE_SCHEMA",
     "TASK_PLAN_PATCH_SCHEMA",
+    "TASK_PLAN_EVENT_SCHEMA_V1",
+    "TASK_PLAN_EVENT_SCHEMA_V2",
+    "TASK_PLAN_EVENT_SCHEMAS",
     "TASK_PLAN_POLICY_SCHEMA",
     "TASK_PLAN_PROJECTION_SCHEMA",
     "TASK_PLAN_RUNTIME_VERSION",

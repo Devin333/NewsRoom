@@ -52,7 +52,9 @@ _BUSINESS_CONTEXT_FIELDS = (
 # TaskPlan uses the same durable event stream as the rest of Harness.  The
 # payload schema is intentionally reference-based; worker prompts and private
 # result bodies stay in their dedicated stores.
-TASK_PLAN_EVENT_SCHEMA = "newsroom.harness-task-plan-event/v1"
+TASK_PLAN_EVENT_SCHEMA_V1 = "newsroom.harness-task-plan-event/v1"
+TASK_PLAN_EVENT_SCHEMA_V2 = "newsroom.harness-task-plan-event/v2"
+TASK_PLAN_EVENT_SCHEMA = TASK_PLAN_EVENT_SCHEMA_V1
 TASK_PLAN_EVENT_TYPES = (
     "PLAN_CANDIDATE_BUILT",
     "PLAN_CANDIDATE_REJECTED",
@@ -784,15 +786,22 @@ def default_event_schema_catalog(
             )
         )
     for event_type in TASK_PLAN_EVENT_TYPES:
-        catalog.register(
-            EventSchemaRegistration(
-                event_type=event_type,
-                data_schema=TASK_PLAN_EVENT_SCHEMA,
-                json_schema=_task_plan_event_payload_schema(event_type),
-                sensitivity_policy=SensitivityPolicy(),
-                current=True,
+        for data_schema in (
+            TASK_PLAN_EVENT_SCHEMA_V1,
+            TASK_PLAN_EVENT_SCHEMA_V2,
+        ):
+            catalog.register(
+                EventSchemaRegistration(
+                    event_type=event_type,
+                    data_schema=data_schema,
+                    json_schema=_task_plan_event_payload_schema(
+                        event_type,
+                        data_schema=data_schema,
+                    ),
+                    sensitivity_policy=SensitivityPolicy(),
+                    current=data_schema == TASK_PLAN_EVENT_SCHEMA_V1,
+                )
             )
-        )
     return catalog
 
 
@@ -1055,7 +1064,11 @@ def _harness_graph_transition_payload_schema(data_schema: str) -> dict[str, Any]
     }
 
 
-def _task_plan_event_payload_schema(event_type: str) -> dict[str, Any]:
+def _task_plan_event_payload_schema(
+    event_type: str,
+    *,
+    data_schema: str,
+) -> dict[str, Any]:
     nullable_text = {"anyOf": [_TEXT, {"type": "null"}]}
     nullable_checksum = {"anyOf": [_CHECKSUM_TEXT, {"type": "null"}]}
     nullable_positive_integer = {"anyOf": [_POSITIVE_INTEGER, {"type": "null"}]}
@@ -1104,12 +1117,43 @@ def _task_plan_event_payload_schema(event_type: str) -> dict[str, Any]:
             },
         },
     }
+    graph_identity_required = [
+        "graph_id",
+        "graph_version",
+        "graph_ref",
+        "graph_schema_version",
+        "compiler_version",
+        "condition_policy_version",
+        "stage_binding_checksum",
+        "stage_identity_schema",
+        "stage_identity_checksum",
+    ]
+    identity_required = (
+        graph_identity_required
+        if data_schema == TASK_PLAN_EVENT_SCHEMA_V2
+        else ["workflow_id"]
+    )
+    identity_properties = (
+        {
+            "graph_id": _TEXT,
+            "graph_version": _TEXT,
+            "graph_ref": _TEXT,
+            "graph_schema_version": _TEXT,
+            "compiler_version": _TEXT,
+            "condition_policy_version": _TEXT,
+            "stage_binding_checksum": _CHECKSUM_TEXT,
+            "stage_identity_schema": _TEXT,
+            "stage_identity_checksum": _CHECKSUM_TEXT,
+        }
+        if data_schema == TASK_PLAN_EVENT_SCHEMA_V2
+        else {"workflow_id": _TEXT}
+    )
     return {
         "type": "object",
         "additionalProperties": False,
         "required": [
             "run_id",
-            "workflow_id",
+            *identity_required,
             "stage_id",
             "graph_checksum",
             "plan_id",
@@ -1129,7 +1173,7 @@ def _task_plan_event_payload_schema(event_type: str) -> dict[str, Any]:
         ],
         "properties": {
             "run_id": _TEXT,
-            "workflow_id": _TEXT,
+            **identity_properties,
             "stage_id": _TEXT,
             "graph_checksum": _CHECKSUM_TEXT,
             "plan_id": nullable_text,
@@ -1137,7 +1181,7 @@ def _task_plan_event_payload_schema(event_type: str) -> dict[str, Any]:
             "task_id": nullable_text,
             "task_instance_id": nullable_text,
             "attempt": nullable_positive_integer,
-            "schema_version": {"const": TASK_PLAN_EVENT_SCHEMA},
+            "schema_version": {"const": data_schema},
             "actor_type": _TEXT,
             "causal_event_ref": nullable_text,
             "input_checksum": nullable_checksum,

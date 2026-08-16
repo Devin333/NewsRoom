@@ -4,6 +4,11 @@ from dataclasses import dataclass, field, replace
 from threading import RLock
 from typing import Any, Mapping, Protocol, runtime_checkable
 
+from framework.harness.graph.versioning import (
+    GRAPH_ONLY_NORMALIZED_HARNESS_GRAPH_SCHEMA,
+    HARNESS_CONDITION_POLICY_VERSION,
+    HARNESS_GRAPH_ONLY_COMPILER_VERSION,
+)
 from framework.harness.control_plane.errors import HarnessValidationError
 from framework.harness.task_plan.canonical import (
     canonical_payload_checksum,
@@ -29,9 +34,17 @@ from framework.harness.task_plan.models import (
     TaskResultReference,
     ValidatedTaskPlan,
 )
+from framework.harness.task_plan.schema import (
+    GRAPH_ONLY_TASK_PLAN_STAGE_IDENTITY_SCHEMA,
+    TASK_PLAN_EVENT_SCHEMA_V1,
+    TASK_PLAN_EVENT_SCHEMA_V2,
+    TASK_PLAN_EVENT_SCHEMAS,
+)
 
 
-TASK_PLAN_EVENT_SCHEMA = "newsroom.harness-task-plan-event/v1"
+# Compatibility alias: the legacy runtime remains the default writer until
+# production Graph authority is explicitly enabled.
+TASK_PLAN_EVENT_SCHEMA = TASK_PLAN_EVENT_SCHEMA_V1
 TASK_PLAN_RESULT_SCHEMA_V1 = "newsroom.harness-task-plan-result/v1"
 TASK_PLAN_RESULT_SCHEMA_V2 = "newsroom.harness-task-plan-result/v2"
 TASK_PLAN_EVENT_TYPES = (
@@ -303,13 +316,136 @@ class TaskResultRecord:
         return result
 
 
+_GRAPH_ONLY_TASK_PLAN_EVENT_IDENTITY_FIELDS = frozenset(
+    {
+        "graph_id",
+        "graph_version",
+        "graph_ref",
+        "graph_schema_version",
+        "compiler_version",
+        "condition_policy_version",
+        "stage_binding_checksum",
+        "stage_identity_schema",
+        "stage_identity_checksum",
+    }
+)
+
+
+def _normalize_task_plan_event_identity(event: Any) -> None:
+    if event.schema_version == TASK_PLAN_EVENT_SCHEMA_V1:
+        object.__setattr__(
+            event,
+            "workflow_id",
+            identifier(event.workflow_id, "workflow_id"),
+        )
+        unexpected = sorted(
+            name
+            for name in _GRAPH_ONLY_TASK_PLAN_EVENT_IDENTITY_FIELDS
+            if getattr(event, name) is not None
+        )
+        if unexpected:
+            raise HarnessValidationError(
+                "legacy TaskPlan event cannot carry Graph-only identity",
+                code="task_plan_event_identity_schema_mismatch",
+                details={"unexpected": unexpected},
+            )
+        return
+
+    if event.workflow_id is not None:
+        raise HarnessValidationError(
+            "Graph-only TaskPlan event cannot carry legacy orchestration identity",
+            code="legacy_task_plan_identity_forbidden",
+        )
+    normalized = {
+        "graph_id": identifier(event.graph_id, "graph_id"),
+        "graph_version": identifier(event.graph_version, "graph_version"),
+        "graph_ref": exact_reference(event.graph_ref, "graph_ref"),
+        "graph_schema_version": required_text(
+            event.graph_schema_version,
+            "graph_schema_version",
+        ),
+        "compiler_version": required_text(
+            event.compiler_version,
+            "compiler_version",
+        ),
+        "condition_policy_version": required_text(
+            event.condition_policy_version,
+            "condition_policy_version",
+        ),
+        "stage_binding_checksum": checksum(
+            event.stage_binding_checksum,
+            "stage_binding_checksum",
+        ),
+        "stage_identity_schema": required_text(
+            event.stage_identity_schema,
+            "stage_identity_schema",
+        ),
+        "stage_identity_checksum": checksum(
+            event.stage_identity_checksum,
+            "stage_identity_checksum",
+        ),
+    }
+    expected = {
+        "graph_schema_version": GRAPH_ONLY_NORMALIZED_HARNESS_GRAPH_SCHEMA,
+        "compiler_version": HARNESS_GRAPH_ONLY_COMPILER_VERSION,
+        "condition_policy_version": HARNESS_CONDITION_POLICY_VERSION,
+        "stage_identity_schema": GRAPH_ONLY_TASK_PLAN_STAGE_IDENTITY_SCHEMA,
+        "graph_ref": f"{normalized['graph_id']}@{normalized['graph_version']}",
+    }
+    mismatched = {
+        name: {"expected": expected_value, "actual": normalized[name]}
+        for name, expected_value in expected.items()
+        if normalized[name] != expected_value
+    }
+    if mismatched:
+        raise HarnessValidationError(
+            "Graph-only TaskPlan event identity versions do not match",
+            code="task_plan_graph_identity_mismatch",
+            details={"mismatched": mismatched},
+        )
+    for name, value in normalized.items():
+        object.__setattr__(event, name, value)
+    identity_projection = {
+        "schema_version": event.stage_identity_schema,
+        "run_id": event.run_id,
+        "graph_schema_version": event.graph_schema_version,
+        "compiler_version": event.compiler_version,
+        "condition_policy_version": event.condition_policy_version,
+        "graph_id": event.graph_id,
+        "graph_version": event.graph_version,
+        "graph_checksum": event.graph_checksum,
+        "stage_id": event.stage_id,
+        "stage_binding_checksum": event.stage_binding_checksum,
+        "graph_ref": event.graph_ref,
+    }
+    expected_identity_checksum = canonical_payload_checksum(identity_projection)
+    if event.stage_identity_checksum != expected_identity_checksum:
+        raise HarnessValidationError(
+            "Graph-only TaskPlan event stage identity checksum does not match",
+            code="task_plan_stage_identity_checksum_invalid",
+            details={
+                "expected": expected_identity_checksum,
+                "actual": event.stage_identity_checksum,
+            },
+        )
+
+
 @dataclass(frozen=True, slots=True)
 class TaskPlanEvent:
     event_type: str
     run_id: str
-    workflow_id: str
+    workflow_id: str | None
     stage_id: str
     graph_checksum: str
+    graph_id: str | None = None
+    graph_version: str | None = None
+    graph_ref: str | None = None
+    graph_schema_version: str | None = None
+    compiler_version: str | None = None
+    condition_policy_version: str | None = None
+    stage_binding_checksum: str | None = None
+    stage_identity_schema: str | None = None
+    stage_identity_checksum: str | None = None
     plan_id: str | None = None
     plan_version: int | None = None
     task_id: str | None = None
@@ -328,15 +464,16 @@ class TaskPlanEvent:
     def __post_init__(self) -> None:
         if self.event_type not in TASK_PLAN_EVENT_TYPES:
             raise HarnessValidationError("unknown TaskPlan event type", code="task_plan_unknown_event")
-        if self.schema_version != TASK_PLAN_EVENT_SCHEMA:
+        if self.schema_version not in TASK_PLAN_EVENT_SCHEMAS:
             raise HarnessValidationError(
                 "unsupported TaskPlan event schema",
                 code="unsupported_task_plan_event_schema",
                 details={"schema_version": str(self.schema_version)},
             )
-        for name in ("run_id", "workflow_id", "stage_id"):
+        for name in ("run_id", "stage_id"):
             object.__setattr__(self, name, identifier(getattr(self, name), name))
         object.__setattr__(self, "graph_checksum", checksum(self.graph_checksum, "graph_checksum"))
+        _normalize_task_plan_event_identity(self)
         object.__setattr__(self, "plan_id", identifier(self.plan_id, "plan_id") if self.plan_id else None)
         if self.plan_version is not None:
             object.__setattr__(self, "plan_version", positive_int(self.plan_version, "plan_version"))
@@ -363,36 +500,129 @@ class TaskPlanEvent:
         payload: dict[str, Any] = {
             "event_type": self.event_type,
             "run_id": self.run_id,
-            "workflow_id": self.workflow_id,
-            "stage_id": self.stage_id,
-            "graph_checksum": self.graph_checksum,
-            "plan_id": self.plan_id,
-            "plan_version": self.plan_version,
-            "task_id": self.task_id,
-            "task_instance_id": self.task_instance_id,
-            "attempt": self.attempt,
-            "schema_version": self.schema_version,
-            "actor_type": self.actor_type,
-            "causal_event_ref": self.causal_event_ref,
-            "input_checksum": self.input_checksum,
-            "output_refs": list(self.output_refs),
-            "reason_code": self.reason_code,
-            "payload": thaw_mapping(self.payload),
-            "sequence": self.sequence,
         }
+        if self.is_graph_only:
+            payload.update(
+                {
+                    "graph_id": self.graph_id,
+                    "graph_version": self.graph_version,
+                    "graph_ref": self.graph_ref,
+                    "graph_schema_version": self.graph_schema_version,
+                    "compiler_version": self.compiler_version,
+                    "condition_policy_version": self.condition_policy_version,
+                }
+            )
+        else:
+            payload["workflow_id"] = self.workflow_id
+        payload.update(
+            {
+                "stage_id": self.stage_id,
+                "graph_checksum": self.graph_checksum,
+                **(
+                    {
+                        "stage_binding_checksum": self.stage_binding_checksum,
+                        "stage_identity_schema": self.stage_identity_schema,
+                        "stage_identity_checksum": self.stage_identity_checksum,
+                    }
+                    if self.is_graph_only
+                    else {}
+                ),
+                "plan_id": self.plan_id,
+                "plan_version": self.plan_version,
+                "task_id": self.task_id,
+                "task_instance_id": self.task_instance_id,
+                "attempt": self.attempt,
+                "schema_version": self.schema_version,
+                "actor_type": self.actor_type,
+                "causal_event_ref": self.causal_event_ref,
+                "input_checksum": self.input_checksum,
+                "output_refs": list(self.output_refs),
+                "reason_code": self.reason_code,
+                "payload": thaw_mapping(self.payload),
+                "sequence": self.sequence,
+            }
+        )
         if include_checksum:
             payload["event_checksum"] = self.event_checksum
         return payload
 
     @classmethod
     def from_dict(cls, value: Mapping[str, Any]) -> "TaskPlanEvent":
-        required = frozenset(cls.__dataclass_fields__) - {"event_checksum"}
-        payload = exact_keys(value, required=required | {"event_checksum"}, model=cls.__name__)
+        schema_version = value.get("schema_version")
+        if schema_version not in TASK_PLAN_EVENT_SCHEMAS:
+            raise HarnessValidationError(
+                "unsupported TaskPlan event schema",
+                code="unsupported_task_plan_event_schema",
+                details={"schema_version": str(schema_version)},
+            )
+        common = frozenset(
+            {
+                "event_type",
+                "run_id",
+                "stage_id",
+                "graph_checksum",
+                "plan_id",
+                "plan_version",
+                "task_id",
+                "task_instance_id",
+                "attempt",
+                "schema_version",
+                "actor_type",
+                "causal_event_ref",
+                "input_checksum",
+                "output_refs",
+                "reason_code",
+                "payload",
+                "sequence",
+                "event_checksum",
+            }
+        )
+        identity = (
+            _GRAPH_ONLY_TASK_PLAN_EVENT_IDENTITY_FIELDS
+            if schema_version == TASK_PLAN_EVENT_SCHEMA_V2
+            else frozenset({"workflow_id"})
+        )
+        payload = exact_keys(
+            value,
+            required=common | identity,
+            model=cls.__name__,
+        )
         supplied = checksum(payload.pop("event_checksum"), "event_checksum")
+        if schema_version == TASK_PLAN_EVENT_SCHEMA_V2:
+            payload["workflow_id"] = None
         event = cls(**payload)
         if supplied != event.event_checksum:
             raise HarnessValidationError("TaskPlanEvent checksum does not match canonical content", code="task_plan_checksum_mismatch")
         return event
+
+    @property
+    def is_graph_only(self) -> bool:
+        return self.schema_version == TASK_PLAN_EVENT_SCHEMA_V2
+
+    def matches_contract_identity(
+        self,
+        value: PlanCandidate | ValidatedTaskPlan,
+    ) -> bool:
+        if not isinstance(value, (PlanCandidate, ValidatedTaskPlan)):
+            raise TypeError("value must be PlanCandidate or ValidatedTaskPlan")
+        if self.is_graph_only != value.is_graph_only:
+            return False
+        if (
+            self.run_id,
+            self.stage_id,
+            self.graph_checksum,
+        ) != (
+            value.run_id,
+            value.stage_id,
+            value.graph_checksum,
+        ):
+            return False
+        if not self.is_graph_only:
+            return self.workflow_id == value.workflow_id
+        return all(
+            getattr(self, name) == getattr(value, name)
+            for name in _GRAPH_ONLY_TASK_PLAN_EVENT_IDENTITY_FIELDS
+        )
 
 
 @runtime_checkable
@@ -433,7 +663,6 @@ class InMemoryTaskPlanStore:
     def append_candidate(self, candidate: PlanCandidate, *, event_type: str = "PLAN_CANDIDATE_BUILT") -> str:
         if not isinstance(candidate, PlanCandidate):
             raise TypeError("candidate must be PlanCandidate")
-        _require_legacy_task_plan_event_identity(candidate)
         with self._lock:
             existing = self._candidates.get(candidate.candidate_checksum)
             if existing is not None and existing != candidate:
@@ -447,7 +676,6 @@ class InMemoryTaskPlanStore:
     def append_rejected_candidate(self, candidate: PlanCandidate, *, reason_code: str) -> str:
         if not isinstance(candidate, PlanCandidate):
             raise TypeError("candidate must be PlanCandidate")
-        _require_legacy_task_plan_event_identity(candidate)
         with self._lock:
             existing = self._candidates.get(candidate.candidate_checksum)
             if existing is not None and existing != candidate:
@@ -482,7 +710,6 @@ class InMemoryTaskPlanStore:
     def accept_plan(self, plan: ValidatedTaskPlan) -> str:
         if not isinstance(plan, ValidatedTaskPlan):
             raise TypeError("plan must be ValidatedTaskPlan")
-        _require_legacy_task_plan_event_identity(plan)
         key = (plan.run_id, plan.stage_id, plan.version)
         with self._lock:
             current = self._current_plan(plan.run_id, plan.stage_id)
@@ -896,27 +1123,50 @@ def _plan_contains_task_version(plans: Mapping[tuple[str, str, int], ValidatedTa
 
 
 def _candidate_event(candidate: PlanCandidate, event_type: str, sequence: int, *, reason_code: str | None = None) -> TaskPlanEvent:
-    _require_legacy_task_plan_event_identity(candidate)
-    return TaskPlanEvent(event_type, run_id=candidate.run_id, workflow_id=candidate.workflow_id, stage_id=candidate.stage_id, graph_checksum=candidate.graph_checksum, input_checksum=candidate.candidate_checksum, reason_code=reason_code, payload={"candidate_ref": candidate.candidate_checksum}, sequence=sequence)
+    return TaskPlanEvent(
+        event_type,
+        **_task_plan_event_identity_kwargs(candidate),
+        input_checksum=candidate.candidate_checksum,
+        reason_code=reason_code,
+        payload={"candidate_ref": candidate.candidate_checksum},
+        sequence=sequence,
+    )
 
 
 def _plan_event(plan: ValidatedTaskPlan, event_type: str, sequence: int) -> TaskPlanEvent:
-    _require_legacy_task_plan_event_identity(plan)
-    return TaskPlanEvent(event_type, run_id=plan.run_id, workflow_id=plan.workflow_id, stage_id=plan.stage_id, graph_checksum=plan.graph_checksum, plan_id=plan.plan_id, plan_version=plan.version, input_checksum=plan.plan_checksum, payload={"plan_ref": plan.plan_checksum, "policy_ref": plan.policy_ref}, sequence=sequence)
+    return TaskPlanEvent(
+        event_type,
+        **_task_plan_event_identity_kwargs(plan),
+        plan_id=plan.plan_id,
+        plan_version=plan.version,
+        input_checksum=plan.plan_checksum,
+        payload={"plan_ref": plan.plan_checksum, "policy_ref": plan.policy_ref},
+        sequence=sequence,
+    )
 
 
-def _require_legacy_task_plan_event_identity(
+def _task_plan_event_identity_kwargs(
     value: PlanCandidate | ValidatedTaskPlan,
-) -> None:
+) -> dict[str, Any]:
+    identity: dict[str, Any] = {
+        "run_id": value.run_id,
+        "workflow_id": value.workflow_id,
+        "stage_id": value.stage_id,
+        "graph_checksum": value.graph_checksum,
+        "schema_version": (
+            TASK_PLAN_EVENT_SCHEMA_V2
+            if value.is_graph_only
+            else TASK_PLAN_EVENT_SCHEMA_V1
+        ),
+    }
     if value.is_graph_only:
-        raise HarnessValidationError(
-            "Graph-only TaskPlan contracts cannot be written to the legacy event schema",
-            code="graph_task_plan_event_schema_unavailable",
-            details={
-                "contract_schema": value.schema_version,
-                "event_schema": TASK_PLAN_EVENT_SCHEMA,
-            },
+        identity.update(
+            {
+                name: getattr(value, name)
+                for name in _GRAPH_ONLY_TASK_PLAN_EVENT_IDENTITY_FIELDS
+            }
         )
+    return identity
 
 
 def _result_event(result: TaskResultRecord, event_type: str, sequence: int, *, graph_checksum: str) -> TaskPlanEvent:
@@ -1095,4 +1345,14 @@ def _require_projection_transition_identity(
         )
 
 
-__all__ = ["InMemoryTaskPlanStore", "TASK_PLAN_EVENT_SCHEMA", "TASK_PLAN_EVENT_TYPES", "TaskPlanEvent", "TaskPlanStorePort", "TaskResultRecord"]
+__all__ = [
+    "InMemoryTaskPlanStore",
+    "TASK_PLAN_EVENT_SCHEMA",
+    "TASK_PLAN_EVENT_SCHEMA_V1",
+    "TASK_PLAN_EVENT_SCHEMA_V2",
+    "TASK_PLAN_EVENT_SCHEMAS",
+    "TASK_PLAN_EVENT_TYPES",
+    "TaskPlanEvent",
+    "TaskPlanStorePort",
+    "TaskResultRecord",
+]

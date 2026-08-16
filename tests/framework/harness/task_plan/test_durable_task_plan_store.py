@@ -7,9 +7,17 @@ from threading import Lock
 
 import pytest
 
+from business.research.graphs import (
+    RESEARCH_DYNAMIC_STAGE_ID,
+    build_dynamic_paper_analysis_graph_definition,
+)
 from framework.agent.artifacts.models import ArtifactRef, ArtifactWriteRequest
 from framework.events.canonical import EventCandidate, StoredEvent
 from framework.events.errors import EventStreamVersionConflictError
+from framework.events.projection import (
+    GRAPH_EVENT_CONTEXT_EXTENSION,
+    graph_event_context,
+)
 from framework.events.runtime.models import (
     AppendResult,
     EventPage,
@@ -17,8 +25,11 @@ from framework.events.runtime.models import (
 )
 from framework.events.runtime.publisher import EventPublishRequest, EventRuntime
 from framework.events.schema import default_event_schema_catalog
+from framework.harness.control_plane.errors import HarnessValidationError
 from framework.harness.task_plan import (
     DurableTaskPlanStore,
+    TASK_PLAN_EVENT_SCHEMA_V1,
+    TASK_PLAN_EVENT_SCHEMA_V2,
     PlanBuildBudget,
     PlanCandidate,
     PlanPatch,
@@ -35,6 +46,8 @@ from framework.harness.task_plan import (
     TaskPlanScheduler,
     TaskPlanValidationContext,
     TaskPlanValidator,
+    TaskPlanStageBinding,
+    TaskPlanStageIdentity,
     TaskResultRecord,
     TaskRetryPolicy,
     TaskSpec,
@@ -44,6 +57,7 @@ from framework.harness.task_plan import (
 from framework.harness.task_plan.patches import TaskPlanPatchValidator
 from framework.harness.task_plan.policy import TaskPlanPolicy
 from framework.harness.graph.bindings import HarnessWorkerBinding
+from framework.harness.graph import HarnessGraphCompiler
 from framework.harness.graph.model import HarnessContractKind, HarnessContractReference
 from framework.harness.graph.activity import HarnessWorkerType
 from tests.fixtures.task_plan import build_task_plan_stage_binding
@@ -358,6 +372,41 @@ def _accepted_plan(tasks: tuple[TaskSpec, ...], *, two_tasks: bool = False):
     return candidate, plan, policy, registry
 
 
+def _graph_only_candidate_and_plan():
+    legacy_candidate, legacy_plan, _, _ = _accepted_plan((_task("structure"),))
+    graph = HarnessGraphCompiler().compile(
+        build_dynamic_paper_analysis_graph_definition()
+    ).graph
+    stage_identity = TaskPlanStageIdentity(
+        run_id=legacy_candidate.run_id,
+        stage_binding=TaskPlanStageBinding(graph, RESEARCH_DYNAMIC_STAGE_ID),
+    )
+    candidate = PlanCandidate.for_stage(
+        stage_identity=stage_identity,
+        candidate_id="graph-candidate-1",
+        input_context_refs=legacy_candidate.input_context_refs,
+        tasks=legacy_candidate.tasks,
+        required_output_roles=legacy_candidate.required_output_roles,
+        generated_by=legacy_candidate.generated_by,
+        requested_plan_budget=legacy_candidate.requested_plan_budget,
+    )
+    assert legacy_plan.policy_checksum is not None
+    plan = ValidatedTaskPlan.from_candidate(
+        candidate,
+        plan_id="graph-plan-1",
+        version=1,
+        parent_plan_id=None,
+        source_candidate_ref=candidate.candidate_checksum,
+        policy_ref=legacy_plan.policy_ref,
+        policy_checksum=legacy_plan.policy_checksum,
+        tasks=legacy_plan.tasks,
+        required_output_roles=legacy_plan.required_output_roles,
+        limits=legacy_plan.limits,
+        accepted_at=legacy_plan.accepted_at,
+    )
+    return candidate, plan
+
+
 def _store(event_store: _EventStore, artifacts: _ArtifactStore, *, runtime=None) -> DurableTaskPlanStore:
     return DurableTaskPlanStore(
         runtime or _runtime(event_store),
@@ -458,6 +507,75 @@ def test_durable_store_rebuilds_plan_projection_and_artifacts_after_reopen():
         "PLAN_CANDIDATE_BUILT",
         "PLAN_ACCEPTED",
     ]
+
+
+def test_legacy_task_plan_event_v1_wire_and_checksum_remain_stable():
+    event = TaskPlanEvent(
+        "PLAN_CANDIDATE_BUILT",
+        run_id="run-1",
+        workflow_id="workflow-1",
+        stage_id="stage-1",
+        graph_checksum="sha256:" + "1" * 64,
+        input_checksum="sha256:" + "2" * 64,
+        payload={"candidate_ref": "sha256:" + "2" * 64},
+        sequence=1,
+    )
+
+    assert event.schema_version == TASK_PLAN_EVENT_SCHEMA_V1
+    assert event.event_checksum == (
+        "sha256:28ff24bbc35fecf948d0fd18b3d0cdcb10210926746903a62afd1a0408cd7dcc"
+    )
+    assert "graph_id" not in event.to_dict()
+    assert TaskPlanEvent.from_dict(event.to_dict()) == event
+
+
+def test_graph_only_candidate_and_plan_round_trip_through_durable_event_store():
+    artifacts = _ArtifactStore()
+    event_store = _EventStore()
+    store = _store(event_store, artifacts)
+    candidate, plan = _graph_only_candidate_and_plan()
+
+    assert store.append_candidate(candidate) == candidate.candidate_checksum
+    assert store.accept_plan(plan) == plan.plan_checksum
+
+    reopened = _store(event_store, artifacts)
+    assert reopened.plan(plan.run_id, plan.stage_id) == plan
+    events = reopened.read_events(plan.run_id, plan.stage_id)
+    assert [event.event_type for event in events] == [
+        "PLAN_CANDIDATE_BUILT",
+        "PLAN_ACCEPTED",
+    ]
+    assert all(
+        event.schema_version == TASK_PLAN_EVENT_SCHEMA_V2 for event in events
+    )
+    assert events[0].matches_contract_identity(candidate)
+    assert events[1].matches_contract_identity(plan)
+    assert artifacts._content
+
+    assert len(event_store._events) == 2
+    for stored in event_store._events:
+        assert stored.data_schema == TASK_PLAN_EVENT_SCHEMA_V2
+        assert stored.business_context.workflow_id is None
+        assert stored.business_context.step_id is None
+        assert "workflow_id" not in (stored.payload or {})
+        context = graph_event_context(stored)
+        assert context.identity.run_id == plan.run_id
+        assert context.identity.graph_id == plan.graph_id
+        assert context.identity.normalized_graph_checksum == plan.graph_checksum
+
+    stored = event_store._events[0]
+    extensions = dict(stored.extensions)
+    graph_context = dict(extensions[GRAPH_EVENT_CONTEXT_EXTENSION])
+    graph_context["graph_id"] = "other.graph"
+    extensions[GRAPH_EVENT_CONTEXT_EXTENSION] = graph_context
+    event_store._events[0] = StoredEvent(
+        candidate=replace(stored.candidate, extensions=extensions),
+        observed_at=stored.observed_at,
+        stream_sequence=stored.stream_sequence,
+    )
+    with pytest.raises(HarnessValidationError) as mismatch:
+        reopened.read_events(plan.run_id, plan.stage_id)
+    assert mismatch.value.code == "task_plan_event_identity_mismatch"
 
 
 def test_rejected_candidate_batch_is_atomic_when_second_event_fails():
