@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+from copy import deepcopy
 from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import Any, Callable, TypeVar
@@ -31,15 +32,14 @@ from business.research.graphs.reader_repair import (
     build_reader_repair_subagent_specs,
 )
 from business.research.ports.llm_worker import ResearchCandidateWorkerPort
+from business.research.ports.reader_repair_candidate import (
+    READER_REPAIR_APPLICATION_OBSERVATION_TASK,
+    READER_REPAIR_PATCH_CANDIDATE_TASK,
+)
 from business.research.reader_repair.application import (
     reader_repair_component_checksum,
 )
 
-
-READER_REPAIR_PATCH_CANDIDATE_TASK = "reader_repair_patch_candidate"
-READER_REPAIR_APPLICATION_OBSERVATION_TASK = (
-    "reader_repair_application_observation"
-)
 
 _PATCH_TARGET_BY_OPERATION = MappingProxyType(
     {
@@ -171,13 +171,16 @@ class _ReaderRepairSubAgentWorkerBuilder:
                 step_id=task.step_id,
             )
 
-        proposal = _candidate_mapping(
-            self.candidate_worker.generate_candidate(
-                task=READER_REPAIR_PATCH_CANDIDATE_TASK,
-                payload={
-                    "reader_payload": payload.to_dict(),
-                    "reader_repair_context_pack": context_pack.to_dict(),
-                },
+        proposal = _normalize_patch_proposal(
+            _candidate_mapping(
+                self.candidate_worker.generate_candidate(
+                    task=READER_REPAIR_PATCH_CANDIDATE_TASK,
+                    payload={
+                        "reader_payload": payload.to_dict(),
+                        "reader_repair_context_pack": context_pack.to_dict(),
+                    },
+                ),
+                step_id=task.step_id,
             ),
             step_id=task.step_id,
         )
@@ -481,6 +484,115 @@ def _candidate_mapping(value: Any, *, step_id: str) -> dict[str, Any]:
             step_id=step_id,
         )
     return dict(value)
+
+
+def _normalize_patch_proposal(
+    proposal: dict[str, Any],
+    *,
+    step_id: str,
+) -> dict[str, Any]:
+    """Restore strict provider key/value projections to domain dictionaries."""
+
+    normalized = deepcopy(proposal)
+    operations = normalized.get("patch_operations")
+    if not isinstance(operations, list):
+        return normalized
+    for index, operation in enumerate(operations):
+        if not isinstance(operation, dict):
+            continue
+        replacement = operation.get("replacement")
+        if operation.get("op") == "replace_document" and isinstance(
+            replacement,
+            dict,
+        ):
+            for table in replacement.get("tables", []):
+                if not isinstance(table, dict):
+                    continue
+                rows = table.get("rows")
+                if not isinstance(rows, list):
+                    continue
+                table["rows"] = [
+                    _entries_to_mapping(
+                        row,
+                        step_id=step_id,
+                        field_name=(
+                            f"patch_operations[{index}].replacement.tables.rows"
+                        ),
+                    )
+                    for row in rows
+                ]
+        if operation.get("op") == "replace_analysis" and isinstance(
+            replacement,
+            dict,
+        ):
+            quality = replacement.get("quality")
+            if quality is not None:
+                replacement["quality"] = _entries_to_mapping(
+                    quality,
+                    step_id=step_id,
+                    field_name=(
+                        f"patch_operations[{index}].replacement.quality"
+                    ),
+                )
+        if operation.get("op") == "replace_evidence" and isinstance(
+            replacement,
+            dict,
+        ):
+            coverage = replacement.get("coverage")
+            if coverage is not None:
+                replacement["coverage"] = _entries_to_mapping(
+                    coverage,
+                    step_id=step_id,
+                    field_name=(
+                        f"patch_operations[{index}].replacement.coverage"
+                    ),
+                )
+    return normalized
+
+
+def _entries_to_mapping(
+    value: Any,
+    *,
+    step_id: str,
+    field_name: str,
+) -> dict[str, Any]:
+    if not isinstance(value, Mapping) or set(value) != {"entries"}:
+        raise _worker_error(
+            "Reader Repair key/value projection is invalid",
+            step_id=step_id,
+            field_name=field_name,
+        )
+    entries = value["entries"]
+    if not isinstance(entries, list):
+        raise _worker_error(
+            "Reader Repair key/value entries must be an array",
+            step_id=step_id,
+            field_name=field_name,
+        )
+    result: dict[str, Any] = {}
+    for entry in entries:
+        if not isinstance(entry, Mapping) or set(entry) != {"key", "value"}:
+            raise _worker_error(
+                "Reader Repair key/value entry is invalid",
+                step_id=step_id,
+                field_name=field_name,
+            )
+        key = entry["key"]
+        if not isinstance(key, str) or not key.strip() or key != key.strip():
+            raise _worker_error(
+                "Reader Repair key/value entry key is invalid",
+                step_id=step_id,
+                field_name=field_name,
+            )
+        if key in result:
+            raise _worker_error(
+                "Reader Repair key/value entry keys must be unique",
+                step_id=step_id,
+                field_name=field_name,
+                duplicate_key=key,
+            )
+        result[key] = entry["value"]
+    return result
 
 
 def _reject_reserved_fields(

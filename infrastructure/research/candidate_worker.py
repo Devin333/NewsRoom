@@ -16,6 +16,11 @@ from types import MappingProxyType
 from typing import Any
 from urllib.parse import urlsplit, urlunsplit
 
+from business.research.ports.reader_repair_candidate import (
+    READER_REPAIR_APPLICATION_OBSERVATION_TASK,
+    READER_REPAIR_PATCH_CANDIDATE_TASK,
+    reader_repair_candidate_task_schemas,
+)
 from framework.llm.clients.openai_compatible import (
     LLMConfigurationError,
     LLMProviderError,
@@ -94,6 +99,8 @@ SUPPORTED_CANDIDATE_TASKS = frozenset(
         "candidate_experiment_claims",
         "candidate_task_plan",
         "rag_plan_candidate",
+        READER_REPAIR_APPLICATION_OBSERVATION_TASK,
+        READER_REPAIR_PATCH_CANDIDATE_TASK,
     }
 )
 
@@ -353,13 +360,13 @@ _TASK_PLAN_OUTLINE_SCHEMA = _object_schema(
     }
 )
 
-
 _SCHEMAS: dict[str, dict[str, Any]] = {
     "candidate_three_minute_read": _THREE_MINUTE_READ_SCHEMA,
     "candidate_taxonomy": _TAXONOMY_SCHEMA,
     "candidate_experiment_claims": _EXPERIMENT_SCHEMA,
     "rag_plan_candidate": _RAG_PLAN_SCHEMA,
     "candidate_task_plan": _TASK_PLAN_OUTLINE_SCHEMA,
+    **reader_repair_candidate_task_schemas(),
 }
 
 # Expose immutable task/schema references for composition/tests without
@@ -391,6 +398,21 @@ _TASK_INSTRUCTIONS = MappingProxyType(
             "capabilities and document/evidence_pack refs. Do not choose output schemas, "
             "gates, workers, tools, memory, quality, publication, routing, or retries; "
             "Harness supplies those controls after validation."
+        ),
+        READER_REPAIR_PATCH_CANDIDATE_TASK: (
+            "Propose only a bounded Reader Repair patch. Cite only source refs "
+            "present in the request. Omit candidate ids, operation ids, before "
+            "checksums, input bindings, metadata, quality verdicts, routing, memory, "
+            "skill promotion, and publication decisions; deterministic code supplies "
+            "and verifies those fields. Represent table rows and analysis quality as "
+            "strict entries arrays of key/value objects, and represent evidence "
+            "coverage with numeric key/value entries."
+        ),
+        READER_REPAIR_APPLICATION_OBSERVATION_TASK: (
+            "Return only source-backed observations about the proposed Reader Repair "
+            "application. Cite only source refs present in the request. Do not return "
+            "candidate/application ids, input bindings, metadata, pass/fail, quality "
+            "verdicts, routing, memory, skill promotion, or publication decisions."
         ),
     }
 )
@@ -671,6 +693,15 @@ class StructuredResearchCandidateWorker:
                     for source_ref in step["source_refs"]:
                         _require_source_ref_scope(source_ref, scope, task=task)
             return
+        if task == READER_REPAIR_PATCH_CANDIDATE_TASK:
+            for source_ref in sorted(_collect_named_source_refs(candidate)):
+                _require_source_ref_scope(source_ref, scope, task=task)
+            return
+        if task == READER_REPAIR_APPLICATION_OBSERVATION_TASK:
+            for observation in candidate["observations"]:
+                for source_ref in observation["evidence_refs"]:
+                    _require_source_ref_scope(source_ref, scope, task=task)
+            return
         if task == "candidate_task_plan":
             return
 
@@ -716,7 +747,205 @@ def _project_payload(
         return _project_rag_request(payload, limits)
     if task == "candidate_task_plan":
         return _project_task_plan_request(payload, limits)
+    if task == READER_REPAIR_PATCH_CANDIDATE_TASK:
+        return _project_reader_repair_patch_request(payload, limits)
+    if task == READER_REPAIR_APPLICATION_OBSERVATION_TASK:
+        return _project_reader_repair_observation_request(payload, limits)
     raise ResearchCandidateContractError("unsupported Research candidate task")
+
+
+_READER_REPAIR_PROMPT_OMITTED_FIELDS = frozenset(
+    {
+        "api_key",
+        "artifact_refs",
+        "authorization",
+        "credential",
+        "credentials",
+        "halt_workflow",
+        "identity_scope_ref",
+        "metadata",
+        "next_step",
+        "password",
+        "private_notes",
+        "promote_skill",
+        "publish",
+        "publish_artifact",
+        "quality_passed",
+        "quality_verdict",
+        "secret",
+        "subject_scope_ref",
+        "tenant_id",
+        "token",
+        "verdict",
+        "workflow_id",
+        "write_memory",
+    }
+)
+
+
+def _project_reader_repair_patch_request(
+    payload: dict[str, Any],
+    limits: _ProjectionLimits,
+) -> _Projection:
+    reader_payload = _mapping_or_empty(payload.get("reader_payload"))
+    context_pack = _mapping_or_empty(
+        payload.get("reader_repair_context_pack")
+    )
+    projected_reader_payload = _project_reader_repair_value(
+        reader_payload,
+        limits=limits,
+    )
+    projected_context_pack = _project_reader_repair_value(
+        context_pack,
+        limits=limits,
+    )
+    source_refs = {
+        *_collect_named_source_refs(projected_reader_payload),
+        *_collect_named_source_refs(projected_context_pack),
+    }
+    return _Projection(
+        payload={
+            "reader_payload": projected_reader_payload,
+            "reader_repair_context_pack": projected_context_pack,
+            "allowed_source_refs": sorted(source_refs),
+        },
+        scope=_EvidenceScope({}, frozenset(source_refs)),
+    )
+
+
+def _project_reader_repair_observation_request(
+    payload: dict[str, Any],
+    limits: _ProjectionLimits,
+) -> _Projection:
+    issue = _mapping_or_empty(payload.get("reader_issue"))
+    candidate = _mapping_or_empty(
+        payload.get("reader_repair_patch_candidate")
+    )
+    application = _mapping_or_empty(
+        payload.get("reader_repair_application_candidate")
+    )
+    source_refs = frozenset(
+        _safe_reference_list(
+            issue.get("source_refs"),
+            limit=limits.list_items,
+        )
+    )
+    return _Projection(
+        payload={
+            "reader_issue": _project_reader_repair_value(
+                issue,
+                limits=limits,
+            ),
+            "reader_repair_patch_candidate": _project_reader_repair_value(
+                candidate,
+                limits=limits,
+            ),
+            "reader_repair_application_candidate": (
+                _project_reader_repair_value(
+                    application,
+                    limits=limits,
+                )
+            ),
+            "allowed_source_refs": sorted(source_refs),
+        },
+        scope=_EvidenceScope({}, source_refs),
+    )
+
+
+def _project_reader_repair_value(
+    value: Any,
+    *,
+    limits: _ProjectionLimits,
+    field_name: str | None = None,
+    depth: int = 0,
+) -> Any:
+    if depth > 16:
+        return None
+    if isinstance(value, Mapping):
+        projected: dict[str, Any] = {}
+        keys = sorted(key for key in value if isinstance(key, str))
+        for key in keys[: limits.list_items * 2]:
+            normalized_key = key.casefold()
+            if (
+                normalized_key in _READER_REPAIR_PROMPT_OMITTED_FIELDS
+                or normalized_key.startswith("routing_")
+            ):
+                continue
+            projected[key] = _project_reader_repair_value(
+                value[key],
+                limits=limits,
+                field_name=key,
+                depth=depth + 1,
+            )
+        return projected
+    if isinstance(value, list | tuple):
+        return [
+            _project_reader_repair_value(
+                item,
+                limits=limits,
+                field_name=field_name,
+                depth=depth + 1,
+            )
+            for item in value[: limits.list_items]
+        ]
+    if isinstance(value, str):
+        if field_name is not None and (
+            field_name in {"source_refs", "evidence_refs", "url"}
+            or field_name.endswith("_ref")
+            or field_name.endswith("_url")
+        ):
+            return _safe_reference(value)
+        return _content(
+            value,
+            maximum=max(512, limits.evidence_summary_chars * 4),
+        )
+    if value is None or isinstance(value, bool | int | float):
+        return value
+    return _content(
+        value,
+        maximum=max(512, limits.evidence_summary_chars * 4),
+    )
+
+
+def _collect_named_source_refs(value: Any, *, depth: int = 0) -> set[str]:
+    refs: set[str] = set()
+    if depth > 16:
+        return refs
+    if isinstance(value, Mapping):
+        keys = sorted(key for key in value if isinstance(key, str))[:128]
+        for key in keys:
+            item = value[key]
+            if key.casefold() == "metadata":
+                continue
+            if key == "source_ref":
+                if ref := _safe_reference(item):
+                    refs.add(ref)
+                continue
+            if key == "source_refs":
+                refs.update(_safe_reference_list(item))
+                continue
+            refs.update(_collect_named_source_refs(item, depth=depth + 1))
+    elif isinstance(value, list | tuple):
+        for item in value[:128]:
+            refs.update(_collect_named_source_refs(item, depth=depth + 1))
+    return refs
+
+
+def _safe_reference_list(
+    value: Any,
+    *,
+    limit: int | None = None,
+) -> list[str]:
+    if not isinstance(value, list | tuple):
+        return []
+    items = value if limit is None else value[:limit]
+    return sorted(
+        {
+            ref
+            for item in items
+            if (ref := _safe_reference(item))
+        }
+    )
 
 
 def _project_paper(

@@ -2,6 +2,11 @@ from __future__ import annotations
 
 from typing import Any, Protocol, runtime_checkable
 
+from business.research.ports.reader_repair_candidate import (
+    READER_REPAIR_APPLICATION_OBSERVATION_TASK,
+    READER_REPAIR_PATCH_CANDIDATE_TASK,
+)
+
 
 @runtime_checkable
 class ResearchCandidateWorkerPort(Protocol):
@@ -9,4 +14,8 @@ class ResearchCandidateWorkerPort(Protocol):
         ...
 
 
-__all__ = ["ResearchCandidateWorkerPort"]
+__all__ = [
+    "READER_REPAIR_APPLICATION_OBSERVATION_TASK",
+    "READER_REPAIR_PATCH_CANDIDATE_TASK",
+    "ResearchCandidateWorkerPort",
+]

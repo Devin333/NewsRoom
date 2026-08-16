@@ -323,6 +323,140 @@ def test_reader_repair_subagents_reject_cross_run_context_before_llm_call() -> N
     assert candidate_worker.calls == []
 
 
+def test_reader_repair_subagent_restores_strict_table_row_entries() -> None:
+    payload, context_pack = _payload_and_context()
+    proposal = _patch_proposal(payload)
+    document = proposal["patch_operations"][0]["replacement"]
+    document["tables"] = [
+        {
+            "table_id": "table-1",
+            "caption": "Main result",
+            "source_ref": _SOURCE_REF,
+            "columns": ["metric", "value"],
+            "rows": [
+                {
+                    "entries": [
+                        {"key": "metric", "value": "accuracy"},
+                        {"key": "value", "value": 0.91},
+                    ]
+                }
+            ],
+            "page": 3,
+        }
+    ]
+    candidate_worker = _CandidateWorker()
+    candidate_worker.patch_proposal = proposal
+    worker = build_reader_repair_subagent_worker_implementations(
+        candidate_worker=candidate_worker,
+    )["propose_repair_candidate"]
+
+    result = worker.execute(
+        _task(
+            build_reader_repair_graph_definition(),
+            "propose_repair_candidate",
+            {
+                "reader_payload": payload.to_dict(),
+                "reader_repair_context_pack": context_pack.to_dict(),
+            },
+        )
+    )
+    candidate = ReaderRepairPatchCandidate.model_validate(
+        result.output["reader_repair_patch_candidate"]
+    )
+    replacement = candidate.patch_operations[0].replacement
+
+    assert replacement.tables[0].rows == [
+        {"metric": "accuracy", "value": 0.91}
+    ]
+
+
+def test_reader_repair_subagent_rejects_duplicate_projected_map_keys() -> None:
+    payload, context_pack = _payload_and_context()
+    proposal = _patch_proposal(payload)
+    document = proposal["patch_operations"][0]["replacement"]
+    document["tables"] = [
+        {
+            "table_id": "table-1",
+            "caption": "Main result",
+            "source_ref": _SOURCE_REF,
+            "columns": ["metric"],
+            "rows": [
+                {
+                    "entries": [
+                        {"key": "metric", "value": "accuracy"},
+                        {"key": "metric", "value": "tampered"},
+                    ]
+                }
+            ],
+        }
+    ]
+    candidate_worker = _CandidateWorker()
+    candidate_worker.patch_proposal = proposal
+    worker = build_reader_repair_subagent_worker_implementations(
+        candidate_worker=candidate_worker,
+    )["propose_repair_candidate"]
+
+    with pytest.raises(HarnessValidationError) as captured:
+        worker.execute(
+            _task(
+                build_reader_repair_graph_definition(),
+                "propose_repair_candidate",
+                {
+                    "reader_payload": payload.to_dict(),
+                    "reader_repair_context_pack": context_pack.to_dict(),
+                },
+            )
+        )
+
+    assert captured.value.details["duplicate_key"] == "metric"
+
+
+def test_reader_repair_subagent_restores_strict_evidence_coverage_entries() -> None:
+    payload, context_pack = _payload_and_context()
+    proposal = _patch_proposal(payload)
+    proposal["patch_operations"] = [
+        {
+            "op": "replace_evidence",
+            "source_refs": [_SOURCE_REF],
+            "replacement": {
+                "pack_id": "reader-repair-evidence-pack",
+                "paper_id": payload.paper.paper_id,
+                "items": [],
+                "coverage": {
+                    "entries": [
+                        {"key": "method", "value": 0.92},
+                        {"key": "experiments", "value": 0.75},
+                    ]
+                },
+                "missing_information": [],
+                "lineage": {"source_refs": [_SOURCE_REF]},
+            },
+        }
+    ]
+    candidate_worker = _CandidateWorker()
+    candidate_worker.patch_proposal = proposal
+    worker = build_reader_repair_subagent_worker_implementations(
+        candidate_worker=candidate_worker,
+    )["propose_repair_candidate"]
+
+    result = worker.execute(
+        _task(
+            build_reader_repair_graph_definition(),
+            "propose_repair_candidate",
+            {
+                "reader_payload": payload.to_dict(),
+                "reader_repair_context_pack": context_pack.to_dict(),
+            },
+        )
+    )
+    candidate = ReaderRepairPatchCandidate.model_validate(
+        result.output["reader_repair_patch_candidate"]
+    )
+    replacement = candidate.patch_operations[0].replacement
+
+    assert replacement.coverage == {"method": 0.92, "experiments": 0.75}
+
+
 def test_reader_repair_subagent_module_stays_out_of_production_composition() -> None:
     root = Path(__file__).resolve().parents[4]
     references: list[str] = []

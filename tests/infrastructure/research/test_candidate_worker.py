@@ -7,6 +7,10 @@ import pytest
 
 import infrastructure.research as research_adapters
 from business.research.ports.llm_worker import ResearchCandidateWorkerPort
+from business.research.ports.reader_repair_candidate import (
+    READER_REPAIR_APPLICATION_OBSERVATION_TASK,
+    READER_REPAIR_PATCH_CANDIDATE_TASK,
+)
 from business.research.rag.adapters.plan_worker import ResearchRAGPlanWorker
 from framework.harness import RAGBudget, RAGSessionSpec, RetrievalGoal, WorkerRAGPlanner
 from framework.llm import (
@@ -254,6 +258,144 @@ def test_unknown_source_ref_is_rejected(
 
     with pytest.raises(ResearchCandidateEvidenceScopeError):
         worker.generate_candidate(task=task, payload=_valid_payload(task))
+
+
+@pytest.mark.parametrize(
+    ("task", "mutate"),
+    (
+        (
+            READER_REPAIR_PATCH_CANDIDATE_TASK,
+            lambda output: output["patch_operations"][0].update(
+                source_refs=["paper://outside/private"]
+            ),
+        ),
+        (
+            READER_REPAIR_APPLICATION_OBSERVATION_TASK,
+            lambda output: output["observations"][0].update(
+                evidence_refs=["paper://outside/private"]
+            ),
+        ),
+    ),
+)
+def test_reader_repair_candidates_reject_refs_outside_issue_scope(
+    monkeypatch: pytest.MonkeyPatch,
+    task: str,
+    mutate,
+) -> None:
+    output = _valid_output(task)
+    mutate(output)
+    worker, _ = _recorded_worker(monkeypatch, output)
+
+    with pytest.raises(ResearchCandidateEvidenceScopeError):
+        worker.generate_candidate(task=task, payload=_valid_payload(task))
+
+
+def test_reader_repair_scope_excludes_refs_truncated_from_prompt_projection(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    payload = _valid_payload(READER_REPAIR_PATCH_CANDIDATE_TASK)
+    source_refs = [
+        f"paper://2606.00001/section-{index:02d}" for index in range(40)
+    ]
+    payload["reader_repair_context_pack"]["source_refs"] = source_refs
+    payload["reader_repair_context_pack"]["issue"]["source_refs"] = source_refs
+    output = _valid_output(READER_REPAIR_PATCH_CANDIDATE_TASK)
+    output["patch_operations"][0]["source_refs"] = [source_refs[-1]]
+    worker, requests = _recorded_worker(monkeypatch, output)
+
+    with pytest.raises(ResearchCandidateEvidenceScopeError):
+        worker.generate_candidate(
+            task=READER_REPAIR_PATCH_CANDIDATE_TASK,
+            payload=payload,
+        )
+
+    prompt = "\n".join(
+        message["content"] for message in requests[0]["messages"]
+    )
+    assert source_refs[0] in prompt
+    assert source_refs[-1] not in prompt
+
+
+def test_reader_repair_schemas_exclude_harness_owned_fields_and_open_maps() -> None:
+    patch = CANDIDATE_TASK_SCHEMAS[READER_REPAIR_PATCH_CANDIDATE_TASK]
+    observation = CANDIDATE_TASK_SCHEMAS[
+        READER_REPAIR_APPLICATION_OBSERVATION_TASK
+    ]
+
+    assert set(patch["properties"]) == {
+        "repair_summary",
+        "patch_operations",
+        "expected_effect",
+        "risks",
+        "confidence",
+    }
+    for definition_name, definition in patch["$defs"].items():
+        properties = definition.get("properties", {})
+        assert "metadata" not in properties
+        if "op" in properties:
+            assert "op" in definition["required"]
+            assert "operation_id" not in properties
+            assert "expected_before_checksum" not in properties
+    assert set(observation["properties"]) == {"observations"}
+    assert "metadata" not in observation["$defs"][
+        "ReaderRepairVerificationObservation"
+    ]["properties"]
+
+    table_row = patch["$defs"]["ResearchTable"]["properties"]["rows"][
+        "items"
+    ]
+    analysis_quality = patch["$defs"]["ResearchAnalysis"]["properties"][
+        "quality"
+    ]
+    evidence_coverage = patch["$defs"]["ResearchEvidencePack"]["properties"][
+        "coverage"
+    ]
+    assert set(table_row["properties"]) == {"entries"}
+    assert set(analysis_quality["properties"]) == {"entries"}
+    assert set(evidence_coverage["properties"]) == {"entries"}
+    coverage_value = evidence_coverage["properties"]["entries"]["items"][
+        "properties"
+    ]["value"]
+    assert coverage_value == {"type": "number", "minimum": 0, "maximum": 1}
+
+
+@pytest.mark.parametrize(
+    "task",
+    (
+        READER_REPAIR_PATCH_CANDIDATE_TASK,
+        READER_REPAIR_APPLICATION_OBSERVATION_TASK,
+    ),
+)
+def test_reader_repair_prompt_projection_removes_private_and_control_fields(
+    monkeypatch: pytest.MonkeyPatch,
+    task: str,
+) -> None:
+    payload = _valid_payload(task)
+    if task == READER_REPAIR_PATCH_CANDIDATE_TASK:
+        payload["reader_payload"]["paper"]["source_url"] = (
+            "https://arxiv.org/abs/2606.00001?token=URL-PROMPT-SECRET"
+        )
+    worker, requests = _recorded_worker(monkeypatch, _valid_output(task))
+
+    worker.generate_candidate(task=task, payload=payload)
+
+    prompt = "\n".join(
+        message["content"] for message in requests[0]["messages"]
+    )
+    for secret in (
+        "Bearer PROMPT-SECRET",
+        "CONTEXT-PROMPT-SECRET",
+        "ISSUE-PROMPT-SECRET",
+        "APPLICATION-PROMPT-SECRET",
+        "URL-PROMPT-SECRET",
+        "artifact://private",
+    ):
+        assert secret not in prompt
+    assert '"metadata"' not in prompt
+    assert '"artifact_refs"' not in prompt
+    assert '"workflow_id"' not in prompt
+    assert '"quality_passed"' not in prompt
+    assert "paper://2606.00001/sec-method" in prompt
 
 
 def test_taxonomy_candidate_can_cite_a_supplied_evidence_source_ref(
@@ -653,6 +795,64 @@ def _valid_payload(task: str) -> dict[str, Any]:
             "executed_queries": ["previous query"],
             "forbidden_fields": ["quality_passed", "halt_workflow"],
         }
+    if task == READER_REPAIR_PATCH_CANDIDATE_TASK:
+        source_ref = "paper://2606.00001/sec-method"
+        return {
+            "reader_payload": {
+                "payload_id": "reader-payload-2606.00001",
+                "paper": paper,
+                "document": {
+                    "paper_id": "2606.00001",
+                    "source_hash": "sha256-reader-source",
+                    "sections": [],
+                    "lineage": {"source_refs": [source_ref]},
+                    "metadata": {"artifact_refs": ["artifact://private"]},
+                },
+                "metadata": {"authorization": "Bearer PROMPT-SECRET"},
+            },
+            "reader_repair_context_pack": {
+                "context_id": "reader-repair-context-1",
+                "issue": {
+                    "issue_id": "reader-issue-1",
+                    "paper_id": "2606.00001",
+                    "run_id": "reader-repair-run-1",
+                    "issue_type": "missing_required_section",
+                    "error_signature": "missing-method",
+                    "symptom": "The method section is missing.",
+                    "source_refs": [source_ref],
+                },
+                "source_refs": [source_ref],
+                "metadata": {"token": "CONTEXT-PROMPT-SECRET"},
+            },
+        }
+    if task == READER_REPAIR_APPLICATION_OBSERVATION_TASK:
+        source_ref = "paper://2606.00001/sec-method"
+        return {
+            "reader_issue": {
+                "issue_id": "reader-issue-1",
+                "paper_id": "2606.00001",
+                "run_id": "reader-repair-run-1",
+                "issue_type": "missing_required_section",
+                "error_signature": "missing-method",
+                "symptom": "The method section is missing.",
+                "source_refs": [source_ref],
+                "metadata": {"password": "ISSUE-PROMPT-SECRET"},
+            },
+            "reader_repair_patch_candidate": {
+                "candidate_id": "reader-repair-candidate-1",
+                "repair_summary": "Restore the method section.",
+                "target_region_refs": [source_ref],
+                "patch_operations": [],
+                "expected_effect": "The method section is visible.",
+                "metadata": {"next_step": "publish"},
+            },
+            "reader_repair_application_candidate": {
+                "application_id": "reader-repair-application-1",
+                "candidate_id": "reader-repair-candidate-1",
+                "source_refs": [source_ref],
+                "metadata": {"api_key": "APPLICATION-PROMPT-SECRET"},
+            },
+        }
     raise AssertionError(task)
 
 
@@ -773,6 +973,29 @@ def _valid_output(task: str) -> dict[str, Any]:
                 "confidence": 0.8,
                 "metadata": {"planner": "llm"},
             }
+        }
+    if task == READER_REPAIR_PATCH_CANDIDATE_TASK:
+        return {
+            "repair_summary": "Remove the ungrounded analysis candidate.",
+            "patch_operations": [
+                {
+                    "op": "remove_analysis",
+                    "source_refs": ["paper://2606.00001/sec-method"],
+                }
+            ],
+            "expected_effect": "The ungrounded analysis is removed.",
+            "risks": ["analysis must be regenerated after verification"],
+            "confidence": 0.84,
+        }
+    if task == READER_REPAIR_APPLICATION_OBSERVATION_TASK:
+        return {
+            "observations": [
+                {
+                    "check_id": "source-backed-method",
+                    "finding": "The repaired method cites the accepted source.",
+                    "evidence_refs": ["paper://2606.00001/sec-method"],
+                }
+            ]
         }
     raise AssertionError(task)
 
