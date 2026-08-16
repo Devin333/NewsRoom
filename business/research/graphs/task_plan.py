@@ -235,14 +235,11 @@ class ResearchAnalysisPlanCandidateBuilder(PlanCandidateBuilderPort):
             self._task_from_outline(item, policy=request.policy)
             for item in task_payloads
         )
-        candidate = PlanCandidate(
+        candidate = PlanCandidate.for_stage(
+            stage_identity=request.stage_identity,
             candidate_id=(
                 f"research-analysis-plan-{request.run_id}-{request.graph_checksum[-12:]}"
             ),
-            run_id=request.run_id,
-            workflow_id=request.workflow_id,
-            stage_id=request.stage_id,
-            graph_checksum=request.graph_checksum,
             input_context_refs=tuple(request.context_refs.values()),
             tasks=tasks,
             required_output_roles=request.policy.required_output_roles,

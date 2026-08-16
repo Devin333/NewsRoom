@@ -16,6 +16,9 @@ from framework.harness.graph import (
     StepRef,
     VerifiedAggregation,
 )
+from framework.harness.task_plan.schema import (
+    GRAPH_ONLY_VALIDATED_TASK_PLAN_SCHEMA,
+)
 
 from business.research.graphs.contracts import (
     RESEARCH_DYNAMIC_INPUT_REFS,
@@ -142,7 +145,7 @@ def build_dynamic_paper_analysis_graph_definition() -> (
                     RESEARCH_DYNAMIC_STAGE_ID,
                 ),
                 policy_ref=RESEARCH_DYNAMIC_POLICY_REF,
-                task_plan_schema="newsroom.harness-task-plan/v1",
+                task_plan_schema=GRAPH_ONLY_VALIDATED_TASK_PLAN_SCHEMA,
                 required_output_roles=RESEARCH_DYNAMIC_OUTPUT_ROLES,
                 support_refs=RESEARCH_DYNAMIC_TASK_PLAN_SUPPORT_REFS,
             ),

@@ -15,34 +15,45 @@ from business.research.graphs import (
     RESEARCH_DYNAMIC_WORKER_CONTRACT_REFS,
     RESEARCH_DYNAMIC_WORKER_REFS,
     ResearchAnalysisPlanCandidateBuilder,
+    build_dynamic_paper_analysis_graph_definition,
     build_paper_analysis_gate_registry,
     build_research_analysis_capability_registry,
     build_research_analysis_task_plan_aggregator,
     build_research_analysis_task_plan_policy,
     validate_research_analysis_candidate,
 )
-from business.research.workflows.paper_analysis_workflow import (
-    build_dynamic_paper_analysis_workflow_spec,
-)
 from framework.harness.control_plane.errors import HarnessValidationError
 from framework.harness.task_plan import (
+    GRAPH_ONLY_PLAN_CANDIDATE_SCHEMA,
+    GRAPH_ONLY_VALIDATED_TASK_PLAN_SCHEMA,
+    InMemoryTaskPlanStore,
     PlanBuildRequest,
     PlanCandidate,
+    PlanPatch,
+    PlanPatchOperation,
+    PlanPatchOperationType,
     TaskAcceptanceCriteria,
     TaskBudget,
     TaskLifecycle,
+    TaskPlanPatchValidator,
+    TaskPlanProjection,
+    TaskPlanStageRequest,
     TaskResultRecord,
     TaskPlanStageBinding,
+    TaskPlanValidationContext,
+    TaskPlanValidator,
+    TaskProjection,
+    ValidatedTaskPlan,
 )
 from framework.harness.task_plan.canonical import canonical_payload_checksum
 from framework.harness.graph.bindings import HarnessWorkerBinding
+from framework.harness.graph import HarnessGraphCompiler
 from framework.harness.graph.model import (
     HarnessContractKind,
     HarnessContractReference,
 )
 from framework.harness.graph.activity import HarnessWorkerType
 from framework.harness.workers.result import HarnessWorkerResult
-from framework.harness.workflow import HarnessWorkflowGraphCompiler
 
 
 class _BoundResearchWorker:
@@ -113,11 +124,18 @@ def test_candidate_builder_accepts_only_outline_and_pins_control_fields() -> Non
     worker = _OutlineWorker(_valid_outline())
     policy = build_research_analysis_task_plan_policy()
     builder = ResearchAnalysisPlanCandidateBuilder(worker)
+    request = _plan_build_request(policy)
 
-    candidate = builder.build_candidate(_plan_build_request(policy))
+    candidate = builder.build_candidate(request)
 
     assert worker.calls[0][0] == "candidate_task_plan"
     assert candidate.generated_by == "research.task-plan-builder@1"
+    assert candidate.schema_version == GRAPH_ONLY_PLAN_CANDIDATE_SCHEMA
+    assert candidate.matches_stage_identity(request.stage_identity)
+    assert not {"workflow_id", "workflow_ref"}.intersection(
+        candidate.to_dict()
+    )
+    assert PlanCandidate.from_dict(candidate.to_dict()) == candidate
     assert set(candidate.required_output_roles) == set(policy.required_output_roles)
     for task in candidate.tasks:
         capability = task.worker_capability
@@ -159,26 +177,161 @@ def test_research_candidate_rejects_capability_gate_substitution() -> None:
             ("BenchmarkEvidenceLineageGate@1",)
         ),
     )
-    altered = PlanCandidate(
+    altered = replace(
+        candidate,
         candidate_id="altered-research-analysis-plan",
-        run_id=candidate.run_id,
-        workflow_id=candidate.workflow_id,
-        stage_id=candidate.stage_id,
-        graph_checksum=candidate.graph_checksum,
-        input_context_refs=candidate.input_context_refs,
         tasks=tuple(
             substituted if task.task_id == structure.task_id else task
             for task in candidate.tasks
         ),
-        required_output_roles=candidate.required_output_roles,
-        generated_by=candidate.generated_by,
-        requested_plan_budget=candidate.requested_plan_budget,
-        requested_max_parallelism=candidate.requested_max_parallelism,
     )
 
     with pytest.raises(HarnessValidationError) as exc_info:
         validate_research_analysis_candidate(altered)
     assert exc_info.value.code == "research_task_plan_candidate_contract_mismatch"
+
+
+def test_graph_only_candidate_validates_to_graph_only_plan() -> None:
+    policy = build_research_analysis_task_plan_policy()
+    request = _plan_build_request(policy)
+    candidate = ResearchAnalysisPlanCandidateBuilder(
+        _OutlineWorker(_valid_outline())
+    ).build_candidate(request)
+    context = TaskPlanValidationContext(
+        run_id=request.run_id,
+        stage_binding=request.stage_binding,
+        available_input_refs=tuple(request.context_refs.values()),
+        registered_gate_refs=policy.allowed_gate_refs,
+    )
+
+    plan = TaskPlanValidator().accept(
+        candidate,
+        policy,
+        build_research_analysis_capability_registry(_worker_bindings()),
+        context=context,
+        accepted_at="2026-08-17T00:00:00Z",
+    )
+    payload = plan.to_dict()
+
+    assert plan.schema_version == GRAPH_ONLY_VALIDATED_TASK_PLAN_SCHEMA
+    assert plan.matches_stage_identity(request.stage_identity)
+    assert plan.stage_identity_checksum == candidate.stage_identity_checksum
+    assert plan.stage_binding_checksum == request.stage_binding.binding_checksum
+    assert not {"workflow_id", "workflow_ref"}.intersection(payload)
+    assert ValidatedTaskPlan.from_dict(payload) == plan
+
+    with pytest.raises(HarnessValidationError) as alias_error:
+        ValidatedTaskPlan.from_dict(
+            {**payload, "workflow_id": request.stage_identity.graph_id}
+        )
+    assert alias_error.value.code == "invalid_task_plan_payload_fields"
+
+    with pytest.raises(HarnessValidationError) as checksum_error:
+        ValidatedTaskPlan.from_dict(
+            {**payload, "plan_checksum": "sha256:" + "0" * 64}
+        )
+    assert checksum_error.value.code == "task_plan_checksum_mismatch"
+
+    dependent = next(task for task in plan.tasks if task.depends_on)
+    patch = PlanPatch(
+        patch_id="graph-only-plan-patch",
+        run_id=plan.run_id,
+        stage_id=plan.stage_id,
+        base_plan_id=plan.plan_id,
+        base_plan_version=plan.version,
+        reason_code="replan",
+        source_candidate_ref="candidate://graph-only-plan-patch",
+        operations=(
+            PlanPatchOperation(
+                PlanPatchOperationType.UPDATE_PENDING_DEPENDENCY,
+                target_task_id=dependent.task_id,
+                depends_on=dependent.depends_on,
+            ),
+        ),
+    )
+    projection = TaskPlanProjection(
+        run_id=plan.run_id,
+        stage_id=plan.stage_id,
+        graph_checksum=plan.graph_checksum,
+        plan_id=plan.plan_id,
+        plan_version=plan.version,
+        plan_checksum=plan.plan_checksum,
+        policy_ref=plan.policy_ref,
+        tasks=tuple(
+            TaskProjection(
+                task_id=task.task_id,
+                task_definition_checksum=task.task_definition_checksum,
+                status=TaskLifecycle.PENDING,
+            )
+            for task in plan.tasks
+        ),
+        consumed_budget={},
+        last_sequence=0,
+    )
+    next_plan = TaskPlanPatchValidator().apply(
+        plan,
+        patch,
+        projection,
+        policy,
+        build_research_analysis_capability_registry(_worker_bindings()),
+        accepted_at="2026-08-17T00:01:00Z",
+        available_input_refs=tuple(request.context_refs.values()),
+    )
+
+    assert next_plan.schema_version == GRAPH_ONLY_VALIDATED_TASK_PLAN_SCHEMA
+    assert next_plan.matches_stage_identity(request.stage_identity)
+    assert next_plan.stage_identity_checksum == plan.stage_identity_checksum
+
+    store = InMemoryTaskPlanStore()
+    with pytest.raises(HarnessValidationError) as store_error:
+        store.append_candidate(candidate)
+    assert store_error.value.code == "graph_task_plan_event_schema_unavailable"
+    assert store.read_events(candidate.run_id, candidate.stage_id) == ()
+
+
+def test_graph_only_candidate_and_plan_readers_fail_closed() -> None:
+    policy = build_research_analysis_task_plan_policy()
+    request = _plan_build_request(policy)
+    candidate = ResearchAnalysisPlanCandidateBuilder(
+        _OutlineWorker(_valid_outline())
+    ).build_candidate(request)
+    candidate_payload = candidate.to_dict()
+
+    with pytest.raises(HarnessValidationError) as alias_error:
+        PlanCandidate.from_dict(
+            {**candidate_payload, "workflow_id": request.stage_identity.graph_id}
+        )
+    assert alias_error.value.code == "invalid_task_plan_payload_fields"
+
+    with pytest.raises(HarnessValidationError) as identity_error:
+        PlanCandidate.from_dict(
+            {
+                **candidate_payload,
+                "stage_identity_checksum": "sha256:" + "0" * 64,
+            }
+        )
+    assert identity_error.value.code == (
+        "task_plan_stage_identity_checksum_invalid"
+    )
+
+    with pytest.raises(HarnessValidationError) as checksum_error:
+        PlanCandidate.from_dict(
+            {**candidate_payload, "candidate_checksum": "sha256:" + "0" * 64}
+        )
+    assert checksum_error.value.code == "task_plan_checksum_mismatch"
+
+    other_request = _plan_build_request(policy, graph_version="2")
+    assert not candidate.matches_stage_identity(other_request.stage_identity)
+    with pytest.raises(HarnessValidationError) as graph_error:
+        TaskPlanStageRequest(
+            run_id=other_request.run_id,
+            stage_binding=other_request.stage_binding,
+            context_refs=other_request.context_refs,
+            policy=policy,
+            candidate=candidate,
+            accepted_at="2026-08-17T00:00:00Z",
+        )
+    assert graph_error.value.code == "task_plan_candidate_scope_mismatch"
 
 
 def test_research_aggregator_produces_existing_analysis_branch_contract() -> None:
@@ -229,10 +382,19 @@ def _worker_bindings() -> dict[str, HarnessWorkerBinding]:
     }
 
 
-def _plan_build_request(policy) -> PlanBuildRequest:
-    graph = HarnessWorkflowGraphCompiler().compile(
-        build_dynamic_paper_analysis_workflow_spec()
-    ).graph
+def _plan_build_request(
+    policy,
+    *,
+    graph_version: str | None = None,
+) -> PlanBuildRequest:
+    definition = build_dynamic_paper_analysis_graph_definition()
+    if graph_version is not None:
+        definition = replace(
+            definition,
+            graph_version=graph_version,
+            definition_checksum=None,
+        )
+    graph = HarnessGraphCompiler().compile(definition).graph
     return PlanBuildRequest(
         run_id="research-run",
         stage_binding=TaskPlanStageBinding(graph, RESEARCH_DYNAMIC_STAGE_ID),

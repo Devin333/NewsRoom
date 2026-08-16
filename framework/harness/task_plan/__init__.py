@@ -42,8 +42,10 @@ from framework.harness.task_plan.identity import TaskPlanStageIdentity
 from framework.harness.task_plan.policy import TaskPlanPolicy, TaskPlanPolicyRegistry
 from framework.harness.task_plan.schema import (
     DEFAULT_TASK_PLAN_SCHEMA_REGISTRY,
+    GRAPH_ONLY_PLAN_CANDIDATE_SCHEMA,
     GRAPH_ONLY_TASK_PLAN_STAGE_BINDING_SCHEMA,
     GRAPH_ONLY_TASK_PLAN_STAGE_IDENTITY_SCHEMA,
+    GRAPH_ONLY_VALIDATED_TASK_PLAN_SCHEMA,
     PLAN_CANDIDATE_SCHEMA,
     RESOLVED_TASK_DEFINITION_SCHEMA,
     TASK_CAPABILITY_BINDING_SCHEMA,
@@ -134,8 +136,10 @@ from framework.harness.task_plan.verification import (
 __all__ = [
     "DEFAULT_TASK_PLAN_SCHEMA_REGISTRY",
     "FORBIDDEN_CANDIDATE_FIELDS",
+    "GRAPH_ONLY_PLAN_CANDIDATE_SCHEMA",
     "GRAPH_ONLY_TASK_PLAN_STAGE_BINDING_SCHEMA",
     "GRAPH_ONLY_TASK_PLAN_STAGE_IDENTITY_SCHEMA",
+    "GRAPH_ONLY_VALIDATED_TASK_PLAN_SCHEMA",
     "PLAN_CANDIDATE_SCHEMA",
     "RESOLVED_TASK_DEFINITION_SCHEMA",
     "ResolvedCapabilityBinding",

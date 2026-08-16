@@ -22,7 +22,9 @@ from framework.harness.task_plan.canonical import (
 from framework.harness.task_plan.schema import (
     DEFAULT_TASK_PLAN_SCHEMA_REGISTRY,
     GRAPH_ONLY_TASK_PLAN_STAGE_BINDING_SCHEMA,
+    GRAPH_ONLY_VALIDATED_TASK_PLAN_SCHEMA,
     TASK_PLAN_STAGE_BINDING_SCHEMA,
+    VALIDATED_TASK_PLAN_SCHEMA,
     TaskPlanContractKind,
 )
 
@@ -149,6 +151,22 @@ class TaskPlanStageBinding:
                 code="dynamic_task_plan_schema_missing_or_inexact",
                 details={"stage_id": stage_id, "schema": str(task_plan_schema)},
             ) from exc
+        expected_task_plan_schema = (
+            GRAPH_ONLY_VALIDATED_TASK_PLAN_SCHEMA
+            if self.graph.schema_version
+            == GRAPH_ONLY_NORMALIZED_HARNESS_GRAPH_SCHEMA
+            else VALIDATED_TASK_PLAN_SCHEMA
+        )
+        if task_plan_schema != expected_task_plan_schema:
+            raise HarnessValidationError(
+                "dynamic TaskPlan schema does not match its Graph identity",
+                code="dynamic_task_plan_schema_identity_mismatch",
+                details={
+                    "stage_id": stage_id,
+                    "schema": str(task_plan_schema),
+                    "expected_schema": expected_task_plan_schema,
+                },
+            )
 
         raw_roles = declaration.get("required_output_roles")
         if (

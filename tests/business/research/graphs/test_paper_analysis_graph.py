@@ -33,6 +33,7 @@ from framework.harness.graph import (
     HarnessLeafActivityKind,
     HarnessWorkerType,
 )
+from framework.harness.task_plan import GRAPH_ONLY_VALIDATED_TASK_PLAN_SCHEMA
 
 
 _EXPECTED_GATES = {
@@ -200,7 +201,7 @@ def test_dynamic_graph_replaces_only_static_analysis_fanout() -> None:
         "research.paper_analysis.dynamic_analysis_stage@1"
     )
     assert binding.policy_ref == RESEARCH_DYNAMIC_POLICY_REF
-    assert binding.task_plan_schema == "newsroom.harness-task-plan/v1"
+    assert binding.task_plan_schema == GRAPH_ONLY_VALIDATED_TASK_PLAN_SCHEMA
     assert binding.required_output_roles == tuple(
         sorted(RESEARCH_DYNAMIC_OUTPUT_ROLES)
     )

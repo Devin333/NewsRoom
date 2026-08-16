@@ -433,6 +433,7 @@ class InMemoryTaskPlanStore:
     def append_candidate(self, candidate: PlanCandidate, *, event_type: str = "PLAN_CANDIDATE_BUILT") -> str:
         if not isinstance(candidate, PlanCandidate):
             raise TypeError("candidate must be PlanCandidate")
+        _require_legacy_task_plan_event_identity(candidate)
         with self._lock:
             existing = self._candidates.get(candidate.candidate_checksum)
             if existing is not None and existing != candidate:
@@ -446,6 +447,7 @@ class InMemoryTaskPlanStore:
     def append_rejected_candidate(self, candidate: PlanCandidate, *, reason_code: str) -> str:
         if not isinstance(candidate, PlanCandidate):
             raise TypeError("candidate must be PlanCandidate")
+        _require_legacy_task_plan_event_identity(candidate)
         with self._lock:
             existing = self._candidates.get(candidate.candidate_checksum)
             if existing is not None and existing != candidate:
@@ -480,6 +482,7 @@ class InMemoryTaskPlanStore:
     def accept_plan(self, plan: ValidatedTaskPlan) -> str:
         if not isinstance(plan, ValidatedTaskPlan):
             raise TypeError("plan must be ValidatedTaskPlan")
+        _require_legacy_task_plan_event_identity(plan)
         key = (plan.run_id, plan.stage_id, plan.version)
         with self._lock:
             current = self._current_plan(plan.run_id, plan.stage_id)
@@ -893,11 +896,27 @@ def _plan_contains_task_version(plans: Mapping[tuple[str, str, int], ValidatedTa
 
 
 def _candidate_event(candidate: PlanCandidate, event_type: str, sequence: int, *, reason_code: str | None = None) -> TaskPlanEvent:
+    _require_legacy_task_plan_event_identity(candidate)
     return TaskPlanEvent(event_type, run_id=candidate.run_id, workflow_id=candidate.workflow_id, stage_id=candidate.stage_id, graph_checksum=candidate.graph_checksum, input_checksum=candidate.candidate_checksum, reason_code=reason_code, payload={"candidate_ref": candidate.candidate_checksum}, sequence=sequence)
 
 
 def _plan_event(plan: ValidatedTaskPlan, event_type: str, sequence: int) -> TaskPlanEvent:
+    _require_legacy_task_plan_event_identity(plan)
     return TaskPlanEvent(event_type, run_id=plan.run_id, workflow_id=plan.workflow_id, stage_id=plan.stage_id, graph_checksum=plan.graph_checksum, plan_id=plan.plan_id, plan_version=plan.version, input_checksum=plan.plan_checksum, payload={"plan_ref": plan.plan_checksum, "policy_ref": plan.policy_ref}, sequence=sequence)
+
+
+def _require_legacy_task_plan_event_identity(
+    value: PlanCandidate | ValidatedTaskPlan,
+) -> None:
+    if value.is_graph_only:
+        raise HarnessValidationError(
+            "Graph-only TaskPlan contracts cannot be written to the legacy event schema",
+            code="graph_task_plan_event_schema_unavailable",
+            details={
+                "contract_schema": value.schema_version,
+                "event_schema": TASK_PLAN_EVENT_SCHEMA,
+            },
+        )
 
 
 def _result_event(result: TaskResultRecord, event_type: str, sequence: int, *, graph_checksum: str) -> TaskPlanEvent:

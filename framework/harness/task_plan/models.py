@@ -6,6 +6,11 @@ from enum import StrEnum
 from typing import Any, Self
 
 from framework.harness.control_plane.errors import HarnessValidationError
+from framework.harness.graph.versioning import (
+    GRAPH_ONLY_NORMALIZED_HARNESS_GRAPH_SCHEMA,
+    HARNESS_CONDITION_POLICY_VERSION,
+    HARNESS_GRAPH_ONLY_COMPILER_VERSION,
+)
 from framework.harness.task_plan.canonical import (
     canonical_payload_checksum,
     checksum,
@@ -22,8 +27,12 @@ from framework.harness.task_plan.canonical import (
     thaw_mapping,
 )
 from framework.harness.task_plan.forbidden import ensure_candidate_only
+from framework.harness.task_plan.identity import TaskPlanStageIdentity
 from framework.harness.task_plan.schema import (
     DEFAULT_TASK_PLAN_SCHEMA_REGISTRY,
+    GRAPH_ONLY_PLAN_CANDIDATE_SCHEMA,
+    GRAPH_ONLY_TASK_PLAN_STAGE_IDENTITY_SCHEMA,
+    GRAPH_ONLY_VALIDATED_TASK_PLAN_SCHEMA,
     PLAN_CANDIDATE_SCHEMA,
     RESOLVED_TASK_DEFINITION_SCHEMA,
     TASK_DEFINITION_SCHEMA,
@@ -323,11 +332,224 @@ class TaskSpec:
         return task
 
 
+_GRAPH_ONLY_MODEL_IDENTITY_FIELDS = frozenset(
+    {
+        "graph_id",
+        "graph_version",
+        "graph_ref",
+        "graph_schema_version",
+        "compiler_version",
+        "condition_policy_version",
+        "stage_binding_checksum",
+        "stage_identity_schema",
+        "stage_identity_checksum",
+    }
+)
+
+
+def _stage_identity_kwargs(identity: TaskPlanStageIdentity) -> dict[str, Any]:
+    if not isinstance(identity, TaskPlanStageIdentity):
+        raise TypeError("stage_identity must be TaskPlanStageIdentity")
+    values: dict[str, Any] = {
+        "run_id": identity.run_id,
+        "workflow_id": None if identity.is_graph_only else identity.workflow_id,
+        "stage_id": identity.stage_id,
+        "graph_checksum": identity.graph_checksum,
+    }
+    if identity.is_graph_only:
+        values.update(
+            {
+                "graph_id": identity.graph_id,
+                "graph_version": identity.graph_version,
+                "graph_ref": identity.graph_ref,
+                "graph_schema_version": identity.graph_schema_version,
+                "compiler_version": identity.compiler_version,
+                "condition_policy_version": identity.condition_policy_version,
+                "stage_binding_checksum": identity.stage_binding_checksum,
+                "stage_identity_schema": identity.schema_version,
+                "stage_identity_checksum": identity.identity_checksum,
+            }
+        )
+    return values
+
+
+def _normalize_model_identity(
+    model: Any,
+    *,
+    legacy_schema: str,
+    graph_only_schema: str,
+) -> None:
+    object.__setattr__(model, "run_id", identifier(model.run_id, "run_id"))
+    object.__setattr__(model, "stage_id", identifier(model.stage_id, "stage_id"))
+    object.__setattr__(
+        model,
+        "graph_checksum",
+        checksum(model.graph_checksum, "graph_checksum"),
+    )
+    graph_values = {
+        name: getattr(model, name) for name in _GRAPH_ONLY_MODEL_IDENTITY_FIELDS
+    }
+    if model.schema_version == legacy_schema:
+        object.__setattr__(
+            model,
+            "workflow_id",
+            identifier(model.workflow_id, "workflow_id"),
+        )
+        if any(value is not None for value in graph_values.values()):
+            raise HarnessValidationError(
+                "legacy TaskPlan contract cannot carry Graph-only identity",
+                code="task_plan_identity_schema_mismatch",
+            )
+        return
+    if model.schema_version != graph_only_schema:
+        raise HarnessValidationError(
+            "TaskPlan contract schema does not select a supported identity",
+            code="task_plan_identity_schema_mismatch",
+        )
+    if model.workflow_id is not None:
+        raise HarnessValidationError(
+            "Graph-only TaskPlan contract cannot carry legacy orchestration identity",
+            code="legacy_task_plan_identity_forbidden",
+        )
+    object.__setattr__(model, "workflow_id", None)
+    normalized = {
+        "graph_id": identifier(model.graph_id, "graph_id"),
+        "graph_version": identifier(model.graph_version, "graph_version"),
+        "graph_ref": exact_reference(model.graph_ref, "graph_ref"),
+        "graph_schema_version": required_text(
+            model.graph_schema_version,
+            "graph_schema_version",
+        ),
+        "compiler_version": required_text(
+            model.compiler_version,
+            "compiler_version",
+        ),
+        "condition_policy_version": required_text(
+            model.condition_policy_version,
+            "condition_policy_version",
+        ),
+        "stage_binding_checksum": checksum(
+            model.stage_binding_checksum,
+            "stage_binding_checksum",
+        ),
+        "stage_identity_schema": required_text(
+            model.stage_identity_schema,
+            "stage_identity_schema",
+        ),
+        "stage_identity_checksum": checksum(
+            model.stage_identity_checksum,
+            "stage_identity_checksum",
+        ),
+    }
+    expected_versions = {
+        "graph_schema_version": GRAPH_ONLY_NORMALIZED_HARNESS_GRAPH_SCHEMA,
+        "compiler_version": HARNESS_GRAPH_ONLY_COMPILER_VERSION,
+        "condition_policy_version": HARNESS_CONDITION_POLICY_VERSION,
+        "stage_identity_schema": GRAPH_ONLY_TASK_PLAN_STAGE_IDENTITY_SCHEMA,
+    }
+    mismatched = {
+        name: {"expected": expected, "actual": normalized[name]}
+        for name, expected in expected_versions.items()
+        if normalized[name] != expected
+    }
+    if normalized["graph_ref"] != (
+        f"{normalized['graph_id']}@{normalized['graph_version']}"
+    ):
+        mismatched["graph_ref"] = {
+            "expected": f"{normalized['graph_id']}@{normalized['graph_version']}",
+            "actual": normalized["graph_ref"],
+        }
+    if mismatched:
+        raise HarnessValidationError(
+            "Graph-only TaskPlan identity versions do not match",
+            code="task_plan_graph_identity_mismatch",
+            details={"mismatched": mismatched},
+        )
+    for name, value in normalized.items():
+        object.__setattr__(model, name, value)
+    expected_identity_checksum = canonical_payload_checksum(
+        _stage_identity_checksum_projection(model)
+    )
+    if model.stage_identity_checksum != expected_identity_checksum:
+        raise HarnessValidationError(
+            "Graph-only TaskPlan stage identity checksum does not match",
+            code="task_plan_stage_identity_checksum_invalid",
+            details={
+                "expected": expected_identity_checksum,
+                "actual": model.stage_identity_checksum,
+            },
+        )
+
+
+def _stage_identity_checksum_projection(model: Any) -> dict[str, Any]:
+    return {
+        "schema_version": model.stage_identity_schema,
+        "run_id": model.run_id,
+        "graph_schema_version": model.graph_schema_version,
+        "compiler_version": model.compiler_version,
+        "condition_policy_version": model.condition_policy_version,
+        "graph_id": model.graph_id,
+        "graph_version": model.graph_version,
+        "graph_checksum": model.graph_checksum,
+        "stage_id": model.stage_id,
+        "stage_binding_checksum": model.stage_binding_checksum,
+        "graph_ref": model.graph_ref,
+    }
+
+
+def _model_identity_projection(model: Any) -> dict[str, Any]:
+    if not model.is_graph_only:
+        return {
+            "run_id": model.run_id,
+            "workflow_id": model.workflow_id,
+            "stage_id": model.stage_id,
+            "graph_checksum": model.graph_checksum,
+        }
+    return {
+        "run_id": model.run_id,
+        "graph_id": model.graph_id,
+        "graph_version": model.graph_version,
+        "graph_ref": model.graph_ref,
+        "graph_schema_version": model.graph_schema_version,
+        "compiler_version": model.compiler_version,
+        "condition_policy_version": model.condition_policy_version,
+        "stage_id": model.stage_id,
+        "graph_checksum": model.graph_checksum,
+        "stage_binding_checksum": model.stage_binding_checksum,
+        "stage_identity_schema": model.stage_identity_schema,
+        "stage_identity_checksum": model.stage_identity_checksum,
+    }
+
+
+def _matches_stage_identity(model: Any, identity: TaskPlanStageIdentity) -> bool:
+    if not isinstance(identity, TaskPlanStageIdentity):
+        raise TypeError("identity must be TaskPlanStageIdentity")
+    if model.is_graph_only != identity.is_graph_only:
+        return False
+    if model.is_graph_only:
+        return (
+            _stage_identity_checksum_projection(model)
+            == identity.checksum_projection()
+            and model.stage_identity_checksum == identity.identity_checksum
+        )
+    return (
+        model.run_id,
+        model.workflow_id,
+        model.stage_id,
+        model.graph_checksum,
+    ) == (
+        identity.run_id,
+        identity.workflow_id,
+        identity.stage_id,
+        identity.graph_checksum,
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class PlanCandidate:
     candidate_id: str
     run_id: str
-    workflow_id: str
+    workflow_id: str | None
     stage_id: str
     graph_checksum: str
     input_context_refs: tuple[str, ...]
@@ -338,6 +560,15 @@ class PlanCandidate:
     requested_max_parallelism: int = 1
     diagnostics: Mapping[str, Any] = field(default_factory=dict)
     metadata: Mapping[str, Any] = field(default_factory=dict)
+    graph_id: str | None = None
+    graph_version: str | None = None
+    graph_ref: str | None = None
+    graph_schema_version: str | None = None
+    compiler_version: str | None = None
+    condition_policy_version: str | None = None
+    stage_binding_checksum: str | None = None
+    stage_identity_schema: str | None = None
+    stage_identity_checksum: str | None = None
     schema_version: str = PLAN_CANDIDATE_SCHEMA
     candidate_checksum: str = field(init=False)
 
@@ -347,10 +578,11 @@ class PlanCandidate:
             self.schema_version,
         )
         object.__setattr__(self, "candidate_id", identifier(self.candidate_id, "candidate_id"))
-        object.__setattr__(self, "run_id", identifier(self.run_id, "run_id"))
-        object.__setattr__(self, "workflow_id", identifier(self.workflow_id, "workflow_id"))
-        object.__setattr__(self, "stage_id", identifier(self.stage_id, "stage_id"))
-        object.__setattr__(self, "graph_checksum", checksum(self.graph_checksum, "graph_checksum"))
+        _normalize_model_identity(
+            self,
+            legacy_schema=PLAN_CANDIDATE_SCHEMA,
+            graph_only_schema=GRAPH_ONLY_PLAN_CANDIDATE_SCHEMA,
+        )
         object.__setattr__(
             self,
             "input_context_refs",
@@ -401,10 +633,7 @@ class PlanCandidate:
         return {
             "schema_version": self.schema_version,
             "candidate_id": self.candidate_id,
-            "run_id": self.run_id,
-            "workflow_id": self.workflow_id,
-            "stage_id": self.stage_id,
-            "graph_checksum": self.graph_checksum,
+            **_model_identity_projection(self),
             "input_context_refs": list(self.input_context_refs),
             "tasks": [task.to_dict() for task in self.tasks],
             "required_output_roles": list(self.required_output_roles),
@@ -418,9 +647,59 @@ class PlanCandidate:
     def to_dict(self) -> dict[str, Any]:
         return {**self.checksum_projection(), "candidate_checksum": self.candidate_checksum}
 
+    @property
+    def is_graph_only(self) -> bool:
+        return self.schema_version == GRAPH_ONLY_PLAN_CANDIDATE_SCHEMA
+
+    def matches_stage_identity(self, identity: TaskPlanStageIdentity) -> bool:
+        return _matches_stage_identity(self, identity)
+
+    @classmethod
+    def for_stage(
+        cls,
+        *,
+        stage_identity: TaskPlanStageIdentity,
+        candidate_id: str,
+        input_context_refs: tuple[str, ...],
+        tasks: tuple[TaskSpec, ...],
+        required_output_roles: tuple[str, ...],
+        generated_by: str,
+        requested_plan_budget: PlanBuildBudget | Mapping[str, Any],
+        requested_max_parallelism: int = 1,
+        diagnostics: Mapping[str, Any] | None = None,
+        metadata: Mapping[str, Any] | None = None,
+    ) -> Self:
+        return cls(
+            candidate_id=candidate_id,
+            input_context_refs=input_context_refs,
+            tasks=tasks,
+            required_output_roles=required_output_roles,
+            generated_by=generated_by,
+            requested_plan_budget=requested_plan_budget,
+            requested_max_parallelism=requested_max_parallelism,
+            diagnostics=diagnostics or {},
+            metadata=metadata or {},
+            schema_version=(
+                GRAPH_ONLY_PLAN_CANDIDATE_SCHEMA
+                if stage_identity.is_graph_only
+                else PLAN_CANDIDATE_SCHEMA
+            ),
+            **_stage_identity_kwargs(stage_identity),
+        )
+
     @classmethod
     def from_dict(cls, value: Mapping[str, Any]) -> Self:
         ensure_candidate_only(value, path="$.candidate")
+        schema_version = value.get("schema_version")
+        DEFAULT_TASK_PLAN_SCHEMA_REGISTRY.require_readable(
+            TaskPlanContractKind.PLAN_CANDIDATE,
+            str(schema_version),
+        )
+        identity_fields = (
+            _GRAPH_ONLY_MODEL_IDENTITY_FIELDS
+            if schema_version == GRAPH_ONLY_PLAN_CANDIDATE_SCHEMA
+            else frozenset({"workflow_id"})
+        )
         payload = exact_keys(
             value,
             required=frozenset(
@@ -428,7 +707,6 @@ class PlanCandidate:
                     "schema_version",
                     "candidate_id",
                     "run_id",
-                    "workflow_id",
                     "stage_id",
                     "graph_checksum",
                     "input_context_refs",
@@ -441,10 +719,13 @@ class PlanCandidate:
                     "metadata",
                     "candidate_checksum",
                 }
-            ),
+            )
+            | identity_fields,
             model=cls.__name__,
         )
         supplied = checksum(payload.pop("candidate_checksum"), "candidate_checksum")
+        if schema_version == GRAPH_ONLY_PLAN_CANDIDATE_SCHEMA:
+            payload["workflow_id"] = None
         raw_tasks = payload.pop("tasks")
         if isinstance(raw_tasks, (str, bytes)) or not isinstance(raw_tasks, Sequence):
             raise HarnessValidationError("PlanCandidate tasks must be an array", code="invalid_task_plan_payload")
@@ -632,7 +913,7 @@ class ResolvedTaskSpec:
 class ValidatedTaskPlan:
     plan_id: str
     run_id: str
-    workflow_id: str
+    workflow_id: str | None
     stage_id: str
     graph_checksum: str
     version: int
@@ -644,6 +925,15 @@ class ValidatedTaskPlan:
     limits: TaskPlanLimits | Mapping[str, Any]
     accepted_at: str
     policy_checksum: str | None = None
+    graph_id: str | None = None
+    graph_version: str | None = None
+    graph_ref: str | None = None
+    graph_schema_version: str | None = None
+    compiler_version: str | None = None
+    condition_policy_version: str | None = None
+    stage_binding_checksum: str | None = None
+    stage_identity_schema: str | None = None
+    stage_identity_checksum: str | None = None
     schema_version: str = VALIDATED_TASK_PLAN_SCHEMA
     plan_checksum: str = field(init=False)
 
@@ -653,16 +943,22 @@ class ValidatedTaskPlan:
             self.schema_version,
         )
         object.__setattr__(self, "plan_id", identifier(self.plan_id, "plan_id"))
-        object.__setattr__(self, "run_id", identifier(self.run_id, "run_id"))
-        object.__setattr__(self, "workflow_id", identifier(self.workflow_id, "workflow_id"))
-        object.__setattr__(self, "stage_id", identifier(self.stage_id, "stage_id"))
-        object.__setattr__(self, "graph_checksum", checksum(self.graph_checksum, "graph_checksum"))
+        _normalize_model_identity(
+            self,
+            legacy_schema=VALIDATED_TASK_PLAN_SCHEMA,
+            graph_only_schema=GRAPH_ONLY_VALIDATED_TASK_PLAN_SCHEMA,
+        )
         object.__setattr__(self, "version", positive_int(self.version, "version"))
         object.__setattr__(
             self,
             "parent_plan_id",
             identifier(self.parent_plan_id, "parent_plan_id") if self.parent_plan_id is not None else None,
         )
+        if self.is_graph_only and self.policy_checksum is None:
+            raise HarnessValidationError(
+                "Graph-only ValidatedTaskPlan requires a policy checksum",
+                code="task_plan_policy_checksum_required",
+            )
         object.__setattr__(self, "source_candidate_ref", reference(self.source_candidate_ref, "source_candidate_ref"))
         object.__setattr__(self, "policy_ref", exact_reference(self.policy_ref, "policy_ref"))
         object.__setattr__(
@@ -689,10 +985,7 @@ class ValidatedTaskPlan:
         projection = {
             "schema_version": self.schema_version,
             "plan_id": self.plan_id,
-            "run_id": self.run_id,
-            "workflow_id": self.workflow_id,
-            "stage_id": self.stage_id,
-            "graph_checksum": self.graph_checksum,
+            **_model_identity_projection(self),
             "version": self.version,
             "parent_plan_id": self.parent_plan_id,
             "source_candidate_ref": self.source_candidate_ref,
@@ -709,8 +1002,75 @@ class ValidatedTaskPlan:
     def to_dict(self) -> dict[str, Any]:
         return {**self.checksum_projection(), "plan_checksum": self.plan_checksum}
 
+    @property
+    def is_graph_only(self) -> bool:
+        return self.schema_version == GRAPH_ONLY_VALIDATED_TASK_PLAN_SCHEMA
+
+    def matches_stage_identity(self, identity: TaskPlanStageIdentity) -> bool:
+        return _matches_stage_identity(self, identity)
+
+    @classmethod
+    def from_candidate(
+        cls,
+        candidate: PlanCandidate,
+        *,
+        plan_id: str,
+        version: int,
+        parent_plan_id: str | None,
+        source_candidate_ref: str,
+        policy_ref: str,
+        policy_checksum: str,
+        tasks: tuple[ResolvedTaskSpec, ...],
+        required_output_roles: tuple[str, ...],
+        limits: TaskPlanLimits | Mapping[str, Any],
+        accepted_at: str,
+    ) -> Self:
+        if not isinstance(candidate, PlanCandidate):
+            raise TypeError("candidate must be PlanCandidate")
+        identity_values = {
+            "run_id": candidate.run_id,
+            "workflow_id": candidate.workflow_id,
+            "stage_id": candidate.stage_id,
+            "graph_checksum": candidate.graph_checksum,
+        }
+        if candidate.is_graph_only:
+            identity_values.update(
+                {
+                    name: getattr(candidate, name)
+                    for name in _GRAPH_ONLY_MODEL_IDENTITY_FIELDS
+                }
+            )
+        return cls(
+            plan_id=plan_id,
+            version=version,
+            parent_plan_id=parent_plan_id,
+            source_candidate_ref=source_candidate_ref,
+            policy_ref=policy_ref,
+            policy_checksum=policy_checksum,
+            tasks=tasks,
+            required_output_roles=required_output_roles,
+            limits=limits,
+            accepted_at=accepted_at,
+            schema_version=(
+                GRAPH_ONLY_VALIDATED_TASK_PLAN_SCHEMA
+                if candidate.is_graph_only
+                else VALIDATED_TASK_PLAN_SCHEMA
+            ),
+            **identity_values,
+        )
+
     @classmethod
     def from_dict(cls, value: Mapping[str, Any]) -> Self:
+        schema_version = value.get("schema_version")
+        DEFAULT_TASK_PLAN_SCHEMA_REGISTRY.require_readable(
+            TaskPlanContractKind.VALIDATED_PLAN,
+            str(schema_version),
+        )
+        identity_fields = (
+            _GRAPH_ONLY_MODEL_IDENTITY_FIELDS
+            if schema_version == GRAPH_ONLY_VALIDATED_TASK_PLAN_SCHEMA
+            else frozenset({"workflow_id"})
+        )
         payload = exact_keys(
             value,
             required=frozenset(
@@ -718,7 +1078,6 @@ class ValidatedTaskPlan:
                     "schema_version",
                     "plan_id",
                     "run_id",
-                    "workflow_id",
                     "stage_id",
                     "graph_checksum",
                     "version",
@@ -731,11 +1090,14 @@ class ValidatedTaskPlan:
                     "accepted_at",
                     "plan_checksum",
                 }
-            ),
+            )
+            | identity_fields,
             optional=frozenset({"policy_checksum"}),
             model=cls.__name__,
         )
         supplied = checksum(payload.pop("plan_checksum"), "plan_checksum")
+        if schema_version == GRAPH_ONLY_VALIDATED_TASK_PLAN_SCHEMA:
+            payload["workflow_id"] = None
         raw_tasks = payload.pop("tasks")
         if isinstance(raw_tasks, (str, bytes)) or not isinstance(raw_tasks, Sequence):
             raise HarnessValidationError("ValidatedTaskPlan tasks must be an array", code="invalid_task_plan_payload")

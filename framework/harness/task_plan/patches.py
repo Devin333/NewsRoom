@@ -19,7 +19,7 @@ from framework.harness.task_plan.policy import TaskPlanPolicy
 
 
 class TaskPlanPatchValidator:
-    """Validates and materialises bounded immutable v1 plan patches."""
+    """Validates and materialises bounded immutable plan patches."""
 
     def apply(
         self,
@@ -182,12 +182,9 @@ class TaskPlanPatchValidator:
             # Skipping is represented by the next projection/event; the plan
             # definition remains immutable and therefore replayable.
             pass
-        return ValidatedTaskPlan(
+        return replace(
+            plan,
             plan_id=f"{plan.plan_id}.v{plan.version + 1}",
-            run_id=plan.run_id,
-            workflow_id=plan.workflow_id,
-            stage_id=plan.stage_id,
-            graph_checksum=plan.graph_checksum,
             version=plan.version + 1,
             parent_plan_id=plan.plan_id,
             source_candidate_ref=patch.patch_checksum,

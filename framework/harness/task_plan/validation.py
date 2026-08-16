@@ -210,16 +210,30 @@ class TaskPlanValidator:
         for name in ("run_id", "stage_id", "graph_checksum"):
             if getattr(candidate, name) != getattr(context, name):
                 diagnostics.append(_diag(f"candidate_{name}_mismatch", f"candidate {name} does not match stage context", "identity", field=name))
-        if context.stage_identity.is_graph_only:
+        if candidate.is_graph_only != context.stage_identity.is_graph_only:
             diagnostics.append(
                 _diag(
                     "task_plan_candidate_identity_schema_mismatch",
-                    "legacy TaskPlan candidate cannot enter a Graph-only stage",
+                    "TaskPlan candidate identity schema does not match stage context",
                     "identity",
                     field="schema_version",
                 )
             )
-        elif candidate.workflow_id != context.workflow_id:
+        elif candidate.is_graph_only and not candidate.matches_stage_identity(
+            context.stage_identity
+        ):
+            diagnostics.append(
+                _diag(
+                    "task_plan_candidate_graph_identity_mismatch",
+                    "candidate Graph identity does not match stage context",
+                    "identity",
+                    field="stage_identity_checksum",
+                )
+            )
+        elif (
+            not candidate.is_graph_only
+            and candidate.workflow_id != context.workflow_id
+        ):
             diagnostics.append(
                 _diag(
                     "candidate_workflow_id_mismatch",
@@ -305,12 +319,9 @@ class TaskPlanValidator:
         result.require_valid()
         if plan_id is None:
             plan_id = canonical_payload_checksum({"candidate_checksum": candidate.candidate_checksum, "stage_id": candidate.stage_id})
-        return ValidatedTaskPlan(
+        return ValidatedTaskPlan.from_candidate(
+            candidate,
             plan_id=plan_id,
-            run_id=candidate.run_id,
-            workflow_id=candidate.workflow_id,
-            stage_id=candidate.stage_id,
-            graph_checksum=context.graph_checksum,
             version=1,
             parent_plan_id=None,
             source_candidate_ref=candidate.candidate_checksum,

@@ -204,12 +204,9 @@ class TaskPlanStageRunner(TaskPlanStageRunnerPort):
         if not result.accepted:
             self.store.append_rejected_candidate(candidate, reason_code=result.diagnostics[0].code if result.diagnostics else "task_plan_candidate_rejected")
             result.require_valid()
-        plan = ValidatedTaskPlan(
+        plan = ValidatedTaskPlan.from_candidate(
+            candidate,
             plan_id=canonical_payload_checksum({"candidate_checksum": candidate.candidate_checksum, "stage_id": request.stage_id}),
-            run_id=candidate.run_id,
-            workflow_id=candidate.workflow_id,
-            stage_id=candidate.stage_id,
-            graph_checksum=request.graph_checksum,
             version=1,
             parent_plan_id=None,
             source_candidate_ref=candidate.candidate_checksum,

@@ -171,17 +171,7 @@ class HarnessPlanCandidateBuilder:
             )
         payload = result.output["candidate"]
         candidate = payload if isinstance(payload, PlanCandidate) else PlanCandidate.from_dict(payload)
-        if request.stage_identity.is_graph_only:
-            raise HarnessValidationError(
-                "Graph-only TaskPlan request requires a Graph identity candidate schema",
-                code="task_plan_candidate_identity_schema_mismatch",
-            )
-        if (candidate.run_id, candidate.workflow_id, candidate.stage_id, candidate.graph_checksum) != (
-            request.run_id,
-            request.workflow_id,
-            request.stage_id,
-            request.graph_checksum,
-        ):
+        if not candidate.matches_stage_identity(request.stage_identity):
             raise HarnessValidationError("plan builder returned candidate outside the requested stage", code="task_plan_candidate_scope_mismatch")
         if not set(candidate.input_context_refs).issubset(request.context_refs.values()):
             raise HarnessValidationError("plan builder referenced context outside policy", code="task_plan_input_reference_unavailable")
@@ -279,21 +269,9 @@ class TaskPlanStageRequest:
             object.__setattr__(self, "budget", frozen_mapping(self.budget, "task_plan.budget"))
         if self.candidate is not None and not isinstance(self.candidate, PlanCandidate):
             raise TypeError("candidate must be PlanCandidate")
-        if self.candidate is not None and self.stage_identity.is_graph_only:
-            raise HarnessValidationError(
-                "Graph-only TaskPlan stage requires a Graph identity candidate schema",
-                code="task_plan_candidate_identity_schema_mismatch",
-            )
-        if self.candidate is not None and (
-            self.candidate.run_id,
-            self.candidate.workflow_id,
-            self.candidate.stage_id,
-            self.candidate.graph_checksum,
-        ) != (
-            self.run_id,
-            self.workflow_id,
-            self.stage_id,
-            self.graph_checksum,
+        if (
+            self.candidate is not None
+            and not self.candidate.matches_stage_identity(self.stage_identity)
         ):
             raise HarnessValidationError(
                 "TaskPlan candidate is outside the frozen Graph stage binding",

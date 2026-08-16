@@ -13,7 +13,9 @@ TASK_PLAN_RUNTIME_VERSION = "newsroom.harness-task-plan-runtime/v1"
 TASK_DEFINITION_SCHEMA = "newsroom.harness-task-definition/v1"
 RESOLVED_TASK_DEFINITION_SCHEMA = "newsroom.harness-resolved-task-definition/v1"
 PLAN_CANDIDATE_SCHEMA = "newsroom.harness-task-plan-candidate/v1"
+GRAPH_ONLY_PLAN_CANDIDATE_SCHEMA = "newsroom.harness-task-plan-candidate/v2"
 VALIDATED_TASK_PLAN_SCHEMA = "newsroom.harness-task-plan/v1"
+GRAPH_ONLY_VALIDATED_TASK_PLAN_SCHEMA = "newsroom.harness-task-plan/v2"
 TASK_PLAN_PATCH_SCHEMA = "newsroom.harness-task-plan-patch/v1"
 TASK_PLAN_POLICY_SCHEMA = "newsroom.harness-task-plan-policy/v1"
 TASK_INSTANCE_SCHEMA = "newsroom.harness-task-instance/v1"
@@ -176,6 +178,12 @@ _WRITERS: Mapping[TaskPlanContractKind, str] = MappingProxyType(
 _ADDITIONAL_SCHEMAS: Mapping[TaskPlanContractKind, tuple[str, ...]] = (
     MappingProxyType(
         {
+            TaskPlanContractKind.PLAN_CANDIDATE: (
+                GRAPH_ONLY_PLAN_CANDIDATE_SCHEMA,
+            ),
+            TaskPlanContractKind.VALIDATED_PLAN: (
+                GRAPH_ONLY_VALIDATED_TASK_PLAN_SCHEMA,
+            ),
             TaskPlanContractKind.STAGE_BINDING: (
                 GRAPH_ONLY_TASK_PLAN_STAGE_BINDING_SCHEMA,
             ),
@@ -201,8 +209,10 @@ DEFAULT_TASK_PLAN_SCHEMA_REGISTRY = TaskPlanSchemaRegistry(
 
 __all__ = [
     "DEFAULT_TASK_PLAN_SCHEMA_REGISTRY",
+    "GRAPH_ONLY_PLAN_CANDIDATE_SCHEMA",
     "GRAPH_ONLY_TASK_PLAN_STAGE_BINDING_SCHEMA",
     "GRAPH_ONLY_TASK_PLAN_STAGE_IDENTITY_SCHEMA",
+    "GRAPH_ONLY_VALIDATED_TASK_PLAN_SCHEMA",
     "PLAN_CANDIDATE_SCHEMA",
     "RESOLVED_TASK_DEFINITION_SCHEMA",
     "TASK_CAPABILITY_BINDING_SCHEMA",

@@ -44,6 +44,7 @@ from framework.harness.task_plan.store import (
     _plan_contains_task_version,
     _plan_event,
     _projection_for_plan,
+    _require_legacy_task_plan_event_identity,
     _require_subagent_result_evidence,
     _require_projection_transition_identity,
     _result_event,
@@ -244,6 +245,7 @@ class DurableTaskPlanStore:
     ) -> str:
         if not isinstance(candidate, PlanCandidate):
             raise TypeError("candidate must be PlanCandidate")
+        _require_legacy_task_plan_event_identity(candidate)
         if event_type not in {"PLAN_CANDIDATE_BUILT", "PLAN_CANDIDATE_REJECTED"}:
             raise HarnessValidationError(
                 "candidate event type is invalid",
@@ -278,6 +280,7 @@ class DurableTaskPlanStore:
     ) -> str:
         if not isinstance(candidate, PlanCandidate):
             raise TypeError("candidate must be PlanCandidate")
+        _require_legacy_task_plan_event_identity(candidate)
         candidate_ref = self._put_document(
             "candidate",
             candidate.run_id,
@@ -335,6 +338,7 @@ class DurableTaskPlanStore:
     def accept_plan(self, plan: ValidatedTaskPlan) -> str:
         if not isinstance(plan, ValidatedTaskPlan):
             raise TypeError("plan must be ValidatedTaskPlan")
+        _require_legacy_task_plan_event_identity(plan)
         events = self.read_events(plan.run_id, plan.stage_id)
         accepted = [item for item in events if item.event_type == "PLAN_ACCEPTED"]
         same_version = [item for item in accepted if item.plan_version == plan.version]

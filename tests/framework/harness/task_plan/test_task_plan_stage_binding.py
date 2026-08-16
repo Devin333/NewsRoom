@@ -18,7 +18,9 @@ from framework.harness.graph import (
 from framework.harness.task_plan import (
     DEFAULT_TASK_PLAN_SCHEMA_REGISTRY,
     GRAPH_ONLY_TASK_PLAN_STAGE_BINDING_SCHEMA,
+    GRAPH_ONLY_VALIDATED_TASK_PLAN_SCHEMA,
     TASK_PLAN_STAGE_BINDING_SCHEMA,
+    VALIDATED_TASK_PLAN_SCHEMA,
     TaskPlanContractKind,
     TaskPlanStageBinding,
     TaskPlanValidationContext,
@@ -74,6 +76,7 @@ def test_graph_only_stage_binding_uses_only_exact_graph_identity() -> None:
     payload = binding.to_dict()
 
     assert binding.schema_version == GRAPH_ONLY_TASK_PLAN_STAGE_BINDING_SCHEMA
+    assert binding.task_plan_schema == GRAPH_ONLY_VALIDATED_TASK_PLAN_SCHEMA
     assert binding.graph.graph_ref is not None
     assert payload["graph_ref"] == binding.graph.graph_ref.exact_ref
     assert payload["graph_version"] == binding.graph.identity_version
@@ -130,6 +133,27 @@ def test_stage_binding_rejects_schema_identity_mixing() -> None:
             schema_version=TASK_PLAN_STAGE_BINDING_SCHEMA,
         )
     assert graph_error.value.code == "task_plan_stage_binding_schema_mismatch"
+
+
+def test_graph_only_stage_binding_rejects_legacy_plan_schema() -> None:
+    definition = build_dynamic_paper_analysis_graph_definition()
+    stage_binding = definition.task_plan_stage_bindings[0]
+    legacy_definition = replace(
+        definition,
+        task_plan_stage_bindings=(
+            replace(
+                stage_binding,
+                task_plan_schema=VALIDATED_TASK_PLAN_SCHEMA,
+            ),
+        ),
+        definition_checksum=None,
+    )
+    graph = HarnessGraphCompiler().compile(legacy_definition).graph
+
+    with pytest.raises(HarnessValidationError) as error:
+        TaskPlanStageBinding(graph, RESEARCH_DYNAMIC_STAGE_ID)
+
+    assert error.value.code == "dynamic_task_plan_schema_identity_mismatch"
 
 
 def test_graph_only_stage_binding_reader_rejects_aliases_and_tampering() -> None:

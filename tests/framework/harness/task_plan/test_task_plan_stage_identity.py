@@ -16,8 +16,12 @@ from framework.harness.control_plane.errors import HarnessValidationError
 from framework.harness.graph import HarnessGraphCompiler
 from framework.harness.task_plan import (
     DEFAULT_TASK_PLAN_SCHEMA_REGISTRY,
+    GRAPH_ONLY_PLAN_CANDIDATE_SCHEMA,
     GRAPH_ONLY_TASK_PLAN_STAGE_IDENTITY_SCHEMA,
+    GRAPH_ONLY_VALIDATED_TASK_PLAN_SCHEMA,
+    PLAN_CANDIDATE_SCHEMA,
     TASK_PLAN_STAGE_IDENTITY_SCHEMA,
+    VALIDATED_TASK_PLAN_SCHEMA,
     PlanBuildRequest,
     TaskPlanContractKind,
     TaskPlanStageBinding,
@@ -74,6 +78,29 @@ def test_stage_identity_registry_keeps_v1_writer_and_admits_v2() -> None:
     assert set(registration.executable_schemas) == set(
         registration.readable_schemas
     )
+
+
+def test_candidate_and_plan_registries_keep_v1_writers_and_admit_v2() -> None:
+    registrations = {
+        item.contract_kind: item
+        for item in DEFAULT_TASK_PLAN_SCHEMA_REGISTRY.registrations
+    }
+
+    candidate = registrations[TaskPlanContractKind.PLAN_CANDIDATE]
+    assert candidate.writer_schema == PLAN_CANDIDATE_SCHEMA
+    assert set(candidate.readable_schemas) == {
+        PLAN_CANDIDATE_SCHEMA,
+        GRAPH_ONLY_PLAN_CANDIDATE_SCHEMA,
+    }
+    assert set(candidate.executable_schemas) == set(candidate.readable_schemas)
+
+    plan = registrations[TaskPlanContractKind.VALIDATED_PLAN]
+    assert plan.writer_schema == VALIDATED_TASK_PLAN_SCHEMA
+    assert set(plan.readable_schemas) == {
+        VALIDATED_TASK_PLAN_SCHEMA,
+        GRAPH_ONLY_VALIDATED_TASK_PLAN_SCHEMA,
+    }
+    assert set(plan.executable_schemas) == set(plan.readable_schemas)
 
 
 def test_legacy_stage_identity_round_trips_without_changing_request_wire() -> None:
