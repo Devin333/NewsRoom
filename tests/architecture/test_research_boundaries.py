@@ -156,6 +156,7 @@ def test_reader_repair_execution_v2_contract_is_candidate_only_and_inactive() ->
     research_root = PROJECT_ROOT / "business" / "research"
     contract_paths = (
         research_root / "reader_repair" / "application.py",
+        research_root / "graphs" / "reader_repair_contracts.py",
         research_root / "graphs" / "reader_repair_execution_gates.py",
         research_root / "graphs" / "reader_repair_execution_workers.py",
     )
@@ -183,14 +184,19 @@ def test_reader_repair_execution_v2_contract_is_candidate_only_and_inactive() ->
     inactive_symbols = (
         "build_reader_repair_application_worker_result",
         "build_reader_repair_application_verification_worker_result",
+        "build_reader_repair_result_worker_result",
         "build_reader_repair_execution_gate_registry",
     )
     for path in production_paths:
         source = path.read_text(encoding="utf-8")
         assert all(symbol not in source for symbol in inactive_symbols)
 
-    v1_graph_source = (
+    graph_source = (
         research_root / "graphs" / "reader_repair.py"
     ).read_text(encoding="utf-8")
-    assert "READER_REPAIR_GRAPH_VERSION = \"1\"" in v1_graph_source
-    assert "apply_repair_candidate" not in v1_graph_source
+    contract_source = (
+        research_root / "graphs" / "reader_repair_contracts.py"
+    ).read_text(encoding="utf-8")
+    assert 'READER_REPAIR_GRAPH_VERSION = "2"' in contract_source
+    assert "READER_REPAIR_APPLICATION_STEP_ID" in graph_source
+    assert "HarnessGraphCommittedNodeOutputBinding" in graph_source

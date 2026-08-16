@@ -1,10 +1,27 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 from framework.events.canonical import checksum_for
-from framework.harness import HarnessWorkerStatus
+from framework.harness import (
+    HarnessCommittedNodeOutputReceipt,
+    HarnessGraphReference,
+    HarnessNodeOutputCandidate,
+    HarnessNodeOutputCommit,
+    HarnessNodeOutputResourceIdentity,
+    HarnessValidationError,
+    HarnessWorkerStatus,
+)
+from framework.harness.graph import HarnessContractKind, HarnessContractReference
+from framework.harness.graph.versioning import (
+    HARNESS_CONDITION_POLICY_VERSION,
+    HARNESS_GRAPH_COMPILER_VERSION,
+    NORMALIZED_HARNESS_GRAPH_SCHEMA,
+)
 
 from business.research.domain import (
     ReaderIssue,
@@ -13,16 +30,26 @@ from business.research.domain import (
     ReaderRepairApplicationObservationCandidate,
     ReaderRepairContextPack,
     ReaderRepairPatchCandidate,
+    ReaderRepairResult,
     ResearchDocument,
     ResearchSection,
     SourceLineage,
     stable_research_id,
 )
 from business.research.graphs import (
+    READER_REPAIR_APPLICATION_OUTPUT_KEY,
+    READER_REPAIR_APPLICATION_STEP_ID,
+    READER_REPAIR_COMMITTED_OUTPUT_BINDING_ID,
+    READER_REPAIR_COMMITTED_OUTPUT_RECEIPT_KEY,
     READER_REPAIR_EXECUTION_GATE_REFERENCES,
+    READER_REPAIR_GRAPH_ID,
+    READER_REPAIR_GRAPH_VERSION,
+    READER_REPAIR_RESULT_OUTPUT_KEY,
     build_reader_repair_application_verification_worker_result,
     build_reader_repair_application_worker_result,
     build_reader_repair_execution_gate_registry,
+    build_reader_repair_graph_definition,
+    build_reader_repair_result_worker_result,
 )
 from business.research.reader import ReaderPayloadBuilder
 from business.research.reader_repair import (
@@ -53,7 +80,25 @@ def test_reader_repair_execution_gate_chain_recomputes_exact_candidates() -> Non
         application=application,
         observation=observation,
     )
-    registry = build_reader_repair_execution_gate_registry()
+    definition = build_reader_repair_graph_definition()
+    assert definition.definition_checksum is not None
+    receipt = _receipt(
+        application,
+        graph_definition_checksum=definition.definition_checksum,
+    )
+    result_output = build_reader_repair_result_worker_result(
+        payload=payload,
+        issue=issue,
+        candidate=candidate,
+        application=application,
+        observation=observation,
+        verification=verification,
+        receipt=receipt,
+        graph_definition_checksum=definition.definition_checksum,
+    ).output
+    registry = build_reader_repair_execution_gate_registry(
+        graph_definition_checksum=definition.definition_checksum,
+    )
 
     cases = (
         (
@@ -88,6 +133,17 @@ def test_reader_repair_execution_gate_chain_recomputes_exact_candidates() -> Non
                 "reader_repair_patch_candidate": candidate.to_dict(),
                 "reader_repair_application_candidate": application.to_dict(),
                 "reader_repair_application_observation": observation.to_dict(),
+            },
+        ),
+        (
+            "ReaderRepairCommittedResultGate@1",
+            result_output,
+            {
+                "reader_issue": issue.to_dict(),
+                "reader_repair_patch_candidate": candidate.to_dict(),
+                "reader_repair_application_candidate": application.to_dict(),
+                "reader_repair_application_observation": observation.to_dict(),
+                "reader_repair_application_verification": verification.to_dict(),
             },
         ),
     )
@@ -141,6 +197,135 @@ def test_reader_repair_execution_function_workers_return_candidates_only() -> No
     }
     assert set(verification_result.output) == {
         "reader_repair_application_verification"
+    }
+
+
+def test_reader_repair_result_worker_binds_real_payload_and_commit_receipt() -> None:
+    payload = _payload()
+    issue = _issue(payload)
+    candidate = _candidate(payload, _context_pack(issue))
+    application = apply_reader_repair_candidate(
+        payload=payload,
+        candidate=candidate,
+    )
+    observation = _observation(candidate, application)
+    verification = verify_reader_repair_application(
+        payload=payload,
+        issue=issue,
+        candidate=candidate,
+        application=application,
+        observation=observation,
+    )
+    definition = build_reader_repair_graph_definition()
+    assert definition.definition_checksum is not None
+    receipt = _receipt(
+        application,
+        graph_definition_checksum=definition.definition_checksum,
+    )
+
+    worker_result = build_reader_repair_result_worker_result(
+        payload=payload,
+        issue=issue,
+        candidate=candidate,
+        application=application,
+        observation=observation,
+        verification=verification,
+        receipt=receipt,
+        graph_definition_checksum=definition.definition_checksum,
+    )
+    result = ReaderRepairResult.model_validate(
+        worker_result.output[READER_REPAIR_RESULT_OUTPUT_KEY]
+    )
+
+    assert worker_result.status is HarnessWorkerStatus.SUCCEEDED
+    assert worker_result.effect_intent is None
+    assert set(worker_result.output) == {
+        READER_REPAIR_RESULT_OUTPUT_KEY,
+        READER_REPAIR_COMMITTED_OUTPUT_RECEIPT_KEY,
+    }
+    assert result.successful is True
+    assert result.payload_before_ref == payload.payload_id
+    assert result.payload_after_ref == application.after_payload_checksum
+    assert result.application_id == application.application_id
+    assert result.committed_output is not None
+    assert result.committed_output.receipt_ref == receipt.receipt_ref
+    assert result.committed_output.commit_ref == receipt.commit.commit_ref
+    assert result.committed_output.output_ref == checksum_for(application.to_dict())
+    assert result.committed_output.payload_checksum == (
+        application.after_payload_checksum
+    )
+    assert "public_ref" not in result.to_dict()
+    assert "artifact_ref" not in result.to_dict()
+
+    partial = result.to_dict()
+    partial.pop("committed_output")
+    with pytest.raises(ValueError, match="requires application, verification"):
+        ReaderRepairResult.model_validate(partial)
+
+    blank_application = result.to_dict()
+    blank_application["application_id"] = ""
+    with pytest.raises(ValueError, match="application id"):
+        ReaderRepairResult.model_validate(blank_application)
+
+
+def test_committed_result_gate_rejects_tampered_business_proof() -> None:
+    fixture = _committed_result_fixture()
+    output = dict(fixture["output"])
+    raw_result = dict(output[READER_REPAIR_RESULT_OUTPUT_KEY])
+    raw_proof = dict(raw_result["committed_output"])
+    raw_proof["commit_ref"] = checksum_for({"forged": True})
+    raw_result["committed_output"] = raw_proof
+    output[READER_REPAIR_RESULT_OUTPUT_KEY] = raw_result
+
+    gate_result = fixture["gate"].evaluate(
+        _gate_context(
+            output,
+            prior=fixture["prior"],
+            payload=fixture["payload"],
+        )
+    )
+
+    assert gate_result.passed is False
+    assert "reader_repair_result" in gate_result.details["violations"]
+
+
+def test_committed_result_gate_rejects_receipt_checksum_tampering() -> None:
+    fixture = _committed_result_fixture()
+    output = dict(fixture["output"])
+    raw_receipt = dict(output[READER_REPAIR_COMMITTED_OUTPUT_RECEIPT_KEY])
+    raw_receipt["receipt_ref"] = checksum_for({"forged": True})
+    output[READER_REPAIR_COMMITTED_OUTPUT_RECEIPT_KEY] = raw_receipt
+
+    gate_result = fixture["gate"].evaluate(
+        _gate_context(
+            output,
+            prior=fixture["prior"],
+            payload=fixture["payload"],
+        )
+    )
+
+    assert gate_result.passed is False
+    assert gate_result.details["reason_code"] == (
+        "reader_repair_execution_gate_input_invalid"
+    )
+    assert gate_result.details["error_code"] == (
+        "graph_committed_node_output_receipt_checksum_invalid"
+    )
+
+
+def test_committed_result_worker_rejects_wrong_graph_definition() -> None:
+    fixture = _committed_result_fixture()
+    build_args = dict(fixture["build_args"])
+    build_args["graph_definition_checksum"] = checksum_for(
+        {"definition": "wrong"}
+    )
+
+    with pytest.raises(HarnessValidationError) as captured:
+        build_reader_repair_result_worker_result(**build_args)
+
+    assert captured.value.code == "reader_repair_committed_result_invalid"
+    assert captured.value.details["violations"]["committed_output_receipt"] == {
+        "mismatches": ["graph_definition_checksum"]
     }
 
 
@@ -318,6 +503,116 @@ def test_execution_gate_fails_closed_without_root_payload() -> None:
     assert result.passed is False
     assert result.details["reason_code"] == (
         "reader_repair_execution_gate_input_invalid"
+    )
+
+
+def _committed_result_fixture():
+    payload = _payload()
+    issue = _issue(payload)
+    candidate = _candidate(payload, _context_pack(issue))
+    application = apply_reader_repair_candidate(
+        payload=payload,
+        candidate=candidate,
+    )
+    observation = _observation(candidate, application)
+    verification = verify_reader_repair_application(
+        payload=payload,
+        issue=issue,
+        candidate=candidate,
+        application=application,
+        observation=observation,
+    )
+    definition = build_reader_repair_graph_definition()
+    assert definition.definition_checksum is not None
+    receipt = _receipt(
+        application,
+        graph_definition_checksum=definition.definition_checksum,
+    )
+    build_args = {
+        "payload": payload,
+        "issue": issue,
+        "candidate": candidate,
+        "application": application,
+        "observation": observation,
+        "verification": verification,
+        "receipt": receipt,
+        "graph_definition_checksum": definition.definition_checksum,
+    }
+    output = build_reader_repair_result_worker_result(
+        **build_args,
+    ).output
+    gate = build_reader_repair_execution_gate_registry(
+        graph_definition_checksum=definition.definition_checksum,
+    ).resolve("ReaderRepairCommittedResultGate@1").gate
+    return {
+        "payload": payload,
+        "output": output,
+        "gate": gate,
+        "build_args": build_args,
+        "prior": {
+            "reader_issue": issue.to_dict(),
+            "reader_repair_patch_candidate": candidate.to_dict(),
+            "reader_repair_application_candidate": application.to_dict(),
+            "reader_repair_application_observation": observation.to_dict(),
+            "reader_repair_application_verification": verification.to_dict(),
+        },
+    }
+
+
+def _receipt(
+    application: ReaderRepairApplicationCandidate,
+    *,
+    graph_definition_checksum: str,
+) -> HarnessCommittedNodeOutputReceipt:
+    graph_ref = HarnessGraphReference(
+        graph_id=READER_REPAIR_GRAPH_ID,
+        workflow_ref=HarnessContractReference(
+            HarnessContractKind.WORKFLOW,
+            READER_REPAIR_GRAPH_ID,
+            READER_REPAIR_GRAPH_VERSION,
+        ),
+        schema_version=NORMALIZED_HARNESS_GRAPH_SCHEMA,
+        compiler_version=HARNESS_GRAPH_COMPILER_VERSION,
+        condition_policy_version=HARNESS_CONDITION_POLICY_VERSION,
+        checksum=checksum_for({"graph": READER_REPAIR_GRAPH_ID, "version": "2"}),
+    )
+    resource = HarnessNodeOutputResourceIdentity(
+        run_id="reader-repair-execution-run",
+        graph_ref=graph_ref,
+        node_id=READER_REPAIR_APPLICATION_STEP_ID,
+        node_instance_id="reader-repair-application-node-instance-1",
+    )
+    candidate = HarnessNodeOutputCandidate(
+        output_refs={
+            READER_REPAIR_APPLICATION_OUTPUT_KEY: checksum_for(
+                application.to_dict()
+            )
+        },
+        evidence_refs=(checksum_for({"source_ref": SOURCE_REF}),),
+    )
+    commit = HarnessNodeOutputCommit(
+        stage_ref=checksum_for({"stage": "reader-repair-application"}),
+        lease_ref=checksum_for({"lease": "reader-repair-application"}),
+        resource_ref=resource.resource_ref,
+        activity_id="reader-repair-application-activity-instance",
+        owner_attempt_id="reader-repair-application-attempt-1",
+        generation=1,
+        candidate=candidate,
+        committed_at=datetime(2026, 8, 16, 8, 0, tzinfo=UTC),
+    )
+    return HarnessCommittedNodeOutputReceipt(
+        graph_definition_checksum=graph_definition_checksum,
+        binding_id=READER_REPAIR_COMMITTED_OUTPUT_BINDING_ID,
+        receipt_input_key=READER_REPAIR_COMMITTED_OUTPUT_RECEIPT_KEY,
+        producer_activity_id=READER_REPAIR_APPLICATION_STEP_ID,
+        producer_activity_ref=HarnessContractReference(
+            HarnessContractKind.ACTIVITY,
+            "research.reader_repair.apply_repair_candidate",
+            "1",
+        ),
+        resource=resource,
+        commit=commit,
+        output_key=READER_REPAIR_APPLICATION_OUTPUT_KEY,
     )
 
 

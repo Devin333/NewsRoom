@@ -7,12 +7,14 @@ from pydantic import BaseModel, ValidationError
 
 from framework.events.canonical import checksum_for
 from framework.harness import (
+    HarnessCommittedNodeOutputReceipt,
     DeterministicGate,
     DeterministicGateRegistry,
     GateContext,
     GateReference,
     GateRegistration,
     HarnessGateResult,
+    HarnessValidationError,
 )
 
 from business.research.domain import (
@@ -22,7 +24,15 @@ from business.research.domain import (
     ReaderRepairApplicationVerificationRecord,
     ReaderRepairContextPack,
     ReaderRepairPatchCandidate,
+    ReaderRepairResult,
     ResearchReaderPayload,
+)
+from business.research.graphs.reader_repair_contracts import (
+    READER_REPAIR_COMMITTED_OUTPUT_RECEIPT_KEY,
+    READER_REPAIR_RESULT_OUTPUT_KEY,
+)
+from business.research.graphs.reader_repair_execution_workers import (
+    build_reader_repair_committed_result,
 )
 from business.research.reader_repair.application import (
     ReaderRepairApplicationError,
@@ -310,11 +320,137 @@ class ReaderRepairApplicationVerificationGateAdapter(DeterministicGate):
         return _result(self.gate_name, violations)
 
 
+class ReaderRepairCommittedResultGateAdapter(DeterministicGate):
+    gate_name = "ReaderRepairCommittedResultGate"
+    gate_version = "1"
+
+    def __init__(self, *, graph_definition_checksum: str) -> None:
+        self._graph_definition_checksum = str(graph_definition_checksum)
+
+    def evaluate(self, context: GateContext) -> HarnessGateResult:
+        output = getattr(getattr(context, "worker_result", None), "output", None)
+        expected_output_keys = {
+            READER_REPAIR_RESULT_OUTPUT_KEY,
+            READER_REPAIR_COMMITTED_OUTPUT_RECEIPT_KEY,
+        }
+        if not isinstance(output, Mapping) or set(output) != expected_output_keys:
+            return _invalid(
+                self.gate_name,
+                "committed repair result worker output fields are invalid",
+                expected_output_keys=sorted(expected_output_keys),
+            )
+        result, failure = _model_from_output(
+            context,
+            output_key=READER_REPAIR_RESULT_OUTPUT_KEY,
+            model_type=ReaderRepairResult,
+            gate_name=self.gate_name,
+        )
+        if failure is not None:
+            return failure
+        raw_receipt = output[READER_REPAIR_COMMITTED_OUTPUT_RECEIPT_KEY]
+        if not isinstance(raw_receipt, Mapping):
+            return _invalid(
+                self.gate_name,
+                "committed node-output receipt must be an object",
+            )
+        try:
+            receipt = HarnessCommittedNodeOutputReceipt.from_dict(raw_receipt)
+        except (HarnessValidationError, TypeError, ValueError) as exc:
+            return _invalid(
+                self.gate_name,
+                "committed node-output receipt is invalid",
+                error_code=getattr(exc, "code", type(exc).__name__),
+            )
+        payload, failure = _run_input_model(
+            context,
+            input_key="reader_payload",
+            model_type=ResearchReaderPayload,
+            gate_name=self.gate_name,
+        )
+        if failure is not None:
+            return failure
+        issue, failure = _prior_model(
+            context,
+            output_key="reader_issue",
+            model_type=ReaderIssue,
+            gate_name=self.gate_name,
+        )
+        if failure is not None:
+            return failure
+        candidate, failure = _prior_model(
+            context,
+            output_key="reader_repair_patch_candidate",
+            model_type=ReaderRepairPatchCandidate,
+            gate_name=self.gate_name,
+        )
+        if failure is not None:
+            return failure
+        application, failure = _prior_model(
+            context,
+            output_key="reader_repair_application_candidate",
+            model_type=ReaderRepairApplicationCandidate,
+            gate_name=self.gate_name,
+        )
+        if failure is not None:
+            return failure
+        observation, failure = _prior_model(
+            context,
+            output_key="reader_repair_application_observation",
+            model_type=ReaderRepairApplicationObservationCandidate,
+            gate_name=self.gate_name,
+        )
+        if failure is not None:
+            return failure
+        verification, failure = _prior_model(
+            context,
+            output_key="reader_repair_application_verification",
+            model_type=ReaderRepairApplicationVerificationRecord,
+            gate_name=self.gate_name,
+        )
+        if failure is not None:
+            return failure
+        assert isinstance(result, ReaderRepairResult)
+        assert isinstance(payload, ResearchReaderPayload)
+        assert isinstance(issue, ReaderIssue)
+        assert isinstance(candidate, ReaderRepairPatchCandidate)
+        assert isinstance(application, ReaderRepairApplicationCandidate)
+        assert isinstance(observation, ReaderRepairApplicationObservationCandidate)
+        assert isinstance(verification, ReaderRepairApplicationVerificationRecord)
+        try:
+            expected = build_reader_repair_committed_result(
+                payload=payload,
+                issue=issue,
+                candidate=candidate,
+                application=application,
+                observation=observation,
+                verification=verification,
+                receipt=receipt,
+                graph_definition_checksum=self._graph_definition_checksum,
+            )
+        except HarnessValidationError as exc:
+            return _result(
+                self.gate_name,
+                {
+                    "committed_result": {
+                        "code": exc.code,
+                        "details": exc.details,
+                    }
+                },
+            )
+        violations: dict[str, Any] = {}
+        if result != expected:
+            violations["reader_repair_result"] = (
+                "must equal the deterministic committed repair result"
+            )
+        return _result(self.gate_name, violations)
+
+
 _READER_REPAIR_EXECUTION_GATE_TYPES = (
     ReaderRepairPatchCandidateGateAdapter,
     ReaderRepairApplicationCandidateGateAdapter,
     ReaderRepairApplicationObservationGateAdapter,
     ReaderRepairApplicationVerificationGateAdapter,
+    ReaderRepairCommittedResultGateAdapter,
 )
 
 READER_REPAIR_EXECUTION_GATE_REFERENCES = tuple(
@@ -323,8 +459,29 @@ READER_REPAIR_EXECUTION_GATE_REFERENCES = tuple(
 )
 
 
-def build_reader_repair_execution_gate_registry() -> DeterministicGateRegistry:
-    gates = tuple(gate_type() for gate_type in _READER_REPAIR_EXECUTION_GATE_TYPES)
+def build_reader_repair_execution_gate_registry(
+    *,
+    graph_definition_checksum: str | None = None,
+) -> DeterministicGateRegistry:
+    if graph_definition_checksum is None:
+        from business.research.graphs.reader_repair import (
+            build_reader_repair_graph_definition,
+        )
+
+        graph_definition_checksum = (
+            build_reader_repair_graph_definition().definition_checksum
+        )
+    if graph_definition_checksum is None:  # pragma: no cover - model invariant
+        raise AssertionError("Reader Repair Graph checksum was not materialized")
+    gates = (
+        ReaderRepairPatchCandidateGateAdapter(),
+        ReaderRepairApplicationCandidateGateAdapter(),
+        ReaderRepairApplicationObservationGateAdapter(),
+        ReaderRepairApplicationVerificationGateAdapter(),
+        ReaderRepairCommittedResultGateAdapter(
+            graph_definition_checksum=graph_definition_checksum,
+        ),
+    )
     return DeterministicGateRegistry(
         GateRegistration(
             reference=GateReference(
@@ -478,6 +635,7 @@ __all__ = [
     "ReaderRepairApplicationCandidateGateAdapter",
     "ReaderRepairApplicationObservationGateAdapter",
     "ReaderRepairApplicationVerificationGateAdapter",
+    "ReaderRepairCommittedResultGateAdapter",
     "ReaderRepairPatchCandidateGateAdapter",
     "build_reader_repair_execution_gate_registry",
 ]

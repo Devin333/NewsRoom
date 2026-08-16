@@ -30,6 +30,9 @@ READER_REPAIR_APPLICATION_SCHEMA = "newsroom.reader-repair-application-candidate
 READER_REPAIR_APPLICATION_VERIFICATION_SCHEMA = (
     "newsroom.reader-repair-application-verification/v1"
 )
+READER_REPAIR_COMMITTED_OUTPUT_PROOF_SCHEMA = (
+    "newsroom.reader-repair-committed-output-proof/v1"
+)
 READER_REPAIR_MAX_PATCH_OPERATIONS = 8
 READER_REPAIR_APPLICATION_CHECK_IDS = (
     "candidate_binding",
@@ -421,6 +424,46 @@ class ReaderRepairApplicationVerificationRecord(PrimitiveModel):
         return self
 
 
+class ReaderRepairCommittedOutputProof(PrimitiveModel):
+    schema_version: Literal[
+        "newsroom.reader-repair-committed-output-proof/v1"
+    ] = READER_REPAIR_COMMITTED_OUTPUT_PROOF_SCHEMA
+    binding_id: str
+    receipt_ref: str
+    graph_definition_checksum: str
+    resource_ref: str
+    commit_ref: str
+    producer_activity_id: str
+    producer_node_id: str
+    producer_node_instance_id: str
+    output_key: str
+    output_ref: str
+    payload_checksum: str
+
+    @field_validator(
+        "binding_id",
+        "producer_activity_id",
+        "producer_node_id",
+        "producer_node_instance_id",
+        "output_key",
+    )
+    @classmethod
+    def _required_identity(cls, value: str) -> str:
+        return require_text(value, "reader repair committed output identity")
+
+    @field_validator(
+        "receipt_ref",
+        "graph_definition_checksum",
+        "resource_ref",
+        "commit_ref",
+        "output_ref",
+        "payload_checksum",
+    )
+    @classmethod
+    def _valid_checksum(cls, value: str) -> str:
+        return _require_checksum(value, "reader repair committed output checksum")
+
+
 class ReaderRepairCandidate(PrimitiveModel):
     candidate_id: str
     repair_summary: str
@@ -603,12 +646,22 @@ class ReaderRepairResult(PrimitiveModel):
     payload_after_ref: str | None = None
     source_refs: list[str] = Field(default_factory=list)
     failure_reason: str | None = None
+    application_id: str | None = None
+    application_verification_ref: str | None = None
+    committed_output: ReaderRepairCommittedOutputProof | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
 
     @field_validator("result_id", "attempt_id", "payload_before_ref")
     @classmethod
     def _required_text(cls, value: str) -> str:
         return require_text(value, "repair result fields")
+
+    @field_validator("application_id")
+    @classmethod
+    def _optional_application_id(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return require_text(value, "reader repair result application id")
 
     @model_validator(mode="after")
     def _normalize_result(self) -> "ReaderRepairResult":
@@ -617,6 +670,32 @@ class ReaderRepairResult(PrimitiveModel):
             raise ValueError("successful repair result requires payload_after_ref")
         if not self.verification_results:
             raise ValueError("repair result requires verification results")
+        committed_fields = (
+            self.application_id,
+            self.application_verification_ref,
+            self.committed_output,
+        )
+        if any(value is not None for value in committed_fields) and not all(
+            value is not None for value in committed_fields
+        ):
+            raise ValueError(
+                "reader repair committed result requires application, verification, "
+                "and output proof"
+            )
+        if self.committed_output is not None:
+            if not self.successful or self.failure_reason is not None:
+                raise ValueError(
+                    "reader repair committed output is allowed only on success"
+                )
+            if self.payload_after_ref != self.committed_output.payload_checksum:
+                raise ValueError(
+                    "reader repair result payload_after_ref must match committed payload"
+                )
+            assert self.application_verification_ref is not None
+            _require_checksum(
+                self.application_verification_ref,
+                "application_verification_ref",
+            )
         return self
 
 
@@ -918,6 +997,7 @@ __all__ = [
     "READER_REPAIR_APPLICATION_CHECK_IDS",
     "READER_REPAIR_APPLICATION_SCHEMA",
     "READER_REPAIR_APPLICATION_VERIFICATION_SCHEMA",
+    "READER_REPAIR_COMMITTED_OUTPUT_PROOF_SCHEMA",
     "READER_REPAIR_MAX_PATCH_OPERATIONS",
     "READER_REPAIR_NAMESPACE",
     "ReaderIssue",
@@ -928,6 +1008,7 @@ __all__ = [
     "ReaderRepairApplicationCheckId",
     "ReaderRepairApplicationObservationCandidate",
     "ReaderRepairApplicationVerificationRecord",
+    "ReaderRepairCommittedOutputProof",
     "ReaderRepairAttempt",
     "ReaderRepairCandidate",
     "ReaderRepairCase",

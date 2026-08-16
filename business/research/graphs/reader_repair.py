@@ -6,10 +6,14 @@ from framework.events.canonical import checksum_for
 from framework.harness.graph import (
     HarnessContractKind,
     HarnessContractReference,
+    HarnessGraphCommittedNodeOutputBinding,
     HarnessGraphDefinition,
     HarnessGraphLeafBinding,
+    HarnessGraphRepairBinding,
+    HarnessGraphRepairTrigger,
     HarnessGraphSpec,
     HarnessLeafActivityKind,
+    HarnessRetryPolicy,
     HarnessStepSpec,
     HarnessTerminalSideEffectPolicy,
     HarnessWorkerType,
@@ -19,14 +23,23 @@ from framework.harness.graph import (
 from framework.harness.subagents import SubAgentSpec
 
 from business.research.domain.reader_repair import READER_REPAIR_NAMESPACE
+from business.research.graphs.reader_repair_contracts import (
+    READER_REPAIR_APPLICATION_OUTPUT_KEY,
+    READER_REPAIR_APPLICATION_STEP_ID,
+    READER_REPAIR_APPLICATION_VERIFICATION_OUTPUT_KEY,
+    READER_REPAIR_APPLICATION_VERIFICATION_STEP_ID,
+    READER_REPAIR_COMMITTED_OUTPUT_BINDING_ID,
+    READER_REPAIR_COMMITTED_OUTPUT_RECEIPT_KEY,
+    READER_REPAIR_GRAPH_ID,
+    READER_REPAIR_GRAPH_VERSION,
+    READER_REPAIR_RESULT_OUTPUT_KEY,
+    READER_REPAIR_RESULT_STEP_ID,
+)
 from business.research.ports.repair_memory import (
     READER_REPAIR_MEMORY_EFFECT_KIND,
     READER_REPAIR_MEMORY_HANDLER_REF,
 )
 
-
-READER_REPAIR_GRAPH_ID = "research.reader_repair.graph"
-READER_REPAIR_GRAPH_VERSION = "1"
 READER_REPAIR_MEMORY_POLICY_ID = "research.reader_repair.memory"
 READER_REPAIR_MEMORY_POLICY_VERSION = "1"
 READER_REPAIR_MEMORY_NOT_REQUIRED_EVIDENCE_REF = checksum_for(
@@ -40,7 +53,7 @@ READER_REPAIR_MEMORY_NOT_REQUIRED_EVIDENCE_REF = checksum_for(
 READER_REPAIR_SUBAGENT_IDS = MappingProxyType(
     {
         "propose_repair_candidate": "reader_repair_proposer",
-        "collect_repair_verification": "reader_repair_verifier",
+        "collect_repair_application_observation": "reader_repair_verifier",
     }
 )
 READER_REPAIR_SUBAGENT_WORKER_REFS = MappingProxyType(
@@ -79,8 +92,18 @@ def build_reader_repair_graph_definition() -> HarnessGraphDefinition:
         activities=activities,
         leaf_activity_bindings=tuple(_leaf_binding(activity) for activity in activities),
         task_plan_stage_bindings=(),
-        committed_output_bindings=(),
-        repair_bindings=(),
+        committed_output_bindings=(
+            HarnessGraphCommittedNodeOutputBinding(
+                binding_id=READER_REPAIR_COMMITTED_OUTPUT_BINDING_ID,
+                producer_activity_id=READER_REPAIR_APPLICATION_STEP_ID,
+                producer_node_id=READER_REPAIR_APPLICATION_STEP_ID,
+                producer_output_key=READER_REPAIR_APPLICATION_OUTPUT_KEY,
+                consumer_activity_id=READER_REPAIR_RESULT_STEP_ID,
+                consumer_node_id=READER_REPAIR_RESULT_STEP_ID,
+                receipt_input_key=READER_REPAIR_COMMITTED_OUTPUT_RECEIPT_KEY,
+            ),
+        ),
+        repair_bindings=_repair_bindings(),
         terminal_side_effect_policy=build_reader_repair_memory_terminal_policy(),
     )
 
@@ -94,7 +117,7 @@ def build_reader_repair_subagent_specs() -> tuple[SubAgentSpec, SubAgentSpec]:
             "context packs without routing or side-effect authority."
         ),
         input_schema={
-            "required": ["reader_repair_context_pack"],
+            "required": ["reader_payload", "reader_repair_context_pack"],
             "additionalProperties": False,
         },
         output_schema={
@@ -120,21 +143,29 @@ def build_reader_repair_subagent_specs() -> tuple[SubAgentSpec, SubAgentSpec]:
         metadata={"candidate_only": True},
     )
     verifier = SubAgentSpec(
-        subagent_id=READER_REPAIR_SUBAGENT_IDS["collect_repair_verification"],
+        subagent_id=READER_REPAIR_SUBAGENT_IDS[
+            "collect_repair_application_observation"
+        ],
         role="repair_verifier",
         purpose=(
             "Collect source-backed repair observations for deterministic Harness "
             "gates; never issue a pass/fail or promotion verdict."
         ),
         input_schema={
-            "required": ["reader_repair_candidate", "source_refs", "gate_inputs"],
+            "required": [
+                "reader_issue",
+                "reader_repair_patch_candidate",
+                "reader_repair_application_candidate",
+            ],
             "additionalProperties": False,
         },
         output_schema={
             "required": [
                 "candidate_id",
+                "application_id",
                 "observations",
                 "source_refs",
+                "input_bindings",
                 "metadata",
             ],
             "additionalProperties": False,
@@ -183,29 +214,59 @@ def _activities() -> tuple[HarnessStepSpec, ...]:
         HarnessStepSpec(
             step_id="propose_repair_candidate",
             worker_type=HarnessWorkerType.SUBAGENT,
-            input_keys=("reader_repair_context_pack",),
-            output_key="reader_repair_candidate",
-            quality_gate="ReaderRepairCandidateGate@1",
+            input_keys=("reader_payload", "reader_repair_context_pack"),
+            output_key="reader_repair_patch_candidate",
+            retry_policy=HarnessRetryPolicy(max_retries=1, max_attempts=2),
+            quality_gate="ReaderRepairPatchCandidateGate@1",
             metadata={"candidate_only": True},
         ),
         HarnessStepSpec(
-            step_id="collect_repair_verification",
+            step_id=READER_REPAIR_APPLICATION_STEP_ID,
+            worker_type=HarnessWorkerType.FUNCTION,
+            input_keys=("reader_payload", "reader_repair_patch_candidate"),
+            output_key=READER_REPAIR_APPLICATION_OUTPUT_KEY,
+            retry_policy=HarnessRetryPolicy(max_retries=0, max_attempts=1),
+            quality_gate="ReaderRepairApplicationCandidateGate@1",
+        ),
+        HarnessStepSpec(
+            step_id="collect_repair_application_observation",
             worker_type=HarnessWorkerType.SUBAGENT,
-            input_keys=("reader_issue", "reader_repair_candidate"),
-            output_key="repair_verification_candidate",
-            quality_gate="ReaderRepairVerificationObservationGate@1",
+            input_keys=(
+                "reader_issue",
+                "reader_repair_patch_candidate",
+                READER_REPAIR_APPLICATION_OUTPUT_KEY,
+            ),
+            output_key="reader_repair_application_observation",
+            retry_policy=HarnessRetryPolicy(max_retries=1, max_attempts=2),
+            quality_gate="ReaderRepairApplicationObservationGate@1",
             metadata={"candidate_only": True, "deterministic_verdict": False},
         ),
         HarnessStepSpec(
-            step_id="build_repair_result",
+            step_id=READER_REPAIR_APPLICATION_VERIFICATION_STEP_ID,
+            worker_type=HarnessWorkerType.FUNCTION,
+            input_keys=(
+                "reader_payload",
+                "reader_issue",
+                "reader_repair_patch_candidate",
+                READER_REPAIR_APPLICATION_OUTPUT_KEY,
+                "reader_repair_application_observation",
+            ),
+            output_key=READER_REPAIR_APPLICATION_VERIFICATION_OUTPUT_KEY,
+            retry_policy=HarnessRetryPolicy(max_retries=0, max_attempts=1),
+            quality_gate="ReaderRepairApplicationVerificationGate@1",
+        ),
+        HarnessStepSpec(
+            step_id=READER_REPAIR_RESULT_STEP_ID,
             worker_type=HarnessWorkerType.FUNCTION,
             input_keys=(
                 "reader_issue",
-                "reader_repair_candidate",
-                "repair_verification_candidate",
+                "reader_repair_patch_candidate",
+                READER_REPAIR_APPLICATION_OUTPUT_KEY,
+                "reader_repair_application_observation",
+                READER_REPAIR_APPLICATION_VERIFICATION_OUTPUT_KEY,
             ),
-            output_key="reader_repair_result",
-            quality_gate="ReaderRepairResultGate@1",
+            output_key=READER_REPAIR_RESULT_OUTPUT_KEY,
+            quality_gate="ReaderRepairCommittedResultGate@1",
         ),
         HarnessStepSpec(
             step_id="build_repair_case",
@@ -245,6 +306,29 @@ def _activities() -> tuple[HarnessStepSpec, ...]:
     )
 
 
+def _repair_bindings() -> tuple[HarnessGraphRepairBinding, ...]:
+    triggers = (
+        HarnessGraphRepairTrigger.WORKER_FAILURE_AFTER_RETRY_EXHAUSTION,
+        HarnessGraphRepairTrigger.VERIFICATION_FAILURE,
+    )
+    source_node_ids = (
+        "propose_repair_candidate",
+        READER_REPAIR_APPLICATION_STEP_ID,
+        "collect_repair_application_observation",
+        READER_REPAIR_APPLICATION_VERIFICATION_STEP_ID,
+    )
+    return tuple(
+        HarnessGraphRepairBinding(
+            binding_id=f"reader-repair-{source_node_id}-replan",
+            source_node_id=source_node_id,
+            repair_node_id=f"reader-repair-replan:{source_node_id}",
+            repair_activity_id="propose_repair_candidate",
+            triggers=triggers,
+        )
+        for source_node_id in source_node_ids
+    )
+
+
 def _leaf_binding(activity: HarnessStepSpec) -> HarnessGraphLeafBinding:
     worker_ref = READER_REPAIR_SUBAGENT_WORKER_REFS.get(
         activity.step_id,
@@ -268,6 +352,12 @@ def _leaf_binding(activity: HarnessStepSpec) -> HarnessGraphLeafBinding:
 
 
 __all__ = [
+    "READER_REPAIR_APPLICATION_OUTPUT_KEY",
+    "READER_REPAIR_APPLICATION_STEP_ID",
+    "READER_REPAIR_APPLICATION_VERIFICATION_OUTPUT_KEY",
+    "READER_REPAIR_APPLICATION_VERIFICATION_STEP_ID",
+    "READER_REPAIR_COMMITTED_OUTPUT_BINDING_ID",
+    "READER_REPAIR_COMMITTED_OUTPUT_RECEIPT_KEY",
     "READER_REPAIR_GRAPH_ID",
     "READER_REPAIR_GRAPH_VERSION",
     "READER_REPAIR_MEMORY_EFFECT_KIND",

@@ -3,6 +3,13 @@ from __future__ import annotations
 import json
 
 from business.research.graphs import (
+    READER_REPAIR_APPLICATION_OUTPUT_KEY,
+    READER_REPAIR_APPLICATION_STEP_ID,
+    READER_REPAIR_APPLICATION_VERIFICATION_OUTPUT_KEY,
+    READER_REPAIR_APPLICATION_VERIFICATION_STEP_ID,
+    READER_REPAIR_COMMITTED_OUTPUT_BINDING_ID,
+    READER_REPAIR_COMMITTED_OUTPUT_RECEIPT_KEY,
+    READER_REPAIR_EXECUTION_GATE_REFERENCES,
     READER_REPAIR_GATE_REFERENCES,
     READER_REPAIR_GRAPH_ID,
     READER_REPAIR_GRAPH_VERSION,
@@ -12,6 +19,8 @@ from business.research.graphs import (
     READER_REPAIR_MEMORY_POLICY_VERSION,
     READER_REPAIR_SUBAGENT_IDS,
     READER_REPAIR_SUBAGENT_WORKER_REFS,
+    READER_REPAIR_RESULT_STEP_ID,
+    build_reader_repair_execution_gate_registry,
     build_reader_repair_gate_registry,
     build_reader_repair_graph_definition,
     build_reader_repair_subagent_specs,
@@ -20,6 +29,7 @@ from framework.harness.graph import (
     HARNESS_GRAPH_DEFINITION_SCHEMA,
     HarnessGraphDefinitionReader,
     HarnessLeafActivityKind,
+    HarnessGraphRepairTrigger,
     HarnessWorkerType,
 )
 
@@ -27,11 +37,13 @@ from framework.harness.graph import (
 _ACTIVITY_GATES = {
     "detect_reader_issue": "ReaderRepairIssueGate@1",
     "assemble_repair_context": "ReaderRepairContextGate@1",
-    "propose_repair_candidate": "ReaderRepairCandidateGate@1",
-    "collect_repair_verification": (
-        "ReaderRepairVerificationObservationGate@1"
+    "propose_repair_candidate": "ReaderRepairPatchCandidateGate@1",
+    "apply_repair_candidate": "ReaderRepairApplicationCandidateGate@1",
+    "collect_repair_application_observation": (
+        "ReaderRepairApplicationObservationGate@1"
     ),
-    "build_repair_result": "ReaderRepairResultGate@1",
+    "verify_repair_application": "ReaderRepairApplicationVerificationGate@1",
+    "build_repair_result": "ReaderRepairCommittedResultGate@1",
     "build_repair_case": "ReaderRepairCaseGate@1",
     "prepare_skill_candidate_bundle": "ReaderRepairStrategyBoundaryGate@1",
     "prepare_memory_write": "ReaderRepairMemoryPolicyGate@1",
@@ -60,7 +72,14 @@ def test_reader_repair_graph_declares_exact_candidate_pipeline() -> None:
         activity.step_id: activity.quality_gate
         for activity in definition.activities
     } == _ACTIVITY_GATES
-    assert set(READER_REPAIR_GATE_REFERENCES) == set(_ACTIVITY_GATES.values())
+    declared_gates = set(_ACTIVITY_GATES.values())
+    assert declared_gates.issubset(
+        set(READER_REPAIR_GATE_REFERENCES)
+        | set(READER_REPAIR_EXECUTION_GATE_REFERENCES)
+    )
+    assert "ReaderRepairCandidateGate@1" not in declared_gates
+    assert "ReaderRepairVerificationObservationGate@1" not in declared_gates
+    assert "ReaderRepairResultGate@1" not in declared_gates
 
 
 def test_reader_repair_graph_pins_typed_leaf_and_subagent_contracts() -> None:
@@ -77,7 +96,7 @@ def test_reader_repair_graph_pins_typed_leaf_and_subagent_contracts() -> None:
     assert activities["propose_repair_candidate"].worker_type is (
         HarnessWorkerType.SUBAGENT
     )
-    assert activities["collect_repair_verification"].worker_type is (
+    assert activities["collect_repair_application_observation"].worker_type is (
         HarnessWorkerType.SUBAGENT
     )
     assert all(
@@ -100,7 +119,7 @@ def test_reader_repair_graph_pins_typed_leaf_and_subagent_contracts() -> None:
         "propose_repair_candidate"
     ]
     assert verifier.subagent_id == READER_REPAIR_SUBAGENT_IDS[
-        "collect_repair_verification"
+        "collect_repair_application_observation"
     ]
     assert proposer.metadata["candidate_only"] is True
     assert verifier.metadata["candidate_only"] is True
@@ -111,6 +130,59 @@ def test_reader_repair_graph_pins_typed_leaf_and_subagent_contracts() -> None:
     assert "verdict" not in verifier.output_schema["required"]
     assert proposer.budget["max_memory_ops"] == 0
     assert verifier.budget["max_memory_ops"] == 0
+
+
+def test_reader_repair_graph_binds_committed_application_and_bounded_repair() -> None:
+    definition = build_reader_repair_graph_definition()
+
+    assert len(definition.committed_output_bindings) == 1
+    binding = definition.committed_output_bindings[0]
+    assert binding.binding_id == READER_REPAIR_COMMITTED_OUTPUT_BINDING_ID
+    assert binding.producer_activity_id == READER_REPAIR_APPLICATION_STEP_ID
+    assert binding.producer_node_id == READER_REPAIR_APPLICATION_STEP_ID
+    assert binding.producer_output_key == READER_REPAIR_APPLICATION_OUTPUT_KEY
+    assert binding.consumer_activity_id == READER_REPAIR_RESULT_STEP_ID
+    assert binding.consumer_node_id == READER_REPAIR_RESULT_STEP_ID
+    assert binding.receipt_input_key == READER_REPAIR_COMMITTED_OUTPUT_RECEIPT_KEY
+
+    expected_repair_sources = {
+        "propose_repair_candidate",
+        READER_REPAIR_APPLICATION_STEP_ID,
+        "collect_repair_application_observation",
+        READER_REPAIR_APPLICATION_VERIFICATION_STEP_ID,
+    }
+    assert {item.source_node_id for item in definition.repair_bindings} == (
+        expected_repair_sources
+    )
+    assert len({item.repair_node_id for item in definition.repair_bindings}) == 4
+    assert all(
+        item.repair_activity_id == "propose_repair_candidate"
+        and set(item.triggers)
+        == {
+            HarnessGraphRepairTrigger.WORKER_FAILURE_AFTER_RETRY_EXHAUSTION,
+            HarnessGraphRepairTrigger.VERIFICATION_FAILURE,
+        }
+        for item in definition.repair_bindings
+    )
+    assert all(
+        activity.retry_policy.repair_step_id is None
+        for activity in definition.activities
+    )
+    assert definition.activity("propose_repair_candidate").retry_policy.to_dict() == {
+        "max_retries": 1,
+        "max_attempts": 2,
+        "effective_max_attempts": 2,
+        "retry_on_statuses": ["failed"],
+        "backoff_seconds": 0.0,
+        "repair_step_id": None,
+        "fail_fast_error_types": [],
+    }
+    assert definition.activity(
+        "collect_repair_application_observation"
+    ).retry_policy.effective_max_attempts == 2
+    assert definition.activity(
+        READER_REPAIR_APPLICATION_VERIFICATION_STEP_ID
+    ).output_key == READER_REPAIR_APPLICATION_VERIFICATION_OUTPUT_KEY
 
 
 def test_reader_repair_memory_and_skill_authority_stays_with_harness() -> None:
@@ -155,12 +227,18 @@ def test_reader_repair_graph_is_canonical_strict_and_gate_complete() -> None:
         json.loads(json.dumps(first.to_dict())),
         source_schema=HARNESS_GRAPH_DEFINITION_SCHEMA,
     )
-    registry = build_reader_repair_gate_registry()
+    legacy_registry = build_reader_repair_gate_registry()
+    execution_registry = build_reader_repair_execution_gate_registry(
+        graph_definition_checksum=first.definition_checksum,
+    )
 
     assert first.definition_checksum == second.definition_checksum
     assert restored == first
     restored.verify_integrity()
-    assert [
-        str(registry.resolve(reference).reference)
-        for reference in READER_REPAIR_GATE_REFERENCES
-    ] == list(READER_REPAIR_GATE_REFERENCES)
+    for reference in _ACTIVITY_GATES.values():
+        registry = (
+            execution_registry
+            if reference in READER_REPAIR_EXECUTION_GATE_REFERENCES
+            else legacy_registry
+        )
+        assert str(registry.resolve(reference).reference) == reference
