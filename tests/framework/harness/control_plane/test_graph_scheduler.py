@@ -33,7 +33,6 @@ from framework.harness.control_plane.graph_state import (
     HarnessCompensationEntry,
     HarnessEvidenceKind,
     HarnessGraphBudgetState,
-    HarnessGraphReference,
     HarnessGraphState,
     HarnessNodeInstanceIdentity,
     HarnessNodeInstanceState,
@@ -65,6 +64,7 @@ from framework.harness.graph.model import (
     HarnessExecutableNode,
     NormalizedHarnessGraph,
 )
+from framework.harness.graph.reference import HarnessGraphReference
 from framework.harness.workflow.spec import HarnessWorkflowSpec
 from framework.harness.graph.activity import HarnessStepSpec
 

@@ -15,7 +15,7 @@ from framework.harness.control_plane.graph_runtime import (
     HarnessGraphActivity,
     HarnessGraphActivityResultStatus,
 )
-from framework.harness.control_plane.graph_state import HarnessGraphReference
+from framework.harness.graph.reference import HarnessGraphReference
 from framework.harness.control_plane.node_output import (
     HarnessAdmittedGraphActivityAttempt,
     HarnessNodeOutputCandidate,

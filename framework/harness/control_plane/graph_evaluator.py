@@ -13,7 +13,6 @@ from framework.harness.control_plane.graph_state import (
     HarnessBranchOutputReference,
     HarnessCompensationStatus,
     HarnessEvidenceKind,
-    HarnessGraphReference,
     HarnessGraphState,
     HarnessJoinKind,
     HarnessJoinState,
@@ -60,6 +59,7 @@ from framework.harness.graph.model import (
     HarnessGraphNodeKind,
     NormalizedHarnessGraph,
 )
+from framework.harness.graph.reference import HarnessGraphReference
 from framework.harness.graph.versioning import HARNESS_GRAPH_EVALUATOR_VERSION
 from framework.harness.waits.models import (
     HarnessWaitApprovalEvidenceRecord,

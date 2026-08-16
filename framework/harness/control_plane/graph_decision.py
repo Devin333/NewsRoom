@@ -7,7 +7,7 @@ from enum import StrEnum
 from typing import Any
 
 from framework.harness.control_plane.errors import HarnessValidationError
-from framework.harness.control_plane.graph_state import HarnessGraphReference
+from framework.harness.graph.reference import HarnessGraphReference
 from framework.harness.graph.canonical import (
     canonical_checksum,
     exact_reference,

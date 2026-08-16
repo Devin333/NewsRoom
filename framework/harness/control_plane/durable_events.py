@@ -2140,7 +2140,7 @@ def _graph_observation_from_dict(
 
 
 def _graph_state_reference(value: Any):
-    from framework.harness.control_plane.graph_state import HarnessGraphReference
+    from framework.harness.graph.reference import HarnessGraphReference
 
     return HarnessGraphReference.from_dict(_graph_mapping(value, "graph_ref"))
 

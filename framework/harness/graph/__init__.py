@@ -76,6 +76,7 @@ from framework.harness.graph.model import (
     NormalizedHarnessGraph,
     graph_node_from_dict,
 )
+from framework.harness.graph.reference import HarnessGraphReference
 from framework.harness.graph.versioning import (
     GRAPH_ONLY_HARNESS_GRAPH_CHECKPOINT_SCHEMA,
     GRAPH_ONLY_HARNESS_GRAPH_DECISION_SCHEMA,
@@ -156,6 +157,7 @@ __all__ = [
     "HarnessGraphLeafBinding",
     "HarnessGraphRepairBinding",
     "HarnessGraphRepairTrigger",
+    "HarnessGraphReference",
     "HarnessGraphTaskPlanStageBinding",
     "HarnessGraphEdge",
     "HarnessGraphEdgeKind",

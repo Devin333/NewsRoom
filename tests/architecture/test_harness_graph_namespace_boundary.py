@@ -4,7 +4,10 @@ import ast
 from pathlib import Path
 
 import framework.harness as harness_api
+import framework.harness.control_plane as control_plane_api
+import framework.harness.control_plane.graph_state as graph_state_api
 import framework.harness.graph as graph_api
+from framework.harness.graph.reference import HarnessGraphReference
 
 
 _PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -189,6 +192,15 @@ def test_graph_public_api_excludes_legacy_declaration_and_compiler() -> None:
             "LEGACY_WORKFLOW_SCHEMA",
         }
     )
+
+
+def test_graph_reference_has_one_graph_owned_public_definition() -> None:
+    assert graph_api.HarnessGraphReference is HarnessGraphReference
+    assert harness_api.HarnessGraphReference is HarnessGraphReference
+    assert "HarnessGraphReference" in graph_api.__all__
+    assert "HarnessGraphReference" not in control_plane_api.__all__
+    assert not hasattr(control_plane_api, "HarnessGraphReference")
+    assert not hasattr(graph_state_api, "HarnessGraphReference")
 
 
 def test_harness_root_public_api_excludes_legacy_workflow_facade() -> None:

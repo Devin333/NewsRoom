@@ -39,7 +39,6 @@ from framework.harness.control_plane.graph_runtime import (
     graph_reference,
 )
 from framework.harness.control_plane.graph_state import (
-    HarnessGraphReference,
     HarnessGraphState,
     HarnessLegacyStatusProjection,
 )
@@ -47,6 +46,7 @@ from framework.harness.control_plane.scheduler import HarnessGraphStepScheduling
 from framework.harness.control_plane.state import HarnessStepStatus
 from framework.harness.graph.canonical import canonical_checksum, required_text
 from framework.harness.graph.model import NormalizedHarnessGraph
+from framework.harness.graph.reference import HarnessGraphReference
 from framework.harness.graph.versioning import (
     GRAPH_ONLY_HARNESS_GRAPH_CHECKPOINT_SCHEMA,
     GRAPH_ONLY_HARNESS_GRAPH_STATE_SCHEMA,

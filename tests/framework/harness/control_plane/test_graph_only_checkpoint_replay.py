@@ -34,7 +34,6 @@ from framework.harness.control_plane.scheduler import (
     HarnessScheduler,
 )
 from framework.harness.control_plane.graph_state import (
-    HarnessGraphReference,
     HarnessGraphState,
 )
 from framework.harness.control_plane.state import HarnessRunSpec
@@ -65,6 +64,7 @@ from framework.harness.graph import (
     StepRef,
 )
 from framework.harness.graph.validation import HarnessGraphPreflightPolicy
+from framework.harness.graph.reference import HarnessGraphReference
 from framework.harness.side_effects.models import HarnessTerminalSideEffectPolicy
 from framework.harness.workflow.spec import HarnessWorkflowSpec
 

@@ -26,7 +26,6 @@ from framework.harness.control_plane.graph_result_lineage import (
 from framework.harness.control_plane.graph_state import (
     HarnessBudgetCounterState,
     HarnessGraphBudgetState,
-    HarnessGraphReference,
     HarnessGraphState,
 )
 from framework.harness.control_plane.state import HarnessRunSpec
@@ -41,6 +40,7 @@ from framework.harness.graph.model import (
     HarnessContractReference,
     NormalizedHarnessGraph,
 )
+from framework.harness.graph.reference import HarnessGraphReference
 from framework.harness.graph.validation import HarnessGraphPreflightPolicy
 from framework.harness.graph.versioning import (
     GRAPH_ONLY_HARNESS_GRAPH_STATE_SCHEMA,

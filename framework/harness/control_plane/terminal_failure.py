@@ -14,7 +14,6 @@ from framework.harness.control_plane.graph_runtime import (
 from framework.harness.control_plane.graph_state import (
     HarnessAttemptEvidenceReference,
     HarnessEvidenceKind,
-    HarnessGraphReference,
     HarnessNodeInstanceState,
     HarnessNodeInstanceStatus,
     RunLifecycle,
@@ -27,6 +26,7 @@ from framework.harness.graph.canonical import (
     thaw_json,
 )
 from framework.harness.graph.model import HarnessContractReference
+from framework.harness.graph.reference import HarnessGraphReference
 
 
 HARNESS_GRAPH_TERMINAL_FAILURE_RECORD_SCHEMA = (

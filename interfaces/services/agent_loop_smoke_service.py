@@ -43,7 +43,6 @@ from framework.harness.control_plane.graph_runtime import (
     graph_reference,
 )
 from framework.harness.control_plane.graph_state import (
-    HarnessGraphReference,
     HarnessNodeInstanceIdentity,
 )
 from framework.harness.control_plane.node_output import (
@@ -59,6 +58,7 @@ from framework.harness.graph import (
     HarnessWorkerType,
     NormalizedHarnessGraph,
 )
+from framework.harness.graph.reference import HarnessGraphReference
 from framework.harness.graph.bindings import HarnessActivityUsage
 from framework.harness.graph.validation.models import (
     HarnessGraphValidationResult,

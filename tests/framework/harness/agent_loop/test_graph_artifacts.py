@@ -18,7 +18,7 @@ from framework.events.canonical import checksum_for
 from framework.harness.artifacts import ArtifactRef, ArtifactWriteRequest
 from framework.harness.control_plane.errors import HarnessValidationError
 from framework.harness.control_plane.graph_runtime import HarnessGraphActivity
-from framework.harness.control_plane.graph_state import HarnessGraphReference
+from framework.harness.graph.reference import HarnessGraphReference
 from framework.harness.graph.model import (
     HarnessContractKind,
     HarnessContractReference,

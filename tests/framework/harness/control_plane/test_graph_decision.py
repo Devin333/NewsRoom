@@ -7,7 +7,7 @@ from framework.harness.control_plane.graph_decision import (
     HarnessGraphDecision,
     HarnessGraphDecisionType,
 )
-from framework.harness.control_plane.graph_state import HarnessGraphReference
+from framework.harness.graph.reference import HarnessGraphReference
 from framework.harness.graph.canonical import canonical_checksum
 from framework.harness.graph.model import (
     HarnessContractKind,

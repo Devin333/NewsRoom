@@ -23,7 +23,6 @@ from framework.harness.control_plane.graph_evaluator import (
 from framework.harness.control_plane.graph_operations import HarnessGraphRunOperation
 from framework.harness.control_plane.graph_state import (
     HarnessEvidenceKind,
-    HarnessGraphReference,
     HarnessGraphState,
     HarnessNodeInstanceState,
     HarnessNodeInstanceStatus,
@@ -57,6 +56,7 @@ from framework.harness.graph.model import (
     HarnessGraphNodeKind,
     NormalizedHarnessGraph,
 )
+from framework.harness.graph.reference import HarnessGraphReference
 from framework.harness.graph.activity import (
     HarnessRetryPolicy,
     HarnessStepSpec,

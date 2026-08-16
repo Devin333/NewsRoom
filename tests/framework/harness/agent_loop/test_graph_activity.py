@@ -54,7 +54,6 @@ from framework.harness.control_plane.graph_runtime import (
 )
 from framework.harness.control_plane.graph_state import (
     HarnessGraphNodeKind,
-    HarnessGraphReference,
     HarnessNodeInstanceIdentity,
     HarnessNodeInstanceStatus,
     HarnessWaitStatus,
@@ -82,6 +81,7 @@ from framework.harness.graph.model import (
     HarnessContractKind,
     HarnessContractReference,
 )
+from framework.harness.graph.reference import HarnessGraphReference
 from framework.harness.graph.versioning import (
     HARNESS_CONDITION_POLICY_VERSION,
     HARNESS_GRAPH_COMPILER_VERSION,
