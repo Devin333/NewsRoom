@@ -1,15 +1,49 @@
 from __future__ import annotations
 
+import re
 from datetime import UTC, datetime
-from typing import Any, Literal, TypeAlias
+from typing import Annotated, Any, Literal, TypeAlias
 
 from pydantic import Field, field_validator, model_validator
 
 from business.foundation import PrimitiveModel
-from business.research.domain.common import SourceLineage, bounded_float, require_text, stable_research_id, unique_texts
+from business.research.domain.analysis import ResearchAnalysis
+from business.research.domain.common import (
+    QualityFlag,
+    SourceLineage,
+    bounded_float,
+    require_text,
+    stable_research_id,
+    unique_texts,
+)
+from business.research.domain.document import ResearchDocument
+from business.research.domain.evidence import ResearchEvidencePack
+from business.research.domain.reader import (
+    ReaderAnnotation,
+    ReaderNavigationItem,
+    ResearchReaderPayload,
+)
 
 
 READER_REPAIR_NAMESPACE = "research.reader_repair"
+READER_REPAIR_APPLICATION_SCHEMA = "newsroom.reader-repair-application-candidate/v1"
+READER_REPAIR_APPLICATION_VERIFICATION_SCHEMA = (
+    "newsroom.reader-repair-application-verification/v1"
+)
+READER_REPAIR_MAX_PATCH_OPERATIONS = 8
+READER_REPAIR_APPLICATION_CHECK_IDS = (
+    "candidate_binding",
+    "application_binding",
+    "observation_binding",
+    "before_checksum",
+    "after_checksum",
+    "payload_changed",
+    "paper_identity",
+    "target_scope",
+    "reader_schema",
+    "reader_navigation",
+    "source_lineage",
+)
 FORBIDDEN_REPAIR_CANDIDATE_KEYS = frozenset(
     {"next_step", "quality_passed", "write_memory", "publish", "publish_artifact", "promote_skill"}
 )
@@ -49,6 +83,21 @@ ReaderRepairStrategyStatus: TypeAlias = Literal[
     "skill_candidate_ready",
     "deprecated",
 ]
+ReaderRepairApplicationCheckId: TypeAlias = Literal[
+    "candidate_binding",
+    "application_binding",
+    "observation_binding",
+    "before_checksum",
+    "after_checksum",
+    "payload_changed",
+    "paper_identity",
+    "target_scope",
+    "reader_schema",
+    "reader_navigation",
+    "source_lineage",
+]
+
+_CHECKSUM_PATTERN = re.compile(r"sha256:[0-9a-f]{64}\Z")
 
 
 class ReaderIssueSignature(PrimitiveModel):
@@ -97,6 +146,278 @@ class ReaderIssue(PrimitiveModel):
     def _normalize_refs(self) -> "ReaderIssue":
         object.__setattr__(self, "source_refs", unique_texts(self.source_refs))
         object.__setattr__(self, "detector_evidence", unique_texts(self.detector_evidence))
+        return self
+
+
+class ReaderRepairPatchOperationBase(PrimitiveModel):
+    operation_id: str
+    expected_before_checksum: str
+    source_refs: list[str]
+
+    @field_validator("operation_id")
+    @classmethod
+    def _required_operation_id(cls, value: str) -> str:
+        return require_text(value, "reader repair patch operation id")
+
+    @field_validator("expected_before_checksum")
+    @classmethod
+    def _valid_before_checksum(cls, value: str) -> str:
+        return _require_checksum(value, "expected_before_checksum")
+
+    @field_validator("source_refs")
+    @classmethod
+    def _require_source_refs(cls, value: list[str]) -> list[str]:
+        refs = unique_texts(value)
+        if not refs:
+            raise ValueError("reader repair patch operation requires source refs")
+        return refs
+
+
+class ReaderRepairReplaceDocumentOperation(ReaderRepairPatchOperationBase):
+    op: Literal["replace_document"] = "replace_document"
+    replacement: ResearchDocument
+
+
+class ReaderRepairReplaceAnalysisOperation(ReaderRepairPatchOperationBase):
+    op: Literal["replace_analysis"] = "replace_analysis"
+    replacement: ResearchAnalysis
+
+
+class ReaderRepairRemoveAnalysisOperation(ReaderRepairPatchOperationBase):
+    op: Literal["remove_analysis"] = "remove_analysis"
+
+
+class ReaderRepairReplaceEvidenceOperation(ReaderRepairPatchOperationBase):
+    op: Literal["replace_evidence"] = "replace_evidence"
+    replacement: ResearchEvidencePack
+
+
+class ReaderRepairRemoveEvidenceOperation(ReaderRepairPatchOperationBase):
+    op: Literal["remove_evidence"] = "remove_evidence"
+
+
+class ReaderRepairReplaceNavigationOperation(ReaderRepairPatchOperationBase):
+    op: Literal["replace_navigation"] = "replace_navigation"
+    replacement: list[ReaderNavigationItem]
+
+
+class ReaderRepairReplaceAnnotationsOperation(ReaderRepairPatchOperationBase):
+    op: Literal["replace_annotations"] = "replace_annotations"
+    replacement: list[ReaderAnnotation]
+
+
+class ReaderRepairReplaceSourceLineageOperation(ReaderRepairPatchOperationBase):
+    op: Literal["replace_source_lineage"] = "replace_source_lineage"
+    replacement: SourceLineage
+
+
+class ReaderRepairReplaceQualityOperation(ReaderRepairPatchOperationBase):
+    op: Literal["replace_quality"] = "replace_quality"
+    replacement: list[QualityFlag]
+
+
+ReaderRepairPatchOperation: TypeAlias = Annotated[
+    ReaderRepairReplaceDocumentOperation
+    | ReaderRepairReplaceAnalysisOperation
+    | ReaderRepairRemoveAnalysisOperation
+    | ReaderRepairReplaceEvidenceOperation
+    | ReaderRepairRemoveEvidenceOperation
+    | ReaderRepairReplaceNavigationOperation
+    | ReaderRepairReplaceAnnotationsOperation
+    | ReaderRepairReplaceSourceLineageOperation
+    | ReaderRepairReplaceQualityOperation,
+    Field(discriminator="op"),
+]
+
+
+class ReaderRepairPatchCandidate(PrimitiveModel):
+    candidate_id: str
+    repair_summary: str
+    target_region_refs: list[str]
+    patch_operations: list[ReaderRepairPatchOperation]
+    expected_effect: str
+    risks: list[str] = Field(default_factory=list)
+    confidence: float = 0.0
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("candidate_id", "repair_summary", "expected_effect")
+    @classmethod
+    def _required_text(cls, value: str) -> str:
+        return require_text(value, "reader repair patch candidate fields")
+
+    @field_validator("confidence")
+    @classmethod
+    def _bounded_confidence(cls, value: float) -> float:
+        return bounded_float(value, "reader repair patch candidate confidence")
+
+    @model_validator(mode="after")
+    def _validate_patch_boundary(self) -> "ReaderRepairPatchCandidate":
+        target_refs = unique_texts(self.target_region_refs)
+        risks = unique_texts(self.risks)
+        object.__setattr__(self, "target_region_refs", target_refs)
+        object.__setattr__(self, "risks", risks)
+        if not target_refs:
+            raise ValueError("reader repair patch candidate requires target region refs")
+        if not self.patch_operations:
+            raise ValueError("reader repair patch candidate requires patch operations")
+        if len(self.patch_operations) > READER_REPAIR_MAX_PATCH_OPERATIONS:
+            raise ValueError(
+                "reader repair patch candidate exceeds the patch operation budget"
+            )
+        operation_ids = [item.operation_id for item in self.patch_operations]
+        if len(set(operation_ids)) != len(operation_ids):
+            raise ValueError("reader repair patch operation ids must be unique")
+        operation_targets = [
+            reader_repair_patch_operation_target(item)
+            for item in self.patch_operations
+        ]
+        if len(set(operation_targets)) != len(operation_targets):
+            raise ValueError("reader repair patch targets must be unique")
+        operation_source_refs = {
+            ref
+            for operation in self.patch_operations
+            for ref in operation.source_refs
+        }
+        if operation_source_refs != set(target_refs):
+            raise ValueError(
+                "reader repair patch operation source refs must exactly match "
+                "candidate target region refs"
+            )
+        forbidden = _forbidden_nested_keys(
+            self.metadata,
+            FORBIDDEN_REPAIR_CANDIDATE_KEYS,
+        )
+        if forbidden:
+            raise ValueError(
+                "reader repair patch candidate contains forbidden flow-control "
+                f"fields: {sorted(forbidden)}"
+            )
+        return self
+
+
+class ReaderRepairApplicationCandidate(PrimitiveModel):
+    schema_version: Literal[
+        "newsroom.reader-repair-application-candidate/v1"
+    ] = READER_REPAIR_APPLICATION_SCHEMA
+    application_id: str
+    candidate_id: str
+    before_payload_checksum: str
+    after_payload: ResearchReaderPayload
+    after_payload_checksum: str
+    applied_operation_ids: list[str]
+    target_region_refs: list[str]
+    source_refs: list[str]
+    input_bindings: dict[str, str]
+
+    @field_validator("application_id", "candidate_id")
+    @classmethod
+    def _required_text(cls, value: str) -> str:
+        return require_text(value, "reader repair application candidate fields")
+
+    @field_validator("before_payload_checksum", "after_payload_checksum")
+    @classmethod
+    def _valid_checksum(cls, value: str) -> str:
+        return _require_checksum(value, "reader repair application checksum")
+
+    @model_validator(mode="after")
+    def _validate_application_boundary(self) -> "ReaderRepairApplicationCandidate":
+        operation_ids = unique_texts(self.applied_operation_ids)
+        target_refs = unique_texts(self.target_region_refs)
+        source_refs = unique_texts(self.source_refs)
+        object.__setattr__(self, "applied_operation_ids", operation_ids)
+        object.__setattr__(self, "target_region_refs", target_refs)
+        object.__setattr__(self, "source_refs", source_refs)
+        if not operation_ids:
+            raise ValueError("reader repair application requires applied operations")
+        if len(operation_ids) > READER_REPAIR_MAX_PATCH_OPERATIONS:
+            raise ValueError("reader repair application exceeds the operation budget")
+        if not target_refs or set(target_refs) != set(source_refs):
+            raise ValueError(
+                "reader repair application target and source refs must match"
+            )
+        if set(self.input_bindings) != {
+            "reader_payload",
+            "reader_repair_patch_candidate",
+        }:
+            raise ValueError("reader repair application input bindings are invalid")
+        normalized_bindings = {
+            key: _require_checksum(value, f"input_bindings.{key}")
+            for key, value in self.input_bindings.items()
+        }
+        if normalized_bindings["reader_payload"] != self.before_payload_checksum:
+            raise ValueError(
+                "reader repair application reader payload binding is invalid"
+            )
+        object.__setattr__(self, "input_bindings", normalized_bindings)
+        return self
+
+
+class ReaderRepairApplicationCheck(PrimitiveModel):
+    check_id: ReaderRepairApplicationCheckId
+    passed: bool
+    expected: str
+    actual: str
+    evidence_refs: list[str] = Field(default_factory=list)
+
+    @field_validator("expected", "actual")
+    @classmethod
+    def _required_text(cls, value: str) -> str:
+        return require_text(value, "reader repair application check fields")
+
+    @field_validator("evidence_refs")
+    @classmethod
+    def _unique_evidence_refs(cls, value: list[str]) -> list[str]:
+        return unique_texts(value)
+
+
+class ReaderRepairApplicationVerificationRecord(PrimitiveModel):
+    schema_version: Literal[
+        "newsroom.reader-repair-application-verification/v1"
+    ] = READER_REPAIR_APPLICATION_VERIFICATION_SCHEMA
+    verification_id: str
+    application_id: str
+    candidate_id: str
+    observation_candidate_checksum: str
+    before_payload_checksum: str
+    after_payload_checksum: str
+    checks: list[ReaderRepairApplicationCheck]
+    successful: bool
+    source_refs: list[str]
+
+    @field_validator("verification_id", "application_id", "candidate_id")
+    @classmethod
+    def _required_text(cls, value: str) -> str:
+        return require_text(value, "reader repair application verification fields")
+
+    @field_validator(
+        "observation_candidate_checksum",
+        "before_payload_checksum",
+        "after_payload_checksum",
+    )
+    @classmethod
+    def _valid_checksum(cls, value: str) -> str:
+        return _require_checksum(value, "reader repair verification checksum")
+
+    @model_validator(mode="after")
+    def _validate_verification_record(
+        self,
+    ) -> "ReaderRepairApplicationVerificationRecord":
+        check_ids = tuple(item.check_id for item in self.checks)
+        if check_ids != READER_REPAIR_APPLICATION_CHECK_IDS:
+            raise ValueError(
+                "reader repair application checks must use the exact canonical order"
+            )
+        if self.successful != all(item.passed for item in self.checks):
+            raise ValueError(
+                "reader repair application verification outcome must equal the "
+                "deterministic check conjunction"
+            )
+        source_refs = unique_texts(self.source_refs)
+        if not source_refs:
+            raise ValueError(
+                "reader repair application verification requires source refs"
+            )
+        object.__setattr__(self, "source_refs", source_refs)
         return self
 
 
@@ -159,6 +480,60 @@ class ReaderRepairVerificationObservation(PrimitiveModel):
         if forbidden:
             raise ValueError(
                 "repair verification observation contains decision fields: "
+                f"{sorted(forbidden)}"
+            )
+        return self
+
+
+class ReaderRepairApplicationObservationCandidate(PrimitiveModel):
+    candidate_id: str
+    application_id: str
+    observations: list[ReaderRepairVerificationObservation]
+    source_refs: list[str]
+    input_bindings: dict[str, str]
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("candidate_id", "application_id")
+    @classmethod
+    def _required_ids(cls, value: str) -> str:
+        return require_text(value, "reader repair application observation ids")
+
+    @model_validator(mode="after")
+    def _remain_observational(
+        self,
+    ) -> "ReaderRepairApplicationObservationCandidate":
+        if not self.observations:
+            raise ValueError(
+                "reader repair application observation requires observations"
+            )
+        source_refs = unique_texts(self.source_refs)
+        if not source_refs:
+            raise ValueError(
+                "reader repair application observation requires source refs"
+            )
+        object.__setattr__(self, "source_refs", source_refs)
+        if set(self.input_bindings) != {
+            "reader_repair_patch_candidate",
+            "reader_repair_application_candidate",
+        }:
+            raise ValueError(
+                "reader repair application observation input bindings are invalid"
+            )
+        object.__setattr__(
+            self,
+            "input_bindings",
+            {
+                key: _require_checksum(value, f"input_bindings.{key}")
+                for key, value in self.input_bindings.items()
+            },
+        )
+        forbidden = _forbidden_nested_keys(
+            (self.metadata, *(item.metadata for item in self.observations)),
+            FORBIDDEN_REPAIR_VERIFICATION_KEYS,
+        )
+        if forbidden:
+            raise ValueError(
+                "reader repair application observation contains decision fields: "
                 f"{sorted(forbidden)}"
             )
         return self
@@ -488,6 +863,39 @@ def _unique_strategies(strategies: list[ReaderRepairStrategy]) -> list[ReaderRep
     return result
 
 
+def reader_repair_patch_operation_target(
+    operation: ReaderRepairPatchOperationBase,
+) -> str:
+    if isinstance(operation, ReaderRepairReplaceDocumentOperation):
+        return "document"
+    if isinstance(
+        operation,
+        ReaderRepairReplaceAnalysisOperation | ReaderRepairRemoveAnalysisOperation,
+    ):
+        return "analysis"
+    if isinstance(
+        operation,
+        ReaderRepairReplaceEvidenceOperation | ReaderRepairRemoveEvidenceOperation,
+    ):
+        return "evidence"
+    if isinstance(operation, ReaderRepairReplaceNavigationOperation):
+        return "navigation"
+    if isinstance(operation, ReaderRepairReplaceAnnotationsOperation):
+        return "annotations"
+    if isinstance(operation, ReaderRepairReplaceSourceLineageOperation):
+        return "source_lineage"
+    if isinstance(operation, ReaderRepairReplaceQualityOperation):
+        return "quality"
+    raise TypeError("unsupported reader repair patch operation")
+
+
+def _require_checksum(value: str, field_name: str) -> str:
+    text = str(value).strip()
+    if _CHECKSUM_PATTERN.fullmatch(text) is None:
+        raise ValueError(f"{field_name} must be sha256:<64 lowercase hex>")
+    return text
+
+
 def _forbidden_nested_keys(value: Any, forbidden_keys: frozenset[str]) -> set[str]:
     matches: set[str] = set()
     pending = [value]
@@ -507,10 +915,19 @@ def _forbidden_nested_keys(value: Any, forbidden_keys: frozenset[str]) -> set[st
 __all__ = [
     "FORBIDDEN_REPAIR_CANDIDATE_KEYS",
     "FORBIDDEN_REPAIR_VERIFICATION_KEYS",
+    "READER_REPAIR_APPLICATION_CHECK_IDS",
+    "READER_REPAIR_APPLICATION_SCHEMA",
+    "READER_REPAIR_APPLICATION_VERIFICATION_SCHEMA",
+    "READER_REPAIR_MAX_PATCH_OPERATIONS",
     "READER_REPAIR_NAMESPACE",
     "ReaderIssue",
     "ReaderIssueSignature",
     "ReaderIssueType",
+    "ReaderRepairApplicationCandidate",
+    "ReaderRepairApplicationCheck",
+    "ReaderRepairApplicationCheckId",
+    "ReaderRepairApplicationObservationCandidate",
+    "ReaderRepairApplicationVerificationRecord",
     "ReaderRepairAttempt",
     "ReaderRepairCandidate",
     "ReaderRepairCase",
@@ -518,10 +935,23 @@ __all__ = [
     "ReaderRepairMemoryKind",
     "ReaderRepairMemoryQuery",
     "ReaderRepairRAGPolicy",
+    "ReaderRepairPatchCandidate",
+    "ReaderRepairPatchOperation",
+    "ReaderRepairPatchOperationBase",
+    "ReaderRepairRemoveAnalysisOperation",
+    "ReaderRepairRemoveEvidenceOperation",
+    "ReaderRepairReplaceAnalysisOperation",
+    "ReaderRepairReplaceAnnotationsOperation",
+    "ReaderRepairReplaceDocumentOperation",
+    "ReaderRepairReplaceEvidenceOperation",
+    "ReaderRepairReplaceNavigationOperation",
+    "ReaderRepairReplaceQualityOperation",
+    "ReaderRepairReplaceSourceLineageOperation",
     "ReaderRepairResult",
     "ReaderRepairSkillCandidateSeed",
     "ReaderRepairStrategy",
     "ReaderRepairStrategyStatus",
     "ReaderRepairVerificationCandidate",
     "ReaderRepairVerificationObservation",
+    "reader_repair_patch_operation_target",
 ]

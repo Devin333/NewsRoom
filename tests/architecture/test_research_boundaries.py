@@ -150,3 +150,47 @@ def test_reader_repair_memory_side_effect_is_atomic_and_inactive() -> None:
         "ReaderRepairMemorySideEffectHandler" not in path.read_text(encoding="utf-8")
         for path in production_paths
     )
+
+
+def test_reader_repair_execution_v2_contract_is_candidate_only_and_inactive() -> None:
+    research_root = PROJECT_ROOT / "business" / "research"
+    contract_paths = (
+        research_root / "reader_repair" / "application.py",
+        research_root / "graphs" / "reader_repair_execution_gates.py",
+        research_root / "graphs" / "reader_repair_execution_workers.py",
+    )
+    forbidden_prefixes = (
+        "business.research.ports.artifact_publication",
+        "business.research.ports.repair_memory",
+        "framework.harness.artifacts",
+        "framework.harness.memory",
+        "infrastructure",
+        "interfaces",
+    )
+
+    for path in contract_paths:
+        assert path.exists()
+        assert not any(
+            module == prefix or module.startswith(f"{prefix}.")
+            for module in imported_modules(path)
+            for prefix in forbidden_prefixes
+        )
+
+    production_paths = (
+        research_root / "application" / "single_paper_runtime.py",
+        PROJECT_ROOT / "interfaces" / "composition" / "research.py",
+    )
+    inactive_symbols = (
+        "build_reader_repair_application_worker_result",
+        "build_reader_repair_application_verification_worker_result",
+        "build_reader_repair_execution_gate_registry",
+    )
+    for path in production_paths:
+        source = path.read_text(encoding="utf-8")
+        assert all(symbol not in source for symbol in inactive_symbols)
+
+    v1_graph_source = (
+        research_root / "graphs" / "reader_repair.py"
+    ).read_text(encoding="utf-8")
+    assert "READER_REPAIR_GRAPH_VERSION = \"1\"" in v1_graph_source
+    assert "apply_repair_candidate" not in v1_graph_source

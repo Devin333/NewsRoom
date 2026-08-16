@@ -52,6 +52,16 @@ from business.research.graphs.reader_repair_gates import (
     READER_REPAIR_GATE_REFERENCES,
     build_reader_repair_gate_registry,
 )
+from business.research.graphs.reader_repair_execution_gates import (
+    READER_REPAIR_EXECUTION_GATE_REFERENCES,
+    build_reader_repair_execution_gate_registry,
+)
+from business.research.graphs.reader_repair_execution_workers import (
+    READER_REPAIR_APPLICATION_STEP_ID,
+    READER_REPAIR_APPLICATION_VERIFICATION_STEP_ID,
+    build_reader_repair_application_verification_worker_result,
+    build_reader_repair_application_worker_result,
+)
 from business.research.graphs.reader_repair_workers import (
     READER_REPAIR_MEMORY_STEP_ID,
     build_reader_repair_memory_worker_result,
@@ -96,6 +106,9 @@ __all__ = [
     "RESEARCH_PAPER_ANALYSIS_GRAPH_ID",
     "RESEARCH_PAPER_ANALYSIS_GRAPH_VERSION",
     "READER_REPAIR_GATE_REFERENCES",
+    "READER_REPAIR_EXECUTION_GATE_REFERENCES",
+    "READER_REPAIR_APPLICATION_STEP_ID",
+    "READER_REPAIR_APPLICATION_VERIFICATION_STEP_ID",
     "READER_REPAIR_GRAPH_ID",
     "READER_REPAIR_GRAPH_VERSION",
     "READER_REPAIR_MEMORY_EFFECT_KIND",
@@ -113,6 +126,9 @@ __all__ = [
     "build_paper_analysis_gate_registry",
     "build_paper_analysis_graph_definition",
     "build_reader_repair_gate_registry",
+    "build_reader_repair_execution_gate_registry",
+    "build_reader_repair_application_verification_worker_result",
+    "build_reader_repair_application_worker_result",
     "build_reader_repair_graph_definition",
     "build_reader_repair_memory_terminal_policy",
     "build_reader_repair_memory_worker_result",
