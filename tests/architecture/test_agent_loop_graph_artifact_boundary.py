@@ -6,16 +6,24 @@ from pathlib import Path
 
 _PROJECT_ROOT = Path(__file__).resolve().parents[2]
 _AGENT_ROOT = _PROJECT_ROOT / "framework/agent"
-_ADAPTER = _PROJECT_ROOT / "framework/harness/agent_loop/artifacts.py"
+_INTEGRATION_ROOT = _PROJECT_ROOT / "framework/harness/agent_loop"
 _LIVE_ROOTS = (
     _PROJECT_ROOT / "business",
     _PROJECT_ROOT / "interfaces",
     _PROJECT_ROOT / "infrastructure",
 )
 _ADAPTER_NAMES = {
+    "AgentLoopGraphActivityBindingBundle",
+    "AgentLoopGraphActivityContract",
+    "AgentLoopGraphActivityOutput",
+    "AgentLoopGraphActivityTask",
+    "AgentLoopGraphApprovalRequest",
+    "AgentLoopGraphWorker",
     "AgentLoopGraphArtifactContext",
     "AgentLoopGraphArtifactReceipt",
     "AgentLoopGraphArtifactRecorder",
+    "AgentLoopGraphWaitCandidate",
+    "build_agent_loop_graph_activity_binding_bundle",
 }
 
 
@@ -36,23 +44,25 @@ def test_agent_core_does_not_depend_on_harness_graph_integration() -> None:
 
 
 def test_graph_artifact_adapter_has_no_legacy_or_publication_authority() -> None:
-    source = _ADAPTER.read_text(encoding="utf-8")
-    tree = ast.parse(source, filename=str(_ADAPTER))
     forbidden_calls = {
         "commit_terminal_manifest",
         "publish",
         "publish_artifact",
         "write_terminal_manifest",
     }
-    calls = {
-        node.func.attr
-        for node in ast.walk(tree)
-        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
-    }
+    for path in _INTEGRATION_ROOT.glob("*.py"):
+        source = path.read_text(encoding="utf-8")
+        tree = ast.parse(source, filename=str(path))
+        calls = {
+            node.func.attr
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+        }
 
-    assert "framework.workflow" not in source
-    assert "framework.harness.workflow" not in source
-    assert calls.isdisjoint(forbidden_calls)
+        assert "framework.workflow" not in source
+        assert "framework.harness.workflow" not in source
+        assert calls.isdisjoint(forbidden_calls)
 
 
 def test_production_layers_do_not_activate_gate_a_agent_loop_artifact_adapter() -> None:

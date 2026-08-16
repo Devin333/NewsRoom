@@ -1,0 +1,1057 @@
+from __future__ import annotations
+
+from collections.abc import Mapping
+from dataclasses import dataclass, field
+from typing import Any, Protocol
+
+from framework.agent.models import (
+    AgentLoopIssue,
+    AgentLoopResult,
+    AgentLoopStatus,
+    AgentLoopStopReason,
+    AgentSpec,
+)
+from framework.events.canonical import checksum_for
+from framework.harness.agent_loop.artifacts import (
+    AgentLoopGraphArtifactContext,
+    AgentLoopGraphArtifactRecorder,
+)
+from framework.harness.control_plane.errors import HarnessValidationError
+from framework.harness.graph.activity import (
+    HarnessLeafActivityKind,
+    HarnessWorkerType,
+)
+from framework.harness.graph.bindings import (
+    HarnessActivityCapabilities,
+    HarnessActivityContractBinding,
+    HarnessActivityUsage,
+    HarnessLeafActivityBinding,
+    HarnessRuntimeBindingAuthority,
+    HarnessWorkerBinding,
+)
+from framework.harness.graph.canonical import (
+    freeze_json,
+    mapping_to_dict,
+)
+from framework.harness.graph.model import (
+    HarnessContractKind,
+    HarnessContractReference,
+)
+from framework.harness.runtime.activity_executor import (
+    HARNESS_GRAPH_ACTIVITY_TASK_CONTEXT_KEY,
+    HarnessGraphActivityTaskContext,
+)
+from framework.harness.workers.result import (
+    HarnessWorkerEvidence,
+    HarnessWorkerResult,
+    HarnessWorkerStatus,
+)
+from framework.shared.redaction import redact_sensitive_values
+
+
+AGENT_LOOP_GRAPH_ACTIVITY_TASK_SCHEMA = (
+    "newsroom.agent-loop-graph-activity-task/v1"
+)
+AGENT_LOOP_GRAPH_ACTIVITY_OUTPUT_SCHEMA = (
+    "newsroom.agent-loop-graph-activity-output/v1"
+)
+AGENT_LOOP_GRAPH_APPROVAL_REQUEST_SCHEMA = (
+    "newsroom.agent-loop-graph-approval-request/v1"
+)
+AGENT_LOOP_GRAPH_WAIT_CANDIDATE_SCHEMA = (
+    "newsroom.agent-loop-graph-wait-candidate/v1"
+)
+AGENT_LOOP_GRAPH_WAIT_EVIDENCE_TYPE = "agent_loop_graph_wait_candidate"
+AGENT_LOOP_GRAPH_BINDING_MANIFEST_SCHEMA = (
+    "newsroom.agent-loop-graph-activity-binding/v1"
+)
+
+
+class AgentLoopRunnerPort(Protocol):
+    def run(
+        self,
+        agent: AgentSpec,
+        inputs: dict[str, Any],
+        *,
+        conversation_id: str | None = None,
+        run_id: str | None = None,
+        node_instance_id: str | None = None,
+        graph_checkpoint_ref: str | None = None,
+        resume_from_cursor: bool = False,
+    ) -> AgentLoopResult: ...
+
+
+@dataclass(frozen=True, slots=True)
+class AgentLoopGraphActivityTask:
+    """Strict worker input whose Graph identity comes only from Harness."""
+
+    inputs: Mapping[str, Any]
+    conversation_id: str | None
+    resume_from_cursor: bool
+    task_context: HarnessGraphActivityTaskContext
+    schema_version: str = AGENT_LOOP_GRAPH_ACTIVITY_TASK_SCHEMA
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.inputs, Mapping):
+            raise _activity_error("AgentLoop inputs must be an object")
+        inputs = freeze_json(dict(self.inputs), "$.agent_loop_graph_task.inputs")
+        if not isinstance(inputs, Mapping):  # pragma: no cover - guarded above
+            raise AssertionError("canonical AgentLoop inputs must remain a mapping")
+        object.__setattr__(self, "inputs", inputs)
+        object.__setattr__(
+            self,
+            "conversation_id",
+            _optional_text(self.conversation_id, "conversation_id"),
+        )
+        if not isinstance(self.resume_from_cursor, bool):
+            raise _activity_error("resume_from_cursor must be a boolean")
+        if self.resume_from_cursor and self.conversation_id is None:
+            raise _activity_error(
+                "cursor resume requires an explicit conversation_id"
+            )
+        if not isinstance(self.task_context, HarnessGraphActivityTaskContext):
+            raise TypeError(
+                "task_context must be HarnessGraphActivityTaskContext"
+            )
+        if self.schema_version != AGENT_LOOP_GRAPH_ACTIVITY_TASK_SCHEMA:
+            raise HarnessValidationError(
+                "unsupported AgentLoop Graph activity task schema",
+                code="unsupported_agent_loop_graph_activity_schema",
+            )
+
+    @classmethod
+    def from_worker_task(
+        cls,
+        value: Mapping[str, Any],
+    ) -> AgentLoopGraphActivityTask:
+        expected = {
+            "schema_version",
+            "inputs",
+            "conversation_id",
+            "resume_from_cursor",
+            HARNESS_GRAPH_ACTIVITY_TASK_CONTEXT_KEY,
+        }
+        payload = _exact_mapping(value, expected, "activity task")
+        raw_context = payload.pop(HARNESS_GRAPH_ACTIVITY_TASK_CONTEXT_KEY)
+        if not isinstance(raw_context, Mapping):
+            raise _activity_error("Harness Graph activity context must be an object")
+        return cls(
+            inputs=payload["inputs"],
+            conversation_id=payload["conversation_id"],
+            resume_from_cursor=payload["resume_from_cursor"],
+            task_context=HarnessGraphActivityTaskContext.from_dict(raw_context),
+            schema_version=payload["schema_version"],
+        )
+
+
+@dataclass(frozen=True, slots=True, order=True)
+class AgentLoopGraphApprovalRequest:
+    approval_id: str
+    approval_kind: str
+    tool_name: str
+    control_action: str | None = None
+    escalation_type: str | None = None
+    schema_version: str = AGENT_LOOP_GRAPH_APPROVAL_REQUEST_SCHEMA
+
+    def __post_init__(self) -> None:
+        for field_name in ("approval_id", "approval_kind", "tool_name"):
+            object.__setattr__(
+                self,
+                field_name,
+                _required_text(getattr(self, field_name), field_name),
+            )
+        for field_name in ("control_action", "escalation_type"):
+            object.__setattr__(
+                self,
+                field_name,
+                _optional_text(getattr(self, field_name), field_name),
+            )
+        if self.schema_version != AGENT_LOOP_GRAPH_APPROVAL_REQUEST_SCHEMA:
+            raise HarnessValidationError(
+                "unsupported AgentLoop Graph approval request schema",
+                code="unsupported_agent_loop_graph_activity_schema",
+            )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "schema_version": self.schema_version,
+            "approval_id": self.approval_id,
+            "approval_kind": self.approval_kind,
+            "tool_name": self.tool_name,
+            "control_action": self.control_action,
+            "escalation_type": self.escalation_type,
+        }
+
+    @classmethod
+    def from_dict(
+        cls,
+        value: Mapping[str, Any],
+    ) -> AgentLoopGraphApprovalRequest:
+        return cls(
+            **_exact_mapping(
+                value,
+                {
+                    "schema_version",
+                    "approval_id",
+                    "approval_kind",
+                    "tool_name",
+                    "control_action",
+                    "escalation_type",
+                },
+                "approval request",
+            )
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class AgentLoopGraphWaitCandidate:
+    """Candidate evidence only; Harness owns durable Wait registration."""
+
+    run_id: str
+    graph_id: str
+    node_id: str
+    node_instance_id: str
+    activity_id: str
+    activity_attempt: int
+    graph_checkpoint_ref: str
+    task_context_checksum: str
+    agent_id: str
+    conversation_id: str | None
+    approval_requests: tuple[AgentLoopGraphApprovalRequest, ...]
+    schema_version: str = AGENT_LOOP_GRAPH_WAIT_CANDIDATE_SCHEMA
+    candidate_checksum: str = field(init=False)
+
+    def __post_init__(self) -> None:
+        for field_name in (
+            "run_id",
+            "graph_id",
+            "node_id",
+            "node_instance_id",
+            "activity_id",
+            "graph_checkpoint_ref",
+            "agent_id",
+        ):
+            object.__setattr__(
+                self,
+                field_name,
+                _required_text(getattr(self, field_name), field_name),
+            )
+        if (
+            isinstance(self.activity_attempt, bool)
+            or not isinstance(self.activity_attempt, int)
+            or self.activity_attempt < 1
+        ):
+            raise _wait_error("activity_attempt must be a positive integer")
+        object.__setattr__(
+            self,
+            "task_context_checksum",
+            _checksum(self.task_context_checksum, "task_context_checksum"),
+        )
+        object.__setattr__(
+            self,
+            "conversation_id",
+            _optional_text(self.conversation_id, "conversation_id"),
+        )
+        requests = tuple(self.approval_requests)
+        if not requests or not all(
+            isinstance(item, AgentLoopGraphApprovalRequest) for item in requests
+        ):
+            raise _wait_error(
+                "waiting candidate requires typed approval requests"
+            )
+        canonical = tuple(
+            sorted(
+                requests,
+                key=lambda item: (
+                    item.approval_id,
+                    item.approval_kind,
+                    item.tool_name,
+                ),
+            )
+        )
+        identities = tuple(
+            (item.approval_id, item.approval_kind) for item in canonical
+        )
+        if canonical != requests or len(identities) != len(set(identities)):
+            raise _wait_error(
+                "waiting candidate approval requests must be canonical and unique"
+            )
+        object.__setattr__(self, "approval_requests", requests)
+        if self.schema_version != AGENT_LOOP_GRAPH_WAIT_CANDIDATE_SCHEMA:
+            raise HarnessValidationError(
+                "unsupported AgentLoop Graph waiting candidate schema",
+                code="unsupported_agent_loop_graph_activity_schema",
+            )
+        object.__setattr__(
+            self,
+            "candidate_checksum",
+            checksum_for(self.checksum_projection()),
+        )
+
+    @classmethod
+    def from_result(
+        cls,
+        *,
+        task: AgentLoopGraphActivityTask,
+        agent_id: str,
+        result: AgentLoopResult,
+    ) -> AgentLoopGraphWaitCandidate:
+        if result.status is not AgentLoopStatus.WAITING_FOR_APPROVAL:
+            raise _wait_error(
+                "waiting candidate requires a waiting AgentLoop result"
+            )
+        if (
+            result.diagnostics is None
+            or result.diagnostics.status
+            is not AgentLoopStatus.WAITING_FOR_APPROVAL
+            or result.diagnostics.stop_reason
+            is not AgentLoopStopReason.TOOL_APPROVAL_REQUIRED
+        ):
+            raise _wait_error(
+                "waiting AgentLoop result lacks deterministic approval diagnostics"
+            )
+        requests = tuple(
+            sorted(
+                (
+                    _approval_request_from_issue(issue)
+                    for issue in result.diagnostics.issues
+                    if issue.code == "tool_approval_required"
+                ),
+                key=lambda item: (
+                    item.approval_id,
+                    item.approval_kind,
+                    item.tool_name,
+                ),
+            )
+        )
+        activity = task.task_context.activity
+        return cls(
+            run_id=activity.run_id,
+            graph_id=activity.graph_ref.graph_id,
+            node_id=activity.node_id,
+            node_instance_id=activity.node_instance_id,
+            activity_id=activity.activity_id,
+            activity_attempt=activity.attempt,
+            graph_checkpoint_ref=task.task_context.graph_checkpoint_ref,
+            task_context_checksum=task.task_context.context_checksum,
+            agent_id=agent_id,
+            conversation_id=task.conversation_id,
+            approval_requests=requests,
+        )
+
+    def checksum_projection(self) -> dict[str, Any]:
+        return {
+            "schema_version": self.schema_version,
+            "run_id": self.run_id,
+            "graph_id": self.graph_id,
+            "node_id": self.node_id,
+            "node_instance_id": self.node_instance_id,
+            "activity_id": self.activity_id,
+            "activity_attempt": self.activity_attempt,
+            "graph_checkpoint_ref": self.graph_checkpoint_ref,
+            "task_context_checksum": self.task_context_checksum,
+            "agent_id": self.agent_id,
+            "conversation_id": self.conversation_id,
+            "approval_requests": [
+                item.to_dict() for item in self.approval_requests
+            ],
+        }
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            **self.checksum_projection(),
+            "candidate_checksum": self.candidate_checksum,
+        }
+
+    def worker_evidence(self) -> HarnessWorkerEvidence:
+        return HarnessWorkerEvidence(
+            evidence_type=AGENT_LOOP_GRAPH_WAIT_EVIDENCE_TYPE,
+            payload=self.to_dict(),
+        )
+
+    @classmethod
+    def from_dict(
+        cls,
+        value: Mapping[str, Any],
+    ) -> AgentLoopGraphWaitCandidate:
+        payload = _exact_mapping(
+            value,
+            {
+                "schema_version",
+                "run_id",
+                "graph_id",
+                "node_id",
+                "node_instance_id",
+                "activity_id",
+                "activity_attempt",
+                "graph_checkpoint_ref",
+                "task_context_checksum",
+                "agent_id",
+                "conversation_id",
+                "approval_requests",
+                "candidate_checksum",
+            },
+            "waiting candidate",
+        )
+        supplied_checksum = payload.pop("candidate_checksum")
+        raw_requests = payload.get("approval_requests")
+        if not isinstance(raw_requests, list):
+            raise _wait_error("approval_requests must be an array")
+        payload["approval_requests"] = tuple(
+            AgentLoopGraphApprovalRequest.from_dict(item)
+            for item in raw_requests
+        )
+        candidate = cls(**payload)
+        if supplied_checksum != candidate.candidate_checksum:
+            raise _wait_error("waiting candidate checksum does not match")
+        return candidate
+
+
+@dataclass(frozen=True, slots=True)
+class AgentLoopGraphActivityOutput:
+    task_context_checksum: str
+    agent_id: str
+    conversation_id: str | None
+    result: Mapping[str, Any]
+    artifact_refs: tuple[str, ...]
+    artifact_receipt_checksum: str
+    wait_candidate_checksum: str | None = None
+    schema_version: str = AGENT_LOOP_GRAPH_ACTIVITY_OUTPUT_SCHEMA
+    output_checksum: str = field(init=False)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "task_context_checksum",
+            _checksum(self.task_context_checksum, "task_context_checksum"),
+        )
+        object.__setattr__(self, "agent_id", _required_text(self.agent_id, "agent_id"))
+        object.__setattr__(
+            self,
+            "conversation_id",
+            _optional_text(self.conversation_id, "conversation_id"),
+        )
+        if not isinstance(self.result, Mapping):
+            raise _activity_error("AgentLoop result projection must be an object")
+        result = freeze_json(
+            dict(self.result),
+            "$.agent_loop_graph_activity_output.result",
+        )
+        if not isinstance(result, Mapping):  # pragma: no cover - guarded above
+            raise AssertionError("canonical AgentLoop result must remain a mapping")
+        object.__setattr__(self, "result", result)
+        refs = tuple(_required_text(item, "artifact_ref") for item in self.artifact_refs)
+        if len(refs) != len(set(refs)):
+            raise _activity_error("AgentLoop artifact refs must be unique")
+        object.__setattr__(self, "artifact_refs", refs)
+        object.__setattr__(
+            self,
+            "artifact_receipt_checksum",
+            _checksum(
+                self.artifact_receipt_checksum,
+                "artifact_receipt_checksum",
+            ),
+        )
+        if self.wait_candidate_checksum is not None:
+            object.__setattr__(
+                self,
+                "wait_candidate_checksum",
+                _checksum(
+                    self.wait_candidate_checksum,
+                    "wait_candidate_checksum",
+                ),
+            )
+        if self.schema_version != AGENT_LOOP_GRAPH_ACTIVITY_OUTPUT_SCHEMA:
+            raise HarnessValidationError(
+                "unsupported AgentLoop Graph activity output schema",
+                code="unsupported_agent_loop_graph_activity_schema",
+            )
+        object.__setattr__(
+            self,
+            "output_checksum",
+            checksum_for(self.checksum_projection()),
+        )
+
+    def checksum_projection(self) -> dict[str, Any]:
+        return {
+            "schema_version": self.schema_version,
+            "task_context_checksum": self.task_context_checksum,
+            "agent_id": self.agent_id,
+            "conversation_id": self.conversation_id,
+            "result": mapping_to_dict(self.result),
+            "artifact_refs": list(self.artifact_refs),
+            "artifact_receipt_checksum": self.artifact_receipt_checksum,
+            "wait_candidate_checksum": self.wait_candidate_checksum,
+        }
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            **self.checksum_projection(),
+            "output_checksum": self.output_checksum,
+        }
+
+    @classmethod
+    def from_dict(
+        cls,
+        value: Mapping[str, Any],
+    ) -> AgentLoopGraphActivityOutput:
+        payload = _exact_mapping(
+            value,
+            {
+                "schema_version",
+                "task_context_checksum",
+                "agent_id",
+                "conversation_id",
+                "result",
+                "artifact_refs",
+                "artifact_receipt_checksum",
+                "wait_candidate_checksum",
+                "output_checksum",
+            },
+            "activity output",
+        )
+        supplied_checksum = payload.pop("output_checksum")
+        raw_refs = payload.get("artifact_refs")
+        if not isinstance(raw_refs, list):
+            raise _activity_error("artifact_refs must be an array")
+        payload["artifact_refs"] = tuple(raw_refs)
+        output = cls(**payload)
+        if supplied_checksum != output.output_checksum:
+            raise _activity_error("AgentLoop activity output checksum does not match")
+        return output
+
+
+@dataclass(frozen=True, slots=True)
+class AgentLoopGraphWorker:
+    """Candidate-only Graph worker for exactly one configured AgentSpec."""
+
+    worker_id: str
+    worker_version: str
+    activity_contract_id: str
+    activity_contract_version: str
+    agent_runner: AgentLoopRunnerPort = field(repr=False)
+    agent: AgentSpec
+    artifact_recorder: AgentLoopGraphArtifactRecorder = field(repr=False)
+    result_output_key: str = "agent_loop_result"
+    worker_type: HarnessWorkerType = HarnessWorkerType.AGENT_LOOP
+
+    def __post_init__(self) -> None:
+        reference = HarnessContractReference(
+            HarnessContractKind.WORKER,
+            _required_text(self.worker_id, "worker_id"),
+            _required_text(self.worker_version, "worker_version"),
+        )
+        object.__setattr__(self, "worker_id", reference.contract_id)
+        object.__setattr__(self, "worker_version", reference.version)
+        activity_reference = HarnessContractReference(
+            HarnessContractKind.ACTIVITY,
+            _required_text(self.activity_contract_id, "activity_contract_id"),
+            _required_text(
+                self.activity_contract_version,
+                "activity_contract_version",
+            ),
+        )
+        object.__setattr__(
+            self,
+            "activity_contract_id",
+            activity_reference.contract_id,
+        )
+        object.__setattr__(
+            self,
+            "activity_contract_version",
+            activity_reference.version,
+        )
+        if not callable(getattr(self.agent_runner, "run", None)):
+            raise TypeError("agent_runner must expose run(...)")
+        if not isinstance(self.agent, AgentSpec):
+            raise TypeError("agent must be AgentSpec")
+        if not isinstance(self.artifact_recorder, AgentLoopGraphArtifactRecorder):
+            raise TypeError(
+                "artifact_recorder must be AgentLoopGraphArtifactRecorder"
+            )
+        object.__setattr__(
+            self,
+            "result_output_key",
+            _required_text(self.result_output_key, "result_output_key"),
+        )
+        if self.worker_type is not HarnessWorkerType.AGENT_LOOP:
+            raise TypeError("AgentLoop Graph worker type must be AGENT_LOOP")
+        HarnessWorkerResult(
+            status=HarnessWorkerStatus.SUCCEEDED,
+            output={self.result_output_key: {}},
+        )
+
+    @property
+    def worker_ref(self) -> HarnessContractReference:
+        return HarnessContractReference(
+            HarnessContractKind.WORKER,
+            self.worker_id,
+            self.worker_version,
+        )
+
+    @property
+    def activity_ref(self) -> HarnessContractReference:
+        return HarnessContractReference(
+            HarnessContractKind.ACTIVITY,
+            self.activity_contract_id,
+            self.activity_contract_version,
+        )
+
+    def execute(self, task: dict[str, Any]) -> HarnessWorkerResult:
+        parsed = AgentLoopGraphActivityTask.from_worker_task(task)
+        activity = parsed.task_context.activity
+        if (
+            activity.worker_ref != self.worker_ref
+            or activity.activity_ref != self.activity_ref
+        ):
+            raise HarnessValidationError(
+                "AgentLoop Graph worker does not match the durable activity",
+                code="agent_loop_graph_activity_binding_mismatch",
+                details={
+                    "expected_worker_ref": self.worker_ref.exact_ref,
+                    "actual_worker_ref": activity.worker_ref.exact_ref,
+                    "expected_activity_ref": self.activity_ref.exact_ref,
+                    "actual_activity_ref": activity.activity_ref.exact_ref,
+                },
+            )
+        result = self.agent_runner.run(
+            self.agent,
+            mapping_to_dict(parsed.inputs),
+            conversation_id=parsed.conversation_id,
+            run_id=activity.run_id,
+            node_instance_id=activity.node_instance_id,
+            graph_checkpoint_ref=parsed.task_context.graph_checkpoint_ref,
+            resume_from_cursor=parsed.resume_from_cursor,
+        )
+        if not isinstance(result, AgentLoopResult):
+            raise HarnessValidationError(
+                "AgentRunner returned an invalid AgentLoop result",
+                code="agent_loop_graph_activity_result_invalid",
+            )
+        _assert_agent_result_identity(result, agent_id=self.agent.agent_id)
+        worker_status = _worker_status(result)
+        wait_candidate = (
+            AgentLoopGraphWaitCandidate.from_result(
+                task=parsed,
+                agent_id=self.agent.agent_id,
+                result=result,
+            )
+            if worker_status is HarnessWorkerStatus.WAITING_APPROVAL
+            else None
+        )
+        result_projection = _agent_result_projection(result)
+        preliminary_evidence = (
+            () if wait_candidate is None else (wait_candidate.worker_evidence(),)
+        )
+        error = _result_error(result)
+        HarnessWorkerResult(
+            status=worker_status,
+            output={self.result_output_key: {"result": result_projection}},
+            diagnostics=_worker_diagnostics(result, wait_candidate),
+            metrics=result.metrics.to_dict(),
+            evidence=preliminary_evidence,
+            error=error,
+        )
+
+        artifact_context = AgentLoopGraphArtifactContext.from_task_context(
+            parsed.task_context,
+            graph_version=activity.graph_ref.workflow_ref.version,
+            agent_id=self.agent.agent_id,
+            conversation_id=parsed.conversation_id,
+        )
+        receipt = self.artifact_recorder.record(
+            context=artifact_context,
+            artifacts=tuple(result.llm_call_artifacts),
+        )
+        output = AgentLoopGraphActivityOutput(
+            task_context_checksum=parsed.task_context.context_checksum,
+            agent_id=self.agent.agent_id,
+            conversation_id=parsed.conversation_id,
+            result=result_projection,
+            artifact_refs=receipt.artifact_refs,
+            artifact_receipt_checksum=receipt.receipt_checksum,
+            wait_candidate_checksum=(
+                None
+                if wait_candidate is None
+                else wait_candidate.candidate_checksum
+            ),
+        )
+        evidence = [receipt.worker_evidence()]
+        if wait_candidate is not None:
+            evidence.append(wait_candidate.worker_evidence())
+        return HarnessWorkerResult(
+            status=worker_status,
+            output={self.result_output_key: output.to_dict()},
+            artifacts=receipt.artifact_refs,
+            diagnostics=_worker_diagnostics(result, wait_candidate),
+            metrics=result.metrics.to_dict(),
+            evidence=tuple(evidence),
+            error=error,
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class AgentLoopGraphActivityContract:
+    """Serial-only Graph activity contract; dispatch is owned by the executor."""
+
+    activity_contract_id: str
+    activity_contract_version: str
+    capabilities: HarnessActivityCapabilities = field(
+        default_factory=HarnessActivityCapabilities
+    )
+
+    def __post_init__(self) -> None:
+        reference = HarnessContractReference(
+            HarnessContractKind.ACTIVITY,
+            _required_text(self.activity_contract_id, "activity_contract_id"),
+            _required_text(
+                self.activity_contract_version,
+                "activity_contract_version",
+            ),
+        )
+        object.__setattr__(
+            self,
+            "activity_contract_id",
+            reference.contract_id,
+        )
+        object.__setattr__(
+            self,
+            "activity_contract_version",
+            reference.version,
+        )
+        if not isinstance(self.capabilities, HarnessActivityCapabilities):
+            raise TypeError("capabilities must be HarnessActivityCapabilities")
+
+    def dispatch(self, _request: object) -> None:
+        raise HarnessValidationError(
+            "AgentLoop Graph activity must use the physical Graph executor",
+            code="agent_loop_legacy_dispatch_forbidden",
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class AgentLoopGraphActivityBindingBundle:
+    worker_binding: HarnessWorkerBinding
+    activity_binding: HarnessActivityContractBinding
+    leaf_binding: HarnessLeafActivityBinding
+    authority: HarnessRuntimeBindingAuthority
+
+    def __post_init__(self) -> None:
+        if not isinstance(
+            self.worker_binding.implementation,
+            AgentLoopGraphWorker,
+        ):
+            raise TypeError(
+                "worker binding must contain AgentLoopGraphWorker"
+            )
+        if not isinstance(
+            self.activity_binding.implementation,
+            AgentLoopGraphActivityContract,
+        ):
+            raise TypeError(
+                "activity binding must contain AgentLoopGraphActivityContract"
+            )
+        resolved = self.authority.resolve_leaf_activity(
+            worker_ref=self.worker_binding.reference,
+            activity_ref=self.activity_binding.reference,
+            expected_leaf_activity_kind=HarnessLeafActivityKind.AGENT_LOOP,
+            required_usage=HarnessActivityUsage.SERIAL,
+        )
+        if (
+            resolved.worker != self.worker_binding
+            or resolved.activity != self.activity_binding
+            or resolved.registration != self.leaf_binding
+        ):
+            raise HarnessValidationError(
+                "AgentLoop Graph binding bundle is inconsistent",
+                code="agent_loop_graph_activity_binding_mismatch",
+            )
+
+    def to_manifest(self) -> dict[str, Any]:
+        return {
+            "schema_version": AGENT_LOOP_GRAPH_BINDING_MANIFEST_SCHEMA,
+            "installs_runtime_authority": False,
+            "worker_ref": self.worker_binding.reference.to_dict(),
+            "activity_ref": self.activity_binding.reference.to_dict(),
+            "leaf_activity_kind": self.leaf_binding.leaf_activity_kind.value,
+            "required_usage": HarnessActivityUsage.SERIAL.value,
+            "agent_id": self.worker_binding.implementation.agent.agent_id,
+            "result_output_key": (
+                self.worker_binding.implementation.result_output_key
+            ),
+            "artifact_owner_required": True,
+            "publishes_terminal_manifest": False,
+            "registers_graph_wait": False,
+        }
+
+
+def build_agent_loop_graph_activity_binding_bundle(
+    *,
+    worker_ref: HarnessContractReference,
+    activity_ref: HarnessContractReference,
+    agent_runner: AgentLoopRunnerPort,
+    agent: AgentSpec,
+    artifact_recorder: AgentLoopGraphArtifactRecorder,
+    result_output_key: str = "agent_loop_result",
+) -> AgentLoopGraphActivityBindingBundle:
+    if not isinstance(worker_ref, HarnessContractReference) or (
+        worker_ref.contract_kind is not HarnessContractKind.WORKER
+    ):
+        raise TypeError("worker_ref must be a worker HarnessContractReference")
+    if not isinstance(activity_ref, HarnessContractReference) or (
+        activity_ref.contract_kind is not HarnessContractKind.ACTIVITY
+    ):
+        raise TypeError("activity_ref must be an activity HarnessContractReference")
+    worker = AgentLoopGraphWorker(
+        worker_id=worker_ref.contract_id,
+        worker_version=worker_ref.version,
+        activity_contract_id=activity_ref.contract_id,
+        activity_contract_version=activity_ref.version,
+        agent_runner=agent_runner,
+        agent=agent,
+        artifact_recorder=artifact_recorder,
+        result_output_key=result_output_key,
+    )
+    activity_contract = AgentLoopGraphActivityContract(
+        activity_contract_id=activity_ref.contract_id,
+        activity_contract_version=activity_ref.version,
+    )
+    worker_binding = HarnessWorkerBinding(
+        reference=worker_ref,
+        worker_type=HarnessWorkerType.AGENT_LOOP,
+        implementation=worker,
+    )
+    activity_binding = HarnessActivityContractBinding(
+        reference=activity_ref,
+        implementation=activity_contract,
+    )
+    leaf_binding = HarnessLeafActivityBinding(
+        leaf_activity_kind=HarnessLeafActivityKind.AGENT_LOOP,
+        worker_ref=worker_ref,
+        activity_ref=activity_ref,
+    )
+    authority = HarnessRuntimeBindingAuthority(
+        workers=(worker_binding,),
+        activities=(activity_binding,),
+        leaf_activities=(leaf_binding,),
+    )
+    return AgentLoopGraphActivityBindingBundle(
+        worker_binding=worker_binding,
+        activity_binding=activity_binding,
+        leaf_binding=leaf_binding,
+        authority=authority,
+    )
+
+
+def _agent_result_projection(result: AgentLoopResult) -> dict[str, Any]:
+    if result.memory_ops:
+        raise HarnessValidationError(
+            "Graph AgentLoop cannot carry direct memory operations",
+            code="agent_loop_graph_memory_side_effect_forbidden",
+        )
+    serialized = result.to_dict()
+    payload = {
+        "success": result.success,
+        "status": result.status.value,
+        "output": serialized["output"],
+        "final_output": serialized["final_output"],
+        "verdict": serialized["verdict"],
+        "iterations": result.iterations,
+        "metrics": result.metrics.to_dict(),
+        "diagnostics": serialized["diagnostics"],
+        "termination_reason": serialized["termination_reason"],
+        "max_steps_reached": result.max_steps_reached,
+        "trace_id": serialized["trace_id"],
+        "trace_ref": result.trace_ref,
+        "warnings": list(result.warnings),
+        "action_count": len(result.actions),
+        "event_count": len(result.events),
+        "event_types": [
+            str(item.get("event_type") or item.get("type") or "unknown")
+            for item in result.events
+        ],
+        "trajectory_count": len(result.trajectory),
+        "tool_call_count": len(result.tool_calls),
+        "llm_call_artifact_count": len(result.llm_call_artifacts),
+    }
+    frozen = freeze_json(
+        redact_sensitive_values(payload),
+        "$.agent_loop_graph_activity.result",
+    )
+    if not isinstance(frozen, Mapping):  # pragma: no cover - invariant
+        raise AssertionError("AgentLoop result projection must remain a mapping")
+    return mapping_to_dict(frozen)
+
+
+def _worker_status(result: AgentLoopResult) -> HarnessWorkerStatus:
+    if result.success:
+        if result.status not in {
+            AgentLoopStatus.SUCCEEDED,
+            AgentLoopStatus.ACCEPTED,
+        }:
+            raise HarnessValidationError(
+                "successful AgentLoop result has an invalid status",
+                code="agent_loop_graph_activity_result_invalid",
+            )
+        return HarnessWorkerStatus.SUCCEEDED
+    if result.status in {
+        AgentLoopStatus.SUCCEEDED,
+        AgentLoopStatus.ACCEPTED,
+        AgentLoopStatus.PENDING,
+        AgentLoopStatus.RUNNING,
+    }:
+        raise HarnessValidationError(
+            "unsuccessful AgentLoop result has an invalid status",
+            code="agent_loop_graph_activity_result_invalid",
+        )
+    if result.status is AgentLoopStatus.WAITING_FOR_APPROVAL:
+        return HarnessWorkerStatus.WAITING_APPROVAL
+    if result.status in {AgentLoopStatus.BLOCKED, AgentLoopStatus.STALLED}:
+        return HarnessWorkerStatus.BLOCKED
+    return HarnessWorkerStatus.FAILED
+
+
+def _assert_agent_result_identity(
+    result: AgentLoopResult,
+    *,
+    agent_id: str,
+) -> None:
+    diagnostics = result.diagnostics
+    if diagnostics is None:
+        return
+    mismatches = tuple(
+        field_name
+        for field_name, expected, actual in (
+            ("agent_id", agent_id, diagnostics.agent_id),
+            ("status", result.status, diagnostics.status),
+        )
+        if expected != actual
+    )
+    if mismatches:
+        raise HarnessValidationError(
+            "AgentLoop diagnostics do not match the bound agent result",
+            code="agent_loop_graph_activity_result_invalid",
+            details={"mismatches": list(mismatches)},
+        )
+
+
+def _approval_request_from_issue(
+    issue: AgentLoopIssue,
+) -> AgentLoopGraphApprovalRequest:
+    if not isinstance(issue.metadata, Mapping):
+        raise _wait_error("approval diagnostics metadata must be an object")
+    return AgentLoopGraphApprovalRequest(
+        approval_id=issue.metadata.get("approval_id"),
+        approval_kind=issue.metadata.get("approval_kind"),
+        tool_name=issue.tool_name,
+        control_action=issue.metadata.get("control_action"),
+        escalation_type=issue.metadata.get("escalation_type"),
+    )
+
+
+def _worker_diagnostics(
+    result: AgentLoopResult,
+    wait_candidate: AgentLoopGraphWaitCandidate | None,
+) -> dict[str, Any]:
+    diagnostics = result.diagnostics
+    return {
+        "agent_loop_status": result.status.value,
+        "stop_reason": (
+            result.termination_reason
+            or (
+                None
+                if diagnostics is None
+                else diagnostics.stop_reason.value
+            )
+        ),
+        "trace_ref": result.trace_ref,
+        "wait_candidate_checksum": (
+            None
+            if wait_candidate is None
+            else wait_candidate.candidate_checksum
+        ),
+    }
+
+
+def _result_error(result: AgentLoopResult) -> str | None:
+    if result.error is None:
+        return None
+    value = result.to_dict().get("error")
+    if isinstance(value, Mapping):
+        message = value.get("message")
+        text = str(message) if message is not None else str(dict(value))
+    else:
+        text = str(value)
+    return str(redact_sensitive_values(text))
+
+
+def _exact_mapping(
+    value: Mapping[str, Any],
+    expected: set[str],
+    label: str,
+) -> dict[str, Any]:
+    if not isinstance(value, Mapping) or set(value) != expected:
+        raise _activity_error(f"AgentLoop Graph {label} fields are invalid")
+    return dict(value)
+
+
+def _required_text(value: Any, field_name: str) -> str:
+    if (
+        not isinstance(value, str)
+        or not value
+        or value.strip() != value
+        or len(value) > 2048
+        or any(ord(character) < 32 or ord(character) == 127 for character in value)
+    ):
+        raise _activity_error(f"{field_name} must be non-blank text")
+    return value
+
+
+def _optional_text(value: Any, field_name: str) -> str | None:
+    if value is None:
+        return None
+    return _required_text(value, field_name)
+
+
+def _checksum(value: Any, field_name: str) -> str:
+    text = _required_text(value, field_name)
+    if not text.startswith("sha256:") or len(text) != 71:
+        raise _activity_error(f"{field_name} must be a sha256 checksum")
+    try:
+        int(text.removeprefix("sha256:"), 16)
+    except ValueError as exc:
+        raise _activity_error(f"{field_name} must be a sha256 checksum") from exc
+    return text
+
+
+def _activity_error(message: str) -> HarnessValidationError:
+    return HarnessValidationError(
+        message,
+        code="agent_loop_graph_activity_contract_invalid",
+    )
+
+
+def _wait_error(message: str) -> HarnessValidationError:
+    return HarnessValidationError(
+        message,
+        code="agent_loop_graph_wait_candidate_invalid",
+    )
+
+
+__all__ = [
+    "AGENT_LOOP_GRAPH_ACTIVITY_OUTPUT_SCHEMA",
+    "AGENT_LOOP_GRAPH_ACTIVITY_TASK_SCHEMA",
+    "AGENT_LOOP_GRAPH_APPROVAL_REQUEST_SCHEMA",
+    "AGENT_LOOP_GRAPH_BINDING_MANIFEST_SCHEMA",
+    "AGENT_LOOP_GRAPH_WAIT_CANDIDATE_SCHEMA",
+    "AGENT_LOOP_GRAPH_WAIT_EVIDENCE_TYPE",
+    "AgentLoopGraphActivityBindingBundle",
+    "AgentLoopGraphActivityContract",
+    "AgentLoopGraphActivityOutput",
+    "AgentLoopGraphActivityTask",
+    "AgentLoopGraphApprovalRequest",
+    "AgentLoopGraphWaitCandidate",
+    "AgentLoopGraphWorker",
+    "AgentLoopRunnerPort",
+    "build_agent_loop_graph_activity_binding_bundle",
+]
