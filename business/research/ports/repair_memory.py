@@ -308,17 +308,27 @@ class ReaderRepairMemoryCommitReceipt:
 
 
 @runtime_checkable
-class ReaderRepairMemoryPort(Protocol):
-    def write_case(self, repair_case: ReaderRepairCase, *, namespace: str) -> str:
-        ...
+class ReaderRepairMemoryRecallPort(Protocol):
+    """Read-only Reader Repair memory surface used by candidate workers."""
 
     def recall_cases(self, query: ReaderRepairMemoryQuery) -> tuple[ReaderRepairCase, ...]:
         ...
 
-    def write_strategy(self, strategy: ReaderRepairStrategy, *, namespace: str) -> str:
+    def recall_strategies(
+        self,
+        issue_type: str,
+        *,
+        namespace: str,
+    ) -> list[ReaderRepairStrategy]:
         ...
 
-    def recall_strategies(self, issue_type: str, *, namespace: str) -> list[ReaderRepairStrategy]:
+
+@runtime_checkable
+class ReaderRepairMemoryPort(ReaderRepairMemoryRecallPort, Protocol):
+    def write_case(self, repair_case: ReaderRepairCase, *, namespace: str) -> str:
+        ...
+
+    def write_strategy(self, strategy: ReaderRepairStrategy, *, namespace: str) -> str:
         ...
 
     def list_cases(self, *, namespace: str) -> tuple[ReaderRepairCase, ...]:
@@ -390,8 +400,10 @@ def validate_reader_repair_memory_candidate(
         raise ValueError("reader repair memory candidate must remain proposed")
     if set(candidate.content) != {"repair_case", "strategy_candidate_bundle"}:
         raise ValueError("reader repair memory candidate content fields are invalid")
-    repair_case = ReaderRepairCase.model_validate(candidate.content["repair_case"])
-    bundle = candidate.content["strategy_candidate_bundle"]
+    repair_case = ReaderRepairCase.model_validate(
+        _deep_mutable(candidate.content["repair_case"])
+    )
+    bundle = _deep_mutable(candidate.content["strategy_candidate_bundle"])
     if not isinstance(bundle, Mapping) or set(bundle) != {
         "input_bindings",
         "strategies",
@@ -568,6 +580,14 @@ def _deep_immutable(value: Any) -> Any:
     return value
 
 
+def _deep_mutable(value: Any) -> Any:
+    if isinstance(value, Mapping):
+        return {str(key): _deep_mutable(item) for key, item in value.items()}
+    if isinstance(value, Sequence) and not isinstance(value, str | bytes):
+        return [_deep_mutable(item) for item in value]
+    return value
+
+
 def _mapping_sequence(value: Any, field_name: str) -> tuple[Mapping[str, Any], ...]:
     if isinstance(value, str | bytes) or not isinstance(value, Sequence):
         raise TypeError(f"{field_name} must be an array")
@@ -629,6 +649,7 @@ __all__ = [
     "ReaderRepairMemoryCommitReceipt",
     "ReaderRepairMemoryCommitRequest",
     "ReaderRepairMemoryPort",
+    "ReaderRepairMemoryRecallPort",
     "ReaderRepairMemoryVersion",
     "reader_repair_case_memory_ref",
     "reader_repair_strategy_memory_ref",

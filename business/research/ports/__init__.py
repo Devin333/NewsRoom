@@ -29,6 +29,7 @@ from business.research.ports.repair_memory import (
     ReaderRepairMemoryCommitReceipt,
     ReaderRepairMemoryCommitRequest,
     ReaderRepairMemoryPort,
+    ReaderRepairMemoryRecallPort,
     ReaderRepairMemoryVersion,
 )
 from business.research.ports.repositories import (
@@ -74,6 +75,7 @@ __all__ = [
     "ReaderRepairMemoryCommitReceipt",
     "ReaderRepairMemoryCommitRequest",
     "ReaderRepairMemoryPort",
+    "ReaderRepairMemoryRecallPort",
     "ReaderRepairMemoryVersion",
     "ReadingSessionRepository",
     "ResearchArtifactStorePort",

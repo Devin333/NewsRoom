@@ -144,6 +144,12 @@ def test_reader_repair_graph_binds_committed_application_and_bounded_repair() ->
     assert binding.consumer_activity_id == READER_REPAIR_RESULT_STEP_ID
     assert binding.consumer_node_id == READER_REPAIR_RESULT_STEP_ID
     assert binding.receipt_input_key == READER_REPAIR_COMMITTED_OUTPUT_RECEIPT_KEY
+    result_activity = definition.activity(READER_REPAIR_RESULT_STEP_ID)
+    assert result_activity is not None
+    assert "reader_payload" in result_activity.input_keys
+    assert READER_REPAIR_COMMITTED_OUTPUT_RECEIPT_KEY not in (
+        result_activity.input_keys
+    )
 
     expected_repair_sources = {
         "propose_repair_candidate",

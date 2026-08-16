@@ -259,6 +259,7 @@ def _activities() -> tuple[HarnessStepSpec, ...]:
             step_id=READER_REPAIR_RESULT_STEP_ID,
             worker_type=HarnessWorkerType.FUNCTION,
             input_keys=(
+                "reader_payload",
                 "reader_issue",
                 "reader_repair_patch_candidate",
                 READER_REPAIR_APPLICATION_OUTPUT_KEY,

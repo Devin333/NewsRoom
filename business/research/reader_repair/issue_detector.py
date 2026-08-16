@@ -1,9 +1,19 @@
 from __future__ import annotations
 
-from business.research.domain import ResearchDocument, ResearchReaderPayload, stable_research_id
+from datetime import UTC, datetime
+
+from business.research.domain import (
+    ResearchDocument,
+    ResearchReaderPayload,
+    stable_research_id,
+)
 from business.research.domain.reader_repair import ReaderIssue, ReaderIssueType
 from business.research.reader_repair.issue_signature import build_reader_issue_signature
-from business.research.reader.gates import validate_reader_navigation, validate_reader_payload_schema, validate_reader_source_lineage
+from business.research.reader.gates import (
+    validate_reader_navigation,
+    validate_reader_payload_schema,
+    validate_reader_source_lineage,
+)
 
 
 class ReaderRepairIssueDetector:
@@ -14,12 +24,26 @@ class ReaderRepairIssueDetector:
         run_id: str | None = None,
         step_id: str = "build_reader_payload",
         source_format: str | None = "pdf",
+        created_at: datetime | None = None,
     ) -> list[ReaderIssue]:
+        detected_at = _detected_at(created_at)
         issues: list[ReaderIssue] = []
         gate_checks = (
-            (validate_reader_payload_schema(payload), "reader_payload_schema_error", "Reader payload violates schema."),
-            (validate_reader_source_lineage(payload), "source_lineage_missing", "Reader payload has no source refs."),
-            (validate_reader_navigation(payload), "section_boundary_error", "Reader payload navigation is missing or inconsistent."),
+            (
+                validate_reader_payload_schema(payload),
+                "reader_payload_schema_error",
+                "Reader payload violates schema.",
+            ),
+            (
+                validate_reader_source_lineage(payload),
+                "source_lineage_missing",
+                "Reader payload has no source refs.",
+            ),
+            (
+                validate_reader_navigation(payload),
+                "section_boundary_error",
+                "Reader payload navigation is missing or inconsistent.",
+            ),
         )
         for gate_result, issue_type, symptom in gate_checks:
             if not gate_result.passed:
@@ -31,10 +55,20 @@ class ReaderRepairIssueDetector:
                         run_id=run_id,
                         step_id=step_id,
                         source_format=source_format,
+                        created_at=detected_at,
                         detector_evidence=[gate_result.gate_name],
                     )
                 )
-        issues.extend(self._detect_document_asset_issues(payload.document, payload=payload, run_id=run_id, step_id=step_id, source_format=source_format))
+        issues.extend(
+            self._detect_document_asset_issues(
+                payload.document,
+                payload=payload,
+                run_id=run_id,
+                step_id=step_id,
+                source_format=source_format,
+                created_at=detected_at,
+            )
+        )
         return _dedupe_issues(issues)
 
     def _detect_document_asset_issues(
@@ -45,6 +79,7 @@ class ReaderRepairIssueDetector:
         run_id: str | None,
         step_id: str,
         source_format: str | None,
+        created_at: datetime,
     ) -> list[ReaderIssue]:
         issues: list[ReaderIssue] = []
         if not document.sections:
@@ -56,6 +91,7 @@ class ReaderRepairIssueDetector:
                     run_id=run_id,
                     step_id=step_id,
                     source_format=source_format,
+                    created_at=created_at,
                     detector_evidence=["payload.navigation"],
                 )
             )
@@ -67,11 +103,16 @@ class ReaderRepairIssueDetector:
                     run_id=run_id,
                     step_id=step_id,
                     source_format=source_format,
+                    created_at=created_at,
                     detector_evidence=["document.sections"],
                 )
             )
         for table in document.tables:
-            if table.rows and table.columns and any(set(row) - set(table.columns) for row in table.rows):
+            if (
+                table.rows
+                and table.columns
+                and any(set(row) - set(table.columns) for row in table.rows)
+            ):
                 issues.append(
                     self._issue(
                         payload=payload,
@@ -80,6 +121,7 @@ class ReaderRepairIssueDetector:
                         run_id=run_id,
                         step_id=step_id,
                         source_format=source_format,
+                        created_at=created_at,
                         source_refs=[table.source_ref],
                         detector_evidence=[table.table_id],
                     )
@@ -94,6 +136,7 @@ class ReaderRepairIssueDetector:
                         run_id=run_id,
                         step_id=step_id,
                         source_format=source_format,
+                        created_at=created_at,
                         source_refs=[equation.source_ref],
                         detector_evidence=[equation.equation_id],
                     )
@@ -108,6 +151,7 @@ class ReaderRepairIssueDetector:
                         run_id=run_id,
                         step_id=step_id,
                         source_format=source_format,
+                        created_at=created_at,
                         source_refs=[reference.source_ref],
                         detector_evidence=[reference.reference_id],
                     )
@@ -123,6 +167,7 @@ class ReaderRepairIssueDetector:
         run_id: str | None,
         step_id: str,
         source_format: str | None,
+        created_at: datetime,
         source_refs: list[str] | None = None,
         detector_evidence: list[str] | None = None,
     ) -> ReaderIssue:
@@ -134,7 +179,11 @@ class ReaderRepairIssueDetector:
         )
         refs = source_refs or payload.source_lineage.source_refs
         return ReaderIssue(
-            issue_id=stable_research_id("reader_issue", payload.payload_id, signature.value),
+            issue_id=stable_research_id(
+                "reader_issue",
+                payload.payload_id,
+                signature.value,
+            ),
             paper_id=payload.paper.paper_id,
             run_id=run_id,
             step_id=step_id,
@@ -145,6 +194,7 @@ class ReaderRepairIssueDetector:
             source_refs=refs,
             payload_ref=payload.payload_id,
             detector_evidence=detector_evidence or [],
+            created_at=created_at,
             metadata={"source_format": source_format},
         )
 
@@ -157,6 +207,13 @@ def _dedupe_issues(issues: list[ReaderIssue]) -> list[ReaderIssue]:
             seen.add(issue.error_signature)
             result.append(issue)
     return result
+
+
+def _detected_at(value: datetime | None) -> datetime:
+    detected_at = value or datetime.now(UTC)
+    if detected_at.tzinfo is None or detected_at.utcoffset() is None:
+        raise ValueError("reader repair issue timestamp must be timezone-aware")
+    return detected_at.astimezone(UTC)
 
 
 __all__ = ["ReaderRepairIssueDetector"]
