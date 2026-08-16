@@ -16,6 +16,10 @@ from framework.harness.graph.conditions import (
     condition_from_dict,
     evaluate_condition,
 )
+from framework.harness.graph.compiler import (
+    HarnessGraphCompileResult,
+    HarnessGraphCompiler,
+)
 from framework.harness.graph.definition import (
     HarnessGraphCommittedNodeOutputBinding,
     HarnessGraphDefinition,
@@ -52,6 +56,7 @@ from framework.harness.graph.dsl import (
 )
 from framework.harness.graph.model import (
     HarnessBranch,
+    HarnessCommittedOutputReference,
     HarnessCompensationReference,
     HarnessContractKind,
     HarnessContractReference,
@@ -66,14 +71,17 @@ from framework.harness.graph.model import (
     HarnessLoopContract,
     HarnessMergeContract,
     HarnessMergeKind,
+    HarnessRepairReference,
     HarnessWaitContract,
     NormalizedHarnessGraph,
     graph_node_from_dict,
 )
 from framework.harness.graph.versioning import (
+    GRAPH_ONLY_NORMALIZED_HARNESS_GRAPH_SCHEMA,
     HARNESS_CONDITION_POLICY_VERSION,
     HARNESS_GRAPH_CHECKPOINT_SCHEMA,
     HARNESS_GRAPH_COMPILER_VERSION,
+    HARNESS_GRAPH_ONLY_COMPILER_VERSION,
     HARNESS_GRAPH_CONTROL_POLICY_VERSION,
     HARNESS_GRAPH_DECISION_SCHEMA,
     HARNESS_GRAPH_DEFINITION_SCHEMA,
@@ -106,9 +114,11 @@ __all__ = [
     "ConditionAny",
     "ConditionOperator",
     "ConditionPredicate",
+    "GRAPH_ONLY_NORMALIZED_HARNESS_GRAPH_SCHEMA",
     "HARNESS_CONDITION_POLICY_VERSION",
     "HARNESS_GRAPH_CHECKPOINT_SCHEMA",
     "HARNESS_GRAPH_COMPILER_VERSION",
+    "HARNESS_GRAPH_ONLY_COMPILER_VERSION",
     "HARNESS_GRAPH_CONTROL_POLICY_VERSION",
     "HARNESS_GRAPH_DECISION_SCHEMA",
     "HARNESS_GRAPH_DEFINITION_SCHEMA",
@@ -124,6 +134,7 @@ __all__ = [
     "HARNESS_STEP_LIFECYCLE_VERSION",
     "HARNESS_WORKER_ACTIVITY_SCHEMA",
     "HarnessBranch",
+    "HarnessCommittedOutputReference",
     "HarnessCompensationReference",
     "HarnessCondition",
     "HarnessContractKind",
@@ -131,6 +142,8 @@ __all__ = [
     "HarnessControlNode",
     "HarnessExecutableNode",
     "HarnessGraphChecksumRegistry",
+    "HarnessGraphCompileResult",
+    "HarnessGraphCompiler",
     "HarnessGraphCommittedNodeOutputBinding",
     "HarnessGraphDefinition",
     "HarnessGraphDefinitionReader",
@@ -150,6 +163,7 @@ __all__ = [
     "HarnessLoopContract",
     "HarnessMergeContract",
     "HarnessMergeKind",
+    "HarnessRepairReference",
     "HarnessRetryPolicy",
     "HarnessStepSpec",
     "HarnessTerminalFailureSideEffectPolicy",

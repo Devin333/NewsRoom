@@ -72,7 +72,10 @@ class HarnessGraphRegistrySnapshot:
 def graph_contract_references(
     graph: NormalizedHarnessGraph,
 ) -> tuple[HarnessContractReference, ...]:
-    references: set[HarnessContractReference] = {graph.workflow_ref}
+    identity_ref = graph.graph_ref or graph.workflow_ref
+    if identity_ref is None:  # pragma: no cover - normalized Graph invariant
+        raise AssertionError("normalized Graph identity reference is missing")
+    references: set[HarnessContractReference] = {identity_ref}
     if graph.terminal_policy_ref is not None:
         references.add(graph.terminal_policy_ref)
     if graph.terminal_policy is not None:
@@ -87,6 +90,17 @@ def graph_contract_references(
         references.update(
             _exact_contract_reference(HarnessContractKind.GATE, reference)
             for reference in policy.inherited_gate_refs
+        )
+    if graph.terminal_failure_policy_ref is not None:
+        references.add(graph.terminal_failure_policy_ref)
+    if graph.terminal_failure_policy is not None:
+        failure_policy = graph.terminal_failure_policy
+        references.add(
+            HarnessContractReference(
+                HarnessContractKind.SIDE_EFFECT,
+                failure_policy.handler.handler_id,
+                failure_policy.handler.version,
+            )
         )
     for node in graph.nodes:
         if isinstance(node, HarnessExecutableNode):

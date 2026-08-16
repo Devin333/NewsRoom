@@ -39,6 +39,7 @@ class HarnessResolvedRuntimeBindings:
     compensations_by_binding: Mapping[str, HarnessCompensationHandlerBinding]
     merges_by_reference: Mapping[str, HarnessDeterministicMergeBinding]
     terminal_side_effect: HarnessSideEffectHandlerBinding | None = None
+    terminal_failure_side_effect: HarnessSideEffectHandlerBinding | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.registry_snapshot, HarnessGraphRegistrySnapshot):
@@ -82,7 +83,10 @@ class HarnessGraphRuntimeResolver:
         if not isinstance(fenced_side_effect_store, bool):
             raise TypeError("fenced_side_effect_store must be boolean")
 
-        references: set[HarnessContractReference] = {graph.workflow_ref}
+        identity_ref = graph.graph_ref or graph.workflow_ref
+        if identity_ref is None:  # pragma: no cover - normalized Graph invariant
+            raise AssertionError("normalized Graph identity reference is missing")
+        references: set[HarnessContractReference] = {identity_ref}
         workers: dict[str, HarnessWorkerBinding] = {}
         activities: dict[str, HarnessActivityContractBinding] = {}
         gates: dict[str, tuple[GateBinding, ...]] = {}
@@ -148,6 +152,10 @@ class HarnessGraphRuntimeResolver:
             graph,
             references,
         )
+        terminal_failure_binding = self._resolve_terminal_failure_policy(
+            graph,
+            references,
+        )
         if terminal_gate_refs:
             _validate_terminal_gate_coverage(
                 graph,
@@ -181,6 +189,7 @@ class HarnessGraphRuntimeResolver:
             compensations_by_binding=compensations,
             merges_by_reference=merges,
             terminal_side_effect=terminal_binding,
+            terminal_failure_side_effect=terminal_failure_binding,
         )
 
     def _resolve_terminal_policy(
@@ -223,6 +232,40 @@ class HarnessGraphRuntimeResolver:
                 references.add(_gate_reference(gate_binding))
             required_gate_refs.add(graph_gate_ref.exact_ref)
         return binding, frozenset(required_gate_refs)
+
+    def _resolve_terminal_failure_policy(
+        self,
+        graph: NormalizedHarnessGraph,
+        references: set[HarnessContractReference],
+    ) -> HarnessSideEffectHandlerBinding | None:
+        policy = graph.terminal_failure_policy
+        graph_ref = graph.terminal_failure_policy_ref
+        if policy is None:
+            if graph_ref is not None:
+                raise _resolution_error(
+                    "terminal_failure_policy_snapshot_missing",
+                    "graph pins a terminal failure policy without its immutable snapshot",
+                    reference=graph_ref.exact_ref,
+                )
+            return None
+        if graph_ref is None:
+            raise _resolution_error(
+                "terminal_failure_policy_reference_missing",
+                "graph terminal failure policy snapshot lacks its exact reference",
+            )
+        references.add(graph_ref)
+        handler_ref = HarnessContractReference(
+            HarnessContractKind.SIDE_EFFECT,
+            policy.handler.handler_id,
+            policy.handler.version,
+        )
+        binding = self._authority.resolve_side_effect(
+            handler_ref,
+            kind=policy.kind,
+            origin=HarnessSideEffectOrigin.CONTROLLER_TERMINAL.value,
+        )
+        references.add(_side_effect_reference(binding))
+        return binding
 
 
 def _merge_references(

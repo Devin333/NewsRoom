@@ -23,7 +23,10 @@ from framework.harness.graph.validation.models import (
     HarnessGraphValidationPhase,
     diagnostic,
 )
-from framework.harness.graph.versioning import HARNESS_CONDITION_POLICY_VERSION
+from framework.harness.graph.versioning import (
+    GRAPH_ONLY_NORMALIZED_HARNESS_GRAPH_SCHEMA,
+    HARNESS_CONDITION_POLICY_VERSION,
+)
 
 
 _WAIT_SCOPE_PATH_PREFIX = "graph.inputs."
@@ -43,7 +46,8 @@ def validate_semantics(
             diagnostic(
                 HarnessGraphValidationPhase.SEMANTIC,
                 "terminal_policy_snapshot_missing",
-                "terminal policy reference lacks the immutable policy snapshot required for execution",
+                "terminal policy reference lacks the immutable policy snapshot "
+                "required for execution",
                 details={"reference": graph.terminal_policy_ref.exact_ref},
             )
         )
@@ -51,6 +55,7 @@ def validate_semantics(
     diagnostics.extend(_validate_control_fact_contracts(graph))
     diagnostics.extend(_validate_controls(graph, nodes_by_id))
     diagnostics.extend(_validate_edges(graph))
+    diagnostics.extend(_validate_committed_output_refs(graph, nodes_by_id))
     diagnostics.extend(_validate_compensations(graph, nodes_by_id))
     diagnostics.extend(_validate_repair_edges(graph, nodes_by_id))
     return tuple(diagnostics)
@@ -727,6 +732,8 @@ def _validate_repair_edges(
     graph: NormalizedHarnessGraph,
     nodes_by_id: dict[str, HarnessExecutableNode | HarnessControlNode],
 ) -> tuple[HarnessGraphDiagnostic, ...]:
+    if graph.schema_version == GRAPH_ONLY_NORMALIZED_HARNESS_GRAPH_SCHEMA:
+        return _validate_graph_owned_repair_edges(graph, nodes_by_id)
     diagnostics: list[HarnessGraphDiagnostic] = []
     repair_edges = tuple(
         edge for edge in graph.edges if edge.edge_kind == HarnessGraphEdgeKind.REPAIR
@@ -792,6 +799,284 @@ def _validate_repair_edges(
                 details={"repair_step_id": repair_step_id},
             )
         )
+    return tuple(diagnostics)
+
+
+def _validate_committed_output_refs(
+    graph: NormalizedHarnessGraph,
+    nodes_by_id: dict[str, HarnessExecutableNode | HarnessControlNode],
+) -> tuple[HarnessGraphDiagnostic, ...]:
+    diagnostics: list[HarnessGraphDiagnostic] = []
+    references = graph.committed_output_refs
+    business_keys = {
+        *graph.input_keys,
+        *graph.terminal_output_keys,
+        *(
+            key
+            for node in graph.nodes
+            if isinstance(node, HarnessExecutableNode)
+            for key in (*node.input_keys, *node.output_keys)
+        ),
+    }
+    duplicate_dimensions = (
+        (
+            "binding_id",
+            Counter(reference.binding_id for reference in references),
+        ),
+        (
+            "receipt_target",
+            Counter(
+                (reference.consumer_activity_id, reference.receipt_input_key)
+                for reference in references
+            ),
+        ),
+        (
+            "source_target",
+            Counter(
+                (
+                    reference.producer_activity_id,
+                    reference.producer_node_id,
+                    reference.producer_output_key,
+                    reference.consumer_activity_id,
+                    reference.consumer_node_id,
+                )
+                for reference in references
+            ),
+        ),
+    )
+    for dimension, counts in duplicate_dimensions:
+        for identity, count in sorted(counts.items(), key=lambda item: str(item[0])):
+            if count <= 1:
+                continue
+            diagnostics.append(
+                diagnostic(
+                    HarnessGraphValidationPhase.SEMANTIC,
+                    "duplicate_committed_output_reference",
+                    "committed output reference identity must be unique",
+                    details={"dimension": dimension, "identity": identity},
+                )
+            )
+
+    for reference in references:
+        producer = nodes_by_id.get(reference.producer_node_id)
+        consumer = nodes_by_id.get(reference.consumer_node_id)
+        if not isinstance(producer, HarnessExecutableNode):
+            diagnostics.append(
+                diagnostic(
+                    HarnessGraphValidationPhase.SEMANTIC,
+                    "committed_output_producer_not_executable",
+                    "committed output producer must be an executable node",
+                    node_id=reference.producer_node_id,
+                    details={"binding_id": reference.binding_id},
+                )
+            )
+        elif (
+            producer.step_id != reference.producer_activity_id
+            or producer.activity_ref != reference.producer_activity_ref
+        ):
+            diagnostics.append(
+                diagnostic(
+                    HarnessGraphValidationPhase.SEMANTIC,
+                    "committed_output_producer_activity_mismatch",
+                    "committed output producer does not match its exact activity",
+                    node_id=reference.producer_node_id,
+                    details={"binding_id": reference.binding_id},
+                )
+            )
+        elif reference.producer_output_key not in producer.output_keys:
+            diagnostics.append(
+                diagnostic(
+                    HarnessGraphValidationPhase.SEMANTIC,
+                    "committed_output_key_mismatch",
+                    "committed output key is not declared by its producer",
+                    node_id=reference.producer_node_id,
+                    details={"binding_id": reference.binding_id},
+                )
+            )
+
+        if not isinstance(consumer, HarnessExecutableNode):
+            diagnostics.append(
+                diagnostic(
+                    HarnessGraphValidationPhase.SEMANTIC,
+                    "committed_output_consumer_not_executable",
+                    "committed output consumer must be an executable node",
+                    node_id=reference.consumer_node_id,
+                    details={"binding_id": reference.binding_id},
+                )
+            )
+        elif (
+            consumer.step_id != reference.consumer_activity_id
+            or consumer.activity_ref != reference.consumer_activity_ref
+        ):
+            diagnostics.append(
+                diagnostic(
+                    HarnessGraphValidationPhase.SEMANTIC,
+                    "committed_output_consumer_activity_mismatch",
+                    "committed output consumer does not match its exact activity",
+                    node_id=reference.consumer_node_id,
+                    details={"binding_id": reference.binding_id},
+                )
+            )
+        elif reference.producer_output_key not in consumer.input_keys:
+            diagnostics.append(
+                diagnostic(
+                    HarnessGraphValidationPhase.SEMANTIC,
+                    "committed_output_consumer_input_missing",
+                    "committed output consumer does not declare the producer output",
+                    node_id=reference.consumer_node_id,
+                    details={"binding_id": reference.binding_id},
+                )
+            )
+
+        if reference.receipt_input_key in business_keys:
+            diagnostics.append(
+                diagnostic(
+                    HarnessGraphValidationPhase.SEMANTIC,
+                    "committed_output_receipt_input_collision",
+                    "committed output receipt input collides with business dataflow",
+                    node_id=reference.consumer_node_id,
+                    details={"binding_id": reference.binding_id},
+                )
+            )
+    return tuple(diagnostics)
+
+
+def _validate_graph_owned_repair_edges(
+    graph: NormalizedHarnessGraph,
+    nodes_by_id: dict[str, HarnessExecutableNode | HarnessControlNode],
+) -> tuple[HarnessGraphDiagnostic, ...]:
+    diagnostics: list[HarnessGraphDiagnostic] = []
+    repair_edges = tuple(
+        edge for edge in graph.edges if edge.edge_kind == HarnessGraphEdgeKind.REPAIR
+    )
+    expected_pairs = {
+        (reference.source_node_id, reference.repair_node_id): reference
+        for reference in graph.repair_refs
+    }
+    duplicate_dimensions = (
+        (
+            "binding_id",
+            Counter(reference.binding_id for reference in graph.repair_refs),
+        ),
+        (
+            "repair_node_id",
+            Counter(reference.repair_node_id for reference in graph.repair_refs),
+        ),
+        (
+            "source_trigger",
+            Counter(
+                (reference.source_node_id, trigger)
+                for reference in graph.repair_refs
+                for trigger in reference.triggers
+            ),
+        ),
+    )
+    for dimension, counts in duplicate_dimensions:
+        for identity, count in sorted(counts.items(), key=lambda item: str(item[0])):
+            if count <= 1:
+                continue
+            diagnostics.append(
+                diagnostic(
+                    HarnessGraphValidationPhase.SEMANTIC,
+                    "duplicate_graph_repair_reference",
+                    "Graph-owned repair reference identity must be unique",
+                    details={"dimension": dimension, "identity": identity},
+                )
+            )
+    edge_counts: dict[tuple[str, str], int] = {}
+    for edge in repair_edges:
+        pair = (edge.source_id, edge.target_id)
+        edge_counts[pair] = edge_counts.get(pair, 0) + 1
+        if pair not in expected_pairs:
+            diagnostics.append(
+                diagnostic(
+                    HarnessGraphValidationPhase.SEMANTIC,
+                    "unbound_repair_edge",
+                    "repair edge has no exact Graph-owned repair reference",
+                    edge_id=edge.edge_id,
+                )
+            )
+
+    for pair, reference in sorted(expected_pairs.items()):
+        source = nodes_by_id.get(reference.source_node_id)
+        target = nodes_by_id.get(reference.repair_node_id)
+        if not isinstance(source, HarnessExecutableNode):
+            diagnostics.append(
+                diagnostic(
+                    HarnessGraphValidationPhase.SEMANTIC,
+                    "repair_source_not_executable",
+                    "Graph-owned repair source must be executable",
+                    node_id=reference.source_node_id,
+                )
+            )
+        elif source.step_id != reference.source_activity_id:
+            diagnostics.append(
+                diagnostic(
+                    HarnessGraphValidationPhase.SEMANTIC,
+                    "repair_source_activity_mismatch",
+                    "Graph-owned repair source activity does not match its node",
+                    node_id=reference.source_node_id,
+                )
+            )
+        if not isinstance(target, HarnessExecutableNode):
+            diagnostics.append(
+                diagnostic(
+                    HarnessGraphValidationPhase.SEMANTIC,
+                    "repair_target_not_executable",
+                    "Graph-owned repair target must be executable",
+                    node_id=reference.repair_node_id,
+                )
+            )
+        elif (
+            target.step_id != reference.repair_activity_id
+            or target.activity_ref != reference.repair_activity_ref
+        ):
+            diagnostics.append(
+                diagnostic(
+                    HarnessGraphValidationPhase.SEMANTIC,
+                    "repair_target_activity_mismatch",
+                    "Graph-owned repair target does not match its exact activity",
+                    node_id=reference.repair_node_id,
+                )
+            )
+        count = edge_counts.get(pair, 0)
+        if count == 0:
+            diagnostics.append(
+                diagnostic(
+                    HarnessGraphValidationPhase.SEMANTIC,
+                    "missing_repair_edge",
+                    "Graph-owned repair reference has no exact graph edge",
+                    node_id=reference.source_node_id,
+                    details={"binding_id": reference.binding_id},
+                )
+            )
+        elif count > 1:
+            diagnostics.append(
+                diagnostic(
+                    HarnessGraphValidationPhase.SEMANTIC,
+                    "duplicate_repair_edge",
+                    "Graph-owned repair reference resolves to multiple graph edges",
+                    node_id=reference.source_node_id,
+                    details={"binding_id": reference.binding_id},
+                )
+            )
+
+    for node in graph.nodes:
+        if not isinstance(node, HarnessExecutableNode):
+            continue
+        retry_policy = node.metadata.get("retry_policy", {})
+        if (
+            isinstance(retry_policy, Mapping)
+            and retry_policy.get("repair_step_id") is not None
+        ):
+            diagnostics.append(
+                diagnostic(
+                    HarnessGraphValidationPhase.SEMANTIC,
+                    "legacy_repair_authority_forbidden",
+                    "Graph-owned repair topology cannot use leaf repair_step_id",
+                    node_id=node.node_id,
+                )
+            )
     return tuple(diagnostics)
 
 

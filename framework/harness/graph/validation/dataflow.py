@@ -16,6 +16,9 @@ from framework.harness.graph.validation.models import (
     HarnessGraphValidationPhase,
     diagnostic,
 )
+from framework.harness.graph.versioning import (
+    GRAPH_ONLY_NORMALIZED_HARNESS_GRAPH_SCHEMA,
+)
 
 
 _NON_DATAFLOW_EDGE_KINDS = frozenset(
@@ -36,9 +39,15 @@ def validate_dataflow(graph: NormalizedHarnessGraph) -> tuple[HarnessGraphDiagno
     outgoing: dict[str, list[str]] = defaultdict(list)
     indegree = {node_id: 0 for node_id in nodes_by_id}
     for edge in graph.edges:
+        is_graph_owned_repair = (
+            edge.edge_kind == HarnessGraphEdgeKind.REPAIR
+            and graph.schema_version == GRAPH_ONLY_NORMALIZED_HARNESS_GRAPH_SCHEMA
+        )
         if (
             edge.edge_kind in _NON_DATAFLOW_EDGE_KINDS
-            or edge.source_id not in nodes_by_id
+            and not is_graph_owned_repair
+        ) or (
+            edge.source_id not in nodes_by_id
             or edge.target_id not in nodes_by_id
         ):
             continue

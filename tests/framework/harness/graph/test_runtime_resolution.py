@@ -29,12 +29,20 @@ from framework.harness.graph.model import (
 from framework.harness.graph.runtime_resolution import HarnessGraphRuntimeResolver
 from framework.harness.graph.validation.policy import HarnessGraphPreflightPolicy
 from framework.harness.graph.validation.registry import validate_registry
-from framework.harness.side_effects.models import HarnessTerminalSideEffectPolicy
+from framework.harness.side_effects.models import (
+    HarnessTerminalFailureSideEffectPolicy,
+    HarnessTerminalSideEffectPolicy,
+)
 from framework.harness.side_effects.registry import (
     HarnessSideEffectHandlerBinding,
     HarnessSideEffectRegistry,
 )
 from framework.harness.workers.result import HarnessWorkerResult
+from framework.harness.graph.versioning import (
+    GRAPH_ONLY_NORMALIZED_HARNESS_GRAPH_SCHEMA,
+    HARNESS_GRAPH_DEFINITION_SCHEMA,
+    HARNESS_GRAPH_ONLY_COMPILER_VERSION,
+)
 
 
 def test_resolver_builds_registry_snapshot_from_frozen_graph_and_live_bindings() -> None:
@@ -106,6 +114,53 @@ def test_resolver_never_registers_control_nodes_as_worker_activities() -> None:
     assert set(resolved.gates_by_node) == {"fallback", "primary"}
     assert "approval" not in resolved.workers_by_node
     assert "approval" not in resolved.activities_by_node
+
+
+def test_resolver_uses_graph_only_identity_without_legacy_alias() -> None:
+    graph = _graph_v2(
+        (_node("collect", gate_refs=("quality@1",)),),
+        terminal_policy=_terminal_policy(),
+    )
+    authority = _authority(
+        worker_ids=("collect",),
+        gate_registry=_gate_registry(),
+        side_effect_registry=_terminal_side_effect_registry(),
+    )
+
+    resolved = HarnessGraphRuntimeResolver(authority).resolve(graph)
+    references = {
+        (reference.contract_kind.value, reference.exact_ref)
+        for reference in resolved.registry_snapshot.references
+    }
+
+    assert ("graph", "runtime-resolution@1") in references
+    assert not any(kind == "workflow" for kind, _ in references)
+    assert validate_registry(
+        graph,
+        resolved.registry_snapshot,
+        HarnessGraphPreflightPolicy(),
+    ) == ()
+
+
+def test_resolver_pins_graph_only_failure_terminal_handler() -> None:
+    graph = _graph_v2(
+        (_node("collect"),),
+        terminal_policy=_terminal_policy(inherited_gate_refs=()),
+        terminal_failure_policy=_terminal_failure_policy(),
+    )
+    authority = _authority(
+        worker_ids=("collect",),
+        side_effect_registry=_terminal_side_effect_registry(include_failure=True),
+    )
+
+    resolved = HarnessGraphRuntimeResolver(authority).resolve(graph)
+
+    assert resolved.terminal_failure_side_effect is not None
+    assert validate_registry(
+        graph,
+        resolved.registry_snapshot,
+        HarnessGraphPreflightPolicy(),
+    ) == ()
 
 
 def test_resolver_rejects_missing_worker_before_graph_can_self_authorize() -> None:
@@ -207,6 +262,50 @@ def _graph(
     )
 
 
+def _graph_v2(
+    nodes: tuple[HarnessExecutableNode | HarnessControlNode, ...],
+    *,
+    terminal_policy: HarnessTerminalSideEffectPolicy,
+    terminal_failure_policy: HarnessTerminalFailureSideEffectPolicy | None = None,
+) -> NormalizedHarnessGraph:
+    graph_id = "runtime-resolution"
+    executable_ids = tuple(
+        node.node_id for node in nodes if isinstance(node, HarnessExecutableNode)
+    )
+    return NormalizedHarnessGraph(
+        graph_id=graph_id,
+        graph_version="1",
+        graph_ref=_ref(HarnessContractKind.GRAPH, graph_id, "1"),
+        definition_schema_version=HARNESS_GRAPH_DEFINITION_SCHEMA,
+        definition_checksum="sha256:" + "b" * 64,
+        workflow_id=None,
+        workflow_version=None,
+        workflow_ref=None,
+        nodes=nodes,
+        edges=(),
+        entry_node_ids=executable_ids[:1],
+        terminal_node_ids=executable_ids[-1:],
+        terminal_policy_ref=_ref(
+            HarnessContractKind.TERMINAL_POLICY,
+            terminal_policy.policy_id,
+            terminal_policy.version,
+        ),
+        terminal_policy=terminal_policy,
+        terminal_failure_policy_ref=(
+            None
+            if terminal_failure_policy is None
+            else _ref(
+                HarnessContractKind.TERMINAL_POLICY,
+                terminal_failure_policy.policy_id,
+                terminal_failure_policy.version,
+            )
+        ),
+        terminal_failure_policy=terminal_failure_policy,
+        schema_version=GRAPH_ONLY_NORMALIZED_HARNESS_GRAPH_SCHEMA,
+        compiler_version=HARNESS_GRAPH_ONLY_COMPILER_VERSION,
+    )
+
+
 def _node(
     node_id: str,
     *,
@@ -247,7 +346,10 @@ def _ref(
     return HarnessContractReference(kind, contract_id, version)
 
 
-def _terminal_policy() -> HarnessTerminalSideEffectPolicy:
+def _terminal_policy(
+    *,
+    inherited_gate_refs: tuple[str, ...] = ("quality@1",),
+) -> HarnessTerminalSideEffectPolicy:
     return HarnessTerminalSideEffectPolicy(
         policy_id="publication",
         version="4",
@@ -256,7 +358,21 @@ def _terminal_policy() -> HarnessTerminalSideEffectPolicy:
         requires_approval=False,
         retry_limit=1,
         not_required_evidence_ref="sha256:" + "a" * 64,
-        inherited_gate_refs=("quality@1",),
+        inherited_gate_refs=inherited_gate_refs,
+    )
+
+
+def _terminal_failure_policy() -> HarnessTerminalFailureSideEffectPolicy:
+    return HarnessTerminalFailureSideEffectPolicy(
+        policy_id="failure-diagnostic",
+        version="1",
+        handler="failure.commit@1",
+        kind="failure_diagnostic",
+        failure_record_schema="newsroom.harness-graph-terminal-failure-record/v1",
+        terminal_reason_codes=("graph_terminal_failure",),
+        requires_approval=False,
+        retry_limit=1,
+        not_required_evidence_ref="sha256:" + "c" * 64,
     )
 
 
@@ -293,16 +409,29 @@ def _gate_registry() -> DeterministicGateRegistry:
     )
 
 
-def _terminal_side_effect_registry() -> HarnessSideEffectRegistry:
-    return HarnessSideEffectRegistry(
-        (
+def _terminal_side_effect_registry(
+    *,
+    include_failure: bool = False,
+) -> HarnessSideEffectRegistry:
+    bindings = [
+        HarnessSideEffectHandlerBinding(
+            "publication.commit@2",
+            "publication",
+            _SideEffectHandler(),
+            supports_origins=("controller_terminal",),
+        )
+    ]
+    if include_failure:
+        bindings.append(
             HarnessSideEffectHandlerBinding(
-                "publication.commit@2",
-                "publication",
+                "failure.commit@1",
+                "failure_diagnostic",
                 _SideEffectHandler(),
                 supports_origins=("controller_terminal",),
-            ),
+            )
         )
+    return HarnessSideEffectRegistry(
+        tuple(bindings)
     )
 
 

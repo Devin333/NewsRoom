@@ -23,6 +23,7 @@ from framework.harness.graph.validation.registry import (
 from framework.harness.graph.validation.semantic import validate_semantics
 from framework.harness.graph.validation.structural import validate_structure
 from framework.harness.graph.versioning import (
+    GRAPH_ONLY_NORMALIZED_HARNESS_GRAPH_SCHEMA,
     NORMALIZED_HARNESS_GRAPH_SCHEMA,
 )
 
@@ -72,7 +73,10 @@ class HarnessGraphPreflight:
 
     @staticmethod
     def _require_executable_schema(graph: NormalizedHarnessGraph) -> None:
-        if graph.schema_version != NORMALIZED_HARNESS_GRAPH_SCHEMA:
+        if graph.schema_version not in {
+            NORMALIZED_HARNESS_GRAPH_SCHEMA,
+            GRAPH_ONLY_NORMALIZED_HARNESS_GRAPH_SCHEMA,
+        }:
             raise HarnessValidationError(
                 "unsupported normalized graph schema",
                 code="unsupported_graph_schema",
