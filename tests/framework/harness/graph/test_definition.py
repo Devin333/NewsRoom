@@ -8,9 +8,13 @@ import pytest
 from framework.harness.control_plane.errors import HarnessValidationError
 from framework.harness.graph import (
     HARNESS_GRAPH_DEFINITION_SCHEMA,
+    BoundedLoop,
     CompensationBinding,
+    ConditionOperator,
+    ConditionPredicate,
     HarnessContractKind,
     HarnessContractReference,
+    HarnessGraphCommittedNodeOutputBinding,
     HarnessGraphDefinition,
     HarnessGraphDefinitionReader,
     HarnessGraphLeafBinding,
@@ -23,6 +27,7 @@ from framework.harness.graph import (
     HarnessStepSpec,
     HarnessTerminalSideEffectPolicy,
     HarnessWorkerType,
+    ParallelAll,
     ParallelAny,
     ParallelBranch,
     Sequence,
@@ -46,12 +51,13 @@ def test_graph_definition_round_trips_with_canonical_checksum() -> None:
 
     assert restored == definition
     assert restored.schema_version == HARNESS_GRAPH_DEFINITION_SCHEMA
-    assert restored.schema_version == "newsroom.harness-graph-definition/v4"
+    assert restored.schema_version == "newsroom.harness-graph-definition/v5"
     assert restored.activity_ids == ("compose_report", "load_source")
     assert tuple(
         binding.activity_id for binding in restored.leaf_activity_bindings
     ) == ("compose_report", "load_source")
     assert restored.task_plan_stage_bindings == ()
+    assert restored.committed_output_bindings == ()
     assert restored.repair_bindings == ()
     load_source_binding = restored.leaf_activity_binding("load_source")
     compose_report = restored.activity("compose_report")
@@ -84,6 +90,190 @@ def test_graph_definition_activity_order_does_not_change_checksum() -> None:
     assert forward.activities == reverse.activities
     assert forward.leaf_activity_bindings == reverse.leaf_activity_bindings
     assert forward.definition_checksum == reverse.definition_checksum
+
+
+def test_graph_definition_round_trips_committed_node_output_binding() -> None:
+    binding = _committed_output_binding()
+    definition = _definition(committed_output_bindings=(binding,))
+
+    restored = HarnessGraphDefinitionReader().read_for_execution(
+        json.loads(json.dumps(definition.to_dict())),
+        source_schema=HARNESS_GRAPH_DEFINITION_SCHEMA,
+    )
+
+    assert restored.committed_output_bindings == (binding,)
+    assert restored.committed_output_binding(binding.binding_id) == binding
+    assert binding.receipt_input_key not in restored.root.input_keys
+    assert binding.receipt_input_key not in restored.activity(
+        binding.consumer_activity_id
+    ).input_keys
+
+
+def test_graph_definition_rejects_committed_output_business_key_collision() -> None:
+    with pytest.raises(HarnessValidationError) as raised:
+        _definition(
+            committed_output_bindings=(
+                _committed_output_binding(receipt_input_key="paper_source"),
+            )
+        )
+
+    assert raised.value.code == "graph_committed_output_binding_input_collision"
+
+
+def test_graph_definition_rejects_committed_output_contract_mismatch() -> None:
+    with pytest.raises(HarnessValidationError) as output_mismatch:
+        _definition(
+            committed_output_bindings=(
+                _committed_output_binding(producer_output_key="report_draft"),
+            )
+        )
+
+    assert (
+        output_mismatch.value.code
+        == "graph_committed_output_binding_output_mismatch"
+    )
+
+    with pytest.raises(HarnessValidationError) as input_missing:
+        _definition(
+            committed_output_bindings=(
+                _committed_output_binding(
+                    producer_activity_id="compose_report",
+                    producer_output_key="report_draft",
+                    consumer_activity_id="load_source",
+                ),
+            )
+        )
+
+    assert input_missing.value.code == "graph_committed_output_binding_input_missing"
+
+
+def test_graph_definition_rejects_non_dominating_committed_output_producer() -> None:
+    load_source = HarnessStepSpec(
+        step_id="load_source",
+        worker_type=HarnessWorkerType.FUNCTION,
+        input_keys=("report_draft",),
+        output_key="paper_source",
+    )
+    compose_report = HarnessStepSpec(
+        step_id="compose_report",
+        worker_type=HarnessWorkerType.AGENT_LOOP,
+        output_key="report_draft",
+    )
+
+    with pytest.raises(HarnessValidationError) as raised:
+        _definition(
+            activities=(load_source, compose_report),
+            committed_output_bindings=(
+                _committed_output_binding(
+                    producer_activity_id="compose_report",
+                    producer_output_key="report_draft",
+                    consumer_activity_id="load_source",
+                ),
+            ),
+        )
+
+    assert raised.value.code == "graph_committed_output_binding_topology_invalid"
+
+
+def test_graph_definition_rejects_committed_output_node_substitution() -> None:
+    with pytest.raises(HarnessValidationError) as raised:
+        _definition(
+            committed_output_bindings=(
+                _committed_output_binding(producer_node_id="other-node"),
+            )
+        )
+
+    assert raised.value.code == "graph_committed_output_binding_node_mismatch"
+
+
+def test_graph_definition_requires_producer_on_every_parallel_path() -> None:
+    load_source, compose_report = _activities()
+    load_cache = HarnessStepSpec(
+        step_id="load_cache",
+        worker_type=HarnessWorkerType.FUNCTION,
+        output_key="cached_source",
+    )
+    branches = (
+        ParallelBranch("source", StepRef("load_source"), "source"),
+        ParallelBranch("cache", StepRef("load_cache"), "cache"),
+    )
+    binding = _committed_output_binding()
+
+    with pytest.raises(HarnessValidationError) as optional_producer:
+        _definition(
+            root=HarnessGraphSpec(
+                graph_id="research.paper-analysis",
+                root=Sequence(
+                    (
+                        ParallelAny("race", "race:join", branches),
+                        StepRef("compose_report"),
+                    )
+                ),
+                terminal_output_keys=("report_draft",),
+            ),
+            activities=(load_source, load_cache, compose_report),
+            committed_output_bindings=(binding,),
+        )
+
+    assert (
+        optional_producer.value.code
+        == "graph_committed_output_binding_topology_invalid"
+    )
+
+    definition = _definition(
+        root=HarnessGraphSpec(
+            graph_id="research.paper-analysis",
+            root=Sequence(
+                (
+                    ParallelAll("all", "all:join", branches),
+                    StepRef("compose_report"),
+                )
+            ),
+            terminal_output_keys=("report_draft",),
+        ),
+        activities=(load_source, load_cache, compose_report),
+        committed_output_bindings=(binding,),
+    )
+    assert definition.committed_output_bindings == (binding,)
+
+
+def test_graph_definition_rejects_loop_local_committed_output_binding() -> None:
+    load_source, compose_report = _activities()
+    loop = BoundedLoop(
+        loop_id="repair-loop",
+        body=Sequence((StepRef("load_source"), StepRef("compose_report"))),
+        condition=ConditionPredicate(
+            path="quality_verdict.passed",
+            operator=ConditionOperator.EQUALS,
+            expected=True,
+        ),
+        max_iterations=2,
+    )
+
+    with pytest.raises(HarnessValidationError) as raised:
+        _definition(
+            root=HarnessGraphSpec(
+                graph_id="research.paper-analysis",
+                root=loop,
+                terminal_output_keys=("report_draft",),
+            ),
+            activities=(load_source, compose_report),
+            committed_output_bindings=(_committed_output_binding(),),
+        )
+
+    assert raised.value.code == "graph_committed_output_binding_topology_invalid"
+
+
+def test_graph_definition_rejects_committed_output_binding_tampering() -> None:
+    payload = _definition(
+        committed_output_bindings=(_committed_output_binding(),)
+    ).to_dict()
+    payload["committed_output_bindings"][0]["receipt_input_key"] = "forged_receipt"
+
+    with pytest.raises(HarnessValidationError) as raised:
+        HarnessGraphDefinition.from_dict(payload)
+
+    assert raised.value.code == "graph_definition_checksum_mismatch"
 
 
 def test_graph_definition_snapshots_mutable_activity_metadata() -> None:
@@ -967,6 +1157,20 @@ def test_graph_reader_rejects_v3_payload_without_repair_bindings() -> None:
     assert raised.value.code == "unsupported_graph_definition_schema"
 
 
+def test_graph_reader_rejects_v4_payload_without_committed_output_bindings() -> None:
+    payload = _definition().to_dict()
+    payload.pop("committed_output_bindings")
+    payload["schema_version"] = "newsroom.harness-graph-definition/v4"
+
+    with pytest.raises(HarnessValidationError) as raised:
+        HarnessGraphDefinitionReader().read(
+            payload,
+            source_schema="newsroom.harness-graph-definition/v4",
+        )
+
+    assert raised.value.code == "unsupported_graph_definition_schema"
+
+
 def _definition(
     *,
     graph_version: str = "1",
@@ -976,6 +1180,9 @@ def _definition(
     task_plan_stage_bindings: (
         tuple[HarnessGraphTaskPlanStageBinding, ...] | None
     ) = None,
+    committed_output_bindings: tuple[
+        HarnessGraphCommittedNodeOutputBinding, ...
+    ] = (),
     repair_bindings: tuple[HarnessGraphRepairBinding, ...] = (),
 ) -> HarnessGraphDefinition:
     selected_activities = _activities() if activities is None else activities
@@ -1016,6 +1223,7 @@ def _definition(
             if task_plan_stage_bindings is None
             else task_plan_stage_bindings
         ),
+        committed_output_bindings=committed_output_bindings,
         repair_bindings=repair_bindings,
         terminal_side_effect_policy=HarnessTerminalSideEffectPolicy(
             policy_id="research.artifact.publication",
@@ -1123,6 +1331,27 @@ def _leaf_binding(
             f"research.{activity_id}",
             "v1",
         ),
+    )
+
+
+def _committed_output_binding(
+    *,
+    binding_id: str = "load-source-commit",
+    producer_activity_id: str = "load_source",
+    producer_node_id: str | None = None,
+    producer_output_key: str = "paper_source",
+    consumer_activity_id: str = "compose_report",
+    consumer_node_id: str | None = None,
+    receipt_input_key: str = "paper_source_commit",
+) -> HarnessGraphCommittedNodeOutputBinding:
+    return HarnessGraphCommittedNodeOutputBinding(
+        binding_id=binding_id,
+        producer_activity_id=producer_activity_id,
+        producer_node_id=producer_node_id or producer_activity_id,
+        producer_output_key=producer_output_key,
+        consumer_activity_id=consumer_activity_id,
+        consumer_node_id=consumer_node_id or consumer_activity_id,
+        receipt_input_key=receipt_input_key,
     )
 
 

@@ -17,6 +17,7 @@ from framework.harness.graph.conditions import (
     evaluate_condition,
 )
 from framework.harness.graph.definition import (
+    HarnessGraphCommittedNodeOutputBinding,
     HarnessGraphDefinition,
     HarnessGraphDefinitionReader,
     HarnessGraphLeafBinding,
@@ -129,6 +130,7 @@ __all__ = [
     "HarnessControlNode",
     "HarnessExecutableNode",
     "HarnessGraphChecksumRegistry",
+    "HarnessGraphCommittedNodeOutputBinding",
     "HarnessGraphDefinition",
     "HarnessGraphDefinitionReader",
     "HarnessGraphLeafBinding",

@@ -241,6 +241,78 @@ class HarnessGraphTaskPlanStageBinding:
         )
 
 
+@dataclass(frozen=True, slots=True)
+class HarnessGraphCommittedNodeOutputBinding:
+    """Declare one Harness-provided committed node-output receipt input."""
+
+    binding_id: str
+    producer_activity_id: str
+    producer_node_id: str
+    producer_output_key: str
+    consumer_activity_id: str
+    consumer_node_id: str
+    receipt_input_key: str
+
+    def __post_init__(self) -> None:
+        for field_name in (
+            "binding_id",
+            "producer_activity_id",
+            "producer_node_id",
+            "producer_output_key",
+            "consumer_activity_id",
+            "consumer_node_id",
+            "receipt_input_key",
+        ):
+            object.__setattr__(
+                self,
+                field_name,
+                _identifier(
+                    getattr(self, field_name),
+                    f"committed_output_binding.{field_name}",
+                ),
+            )
+        if (
+            self.producer_activity_id == self.consumer_activity_id
+            or self.producer_node_id == self.consumer_node_id
+        ):
+            raise HarnessValidationError(
+                "committed node-output binding cannot target its producer",
+                code="graph_committed_output_binding_self_reference",
+                details={"binding_id": self.binding_id},
+            )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "binding_id": self.binding_id,
+            "producer_activity_id": self.producer_activity_id,
+            "producer_node_id": self.producer_node_id,
+            "producer_output_key": self.producer_output_key,
+            "consumer_activity_id": self.consumer_activity_id,
+            "consumer_node_id": self.consumer_node_id,
+            "receipt_input_key": self.receipt_input_key,
+        }
+
+    @classmethod
+    def from_dict(
+        cls,
+        value: Mapping[str, Any],
+    ) -> "HarnessGraphCommittedNodeOutputBinding":
+        payload = _exact_mapping(
+            value,
+            {
+                "binding_id",
+                "producer_activity_id",
+                "producer_node_id",
+                "producer_output_key",
+                "consumer_activity_id",
+                "consumer_node_id",
+                "receipt_input_key",
+            },
+            "Graph committed node-output binding",
+        )
+        return cls(**payload)
+
+
 class HarnessGraphRepairTrigger(StrEnum):
     """Deterministic failures that may activate an explicit repair node."""
 
@@ -330,6 +402,7 @@ class HarnessGraphDefinition:
     activities: tuple[HarnessStepSpec, ...]
     leaf_activity_bindings: tuple[HarnessGraphLeafBinding, ...]
     task_plan_stage_bindings: tuple[HarnessGraphTaskPlanStageBinding, ...]
+    committed_output_bindings: tuple[HarnessGraphCommittedNodeOutputBinding, ...]
     repair_bindings: tuple[HarnessGraphRepairBinding, ...]
     terminal_side_effect_policy: (
         HarnessTerminalSideEffectPolicy | Mapping[str, Any]
@@ -364,6 +437,9 @@ class HarnessGraphDefinition:
         task_plan_stage_bindings = _task_plan_stage_bindings(
             self.task_plan_stage_bindings
         )
+        committed_output_bindings = _committed_output_bindings(
+            self.committed_output_bindings
+        )
         repair_bindings = _repair_bindings(self.repair_bindings)
         policy = self.terminal_side_effect_policy
         if not isinstance(policy, HarnessTerminalSideEffectPolicy):
@@ -393,6 +469,11 @@ class HarnessGraphDefinition:
             "task_plan_stage_bindings",
             task_plan_stage_bindings,
         )
+        object.__setattr__(
+            self,
+            "committed_output_bindings",
+            committed_output_bindings,
+        )
         object.__setattr__(self, "repair_bindings", repair_bindings)
         object.__setattr__(self, "terminal_side_effect_policy", policy)
         expected = canonical_checksum(self.checksum_projection())
@@ -414,6 +495,12 @@ class HarnessGraphDefinition:
         _validate_task_plan_stage_bindings(
             task_plan_stage_bindings,
             activities=activities,
+        )
+        _validate_committed_output_bindings(
+            committed_output_bindings,
+            root=root,
+            activities=activities,
+            leaf_activity_bindings=leaf_activity_bindings,
         )
         _validate_activity_repair_routing(activities)
         _validate_repair_bindings(
@@ -458,6 +545,16 @@ class HarnessGraphDefinition:
                 return binding
         return None
 
+    def committed_output_binding(
+        self,
+        binding_id: str,
+    ) -> HarnessGraphCommittedNodeOutputBinding | None:
+        normalized = _identifier(binding_id, "binding_id")
+        for binding in self.committed_output_bindings:
+            if binding.binding_id == normalized:
+                return binding
+        return None
+
     def repair_binding(
         self,
         binding_id: str,
@@ -480,6 +577,9 @@ class HarnessGraphDefinition:
             ],
             "task_plan_stage_bindings": [
                 binding.to_dict() for binding in self.task_plan_stage_bindings
+            ],
+            "committed_output_bindings": [
+                binding.to_dict() for binding in self.committed_output_bindings
             ],
             "repair_bindings": [
                 binding.to_dict() for binding in self.repair_bindings
@@ -516,6 +616,7 @@ class HarnessGraphDefinition:
                 "activities",
                 "leaf_activity_bindings",
                 "task_plan_stage_bindings",
+                "committed_output_bindings",
                 "repair_bindings",
                 "terminal_side_effect_policy",
                 "definition_checksum",
@@ -546,6 +647,13 @@ class HarnessGraphDefinition:
                 for item in _mapping_array(
                     payload["task_plan_stage_bindings"],
                     "task_plan_stage_bindings",
+                )
+            ),
+            committed_output_bindings=tuple(
+                HarnessGraphCommittedNodeOutputBinding.from_dict(item)
+                for item in _mapping_array(
+                    payload["committed_output_bindings"],
+                    "committed_output_bindings",
                 )
             ),
             repair_bindings=tuple(
@@ -725,6 +833,83 @@ def _task_plan_stage_bindings(
     return snapshots
 
 
+def _committed_output_bindings(
+    values: Sequence[HarnessGraphCommittedNodeOutputBinding],
+) -> tuple[HarnessGraphCommittedNodeOutputBinding, ...]:
+    if isinstance(values, (str, bytes, bytearray)) or not isinstance(
+        values,
+        Sequence,
+    ):
+        raise HarnessValidationError(
+            "committed_output_bindings must be an array",
+            code="invalid_graph_definition",
+        )
+    if len(values) > MAX_GRAPH_DEFINITION_ACTIVITIES or any(
+        not isinstance(value, HarnessGraphCommittedNodeOutputBinding)
+        for value in values
+    ):
+        raise HarnessValidationError(
+            "committed_output_bindings must contain "
+            "HarnessGraphCommittedNodeOutputBinding values",
+            code="invalid_graph_definition",
+        )
+    snapshots = tuple(
+        sorted(
+            (
+                HarnessGraphCommittedNodeOutputBinding.from_dict(value.to_dict())
+                for value in values
+            ),
+            key=lambda item: item.binding_id,
+        )
+    )
+    binding_ids = tuple(binding.binding_id for binding in snapshots)
+    duplicate_binding_ids = sorted(
+        identity
+        for identity, count in Counter(binding_ids).items()
+        if count > 1
+    )
+    receipt_targets = tuple(
+        (binding.consumer_activity_id, binding.receipt_input_key)
+        for binding in snapshots
+    )
+    duplicate_receipt_targets = sorted(
+        identity
+        for identity, count in Counter(receipt_targets).items()
+        if count > 1
+    )
+    source_targets = tuple(
+        (
+            binding.producer_activity_id,
+            binding.producer_node_id,
+            binding.producer_output_key,
+            binding.consumer_activity_id,
+            binding.consumer_node_id,
+        )
+        for binding in snapshots
+    )
+    duplicate_source_targets = sorted(
+        identity
+        for identity, count in Counter(source_targets).items()
+        if count > 1
+    )
+    if duplicate_binding_ids or duplicate_receipt_targets or duplicate_source_targets:
+        raise HarnessValidationError(
+            "Graph committed node-output bindings must be unique",
+            code="graph_duplicate_identity",
+            details={
+                "field": "committed_output_bindings",
+                "duplicate_binding_ids": duplicate_binding_ids,
+                "duplicate_receipt_targets": [
+                    list(value) for value in duplicate_receipt_targets
+                ],
+                "duplicate_source_targets": [
+                    list(value) for value in duplicate_source_targets
+                ],
+            },
+        )
+    return snapshots
+
+
 def _repair_bindings(
     values: Sequence[HarnessGraphRepairBinding],
 ) -> tuple[HarnessGraphRepairBinding, ...]:
@@ -864,6 +1049,159 @@ def _validate_task_plan_stage_bindings(
         )
 
 
+def _validate_committed_output_bindings(
+    bindings: tuple[HarnessGraphCommittedNodeOutputBinding, ...],
+    *,
+    root: HarnessGraphSpec,
+    activities: tuple[HarnessStepSpec, ...],
+    leaf_activity_bindings: tuple[HarnessGraphLeafBinding, ...],
+) -> None:
+    if not bindings:
+        return
+    activities_by_id = {activity.step_id: activity for activity in activities}
+    leaf_activity_ids = {
+        binding.activity_id for binding in leaf_activity_bindings
+    }
+    root_activity_counts = Counter(
+        _root_topology_identities(root.root).activity_ids
+    )
+    root_activity_nodes = _root_topology_identities(root.root).activity_nodes
+    business_keys = {
+        *root.input_keys,
+        *root.terminal_output_keys,
+        *(
+            key
+            for activity in activities
+            for key in activity.input_keys
+        ),
+        *(
+            activity.output_key
+            for activity in activities
+            if activity.output_key is not None
+        ),
+    }
+    for binding in bindings:
+        producer = activities_by_id.get(binding.producer_activity_id)
+        consumer = activities_by_id.get(binding.consumer_activity_id)
+        if producer is None or consumer is None:
+            raise HarnessValidationError(
+                "Graph committed node-output binding references an unknown activity",
+                code="graph_committed_output_binding_activity_unknown",
+                details={
+                    "binding_id": binding.binding_id,
+                    "producer_activity_id": binding.producer_activity_id,
+                    "consumer_activity_id": binding.consumer_activity_id,
+                },
+            )
+        if (
+            binding.producer_activity_id not in leaf_activity_ids
+            or binding.consumer_activity_id not in leaf_activity_ids
+        ):
+            raise HarnessValidationError(
+                "Graph committed node-output binding requires typed leaf activities",
+                code="graph_committed_output_binding_leaf_required",
+                details={"binding_id": binding.binding_id},
+            )
+        if producer.output_key != binding.producer_output_key:
+            raise HarnessValidationError(
+                "Graph committed node-output binding does not match producer output",
+                code="graph_committed_output_binding_output_mismatch",
+                details={
+                    "binding_id": binding.binding_id,
+                    "declared_output_key": binding.producer_output_key,
+                    "actual_output_key": producer.output_key,
+                },
+            )
+        if binding.producer_output_key not in consumer.input_keys:
+            raise HarnessValidationError(
+                "Graph committed node-output receipt has no matching business input",
+                code="graph_committed_output_binding_input_missing",
+                details={
+                    "binding_id": binding.binding_id,
+                    "consumer_activity_id": binding.consumer_activity_id,
+                    "producer_output_key": binding.producer_output_key,
+                },
+            )
+        if binding.receipt_input_key in business_keys:
+            raise HarnessValidationError(
+                "Graph committed node-output receipt input collides with business dataflow",
+                code="graph_committed_output_binding_input_collision",
+                details={
+                    "binding_id": binding.binding_id,
+                    "receipt_input_key": binding.receipt_input_key,
+                },
+            )
+        occurrence_counts = {
+            binding.producer_activity_id: root_activity_counts[
+                binding.producer_activity_id
+            ],
+            binding.consumer_activity_id: root_activity_counts[
+                binding.consumer_activity_id
+            ],
+        }
+        if set(occurrence_counts.values()) != {1}:
+            raise HarnessValidationError(
+                "Graph committed node-output binding requires exact root occurrences",
+                code="graph_committed_output_binding_occurrence_invalid",
+                details={
+                    "binding_id": binding.binding_id,
+                    "occurrence_counts": occurrence_counts,
+                },
+            )
+        expected_node_ids = {
+            binding.producer_activity_id: next(
+                node_id
+                for activity_id, node_id in root_activity_nodes
+                if activity_id == binding.producer_activity_id
+            ),
+            binding.consumer_activity_id: next(
+                node_id
+                for activity_id, node_id in root_activity_nodes
+                if activity_id == binding.consumer_activity_id
+            ),
+        }
+        node_mismatches = tuple(
+            role
+            for role, expected, actual in (
+                (
+                    "producer",
+                    expected_node_ids[binding.producer_activity_id],
+                    binding.producer_node_id,
+                ),
+                (
+                    "consumer",
+                    expected_node_ids[binding.consumer_activity_id],
+                    binding.consumer_node_id,
+                ),
+            )
+            if expected != actual
+        )
+        if node_mismatches:
+            raise HarnessValidationError(
+                "Graph committed node-output binding node identity is invalid",
+                code="graph_committed_output_binding_node_mismatch",
+                details={
+                    "binding_id": binding.binding_id,
+                    "mismatches": node_mismatches,
+                    "expected_node_ids": expected_node_ids,
+                },
+            )
+        if not _activity_guarantees_before(
+            root.root,
+            producer_activity_id=binding.producer_activity_id,
+            consumer_activity_id=binding.consumer_activity_id,
+        ):
+            raise HarnessValidationError(
+                "Graph committed node-output producer does not dominate its consumer",
+                code="graph_committed_output_binding_topology_invalid",
+                details={
+                    "binding_id": binding.binding_id,
+                    "producer_activity_id": binding.producer_activity_id,
+                    "consumer_activity_id": binding.consumer_activity_id,
+                },
+            )
+
+
 def _validate_activity_repair_routing(
     activities: tuple[HarnessStepSpec, ...],
 ) -> None:
@@ -993,6 +1331,152 @@ class _RootTopologyIdentities:
     node_ids: tuple[str, ...]
     executable_node_ids: tuple[str, ...]
     activity_ids: tuple[str, ...]
+    activity_nodes: tuple[tuple[str, str], ...]
+
+
+def _activity_guarantees_before(
+    expression: HarnessGraphExpression,
+    *,
+    producer_activity_id: str,
+    consumer_activity_id: str,
+) -> bool:
+    if isinstance(expression, StepRef | Wait):
+        return False
+    if isinstance(expression, GraphSequence):
+        producer_index = _containing_child_index(
+            expression.children,
+            producer_activity_id,
+        )
+        consumer_index = _containing_child_index(
+            expression.children,
+            consumer_activity_id,
+        )
+        if producer_index is None or consumer_index is None:
+            return False
+        if producer_index == consumer_index:
+            return _activity_guarantees_before(
+                expression.children[producer_index],
+                producer_activity_id=producer_activity_id,
+                consumer_activity_id=consumer_activity_id,
+            )
+        return producer_index < consumer_index and _expression_guarantees_activity(
+            expression.children[producer_index],
+            producer_activity_id,
+        )
+    if isinstance(expression, Choice | ParallelAny):
+        producer_branch = _containing_branch_index(
+            expression.branches,
+            producer_activity_id,
+        )
+        consumer_branch = _containing_branch_index(
+            expression.branches,
+            consumer_activity_id,
+        )
+        if producer_branch is None or producer_branch != consumer_branch:
+            return False
+        return _activity_guarantees_before(
+            expression.branches[producer_branch].child,
+            producer_activity_id=producer_activity_id,
+            consumer_activity_id=consumer_activity_id,
+        )
+    if isinstance(expression, ParallelAll):
+        producer_branch = _containing_branch_index(
+            expression.branches,
+            producer_activity_id,
+        )
+        consumer_branch = _containing_branch_index(
+            expression.branches,
+            consumer_activity_id,
+        )
+        aggregation = (
+            expression.merge.step
+            if isinstance(expression.merge, VerifiedAggregation)
+            else None
+        )
+        if (
+            consumer_branch is None
+            and aggregation is not None
+            and aggregation.step_id == consumer_activity_id
+            and producer_branch is not None
+        ):
+            return _expression_guarantees_activity(
+                expression.branches[producer_branch].child,
+                producer_activity_id,
+            )
+        if producer_branch is None or producer_branch != consumer_branch:
+            return False
+        return _activity_guarantees_before(
+            expression.branches[producer_branch].child,
+            producer_activity_id=producer_activity_id,
+            consumer_activity_id=consumer_activity_id,
+        )
+    if isinstance(expression, BoundedLoop):
+        # A static node id cannot select the corresponding iteration-specific
+        # producer instance. Loop-local receipt bindings need an explicit
+        # iteration lineage contract before they can be admitted.
+        return False
+    raise AssertionError(
+        f"unsupported HarnessGraphExpression: {type(expression).__name__}"
+    )
+
+
+def _expression_guarantees_activity(
+    expression: HarnessGraphExpression,
+    activity_id: str,
+) -> bool:
+    if isinstance(expression, StepRef):
+        return expression.step_id == activity_id
+    if isinstance(expression, GraphSequence):
+        return any(
+            _expression_guarantees_activity(child, activity_id)
+            for child in expression.children
+        )
+    if isinstance(expression, Choice | ParallelAny | BoundedLoop | Wait):
+        return False
+    if isinstance(expression, ParallelAll):
+        if any(
+            _expression_guarantees_activity(branch.child, activity_id)
+            for branch in expression.branches
+        ):
+            return True
+        return (
+            isinstance(expression.merge, VerifiedAggregation)
+            and expression.merge.step.step_id == activity_id
+        )
+    raise AssertionError(
+        f"unsupported HarnessGraphExpression: {type(expression).__name__}"
+    )
+
+
+def _containing_child_index(
+    children: Sequence[HarnessGraphExpression],
+    activity_id: str,
+) -> int | None:
+    matches = tuple(
+        index
+        for index, child in enumerate(children)
+        if _expression_contains_activity(child, activity_id)
+    )
+    return matches[0] if len(matches) == 1 else None
+
+
+def _containing_branch_index(
+    branches: Sequence[Any],
+    activity_id: str,
+) -> int | None:
+    matches = tuple(
+        index
+        for index, branch in enumerate(branches)
+        if _expression_contains_activity(branch.child, activity_id)
+    )
+    return matches[0] if len(matches) == 1 else None
+
+
+def _expression_contains_activity(
+    expression: HarnessGraphExpression,
+    activity_id: str,
+) -> bool:
+    return activity_id in _root_topology_identities(expression).activity_ids
 
 
 def _root_topology_identities(
@@ -1001,6 +1485,7 @@ def _root_topology_identities(
     node_ids: list[str] = []
     executable_node_ids: list[str] = []
     activity_ids: list[str] = []
+    activity_nodes: list[tuple[str, str]] = []
 
     def visit(current: HarnessGraphExpression) -> None:
         if isinstance(current, StepRef):
@@ -1008,6 +1493,7 @@ def _root_topology_identities(
             node_ids.append(node_id)
             executable_node_ids.append(node_id)
             activity_ids.append(current.step_id)
+            activity_nodes.append((current.step_id, node_id))
             return
         if isinstance(current, GraphSequence):
             for child in current.children:
@@ -1052,6 +1538,7 @@ def _root_topology_identities(
         node_ids=tuple(node_ids),
         executable_node_ids=tuple(executable_node_ids),
         activity_ids=tuple(activity_ids),
+        activity_nodes=tuple(activity_nodes),
     )
 
 
@@ -1365,6 +1852,7 @@ def _exact_mapping(
 
 
 __all__ = [
+    "HarnessGraphCommittedNodeOutputBinding",
     "HarnessGraphDefinition",
     "HarnessGraphDefinitionReader",
     "HarnessGraphLeafBinding",

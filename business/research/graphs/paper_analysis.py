@@ -169,6 +169,7 @@ def _definition(
             if activity.worker_type is not HarnessWorkerType.TASK_PLAN
         ),
         task_plan_stage_bindings=task_plan_stage_bindings,
+        committed_output_bindings=(),
         repair_bindings=(),
         terminal_side_effect_policy=(
             build_research_artifact_terminal_policy()

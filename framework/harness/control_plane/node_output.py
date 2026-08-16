@@ -10,9 +10,14 @@ from types import MappingProxyType
 from typing import Any, Protocol, runtime_checkable
 
 from framework.events.canonical import checksum_for
+from framework.events.errors import EventCanonicalizationError
 from framework.harness.control_plane.errors import HarnessValidationError
 from framework.harness.control_plane.graph_runtime import HarnessGraphActivity
 from framework.harness.control_plane.graph_state import HarnessGraphReference
+from framework.harness.graph.model import (
+    HarnessContractKind,
+    HarnessContractReference,
+)
 from framework.shared.time import ensure_utc, format_datetime, parse_datetime
 
 
@@ -26,6 +31,9 @@ HARNESS_NODE_OUTPUT_STAGED_WRITE_SCHEMA = (
     "newsroom.harness-node-output-staged-write/v1"
 )
 HARNESS_NODE_OUTPUT_COMMIT_SCHEMA = "newsroom.harness-node-output-commit/v1"
+HARNESS_COMMITTED_NODE_OUTPUT_RECEIPT_SCHEMA = (
+    "newsroom.harness-committed-node-output-receipt/v1"
+)
 
 _CHECKSUM_PATTERN = re.compile(r"sha256:[0-9a-f]{64}\Z")
 _MAX_OUTPUT_REFS = 64
@@ -697,6 +705,161 @@ class HarnessNodeOutputCommit:
         return commit
 
 
+@dataclass(frozen=True, slots=True)
+class HarnessCommittedNodeOutputReceipt:
+    """Checksum-bound proof that one Graph output was resource-committed."""
+
+    graph_definition_checksum: str
+    binding_id: str
+    receipt_input_key: str
+    producer_activity_id: str
+    producer_activity_ref: HarnessContractReference
+    resource: HarnessNodeOutputResourceIdentity
+    commit: HarnessNodeOutputCommit
+    output_key: str
+    schema_version: str = HARNESS_COMMITTED_NODE_OUTPUT_RECEIPT_SCHEMA
+    output_ref: str = field(init=False)
+    receipt_ref: str = field(init=False)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "graph_definition_checksum",
+            _checksum(
+                self.graph_definition_checksum,
+                "graph_definition_checksum",
+            ),
+        )
+        for field_name in (
+            "binding_id",
+            "receipt_input_key",
+            "producer_activity_id",
+            "output_key",
+        ):
+            object.__setattr__(
+                self,
+                field_name,
+                _required_text(getattr(self, field_name), field_name),
+            )
+        if not isinstance(self.producer_activity_ref, HarnessContractReference):
+            raise TypeError("producer_activity_ref must be HarnessContractReference")
+        if (
+            self.producer_activity_ref.contract_kind
+            is not HarnessContractKind.ACTIVITY
+        ):
+            raise HarnessValidationError(
+                "committed node-output receipt requires an activity reference",
+                code="graph_committed_node_output_receipt_invalid",
+            )
+        if not isinstance(self.resource, HarnessNodeOutputResourceIdentity):
+            raise TypeError("resource must be HarnessNodeOutputResourceIdentity")
+        if not isinstance(self.commit, HarnessNodeOutputCommit):
+            raise TypeError("commit must be HarnessNodeOutputCommit")
+        if self.commit.resource_ref != self.resource.resource_ref:
+            raise HarnessValidationError(
+                "committed node-output receipt resource does not match its commit",
+                code="graph_committed_node_output_receipt_resource_mismatch",
+            )
+        output_ref = self.commit.candidate.output_refs.get(self.output_key)
+        if output_ref is None:
+            raise HarnessValidationError(
+                "committed node-output receipt references an uncommitted output",
+                code="graph_committed_node_output_receipt_output_missing",
+                details={"output_key": self.output_key},
+            )
+        if self.schema_version != HARNESS_COMMITTED_NODE_OUTPUT_RECEIPT_SCHEMA:
+            raise HarnessValidationError(
+                "unsupported committed node-output receipt schema",
+                code="unsupported_graph_committed_node_output_receipt_schema",
+            )
+        object.__setattr__(self, "output_ref", output_ref)
+        object.__setattr__(
+            self,
+            "receipt_ref",
+            checksum_for(self.checksum_projection()),
+        )
+
+    def checksum_projection(self) -> dict[str, Any]:
+        return {
+            "schema_version": self.schema_version,
+            "graph_definition_checksum": self.graph_definition_checksum,
+            "binding_id": self.binding_id,
+            "receipt_input_key": self.receipt_input_key,
+            "producer_activity_id": self.producer_activity_id,
+            "producer_activity_ref": self.producer_activity_ref.to_dict(),
+            "resource": self.resource.to_dict(),
+            "commit": self.commit.to_dict(),
+            "output_key": self.output_key,
+            "output_ref": self.output_ref,
+        }
+
+    def to_dict(self) -> dict[str, Any]:
+        return {**self.checksum_projection(), "receipt_ref": self.receipt_ref}
+
+    def assert_matches_payload(self, value: Any) -> None:
+        try:
+            payload_ref = checksum_for(value)
+        except (EventCanonicalizationError, TypeError, ValueError) as exc:
+            raise HarnessValidationError(
+                "committed node-output payload must be canonical JSON",
+                code="graph_committed_node_output_payload_invalid",
+                details={"output_key": self.output_key},
+            ) from exc
+        if payload_ref != self.output_ref:
+            raise HarnessValidationError(
+                "committed node-output receipt does not match its business payload",
+                code="graph_committed_node_output_payload_mismatch",
+                details={"output_key": self.output_key},
+            )
+
+    @classmethod
+    def from_dict(
+        cls,
+        value: Mapping[str, Any],
+    ) -> HarnessCommittedNodeOutputReceipt:
+        payload = _exact_mapping(
+            value,
+            {
+                "schema_version",
+                "graph_definition_checksum",
+                "binding_id",
+                "receipt_input_key",
+                "producer_activity_id",
+                "producer_activity_ref",
+                "resource",
+                "commit",
+                "output_key",
+                "output_ref",
+                "receipt_ref",
+            },
+            "committed node-output receipt",
+        )
+        receipt = cls(
+            graph_definition_checksum=payload["graph_definition_checksum"],
+            binding_id=payload["binding_id"],
+            receipt_input_key=payload["receipt_input_key"],
+            producer_activity_id=payload["producer_activity_id"],
+            producer_activity_ref=HarnessContractReference.from_dict(
+                payload["producer_activity_ref"]
+            ),
+            resource=HarnessNodeOutputResourceIdentity.from_dict(payload["resource"]),
+            commit=HarnessNodeOutputCommit.from_dict(payload["commit"]),
+            output_key=payload["output_key"],
+            schema_version=payload["schema_version"],
+        )
+        if payload["output_ref"] != receipt.output_ref:
+            raise HarnessValidationError(
+                "committed node-output receipt output checksum is invalid",
+                code="graph_committed_node_output_receipt_output_mismatch",
+            )
+        if payload["receipt_ref"] != receipt.receipt_ref:
+            raise HarnessValidationError(
+                "committed node-output receipt checksum is invalid",
+                code="graph_committed_node_output_receipt_checksum_invalid",
+            )
+        return receipt
+
+
 @runtime_checkable
 class HarnessNodeOutputResourcePort(Protocol):
     def acquire_after_admission(
@@ -1072,12 +1235,14 @@ def _parse_datetime(value: Any, field_name: str) -> datetime:
 
 __all__ = [
     "HARNESS_ADMITTED_GRAPH_ACTIVITY_SCHEMA",
+    "HARNESS_COMMITTED_NODE_OUTPUT_RECEIPT_SCHEMA",
     "HARNESS_NODE_OUTPUT_CANDIDATE_SCHEMA",
     "HARNESS_NODE_OUTPUT_COMMIT_SCHEMA",
     "HARNESS_NODE_OUTPUT_LEASE_SCHEMA",
     "HARNESS_NODE_OUTPUT_RESOURCE_SCHEMA",
     "HARNESS_NODE_OUTPUT_STAGED_WRITE_SCHEMA",
     "HarnessAdmittedGraphActivityAttempt",
+    "HarnessCommittedNodeOutputReceipt",
     "HarnessNodeOutputAttemptStatus",
     "HarnessNodeOutputCandidate",
     "HarnessNodeOutputCommit",

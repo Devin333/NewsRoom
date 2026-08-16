@@ -117,12 +117,14 @@ from framework.harness.control_plane.graph_runtime import (
 )
 from framework.harness.control_plane.node_output import (
     HARNESS_ADMITTED_GRAPH_ACTIVITY_SCHEMA,
+    HARNESS_COMMITTED_NODE_OUTPUT_RECEIPT_SCHEMA,
     HARNESS_NODE_OUTPUT_CANDIDATE_SCHEMA,
     HARNESS_NODE_OUTPUT_COMMIT_SCHEMA,
     HARNESS_NODE_OUTPUT_LEASE_SCHEMA,
     HARNESS_NODE_OUTPUT_RESOURCE_SCHEMA,
     HARNESS_NODE_OUTPUT_STAGED_WRITE_SCHEMA,
     HarnessAdmittedGraphActivityAttempt,
+    HarnessCommittedNodeOutputReceipt,
     HarnessNodeOutputAttemptStatus,
     HarnessNodeOutputCandidate,
     HarnessNodeOutputCommit,
@@ -239,6 +241,7 @@ from framework.harness.control_plane.transition import (
 
 __all__ = [
     "HARNESS_ADMITTED_GRAPH_ACTIVITY_SCHEMA",
+    "HARNESS_COMMITTED_NODE_OUTPUT_RECEIPT_SCHEMA",
     "HARNESS_NODE_OUTPUT_CANDIDATE_SCHEMA",
     "HARNESS_NODE_OUTPUT_COMMIT_SCHEMA",
     "HARNESS_NODE_OUTPUT_LEASE_SCHEMA",
@@ -264,6 +267,7 @@ __all__ = [
     "HarnessActivity",
     "HarnessActivityResultRecord",
     "HarnessAdmittedGraphActivityAttempt",
+    "HarnessCommittedNodeOutputReceipt",
     "HarnessActiveActivityState",
     "HarnessAttemptEvidenceReference",
     "HarnessBudgetCounterState",

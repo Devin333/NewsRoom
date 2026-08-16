@@ -9,6 +9,7 @@ from framework.harness.control_plane.graph_runtime import HarnessGraphActivity
 from framework.harness.control_plane.graph_state import HarnessGraphReference
 from framework.harness.control_plane.node_output import (
     HarnessAdmittedGraphActivityAttempt,
+    HarnessCommittedNodeOutputReceipt,
     HarnessNodeOutputAttemptStatus,
     HarnessNodeOutputCandidate,
     HarnessNodeOutputCommit,
@@ -56,6 +57,73 @@ def test_node_output_records_round_trip_with_stable_checksums() -> None:
     assert HarnessNodeOutputStagedWrite.from_dict(staged.to_dict()) == staged
     assert HarnessNodeOutputCommit.from_dict(commit.to_dict()) == commit
     assert resource.committed_output(identity) == commit
+
+
+def test_committed_node_output_receipt_round_trips_and_binds_payload() -> None:
+    resource = InMemoryHarnessNodeOutputResource()
+    activity = _activity()
+    identity = HarnessNodeOutputResourceIdentity.for_activity(activity)
+    admission = _admission(activity, owner_attempt_id="physical-attempt-1")
+    lease = resource.acquire_after_admission(activity, admission)
+    payload = {"report": "reader-repair-result"}
+    candidate = HarnessNodeOutputCandidate(
+        output_refs={"report": canonical_checksum(payload)},
+        evidence_refs=(_sha("evidence-receipt"),),
+    )
+    staged = resource.stage(lease, candidate, staged_at=_NOW)
+    commit = resource.commit(staged, _success_guard(), committed_at=_NOW)
+    receipt = HarnessCommittedNodeOutputReceipt(
+        graph_definition_checksum=_sha("definition"),
+        binding_id="repair-result-commit",
+        receipt_input_key="repair_result_commit",
+        producer_activity_id="analyze",
+        producer_activity_ref=activity.activity_ref,
+        resource=identity,
+        commit=commit,
+        output_key="report",
+    )
+
+    restored = HarnessCommittedNodeOutputReceipt.from_dict(receipt.to_dict())
+
+    assert restored == receipt
+    assert restored.output_ref == canonical_checksum(payload)
+    assert restored.receipt_ref.startswith("sha256:")
+    restored.assert_matches_payload(payload)
+    with pytest.raises(HarnessValidationError) as raised:
+        restored.assert_matches_payload({"report": "forged"})
+    assert raised.value.code == "graph_committed_node_output_payload_mismatch"
+    with pytest.raises(HarnessValidationError) as noncanonical:
+        restored.assert_matches_payload(object())
+    assert noncanonical.value.code == "graph_committed_node_output_payload_invalid"
+
+
+def test_committed_node_output_receipt_rejects_output_ref_tampering() -> None:
+    resource = InMemoryHarnessNodeOutputResource()
+    activity = _activity()
+    identity = HarnessNodeOutputResourceIdentity.for_activity(activity)
+    admission = _admission(activity, owner_attempt_id="physical-attempt-1")
+    lease = resource.acquire_after_admission(activity, admission)
+    staged = resource.stage(lease, _candidate("first"), staged_at=_NOW)
+    commit = resource.commit(staged, _success_guard(), committed_at=_NOW)
+    receipt = HarnessCommittedNodeOutputReceipt(
+        graph_definition_checksum=_sha("definition"),
+        binding_id="repair-result-commit",
+        receipt_input_key="repair_result_commit",
+        producer_activity_id="analyze",
+        producer_activity_ref=activity.activity_ref,
+        resource=identity,
+        commit=commit,
+        output_key="report",
+    ).to_dict()
+    receipt["output_ref"] = _sha("forged")
+
+    with pytest.raises(HarnessValidationError) as raised:
+        HarnessCommittedNodeOutputReceipt.from_dict(receipt)
+
+    assert (
+        raised.value.code
+        == "graph_committed_node_output_receipt_output_mismatch"
+    )
 
 
 def test_node_output_contract_rejects_nested_candidate_tampering() -> None:

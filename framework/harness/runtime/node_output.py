@@ -1,14 +1,17 @@
 from __future__ import annotations
 
 import threading
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import datetime
+from typing import Any
 
 from framework.harness.control_plane.errors import HarnessValidationError
 from framework.harness.control_plane.graph_runtime import HarnessGraphActivity
+from framework.harness.control_plane.graph_state import HarnessGraphReference
 from framework.harness.control_plane.node_output import (
     HarnessAdmittedGraphActivityAttempt,
+    HarnessCommittedNodeOutputReceipt,
     HarnessNodeOutputAttemptStatus,
     HarnessNodeOutputCandidate,
     HarnessNodeOutputCommit,
@@ -17,6 +20,7 @@ from framework.harness.control_plane.node_output import (
     HarnessNodeOutputResourceIdentity,
     HarnessNodeOutputResourcePort,
 )
+from framework.harness.graph.definition import HarnessGraphDefinition
 from framework.shared.attempts import (
     AttemptContext,
     AttemptFinalization,
@@ -249,6 +253,173 @@ class HarnessAdmittedGraphActivityOutputAdapter:
         )
 
 
+class HarnessCommittedNodeOutputInputResolver:
+    """Inactive resolver for Graph-declared committed-output receipt inputs.
+
+    Production composition must not install this resolver until the live Graph
+    activity executor uses the durable node-output resource required by Gate B.
+    """
+
+    def __init__(self, *, resource: HarnessNodeOutputResourcePort) -> None:
+        if not isinstance(resource, HarnessNodeOutputResourcePort):
+            raise TypeError("resource must implement HarnessNodeOutputResourcePort")
+        self._resource = resource
+
+    def resolve(
+        self,
+        *,
+        definition: HarnessGraphDefinition,
+        binding_id: str,
+        producer_activity: HarnessGraphActivity,
+        payload: Any,
+    ) -> HarnessCommittedNodeOutputReceipt:
+        if not isinstance(definition, HarnessGraphDefinition):
+            raise TypeError("definition must be HarnessGraphDefinition")
+        if not isinstance(producer_activity, HarnessGraphActivity):
+            raise TypeError("producer_activity must be HarnessGraphActivity")
+        binding = definition.committed_output_binding(binding_id)
+        if binding is None:
+            raise HarnessValidationError(
+                "Graph has no declared committed node-output binding",
+                code="graph_committed_node_output_binding_missing",
+                details={"binding_id": str(binding_id)},
+            )
+        leaf = definition.leaf_activity_binding(binding.producer_activity_id)
+        if (
+            leaf is None
+            or leaf.activity_ref != producer_activity.activity_ref
+            or binding.producer_node_id != producer_activity.node_id
+        ):
+            raise HarnessValidationError(
+                "committed node-output producer does not match its Graph binding",
+                code="graph_committed_node_output_producer_mismatch",
+                details={"binding_id": binding.binding_id},
+            )
+        self._assert_graph_identity(definition, producer_activity.graph_ref)
+        resource = HarnessNodeOutputResourceIdentity.for_activity(producer_activity)
+        commit = self._resource.committed_output(resource)
+        if commit is None:
+            raise HarnessValidationError(
+                "committed node-output binding has no durable resource commit",
+                code="graph_committed_node_output_missing",
+                details={
+                    "binding_id": binding.binding_id,
+                    "resource_ref": resource.resource_ref,
+                },
+            )
+        definition.verify_integrity()
+        if definition.definition_checksum is None:  # pragma: no cover - invariant
+            raise AssertionError("Graph definition checksum was not materialized")
+        receipt = HarnessCommittedNodeOutputReceipt(
+            graph_definition_checksum=definition.definition_checksum,
+            binding_id=binding.binding_id,
+            receipt_input_key=binding.receipt_input_key,
+            producer_activity_id=binding.producer_activity_id,
+            producer_activity_ref=leaf.activity_ref,
+            resource=resource,
+            commit=commit,
+            output_key=binding.producer_output_key,
+        )
+        receipt.assert_matches_payload(payload)
+        return receipt
+
+    def verify(
+        self,
+        receipt: HarnessCommittedNodeOutputReceipt | Mapping[str, Any],
+        *,
+        definition: HarnessGraphDefinition,
+        binding_id: str,
+        payload: Any,
+    ) -> HarnessCommittedNodeOutputReceipt:
+        if not isinstance(definition, HarnessGraphDefinition):
+            raise TypeError("definition must be HarnessGraphDefinition")
+        if not isinstance(receipt, HarnessCommittedNodeOutputReceipt):
+            if not isinstance(receipt, Mapping):
+                raise TypeError(
+                    "receipt must be HarnessCommittedNodeOutputReceipt or mapping"
+                )
+            receipt = HarnessCommittedNodeOutputReceipt.from_dict(receipt)
+        binding = definition.committed_output_binding(binding_id)
+        if binding is None:
+            raise HarnessValidationError(
+                "Graph has no declared committed node-output binding",
+                code="graph_committed_node_output_binding_missing",
+                details={"binding_id": str(binding_id)},
+            )
+        leaf = definition.leaf_activity_binding(binding.producer_activity_id)
+        definition.verify_integrity()
+        mismatches = tuple(
+            field_name
+            for field_name, expected, actual in (
+                (
+                    "graph_definition_checksum",
+                    definition.definition_checksum,
+                    receipt.graph_definition_checksum,
+                ),
+                ("binding_id", binding.binding_id, receipt.binding_id),
+                (
+                    "receipt_input_key",
+                    binding.receipt_input_key,
+                    receipt.receipt_input_key,
+                ),
+                (
+                    "producer_activity_id",
+                    binding.producer_activity_id,
+                    receipt.producer_activity_id,
+                ),
+                (
+                    "producer_activity_ref",
+                    None if leaf is None else leaf.activity_ref,
+                    receipt.producer_activity_ref,
+                ),
+                (
+                    "producer_node_id",
+                    binding.producer_node_id,
+                    receipt.resource.node_id,
+                ),
+                (
+                    "producer_output_key",
+                    binding.producer_output_key,
+                    receipt.output_key,
+                ),
+            )
+            if expected != actual
+        )
+        if mismatches:
+            raise HarnessValidationError(
+                "committed node-output receipt does not match its Graph binding",
+                code="graph_committed_node_output_binding_mismatch",
+                details={"binding_id": binding.binding_id, "mismatches": mismatches},
+            )
+        self._assert_graph_identity(definition, receipt.resource.graph_ref)
+        current = self._resource.committed_output(receipt.resource)
+        if current != receipt.commit:
+            raise HarnessValidationError(
+                "committed node-output receipt is not the current resource commit",
+                code="graph_committed_node_output_commit_mismatch",
+                details={
+                    "binding_id": binding.binding_id,
+                    "resource_ref": receipt.resource.resource_ref,
+                },
+            )
+        receipt.assert_matches_payload(payload)
+        return receipt
+
+    @staticmethod
+    def _assert_graph_identity(
+        definition: HarnessGraphDefinition,
+        graph_ref: HarnessGraphReference,
+    ) -> None:
+        if (
+            graph_ref.graph_id != definition.graph_id
+            or graph_ref.workflow_ref.version != definition.graph_version
+        ):
+            raise HarnessValidationError(
+                "committed node-output resource is outside its Graph definition",
+                code="graph_committed_node_output_graph_mismatch",
+            )
+
+
 def _normal_output_allowed(
     outcome: AttemptOutcome[HarnessNodeOutputCandidate],
 ) -> bool:
@@ -265,5 +436,6 @@ def _normal_output_allowed(
 
 __all__ = [
     "HarnessAdmittedGraphActivityOutputAdapter",
+    "HarnessCommittedNodeOutputInputResolver",
     "HarnessGraphActivityOutputAttemptResult",
 ]

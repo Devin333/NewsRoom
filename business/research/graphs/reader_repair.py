@@ -79,6 +79,7 @@ def build_reader_repair_graph_definition() -> HarnessGraphDefinition:
         activities=activities,
         leaf_activity_bindings=tuple(_leaf_binding(activity) for activity in activities),
         task_plan_stage_bindings=(),
+        committed_output_bindings=(),
         repair_bindings=(),
         terminal_side_effect_policy=build_reader_repair_memory_terminal_policy(),
     )

@@ -75,6 +75,7 @@ from framework.harness.runtime.graph_result_projection import (
 from framework.harness.runtime.graph_result_runtime import HarnessGraphResultRuntime
 from framework.harness.runtime.node_output import (
     HarnessAdmittedGraphActivityOutputAdapter,
+    HarnessCommittedNodeOutputInputResolver,
     HarnessGraphActivityOutputAttemptResult,
 )
 from framework.harness.runtime.tool_result_adapter import (
@@ -139,6 +140,7 @@ __all__ = [
     "HARNESS_BOUND_TOOL_RECEIPT_SCHEMA",
     "HarnessBoundToolSideEffectReceipt",
     "HarnessAdmittedGraphActivityOutputAdapter",
+    "HarnessCommittedNodeOutputInputResolver",
     "HarnessGraphActivityOutputAttemptResult",
     "HarnessToolActivityResult",
     "HarnessToolActivityRuntime",
