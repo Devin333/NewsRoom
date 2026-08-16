@@ -78,9 +78,9 @@ class HarnessGraphActivityOutputAttemptResult:
 class HarnessAdmittedGraphActivityOutputAdapter:
     """Inactive adapter proving admission-before-lease ordering for Graph output.
 
-    The adapter is intentionally not a ``HarnessGraphActivityDispatcherPort`` and
-    is not installed by production composition. Gate B must provide the durable
-    resource binding and explicitly connect the live activity executor.
+    The adapter is intentionally not a ``HarnessGraphActivityDispatcherPort``.
+    Gate A's inactive physical executor composes it; production composition must
+    still provide durable resource/result bindings before Gate B activation.
     """
 
     def __init__(

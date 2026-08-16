@@ -21,6 +21,16 @@ from framework.harness.runtime.artifact_context import (
     ArtifactContextProviderPort,
 )
 from framework.harness.runtime.durable_state import HarnessDurableState
+from framework.harness.runtime.activity_executor import (
+    HARNESS_GRAPH_ACTIVITY_EXECUTION_INPUT_SCHEMA,
+    HARNESS_GRAPH_ACTIVITY_FAILURE_EVIDENCE_SCHEMA,
+    HARNESS_GRAPH_ACTIVITY_TASK_CONTEXT_KEY,
+    HarnessGraphActivityExecutionCommitPort,
+    HarnessGraphActivityExecutionInput,
+    HarnessGraphActivityExecutionInputResolverPort,
+    HarnessGraphPhysicalActivityExecutionResult,
+    HarnessGraphPhysicalActivityExecutor,
+)
 from framework.harness.runtime.replay import HarnessReplayReader, HarnessReplayReport, HarnessTraceExporter
 from framework.harness.runtime.result_errors import (
     GraphArtifactResultError,
@@ -134,9 +144,17 @@ __all__ = [
     "GraphArtifactResultErrorCode",
     "GraphArtifactRetentionSettings",
     "GraphArtifactRolloutMode",
+    "HARNESS_GRAPH_ACTIVITY_EXECUTION_INPUT_SCHEMA",
+    "HARNESS_GRAPH_ACTIVITY_FAILURE_EVIDENCE_SCHEMA",
+    "HARNESS_GRAPH_ACTIVITY_TASK_CONTEXT_KEY",
     "HarnessCheckpoint",
     "HarnessDurableState",
     "HarnessGraphResultRuntime",
+    "HarnessGraphActivityExecutionCommitPort",
+    "HarnessGraphActivityExecutionInput",
+    "HarnessGraphActivityExecutionInputResolverPort",
+    "HarnessGraphPhysicalActivityExecutionResult",
+    "HarnessGraphPhysicalActivityExecutor",
     "HARNESS_BOUND_TOOL_RECEIPT_SCHEMA",
     "HarnessBoundToolSideEffectReceipt",
     "HarnessAdmittedGraphActivityOutputAdapter",

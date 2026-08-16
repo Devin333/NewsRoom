@@ -7,6 +7,7 @@ from pathlib import Path
 _PROJECT_ROOT = Path(__file__).resolve().parents[2]
 _OWNER = _PROJECT_ROOT / "framework/harness/control_plane/node_output.py"
 _INACTIVE_ADAPTER = _PROJECT_ROOT / "framework/harness/runtime/node_output.py"
+_INACTIVE_EXECUTOR = _PROJECT_ROOT / "framework/harness/runtime/activity_executor.py"
 _LIVE_ROOTS = (
     _PROJECT_ROOT / "business",
     _PROJECT_ROOT / "interfaces",
@@ -19,11 +20,12 @@ _FORBIDDEN_OWNER_ROOTS = (
     "interfaces",
 )
 _ADAPTER_NAME = "HarnessAdmittedGraphActivityOutputAdapter"
+_EXECUTOR_NAME = "HarnessGraphPhysicalActivityExecutor"
 
 
 def test_node_output_owner_and_adapter_do_not_depend_on_legacy_layers() -> None:
     violations: list[str] = []
-    for path in (_OWNER, _INACTIVE_ADAPTER):
+    for path in (_OWNER, _INACTIVE_ADAPTER, _INACTIVE_EXECUTOR):
         tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
         for node in ast.walk(tree):
             for module in _imported_modules(node):
@@ -82,7 +84,35 @@ def test_node_output_adapter_is_not_a_live_graph_dispatcher() -> None:
     }
 
 
-def test_production_layers_do_not_activate_node_output_adapter_in_gate_a() -> None:
+def test_physical_executor_is_graph_native_and_does_not_call_legacy_dispatch() -> None:
+    source = _INACTIVE_EXECUTOR.read_text(encoding="utf-8")
+    tree = ast.parse(source, filename=str(_INACTIVE_EXECUTOR))
+    executor = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.ClassDef) and node.name == _EXECUTOR_NAME
+    )
+    methods = {
+        node.name
+        for node in executor.body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+    legacy_dispatch_calls = [
+        node
+        for node in ast.walk(executor)
+        if isinstance(node, ast.Attribute)
+        and node.attr == "dispatch"
+        and isinstance(node.value, ast.Attribute)
+        and node.value.attr == "implementation"
+    ]
+
+    assert {"dispatch", "execute"}.issubset(methods)
+    assert legacy_dispatch_calls == []
+    assert "framework.workflow" not in source
+    assert "Artifact" not in source
+
+
+def test_production_layers_do_not_activate_gate_a_node_output_runtime() -> None:
     violations: list[str] = []
     for root in _LIVE_ROOTS:
         for path in root.rglob("*.py"):
@@ -90,11 +120,11 @@ def test_production_layers_do_not_activate_node_output_adapter_in_gate_a() -> No
             if any(
                 (
                     isinstance(node, ast.Name)
-                    and node.id == _ADAPTER_NAME
+                    and node.id in {_ADAPTER_NAME, _EXECUTOR_NAME}
                 )
                 or (
                     isinstance(node, ast.Attribute)
-                    and node.attr == _ADAPTER_NAME
+                    and node.attr in {_ADAPTER_NAME, _EXECUTOR_NAME}
                 )
                 for node in ast.walk(tree)
             ):

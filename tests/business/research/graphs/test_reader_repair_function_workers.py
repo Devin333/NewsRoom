@@ -448,7 +448,7 @@ def test_reader_repair_function_workers_reject_cross_run_receipts_and_unbound_me
             "strategy_candidate_bundle": strategy_bundle,
         },
     )
-    memory_task.pop("harness_activity")
+    memory_task.pop("harness_graph_activity")
 
     with pytest.raises(HarnessValidationError) as activity_error:
         workers["prepare_memory_write"].execute(memory_task)
@@ -526,7 +526,7 @@ def _task(definition, step_id: str, payload, outputs: dict[str, Any]):
         "worker_type": activity.worker_type.value,
         "inputs": inputs,
         "metadata": dict(activity.metadata),
-        "harness_activity": {
+        "harness_graph_activity": {
             "activity_id": f"activity-{step_id}-1",
             "idempotency_key": f"reader-repair:{step_id}:1",
             "attempt": 1,

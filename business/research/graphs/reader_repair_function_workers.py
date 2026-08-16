@@ -11,6 +11,7 @@ from pydantic import BaseModel, ValidationError
 
 from framework.events.canonical import checksum_for
 from framework.harness import (
+    HARNESS_GRAPH_ACTIVITY_TASK_CONTEXT_KEY,
     HarnessCommittedNodeOutputReceipt,
     HarnessValidationError,
     HarnessWorkerResult,
@@ -613,7 +614,7 @@ def _parse_task(
 
 
 def _activity_attempt(value: Mapping[str, Any], *, step_id: str) -> int | None:
-    activity = value.get("harness_activity")
+    activity = value.get(HARNESS_GRAPH_ACTIVITY_TASK_CONTEXT_KEY)
     if activity is None:
         return None
     if not isinstance(activity, Mapping):
