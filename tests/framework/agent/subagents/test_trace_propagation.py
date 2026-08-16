@@ -66,9 +66,9 @@ def test_subagent_handoff_extracts_child_scope_and_records_link(
         metadata={
             "session_id": "retired-shared-session",
             "run_id": "run-1",
-            "workflow_id": "workflow-1",
-            "step_id": "step-1",
-            "workflow_checkpoint_id": "checkpoint-1",
+            "graph_id": "graph-1",
+            "node_instance_id": "node:1",
+            "graph_checkpoint_ref": "checkpoint://run-1/1",
         },
     )
 
@@ -77,11 +77,13 @@ def test_subagent_handoff_extracts_child_scope_and_records_link(
     assert result.success is True
     child_inputs, runner_kwargs = invocations[0]
     assert child_inputs["run_id"] == "run-1"
-    assert child_inputs["workflow_id"] == "workflow-1"
+    assert child_inputs["graph_id"] == "graph-1"
     assert "session_id" not in child_inputs
     assert runner_kwargs["run_id"] == "run-1"
-    assert runner_kwargs["step_id"] == "step-1"
-    assert runner_kwargs["workflow_checkpoint_id"] == "checkpoint-1"
+    assert runner_kwargs["node_instance_id"] == "node:1"
+    assert runner_kwargs["graph_checkpoint_ref"] == "checkpoint://run-1/1"
+    assert "step_id" not in runner_kwargs
+    assert "workflow_checkpoint_id" not in runner_kwargs
     context = observed[0]
     assert isinstance(context, W3CSpanContext)
     assert context.trace_id == producer.trace_id

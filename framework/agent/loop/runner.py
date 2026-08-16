@@ -53,15 +53,24 @@ class AgentRunner:
         conversation_id: str | None = None,
         run_id: str | None = None,
         step_id: str | None = None,
-        workflow_checkpoint_id: str | None = None,
+        node_instance_id: str | None = None,
+        graph_checkpoint_ref: str | None = None,
         resume_from_cursor: bool = False,
         global_budget_tracker: GlobalBudgetTracker | None = None,
     ) -> AgentLoopResult:
+        _validate_graph_identity_arguments(
+            run_id=run_id,
+            node_instance_id=node_instance_id,
+            graph_checkpoint_ref=graph_checkpoint_ref,
+        )
         loop_inputs = self._inputs_with_resume_context(
             inputs,
             conversation_id,
             agent_id=agent.agent_id,
             resume_from_cursor=resume_from_cursor,
+            run_id=run_id,
+            node_instance_id=node_instance_id,
+            graph_checkpoint_ref=graph_checkpoint_ref,
         )
         self._append_conversation_message(
             conversation_id,
@@ -137,17 +146,17 @@ class AgentRunner:
                 agent=agent,
                 result=result,
                 run_id=run_id,
-                step_id=step_id,
-                workflow_checkpoint_id=workflow_checkpoint_id,
+                node_instance_id=node_instance_id,
+                graph_checkpoint_ref=graph_checkpoint_ref,
             )
             self._write_iteration_checkpoint(
                 conversation_id,
                 agent=agent,
                 result=result,
                 run_id=run_id,
-                step_id=step_id,
-                workflow_checkpoint_id=workflow_checkpoint_id,
-        )
+                node_instance_id=node_instance_id,
+                graph_checkpoint_ref=graph_checkpoint_ref,
+            )
         return result
 
     def run_spec(
@@ -249,6 +258,9 @@ class AgentRunner:
         *,
         agent_id: str,
         resume_from_cursor: bool,
+        run_id: str | None,
+        node_instance_id: str | None,
+        graph_checkpoint_ref: str | None,
     ) -> dict[str, Any]:
         loop_inputs = dict(inputs)
         if not resume_from_cursor or self._conversation_store is None or not conversation_id:
@@ -262,6 +274,13 @@ class AgentRunner:
                 "conversation cursor agent_id mismatch: "
                 f"{cursor_agent_id} != {agent_id}"
             )
+        _assert_resume_graph_identity(
+            cursor,
+            run_id=run_id,
+            node_instance_id=node_instance_id,
+            graph_checkpoint_ref=graph_checkpoint_ref,
+            label="conversation cursor",
+        )
         loop_inputs["conversation_cursor"] = cursor.to_dict()
         summary = self._conversation_store.get_summary(conversation_id)
         if summary is not None:
@@ -274,6 +293,18 @@ class AgentRunner:
                     "agent iteration checkpoint agent_id mismatch: "
                     f"{checkpoint_agent_id} != {agent_id}"
                 )
+            _assert_resume_graph_identity(
+                checkpoint,
+                run_id=run_id,
+                node_instance_id=node_instance_id,
+                graph_checkpoint_ref=graph_checkpoint_ref,
+                label="agent iteration checkpoint",
+            )
+            if _graph_identity(checkpoint) != _graph_identity(cursor):
+                raise ValueError(
+                    "conversation cursor and agent iteration checkpoint Graph "
+                    "identity mismatch"
+                )
             loop_inputs["agent_iteration_checkpoint"] = checkpoint.to_dict()
         return loop_inputs
 
@@ -284,8 +315,8 @@ class AgentRunner:
         agent: AgentSpec,
         result: AgentLoopResult,
         run_id: str | None,
-        step_id: str | None,
-        workflow_checkpoint_id: str | None,
+        node_instance_id: str | None,
+        graph_checkpoint_ref: str | None,
     ) -> None:
         if self._conversation_store is None:
             return
@@ -293,14 +324,19 @@ class AgentRunner:
         if not messages:
             return
         latest = messages[-1]
+        persisted_identity = _persisted_graph_identity(
+            run_id=run_id,
+            node_instance_id=node_instance_id,
+            graph_checkpoint_ref=graph_checkpoint_ref,
+        )
         self._conversation_store.write_cursor(
             ConversationCursor(
                 conversation_id=conversation_id,
                 message_offset=len(messages) - 1,
                 message_id=latest.message_id,
-                run_id=run_id,
-                step_id=step_id,
-                workflow_checkpoint_id=workflow_checkpoint_id,
+                run_id=persisted_identity[0],
+                node_instance_id=persisted_identity[1],
+                graph_checkpoint_ref=persisted_identity[2],
                 metadata={
                     "agent_id": agent.agent_id,
                     "status": result.status.value,
@@ -319,13 +355,18 @@ class AgentRunner:
         agent: AgentSpec,
         result: AgentLoopResult,
         run_id: str | None,
-        step_id: str | None,
-        workflow_checkpoint_id: str | None,
+        node_instance_id: str | None,
+        graph_checkpoint_ref: str | None,
     ) -> None:
         if self._conversation_store is None:
             return
         messages = self._conversation_store.read_messages(conversation_id)
         latest_message_id = messages[-1].message_id if messages else None
+        persisted_identity = _persisted_graph_identity(
+            run_id=run_id,
+            node_instance_id=node_instance_id,
+            graph_checkpoint_ref=graph_checkpoint_ref,
+        )
         self._conversation_store.write_iteration_checkpoint(
             AgentIterationCheckpoint(
                 conversation_id=conversation_id,
@@ -333,9 +374,9 @@ class AgentRunner:
                 iteration=result.iterations,
                 status=result.status.value,
                 stop_reason=_result_stop_reason(result),
-                run_id=run_id,
-                step_id=step_id,
-                workflow_checkpoint_id=workflow_checkpoint_id,
+                run_id=persisted_identity[0],
+                node_instance_id=persisted_identity[1],
+                graph_checkpoint_ref=persisted_identity[2],
                 message_id=latest_message_id,
                 trace_summary=_trace_summary(result),
                 diagnostics_summary=_diagnostics_summary(result),
@@ -345,6 +386,76 @@ class AgentRunner:
                 ],
                 metadata=_iteration_checkpoint_metadata(result),
             )
+        )
+
+
+def _validate_graph_identity_arguments(
+    *,
+    run_id: str | None,
+    node_instance_id: str | None,
+    graph_checkpoint_ref: str | None,
+) -> None:
+    if node_instance_id is None and graph_checkpoint_ref is None:
+        return
+    if run_id is None or node_instance_id is None or graph_checkpoint_ref is None:
+        raise ValueError(
+            "Graph-bound AgentRunner execution requires run_id, node_instance_id, "
+            "and graph_checkpoint_ref together"
+        )
+    for field_name, value in (
+        ("run_id", run_id),
+        ("node_instance_id", node_instance_id),
+        ("graph_checkpoint_ref", graph_checkpoint_ref),
+    ):
+        if (
+            not isinstance(value, str)
+            or not value
+            or value.strip() != value
+            or len(value) > 2048
+            or any(
+                ord(character) < 32 or ord(character) == 127
+                for character in value
+            )
+        ):
+            raise ValueError(f"{field_name} must be a valid non-empty string")
+
+
+def _persisted_graph_identity(
+    *,
+    run_id: str | None,
+    node_instance_id: str | None,
+    graph_checkpoint_ref: str | None,
+) -> tuple[str | None, str | None, str | None]:
+    if node_instance_id is None and graph_checkpoint_ref is None:
+        return None, None, None
+    return run_id, node_instance_id, graph_checkpoint_ref
+
+
+def _graph_identity(value: Any) -> tuple[str | None, str | None, str | None]:
+    return (
+        value.run_id,
+        value.node_instance_id,
+        value.graph_checkpoint_ref,
+    )
+
+
+def _assert_resume_graph_identity(
+    value: Any,
+    *,
+    run_id: str | None,
+    node_instance_id: str | None,
+    graph_checkpoint_ref: str | None,
+    label: str,
+) -> None:
+    actual = _graph_identity(value)
+    expected = _persisted_graph_identity(
+        run_id=run_id,
+        node_instance_id=node_instance_id,
+        graph_checkpoint_ref=graph_checkpoint_ref,
+    )
+    if actual != expected:
+        raise ValueError(
+            f"{label} Graph identity mismatch: stored={actual!r}, requested={expected!r}"
         )
 
 

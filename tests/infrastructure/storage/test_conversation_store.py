@@ -6,9 +6,25 @@ from infrastructure.storage.conversation import (
     AgentIterationCheckpoint,
     AgentMessageRecord,
     ConversationCursor,
+    GRAPH_AGENT_ITERATION_CHECKPOINT_SCHEMA,
+    GRAPH_CONVERSATION_CURSOR_SCHEMA,
     LocalJsonConversationStore,
 )
 from infrastructure.storage.security import REDACTED_VALUE
+
+
+def test_graph_conversation_state_schema_matches_framework_contract() -> None:
+    from framework.agent.messages import (
+        GRAPH_AGENT_ITERATION_CHECKPOINT_SCHEMA as FRAMEWORK_CHECKPOINT_SCHEMA,
+    )
+    from framework.agent.messages import (
+        GRAPH_CONVERSATION_CURSOR_SCHEMA as FRAMEWORK_CURSOR_SCHEMA,
+    )
+
+    assert GRAPH_CONVERSATION_CURSOR_SCHEMA == FRAMEWORK_CURSOR_SCHEMA
+    assert (
+        GRAPH_AGENT_ITERATION_CHECKPOINT_SCHEMA == FRAMEWORK_CHECKPOINT_SCHEMA
+    )
 
 
 def _message(message_id: str, role: str, content: str) -> AgentMessageRecord:
@@ -40,8 +56,8 @@ def test_conversation_cursor_round_trips() -> None:
         message_offset=3,
         message_id="message-3",
         run_id="run-1",
-        step_id="agent",
-        workflow_checkpoint_id="cp-1",
+        node_instance_id="agent:1",
+        graph_checkpoint_ref="checkpoint://run-1/1",
         updated_at=datetime(2026, 5, 11, 2, 0, tzinfo=UTC),
         metadata={"phase": "draft"},
     )
@@ -50,6 +66,9 @@ def test_conversation_cursor_round_trips() -> None:
 
     assert restored == cursor
     assert restored.to_dict()["updated_at"] == "2026-05-11T02:00:00Z"
+    assert restored.schema_version == "newsroom.graph-conversation-cursor/v2"
+    assert "step_id" not in restored.to_dict()
+    assert "workflow_checkpoint_id" not in restored.to_dict()
 
 
 def test_agent_iteration_checkpoint_round_trips() -> None:
@@ -60,8 +79,8 @@ def test_agent_iteration_checkpoint_round_trips() -> None:
         status="waiting_for_approval",
         stop_reason="tool_approval_required",
         run_id="run-1",
-        step_id="agent",
-        workflow_checkpoint_id="cp-1",
+        node_instance_id="agent:1",
+        graph_checkpoint_ref="checkpoint://run-1/1",
         message_id="message-2",
         trace_summary={"iteration_count": 2, "tool_call_count": 1},
         diagnostics_summary={"summary": "tool approval required", "healthy": False},
@@ -75,6 +94,12 @@ def test_agent_iteration_checkpoint_round_trips() -> None:
 
     assert restored == checkpoint
     assert restored.to_dict()["updated_at"] == "2026-05-11T04:00:00Z"
+    assert (
+        restored.schema_version
+        == "newsroom.graph-agent-iteration-checkpoint/v2"
+    )
+    assert "step_id" not in restored.to_dict()
+    assert "workflow_checkpoint_id" not in restored.to_dict()
 
 
 def test_local_json_conversation_store_appends_reads_and_limits(tmp_path) -> None:
@@ -110,8 +135,8 @@ def test_local_json_conversation_store_writes_and_reads_cursor(tmp_path) -> None
         message_offset=2,
         message_id="message-2",
         run_id="run-1",
-        step_id="agent",
-        workflow_checkpoint_id="cp-000002-agent",
+        node_instance_id="agent:1",
+        graph_checkpoint_ref="checkpoint://run-1/2",
         updated_at=datetime(2026, 5, 11, 3, 0, tzinfo=UTC),
         metadata={"phase": "draft"},
     )
@@ -133,8 +158,8 @@ def test_local_json_conversation_store_writes_and_reads_iteration_checkpoint(tmp
         status="accepted",
         stop_reason="final_output_accepted",
         run_id="run-1",
-        step_id="agent",
-        workflow_checkpoint_id="cp-000002-agent",
+        node_instance_id="agent:1",
+        graph_checkpoint_ref="checkpoint://run-1/2",
         message_id="message-2",
         trace_summary={"iteration_count": 1},
         diagnostics_summary={"summary": "accepted", "healthy": True},
@@ -313,6 +338,40 @@ def test_local_json_conversation_store_rejects_invalid_inputs(tmp_path) -> None:
     with pytest.raises(ValueError, match="message_offset must be non-negative"):
         ConversationCursor(conversation_id="conversation-1", message_offset=-1)
 
+    with pytest.raises(TypeError, match="message_offset must be an integer"):
+        ConversationCursor(conversation_id="conversation-1", message_offset=True)
+
+    with pytest.raises(TypeError, match="iteration must be an integer"):
+        AgentIterationCheckpoint(
+            conversation_id="conversation-1",
+            agent_id="analyst",
+            iteration=True,
+            status="accepted",
+        )
+
+    with pytest.raises(ValueError, match="Graph outer identity requires"):
+        ConversationCursor(
+            conversation_id="conversation-1",
+            message_offset=1,
+            run_id="run-1",
+        )
+
+    with pytest.raises(ValueError, match="graph_checkpoint_ref"):
+        ConversationCursor(
+            conversation_id="conversation-1",
+            message_offset=1,
+            run_id="run-1",
+            node_instance_id="agent:1",
+            graph_checkpoint_ref="checkpoint://run-1/1\nforged",
+        )
+
+    with pytest.raises(ValueError, match="reserved identity fields"):
+        ConversationCursor(
+            conversation_id="conversation-1",
+            message_offset=1,
+            metadata={"workflow_checkpoint_id": "cp-1"},
+        )
+
     with pytest.raises(ValueError, match="does not match"):
         store.append_message("other-conversation", _message("message-1", "user", "ok"))
 
@@ -326,3 +385,49 @@ def test_local_json_conversation_store_rejects_invalid_inputs(tmp_path) -> None:
                 content="ok",
             ),
         )
+
+
+@pytest.mark.parametrize(
+    "model,payload",
+    [
+        (
+            ConversationCursor,
+            {
+                "conversation_id": "conversation-1",
+                "message_offset": 1,
+                "message_id": "message-1",
+                "run_id": "run-1",
+                "step_id": "agent",
+                "workflow_checkpoint_id": "cp-1",
+                "updated_at": "2026-05-11T01:00:00Z",
+                "metadata": {},
+            },
+        ),
+        (
+            AgentIterationCheckpoint,
+            {
+                "conversation_id": "conversation-1",
+                "agent_id": "analyst",
+                "iteration": 1,
+                "status": "accepted",
+                "stop_reason": "final_output_accepted",
+                "run_id": "run-1",
+                "step_id": "agent",
+                "workflow_checkpoint_id": "cp-1",
+                "message_id": "message-1",
+                "trace_summary": {},
+                "diagnostics_summary": {},
+                "last_tool_observation": None,
+                "llm_call_artifact_ids": [],
+                "updated_at": "2026-05-11T01:00:00Z",
+                "metadata": {},
+            },
+        ),
+    ],
+)
+def test_live_conversation_state_rejects_legacy_workflow_payloads(
+    model,
+    payload,
+) -> None:
+    with pytest.raises(ValueError, match="fields are invalid"):
+        model.from_dict(payload)

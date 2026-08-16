@@ -166,8 +166,11 @@ class LocalJsonConversationStore:
         _validate_id(cursor.conversation_id, "conversation_id")
         _validate_optional_id(cursor.message_id, "message_id")
         _validate_optional_id(cursor.run_id, "run_id")
-        _validate_optional_id(cursor.step_id, "step_id")
-        _validate_optional_id(cursor.workflow_checkpoint_id, "workflow_checkpoint_id")
+        _validate_optional_id(cursor.node_instance_id, "node_instance_id")
+        _validate_optional_reference(
+            cursor.graph_checkpoint_ref,
+            "graph_checkpoint_ref",
+        )
         metadata_redaction = self.redactor.redact(
             cursor.metadata,
             run_id=cursor.conversation_id,
@@ -181,10 +184,11 @@ class LocalJsonConversationStore:
             message_offset=cursor.message_offset,
             message_id=cursor.message_id,
             run_id=cursor.run_id,
-            step_id=cursor.step_id,
-            workflow_checkpoint_id=cursor.workflow_checkpoint_id,
+            node_instance_id=cursor.node_instance_id,
+            graph_checkpoint_ref=cursor.graph_checkpoint_ref,
             updated_at=cursor.updated_at,
             metadata=metadata,
+            schema_version=cursor.schema_version,
         )
         path = self._cursor_path(cursor.conversation_id)
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -204,8 +208,11 @@ class LocalJsonConversationStore:
         _validate_id(checkpoint.conversation_id, "conversation_id")
         _validate_id(checkpoint.agent_id, "agent_id")
         _validate_optional_id(checkpoint.run_id, "run_id")
-        _validate_optional_id(checkpoint.step_id, "step_id")
-        _validate_optional_id(checkpoint.workflow_checkpoint_id, "workflow_checkpoint_id")
+        _validate_optional_id(checkpoint.node_instance_id, "node_instance_id")
+        _validate_optional_reference(
+            checkpoint.graph_checkpoint_ref,
+            "graph_checkpoint_ref",
+        )
         _validate_optional_id(checkpoint.message_id, "message_id")
         metadata_redaction = self.redactor.redact(
             checkpoint.metadata,
@@ -233,8 +240,8 @@ class LocalJsonConversationStore:
             status=checkpoint.status,
             stop_reason=checkpoint.stop_reason,
             run_id=checkpoint.run_id,
-            step_id=checkpoint.step_id,
-            workflow_checkpoint_id=checkpoint.workflow_checkpoint_id,
+            node_instance_id=checkpoint.node_instance_id,
+            graph_checkpoint_ref=checkpoint.graph_checkpoint_ref,
             message_id=checkpoint.message_id,
             trace_summary=dict(checkpoint.trace_summary),
             diagnostics_summary=diagnostics_summary,
@@ -246,6 +253,7 @@ class LocalJsonConversationStore:
             llm_call_artifact_ids=list(checkpoint.llm_call_artifact_ids),
             updated_at=checkpoint.updated_at,
             metadata=metadata,
+            schema_version=checkpoint.schema_version,
         )
         path = self._iteration_checkpoint_path(checkpoint.conversation_id)
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -346,6 +354,18 @@ def _validate_optional_id(value: str | None, label: str) -> None:
     if value is None:
         return
     _validate_id(value, label)
+
+
+def _validate_optional_reference(value: str | None, label: str) -> None:
+    if value is None:
+        return
+    if (
+        not value
+        or value.strip() != value
+        or len(value) > 2048
+        or any(ord(character) < 32 or ord(character) == 127 for character in value)
+    ):
+        raise ValueError(f"invalid {label}: {value}")
 
 
 def _build_compaction_summary(

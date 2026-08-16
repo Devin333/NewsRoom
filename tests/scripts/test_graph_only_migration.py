@@ -189,7 +189,7 @@ def test_production_shaped_legacy_manifest_uses_owner_metadata_contract(
     assert all(not item.required_for_publication for item in parsed.artifacts)
 
 
-def test_fixture_sources_roundtrip_through_existing_legacy_owners() -> None:
+def test_fixture_sources_remain_valid_for_legacy_and_migration_readers() -> None:
     from framework.agent.artifacts.models import ArtifactRef
     from framework.events.canonical import StoredEvent
     from framework.workflow.checkpoint.durable import (
@@ -197,10 +197,6 @@ def test_fixture_sources_roundtrip_through_existing_legacy_owners() -> None:
         verify_durable_checkpoint_checksum,
     )
     from framework.workflow.runtime.manifest import validate_run_manifest
-    from infrastructure.storage.conversation.models import (
-        AgentIterationCheckpoint,
-        ConversationCursor,
-    )
 
     event_rows = [
         json.loads(line)
@@ -226,28 +222,57 @@ def test_fixture_sources_roundtrip_through_existing_legacy_owners() -> None:
             .read_text(encoding="utf-8")
         )
     )
-    cursor = ConversationCursor.from_dict(
-        json.loads(
-            (_FIXTURE_ROOT / "cursors/conversation-001/cursor.json").read_text(
-                encoding="utf-8"
-            )
+    cursor = json.loads(
+        (_FIXTURE_ROOT / "cursors/conversation-001/cursor.json").read_text(
+            encoding="utf-8"
         )
     )
-    iteration = AgentIterationCheckpoint.from_dict(
-        json.loads(
-            (
-                _FIXTURE_ROOT
-                / "cursors/conversation-001/iteration_checkpoint.json"
-            ).read_text(encoding="utf-8")
-        )
+    iteration = json.loads(
+        (
+            _FIXTURE_ROOT
+            / "cursors/conversation-001/iteration_checkpoint.json"
+        ).read_text(encoding="utf-8")
     )
 
     assert [item.stream_sequence for item in stored_events] == [1, 2]
     validate_run_manifest(manifest_payload, require_terminal_artifact=True)
     assert verify_durable_checkpoint_checksum(checkpoint)
     assert artifact.artifact_id == "report-artifact"
-    assert cursor.workflow_checkpoint_id == "cp-001"
-    assert iteration.workflow_checkpoint_id == "cp-001"
+    assert cursor["workflow_checkpoint_id"] == "cp-001"
+    assert iteration["workflow_checkpoint_id"] == "cp-001"
+
+
+@pytest.mark.parametrize(
+    ("record_kind", "model"),
+    (
+        (LegacyRecordKind.CONVERSATION_CURSOR, "cursor"),
+        (LegacyRecordKind.ITERATION_CHECKPOINT, "iteration"),
+    ),
+)
+def test_history_only_conversation_state_cannot_enter_live_v2_reader(
+    record_kind: LegacyRecordKind,
+    model: str,
+) -> None:
+    from infrastructure.storage.conversation.models import (
+        AgentIterationCheckpoint,
+        ConversationCursor,
+    )
+    from scripts.graph_only_migration.reader import BoundedLegacySourceReader
+    from scripts.graph_only_migration.transformer import GraphHistoryTransformer
+
+    mapping = _run_mapping()
+    record = BoundedLegacySourceReader().read(_source_for_kind(record_kind))[0]
+    target = GraphHistoryTransformer().transform(
+        record,
+        mapping,
+    )
+    assert target.payload["history_only"] is True
+    live_model = (
+        ConversationCursor if model == "cursor" else AgentIterationCheckpoint
+    )
+
+    with pytest.raises(ValueError, match="fields are invalid"):
+        live_model.from_dict(thaw_json(target.payload))
 
 
 def test_history_only_checkpoint_cannot_claim_live_recovery_authority() -> None:

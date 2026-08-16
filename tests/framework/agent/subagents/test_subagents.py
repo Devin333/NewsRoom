@@ -33,7 +33,7 @@ def test_local_subagent_executor_execute_alias_reports_missing_child() -> None:
     assert "missing" in result.error
 
 
-def test_child_inputs_preserve_run_workflow_and_ordinary_input_correlation() -> None:
+def test_child_inputs_preserve_run_graph_and_ordinary_input_correlation() -> None:
     task = SubAgentTask(
         parent_agent_id="parent",
         child_agent_id="child",
@@ -42,7 +42,7 @@ def test_child_inputs_preserve_run_workflow_and_ordinary_input_correlation() -> 
         metadata={
             "session_id": "retired-shared-session",
             "run_id": "run-1",
-            "workflow_id": "workflow-1",
+            "graph_id": "graph-1",
         },
     )
 
@@ -52,7 +52,7 @@ def test_child_inputs_preserve_run_workflow_and_ordinary_input_correlation() -> 
         "parent_agent_id": "parent",
         "session_id": "domain-input-session",
         "run_id": "run-1",
-        "workflow_id": "workflow-1",
+        "graph_id": "graph-1",
     }
 
 

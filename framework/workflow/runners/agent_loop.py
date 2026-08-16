@@ -116,10 +116,6 @@ class AgentLoopStepRunner:
             step.metadata.get("resume_from_cursor")
         ):
             run_kwargs["resume_from_cursor"] = True
-        if "workflow_checkpoint_id" in step.metadata:
-            run_kwargs["workflow_checkpoint_id"] = str(
-                step.metadata["workflow_checkpoint_id"]
-            )
         if self._global_budget_tracker is not None:
             run_kwargs["global_budget_tracker"] = self._global_budget_tracker
         result = self._agent_runner.run(agent, inputs, **run_kwargs)

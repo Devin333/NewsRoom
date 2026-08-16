@@ -6,6 +6,8 @@ from infrastructure.storage.conversation.models import (
     AgentMessageRecord,
     ConversationCompactionRecord,
     ConversationCursor,
+    GRAPH_AGENT_ITERATION_CHECKPOINT_SCHEMA,
+    GRAPH_CONVERSATION_CURSOR_SCHEMA,
 )
 
 __all__ = [
@@ -14,5 +16,7 @@ __all__ = [
     "ConversationCompactionRecord",
     "ConversationCursor",
     "ConversationNotFoundError",
+    "GRAPH_AGENT_ITERATION_CHECKPOINT_SCHEMA",
+    "GRAPH_CONVERSATION_CURSOR_SCHEMA",
     "LocalJsonConversationStore",
 ]

@@ -7,6 +7,8 @@ from framework.agent.messages.message import (
     AgentMessageRecord,
     AgentMessageRole,
     ConversationCursor,
+    GRAPH_AGENT_ITERATION_CHECKPOINT_SCHEMA,
+    GRAPH_CONVERSATION_CURSOR_SCHEMA,
 )
 from framework.agent.messages.scratchpad import Scratchpad
 

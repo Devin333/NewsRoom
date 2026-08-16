@@ -106,13 +106,13 @@ def test_stale_policy_is_rejected_and_metadata_session_id_is_not_promoted() -> N
         metadata={
             "session_id": "obsolete-plane",
             "run_id": "run-1",
-            "workflow_id": "workflow-1",
+            "graph_id": "graph-1",
         },
     )
     child_inputs = _child_inputs(task)
     assert "session_id" not in child_inputs
     assert child_inputs["run_id"] == "run-1"
-    assert child_inputs["workflow_id"] == "workflow-1"
+    assert child_inputs["graph_id"] == "graph-1"
 
 
 def test_independent_session_owners_remain_present() -> None:

@@ -115,7 +115,8 @@ def test_postgres_conversation_store_writes_summary_cursor_and_iteration_checkpo
             message_offset=1,
             message_id="message-1",
             run_id="run-1",
-            step_id="agent",
+            node_instance_id="agent:1",
+            graph_checkpoint_ref="checkpoint://run-1/1",
             updated_at=datetime(2026, 5, 11, 2, 0, tzinfo=UTC),
             metadata={"phase": "draft"},
         )
@@ -145,7 +146,8 @@ def test_postgres_conversation_store_reads_summary_cursor_and_iteration_checkpoi
         message_offset=1,
         message_id="message-1",
         run_id="run-1",
-        step_id="agent",
+        node_instance_id="agent:1",
+        graph_checkpoint_ref="checkpoint://run-1/1",
         updated_at=datetime(2026, 5, 11, 2, 0, tzinfo=UTC),
     )
     checkpoint = AgentIterationCheckpoint(

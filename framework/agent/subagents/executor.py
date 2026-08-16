@@ -188,10 +188,13 @@ class LocalSubAgentExecutor:
                 child_inputs,
                 conversation_id=conversation_id,
                 run_id=_optional_metadata_str(task.metadata, "run_id"),
-                step_id=_optional_metadata_str(task.metadata, "step_id"),
-                workflow_checkpoint_id=_optional_metadata_str(
+                node_instance_id=_optional_metadata_str(
                     task.metadata,
-                    "workflow_checkpoint_id",
+                    "node_instance_id",
+                ),
+                graph_checkpoint_ref=_optional_metadata_str(
+                    task.metadata,
+                    "graph_checkpoint_ref",
                 ),
                 resume_from_cursor=bool(
                     task.metadata.get("resume_from_cursor", False)
@@ -222,7 +225,7 @@ def _child_inputs(task: SubAgentTask) -> dict[str, Any]:
         "parent_agent_id": task.parent_agent_id,
         **deepcopy(task.inputs),
     }
-    for key in ("run_id", "workflow_id"):
+    for key in ("run_id", "graph_id"):
         value = task.metadata.get(key)
         if key not in child_inputs and value:
             child_inputs[key] = str(value)
