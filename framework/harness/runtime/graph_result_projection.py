@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from framework.harness.control_plane.graph_result_lineage import (
+from framework.harness.graph.result_lineage import (
     HarnessGraphArtifactRefProjection,
     HarnessGraphCacheRefProjection,
     HarnessGraphResultLineage,

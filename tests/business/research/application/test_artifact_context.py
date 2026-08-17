@@ -11,7 +11,7 @@ from business.research.domain import research_event_tenant_id
 from framework.events.canonical import checksum_for
 from framework.harness.artifacts.catalog import ArtifactCatalogRegistrationRequest
 from framework.harness.artifacts import GraphArtifactUsageFact
-from framework.harness.control_plane.graph_result_lineage import (
+from framework.harness.graph.result_lineage import (
     HarnessGraphArtifactRefProjection,
     HarnessGraphResultLineage,
     HarnessGraphResultSummary,

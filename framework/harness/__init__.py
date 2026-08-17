@@ -427,7 +427,7 @@ from framework.harness.runtime import (
     verify_harness_tool_side_effect_evidence,
     verify_subagent_materialized_bundle,
 )
-from framework.harness.control_plane.graph_result_lineage import (
+from framework.harness.graph.result_lineage import (
     HARNESS_GRAPH_RESULT_LINEAGE_SCHEMA,
     HarnessGraphArtifactRefProjection,
     HarnessGraphCacheRefProjection,

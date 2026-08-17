@@ -22,7 +22,7 @@ from framework.harness.artifacts.ports import (
     ArtifactCatalogPort,
     GraphResultArtifactReadPort,
 )
-from framework.harness.control_plane.graph_result_lineage import (
+from framework.harness.graph.result_lineage import (
     HarnessGraphArtifactRefProjection,
     HarnessGraphResultLineage,
 )

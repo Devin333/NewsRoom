@@ -19,7 +19,7 @@ from framework.harness.control_plane.graph_evaluator import (
     HarnessAcceptedGraphObservation,
     HarnessGraphObservationType,
 )
-from framework.harness.control_plane.graph_result_lineage import (
+from framework.harness.graph.result_lineage import (
     HarnessGraphResultLineage,
     HarnessGraphResultLineageStatus,
 )

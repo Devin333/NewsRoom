@@ -15,7 +15,7 @@ from framework.harness.artifacts import (
 )
 from framework.harness.artifacts.catalog import ArtifactCatalogRegistrationRequest
 from framework.harness.context import ContextAssembler
-from framework.harness.control_plane.graph_result_lineage import (
+from framework.harness.graph.result_lineage import (
     HarnessGraphArtifactRefProjection,
     HarnessGraphResultLineage,
     HarnessGraphResultSummary,

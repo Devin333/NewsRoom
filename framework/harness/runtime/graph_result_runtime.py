@@ -7,7 +7,7 @@ from framework.harness.control_plane.errors import HarnessValidationError
 from framework.harness.control_plane.graph_application import (
     HarnessGraphControlPlaneRuntime,
 )
-from framework.harness.control_plane.graph_result_lineage import (
+from framework.harness.graph.result_lineage import (
     HarnessGraphResultLineage,
     HarnessGraphResultLineageStatus,
 )

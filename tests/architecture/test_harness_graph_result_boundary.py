@@ -4,7 +4,7 @@ from tests.architecture._helpers import PROJECT_ROOT, imported_modules, matches_
 
 
 RESULT_BOUNDARY_MODULES = (
-    PROJECT_ROOT / "framework" / "harness" / "control_plane" / "graph_result_lineage.py",
+    PROJECT_ROOT / "framework" / "harness" / "graph" / "result_lineage.py",
     PROJECT_ROOT / "framework" / "harness" / "runtime" / "graph_result_projection.py",
     PROJECT_ROOT / "framework" / "harness" / "runtime" / "graph_result_runtime.py",
 )
@@ -37,13 +37,24 @@ def test_graph_result_projection_boundary_has_no_business_worker_or_storage_impo
     assert violations == []
 
 
-def test_control_plane_lineage_does_not_import_runtime_envelope() -> None:
+def test_graph_lineage_does_not_import_runtime_envelope() -> None:
     lineage = RESULT_BOUNDARY_MODULES[0]
 
     assert all(
         not matches_prefix(module, ("framework.harness.runtime",))
         for module in imported_modules(lineage)
     )
+
+
+def test_graph_result_lineage_has_no_control_plane_path_shim() -> None:
+    assert RESULT_BOUNDARY_MODULES[0].is_file()
+    assert not (
+        PROJECT_ROOT
+        / "framework"
+        / "harness"
+        / "control_plane"
+        / "graph_result_lineage.py"
+    ).exists()
 
 
 def test_graph_result_committer_boundary_has_no_storage_or_business_imports() -> None:

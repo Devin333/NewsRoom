@@ -8,6 +8,7 @@ import framework.harness.control_plane as control_plane_api
 import framework.harness.control_plane.graph_state as graph_state_api
 import framework.harness.graph as graph_api
 from framework.harness.graph.reference import HarnessGraphReference
+from framework.harness.graph.result_lineage import HarnessGraphResultLineage
 
 
 _PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -221,6 +222,14 @@ def test_graph_reference_has_one_graph_owned_public_definition() -> None:
     assert "HarnessGraphReference" not in control_plane_api.__all__
     assert not hasattr(control_plane_api, "HarnessGraphReference")
     assert not hasattr(graph_state_api, "HarnessGraphReference")
+
+
+def test_graph_result_lineage_has_one_graph_owned_public_definition() -> None:
+    assert graph_api.HarnessGraphResultLineage is HarnessGraphResultLineage
+    assert harness_api.HarnessGraphResultLineage is HarnessGraphResultLineage
+    assert "HarnessGraphResultLineage" in graph_api.__all__
+    assert "HarnessGraphResultLineage" not in control_plane_api.__all__
+    assert not hasattr(control_plane_api, "HarnessGraphResultLineage")
 
 
 def test_harness_root_public_api_excludes_legacy_workflow_facade() -> None:

@@ -82,6 +82,15 @@ from framework.harness.graph.model import (
     graph_node_from_dict,
 )
 from framework.harness.graph.reference import HarnessGraphReference
+from framework.harness.graph.result_lineage import (
+    HARNESS_GRAPH_RESULT_LINEAGE_SCHEMA,
+    HarnessGraphArtifactRefProjection,
+    HarnessGraphCacheRefProjection,
+    HarnessGraphResultLineage,
+    HarnessGraphResultLineageStatus,
+    HarnessGraphResultPersistenceMode,
+    HarnessGraphResultSummary,
+)
 from framework.harness.graph.versioning import (
     GRAPH_EXECUTION_VERSION_MANIFEST_SCHEMA,
     GRAPH_ONLY_HARNESS_GRAPH_CHECKPOINT_SCHEMA,
@@ -142,6 +151,7 @@ __all__ = [
     "HARNESS_GRAPH_EVENT_SCHEMAS",
     "HARNESS_GRAPH_INSPECTION_SCHEMA",
     "HARNESS_GRAPH_MERGE_VERSION",
+    "HARNESS_GRAPH_RESULT_LINEAGE_SCHEMA",
     "HARNESS_GRAPH_REDUCER_VERSION",
     "HARNESS_GRAPH_RUNTIME_VERSION",
     "HARNESS_GRAPH_STATE_SCHEMA",
@@ -165,6 +175,12 @@ __all__ = [
     "HarnessGraphRepairBinding",
     "HarnessGraphRepairTrigger",
     "HarnessGraphReference",
+    "HarnessGraphArtifactRefProjection",
+    "HarnessGraphCacheRefProjection",
+    "HarnessGraphResultLineage",
+    "HarnessGraphResultLineageStatus",
+    "HarnessGraphResultPersistenceMode",
+    "HarnessGraphResultSummary",
     "HarnessGraphTaskPlanStageBinding",
     "HarnessGraphEdge",
     "HarnessGraphEdgeKind",

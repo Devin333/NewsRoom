@@ -88,7 +88,7 @@ from framework.harness.control_plane.graph_runtime import (
     _validate_graph_decision_storage_identity,
     validate_graph_activity_result,
 )
-from framework.harness.control_plane.graph_result_lineage import (
+from framework.harness.graph.result_lineage import (
     HarnessGraphResultLineage,
 )
 from framework.harness.control_plane.graph_state import HarnessGraphState

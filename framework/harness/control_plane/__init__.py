@@ -142,15 +142,6 @@ from framework.harness.control_plane.node_output import (
     HarnessNodeOutputStaleOwnerError,
     InMemoryHarnessNodeOutputResource,
 )
-from framework.harness.control_plane.graph_result_lineage import (
-    HARNESS_GRAPH_RESULT_LINEAGE_SCHEMA,
-    HarnessGraphArtifactRefProjection,
-    HarnessGraphCacheRefProjection,
-    HarnessGraphResultLineage,
-    HarnessGraphResultLineageStatus,
-    HarnessGraphResultPersistenceMode,
-    HarnessGraphResultSummary,
-)
 from framework.harness.control_plane.graph_state import (
     HarnessActiveActivityState,
     HarnessAttemptEvidenceReference,
@@ -335,13 +326,6 @@ __all__ = [
     "HarnessGraphStepSchedulingInput",
     "HarnessGraphTransitionPort",
     "HarnessGraphTerminalFailureRecord",
-    "HARNESS_GRAPH_RESULT_LINEAGE_SCHEMA",
-    "HarnessGraphArtifactRefProjection",
-    "HarnessGraphCacheRefProjection",
-    "HarnessGraphResultLineage",
-    "HarnessGraphResultLineageStatus",
-    "HarnessGraphResultPersistenceMode",
-    "HarnessGraphResultSummary",
     "HarnessJoinKind",
     "HarnessJoinState",
     "HarnessJoinStatus",
