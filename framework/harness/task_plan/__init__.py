@@ -137,6 +137,17 @@ from framework.harness.task_plan.checkpoint import (
     TaskPlanCheckpointStorePort,
 )
 from framework.harness.task_plan.recovery import TaskPlanRecovery, TaskPlanRecoveryService
+from framework.harness.task_plan.queue import (
+    TASK_PLAN_QUEUE_METADATA_KEY,
+    TASK_PLAN_QUEUE_PROJECTION_SCHEMA_V2,
+    TASK_PLAN_QUEUE_READBACK_SCHEMA_V2,
+    TASK_PLAN_QUEUE_RECLAIM_SCHEMA_V2,
+    TASK_PLAN_QUEUE_TASK_TYPE,
+    TaskPlanQueueProjection,
+    TaskPlanQueueReclaimContinuation,
+    TaskPlanQueueReadPort,
+    TaskPlanQueueReadback,
+)
 from framework.harness.task_plan.verification import (
     TaskPlanGateCallable,
     TaskPlanGateEvidence,
@@ -274,6 +285,15 @@ __all__ = [
     "TASK_PLAN_RESULT_SCHEMA_V1",
     "TASK_PLAN_RESULT_SCHEMA_V2",
     "TASK_PLAN_RESULT_SCHEMA_V3",
+    "TASK_PLAN_QUEUE_METADATA_KEY",
+    "TASK_PLAN_QUEUE_PROJECTION_SCHEMA_V2",
+    "TASK_PLAN_QUEUE_READBACK_SCHEMA_V2",
+    "TASK_PLAN_QUEUE_RECLAIM_SCHEMA_V2",
+    "TASK_PLAN_QUEUE_TASK_TYPE",
+    "TaskPlanQueueProjection",
+    "TaskPlanQueueReclaimContinuation",
+    "TaskPlanQueueReadPort",
+    "TaskPlanQueueReadback",
     "materialize_queue_task",
     "task_instance_for_attempt",
 ]

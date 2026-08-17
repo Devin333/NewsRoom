@@ -22,6 +22,7 @@ from framework.harness.task_plan.models import (
     ValidatedTaskPlan,
 )
 from framework.harness.task_plan.policy import TaskPlanPolicy
+from framework.harness.task_plan.queue import TaskPlanQueueProjection
 from framework.harness.task_plan.schema import (
     GRAPH_ONLY_TASK_INSTANCE_SCHEMA,
 )
@@ -263,14 +264,24 @@ class TaskPlanScheduler:
 def materialize_queue_task(
     instance: TaskInstance,
     *,
-    workflow_id: str,
+    workflow_id: str | None = None,
     queue_name: str = "framework:queue:default",
 ) -> Any:
     """Create a generic execution projection containing identity metadata only."""
     if instance.is_graph_only:
+        if workflow_id is not None:
+            raise HarnessValidationError(
+                "Graph-only TaskPlan queue projection cannot carry legacy orchestration identity",
+                code="graph_task_plan_queue_workflow_alias_rejected",
+            )
+        return TaskPlanQueueProjection.for_instance(
+            instance,
+            queue_name=queue_name,
+        ).to_task()
+    if workflow_id is None:
         raise HarnessValidationError(
-            "Graph-only TaskPlan queue contract is not available",
-            code="graph_task_plan_queue_contract_unavailable",
+            "legacy TaskPlan queue projection requires explicit orchestration identity",
+            code="task_plan_queue_workflow_identity_missing",
         )
     from framework.workers.models.task import Task
 

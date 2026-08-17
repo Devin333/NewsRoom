@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from collections.abc import Sequence
 from dataclasses import replace
 from datetime import UTC, datetime
@@ -43,6 +44,10 @@ from framework.harness.task_plan import (
     TASK_PLAN_REPLAY_REDUCER_VERSION_V2,
     TASK_PLAN_RESULT_SCHEMA_V1,
     TASK_PLAN_RESULT_SCHEMA_V2,
+    TASK_PLAN_QUEUE_METADATA_KEY,
+    TASK_PLAN_QUEUE_PROJECTION_SCHEMA_V2,
+    TASK_PLAN_QUEUE_READBACK_SCHEMA_V2,
+    TASK_PLAN_QUEUE_RECLAIM_SCHEMA_V2,
     PlanBuildBudget,
     PlanCandidate,
     PlanPatch,
@@ -59,6 +64,9 @@ from framework.harness.task_plan import (
     TaskPlanReadyDecision,
     TaskPlanRecoveryService,
     TaskPlanReplayReducer,
+    TaskPlanQueueProjection,
+    TaskPlanQueueReclaimContinuation,
+    TaskPlanQueueReadback,
     TaskPlanScheduler,
     TaskPlanValidationContext,
     TaskPlanValidator,
@@ -77,6 +85,12 @@ from framework.harness.graph.bindings import HarnessWorkerBinding
 from framework.harness.graph import HarnessGraphCompiler
 from framework.harness.graph.model import HarnessContractKind, HarnessContractReference
 from framework.harness.graph.activity import HarnessWorkerType
+from framework.workers.models.status import TaskStatus as WorkerTaskStatus
+from framework.workers.models.task import Task as WorkerTask
+from infrastructure.storage.workers.redis_queue import RedisStreamTaskQueue
+from infrastructure.storage.workers.task_plan_queue import (
+    RedisTaskPlanQueueReadAdapter,
+)
 from tests.fixtures.task_plan import build_task_plan_stage_binding
 
 
@@ -92,6 +106,21 @@ class _Worker:
 
     def execute(self, task):
         return {"status": "succeeded", "task_id": task.get("task_id")}
+
+
+class _TaskPlanQueueReader:
+    def __init__(self, readbacks=()) -> None:
+        self.readbacks = tuple(readbacks)
+        self.calls: list[tuple[str, tuple[str, ...]]] = []
+
+    def read_task_plan_queue(
+        self,
+        *,
+        queue_name: str,
+        task_instance_ids: tuple[str, ...],
+    ):
+        self.calls.append((queue_name, task_instance_ids))
+        return self.readbacks
 
 
 class _ArtifactStore:
@@ -389,13 +418,23 @@ def _accepted_plan(tasks: tuple[TaskSpec, ...], *, two_tasks: bool = False):
     return candidate, plan, policy, registry
 
 
-def _graph_only_candidate_and_plan():
+def _graph_only_candidate_and_plan(
+    *,
+    run_id: str = "durable-run",
+    graph_id: str | None = None,
+):
     legacy_candidate, legacy_plan, _, _ = _accepted_plan((_task("structure"),))
-    graph = HarnessGraphCompiler().compile(
-        build_dynamic_paper_analysis_graph_definition()
-    ).graph
+    graph_definition = build_dynamic_paper_analysis_graph_definition()
+    if graph_id is not None:
+        graph_definition = replace(
+            graph_definition,
+            graph_id=graph_id,
+            root=replace(graph_definition.root, graph_id=graph_id),
+            definition_checksum=None,
+        )
+    graph = HarnessGraphCompiler().compile(graph_definition).graph
     stage_identity = TaskPlanStageIdentity(
-        run_id=legacy_candidate.run_id,
+        run_id=run_id,
         stage_binding=TaskPlanStageBinding(graph, RESEARCH_DYNAMIC_STAGE_ID),
     )
     candidate = PlanCandidate.for_stage(
@@ -885,9 +924,22 @@ def test_graph_only_task_lifecycle_and_result_round_trip_through_durable_store()
     with pytest.raises(HarnessValidationError) as instance_version_error:
         type(instance).from_dict(unknown_instance)
     assert instance_version_error.value.code == "unsupported_task_plan_schema"
-    with pytest.raises(HarnessValidationError) as queue_error:
+    queue_task = materialize_queue_task(instance)
+    queue_projection = TaskPlanQueueProjection.from_task(queue_task)
+    assert queue_task.payload == {}
+    assert set(queue_task.metadata) == {TASK_PLAN_QUEUE_METADATA_KEY}
+    assert queue_projection.schema_version == TASK_PLAN_QUEUE_PROJECTION_SCHEMA_V2
+    assert queue_projection.projection_checksum == (
+        "sha256:fac88d0038131719e3687dab3bc9ad3e07765f426c79a204c97fd50fd24100ee"
+    )
+    assert queue_projection.task_instance == instance
+    assert "workflow_id" not in queue_projection.to_dict()["task_instance"]
+    with pytest.raises(HarnessValidationError) as queue_alias_error:
         materialize_queue_task(instance, workflow_id="legacy-workflow")
-    assert queue_error.value.code == "graph_task_plan_queue_contract_unavailable"
+    assert (
+        queue_alias_error.value.code
+        == "graph_task_plan_queue_workflow_alias_rejected"
+    )
 
     assert store.append_result(result) == result.result_checksum
     reopened = _store(event_store, artifacts)
@@ -1051,7 +1103,7 @@ def test_graph_only_task_lifecycle_and_result_round_trip_through_durable_store()
     )
 
 
-def test_graph_only_recovery_remains_closed_until_queue_and_reclaim_are_available():
+def test_graph_only_recovery_continues_each_recorded_lifecycle_without_io():
     artifacts = _ArtifactStore()
     event_store = _EventStore()
     store = _store(event_store, artifacts)
@@ -1089,24 +1141,366 @@ def test_graph_only_recovery_remains_closed_until_queue_and_reclaim_are_availabl
         terminal_report,
         created_at="2026-08-02T00:00:04Z",
     )
-    histories = (
-        ("pending", accepted_events, (), None),
-        ("ready", running_events[:3], (), None),
-        ("dispatched", running_events[:4], (), None),
-        ("running", running_events, (), None),
-        ("pending_result", pending_result_events, (result,), pending_checkpoint),
-        ("terminal", terminal_events, (result,), terminal_checkpoint),
+    queue_reader = _TaskPlanQueueReader()
+    service = TaskPlanRecoveryService(queue_reader=queue_reader)
+
+    pending = service.recover((plan,), accepted_events)
+    assert pending.missing_queue_projections == ()
+    assert pending.confirmed_queue_readbacks == ()
+    assert pending.reclaim_continuations == ()
+    assert pending.awaiting_reclaim == ()
+
+    ready = service.recover((plan,), running_events[:3])
+    assert queue_reader.calls[-1] == (
+        "framework:queue:default",
+        (instance.task_instance_id,),
+    )
+    assert len(ready.missing_queue_projections) == 1
+    ready_task = ready.missing_queue_projections[0]
+    ready_projection = TaskPlanQueueProjection.from_task(ready_task)
+    assert ready_projection.task_instance == instance
+    assert ready_projection.queue_name == "framework:queue:default"
+    assert ready.confirmed_queue_readbacks == ()
+    assert ready.reclaim_continuations == ()
+    assert ready.awaiting_reclaim == ()
+
+    ready_task.status = WorkerTaskStatus.QUEUED
+    readback = TaskPlanQueueReadback.from_queue_task("1700000000000-0", ready_task)
+    restored_readback = TaskPlanQueueReadback.from_dict(readback.to_dict())
+    queue_reader.readbacks = (restored_readback,)
+    already_queued = service.recover(
+        (plan,),
+        running_events[:3],
+    )
+    assert already_queued.missing_queue_projections == ()
+    assert already_queued.confirmed_queue_readbacks == (restored_readback,)
+    assert already_queued.reclaim_continuations == ()
+    assert already_queued.awaiting_reclaim == ()
+
+    queue_reader.readbacks = ()
+    dispatched = service.recover((plan,), running_events[:4])
+    assert dispatched.missing_queue_projections == ()
+    assert dispatched.confirmed_queue_readbacks == ()
+    assert dispatched.awaiting_reclaim == (instance,)
+    assert len(dispatched.reclaim_continuations) == 1
+    continuation = dispatched.reclaim_continuations[0]
+    assert continuation.schema_version == TASK_PLAN_QUEUE_RECLAIM_SCHEMA_V2
+    assert continuation.task_instance == instance
+    assert continuation.queue_name == "framework:queue:default"
+    assert continuation.continuation_checksum == (
+        "sha256:a27bb8619216b5588596632fa1d4f24f4e0f2036adaaa88312d2f2fb5580f082"
+    )
+    assert (
+        TaskPlanQueueReclaimContinuation.from_dict(continuation.to_dict())
+        == continuation
+    )
+    unauthorized_reclaim = continuation.to_dict()
+    unauthorized_reclaim["continuation_type"] = "reclaim_now"
+    with pytest.raises(HarnessValidationError) as reclaim_action_error:
+        TaskPlanQueueReclaimContinuation.from_dict(unauthorized_reclaim)
+    assert reclaim_action_error.value.code == "task_plan_reclaim_action_mismatch"
+
+    running = service.recover((plan,), running_events)
+    assert running.missing_queue_projections == ()
+    assert running.confirmed_queue_readbacks == ()
+    assert running.awaiting_reclaim == (instance,)
+    assert running.reclaim_continuations == (continuation,)
+
+    pending_result = service.recover(
+        (plan,),
+        pending_result_events,
+        results=(result,),
+        checkpoint=pending_checkpoint,
+    )
+    assert pending_result.checkpoint_verified is True
+    assert pending_result.pending_terminal_results == (result,)
+    assert pending_result.missing_queue_projections == ()
+    assert pending_result.confirmed_queue_readbacks == ()
+    assert pending_result.reclaim_continuations == ()
+    assert pending_result.awaiting_reclaim == ()
+
+    terminal = service.recover(
+        (plan,),
+        terminal_events,
+        results=(result,),
+        checkpoint=terminal_checkpoint,
+    )
+    assert terminal.checkpoint_verified is True
+    assert terminal.pending_terminal_results == ()
+    assert terminal.missing_queue_projections == ()
+    assert terminal.confirmed_queue_readbacks == ()
+    assert terminal.reclaim_continuations == ()
+    assert terminal.awaiting_reclaim == ()
+
+
+def test_graph_only_recovery_requires_exact_queue_readback_identity():
+    artifacts = _ArtifactStore()
+    event_store = _EventStore()
+    store = _store(event_store, artifacts)
+    candidate, plan = _graph_only_candidate_and_plan()
+    store.append_candidate(candidate)
+    store.accept_plan(plan)
+    instance = _start(store, plan, plan.tasks[0].task_id)
+    ready_events = store.read_events(plan.run_id, plan.stage_id)[:3]
+    queue_task = materialize_queue_task(instance)
+    queue_task.status = WorkerTaskStatus.QUEUED
+    readback = TaskPlanQueueReadback.from_queue_task("1700000000000-0", queue_task)
+
+    with pytest.raises(HarnessValidationError) as missing_port_error:
+        TaskPlanRecoveryService().recover((plan,), ready_events)
+    assert (
+        missing_port_error.value.code
+        == "graph_task_plan_queue_read_port_unavailable"
     )
 
-    for state, events, results, checkpoint in histories:
-        with pytest.raises(HarnessValidationError) as error:
-            TaskPlanRecoveryService().recover(
-                (plan,),
-                events,
-                results=results,
-                checkpoint=checkpoint,
-            )
-        assert error.value.code == "graph_task_plan_recovery_contract_unavailable", state
+    with pytest.raises(HarnessValidationError) as bare_id_error:
+        TaskPlanRecoveryService(queue_reader=_TaskPlanQueueReader()).recover(
+            (plan,),
+            ready_events,
+            queued_instance_ids=(instance.task_instance_id,),
+        )
+    assert bare_id_error.value.code == "graph_task_plan_queue_readback_required"
+
+    _, other_plan = _graph_only_candidate_and_plan(
+        run_id="other-durable-run",
+        graph_id="research.other.dynamic",
+    )
+    other_instance = task_instance_for_attempt(
+        other_plan,
+        other_plan.tasks[0].task_id,
+        1,
+    )
+    other_task = materialize_queue_task(other_instance)
+    other_task.status = WorkerTaskStatus.QUEUED
+    cross_graph_readback = TaskPlanQueueReadback.from_queue_task(
+        "1700000000001-0",
+        other_task,
+    )
+
+    with pytest.raises(HarnessValidationError) as cross_graph_error:
+        TaskPlanRecoveryService(
+            queue_reader=_TaskPlanQueueReader((cross_graph_readback,))
+        ).recover(
+            (plan,),
+            ready_events,
+        )
+    assert (
+        cross_graph_error.value.code
+        == "task_plan_queue_readback_identity_mismatch"
+    )
+
+    with pytest.raises(HarnessValidationError) as duplicate_error:
+        TaskPlanRecoveryService(
+            queue_reader=_TaskPlanQueueReader((readback, readback))
+        ).recover(
+            (plan,),
+            ready_events,
+        )
+    assert duplicate_error.value.code == "task_plan_queue_readback_conflict"
+
+    with pytest.raises(HarnessValidationError) as queue_error:
+        TaskPlanRecoveryService(
+            queue_reader=_TaskPlanQueueReader((readback,))
+        ).recover(
+            (plan,),
+            ready_events,
+            queue_name="framework:queue:other",
+        )
+    assert queue_error.value.code == "task_plan_queue_readback_identity_mismatch"
+
+    aliased = readback.to_dict()
+    aliased["projection"]["task_instance"]["workflow_id"] = "legacy-workflow"
+    with pytest.raises(HarnessValidationError) as alias_error:
+        TaskPlanRecoveryService(
+            queue_reader=_TaskPlanQueueReader((aliased,))
+        ).recover(
+            (plan,),
+            ready_events,
+        )
+    assert alias_error.value.code == "invalid_task_plan_payload_fields"
+
+    unknown_schema = readback.to_dict()
+    unknown_schema["projection"]["schema_version"] = (
+        "newsroom.harness-task-plan-queue-projection/v999"
+    )
+    with pytest.raises(HarnessValidationError) as schema_error:
+        TaskPlanQueueReadback.from_dict(unknown_schema)
+    assert (
+        schema_error.value.code
+        == "unsupported_task_plan_queue_projection_schema"
+    )
+
+
+def test_graph_only_queue_projection_survives_redis_transport_readback():
+    class _CaptureRedis:
+        def __init__(self):
+            self.entries = []
+
+        def xadd(self, queue_name, fields):
+            self.entries.append((queue_name, fields))
+            return b"1700000000000-0"
+
+    _, plan = _graph_only_candidate_and_plan()
+    instance = task_instance_for_attempt(plan, plan.tasks[0].task_id, 1)
+    queue_task = materialize_queue_task(instance)
+    redis = _CaptureRedis()
+
+    message_id = RedisStreamTaskQueue(redis).enqueue(queue_task)
+    _, fields = redis.entries[0]
+    durable_payload = json.loads(fields["task"])
+    durable_task = WorkerTask.from_dict(durable_payload)
+    readback = TaskPlanQueueReadback.from_queue_task(message_id.decode(), durable_task)
+
+    assert readback.schema_version == TASK_PLAN_QUEUE_READBACK_SCHEMA_V2
+    assert readback.readback_checksum == (
+        "sha256:bc80d36bce72adb0f93d8c0bfd646841b4eda70beea734a2986ad8e1fd5897d0"
+    )
+    assert readback.projection.task_instance == instance
+    assert TaskPlanQueueReadback.from_dict(readback.to_dict()) == readback
+    serialized_metadata = json.dumps(
+        durable_payload["metadata"],
+        ensure_ascii=True,
+        sort_keys=True,
+    )
+    assert "fencing_token" not in serialized_metadata
+    assert "max_output_tokens" not in serialized_metadata
+    assert "attempt_fence_ref" in serialized_metadata
+    assert "max_output_units" in serialized_metadata
+
+    tampered_task = WorkerTask.from_dict(durable_payload)
+    tampered_task.payload = {"worker_may_activate": True}
+    with pytest.raises(HarnessValidationError) as payload_error:
+        TaskPlanQueueReadback.from_queue_task(
+            message_id.decode(),
+            tampered_task,
+        )
+    assert payload_error.value.code == "task_plan_queue_transport_mismatch"
+
+    tampered_projection = readback.to_dict()
+    tampered_projection["projection"]["task_instance"][
+        "attempt_fence_ref"
+    ] = "fence_tampered"
+    with pytest.raises(HarnessValidationError):
+        TaskPlanQueueReadback.from_dict(tampered_projection)
+
+
+def test_graph_only_redis_queue_reader_proves_undelivered_records_atomically():
+    class _CaptureRedis:
+        def __init__(self):
+            self.entries = []
+
+        def xadd(self, queue_name, fields):
+            self.entries.append((queue_name, fields))
+            return b"1700000000000-0"
+
+    class _AtomicReadRedis:
+        def __init__(self, response):
+            self.response = response
+            self.calls = []
+
+        def eval(self, *args):
+            self.calls.append(args)
+            return self.response
+
+    _, plan = _graph_only_candidate_and_plan()
+    instance = task_instance_for_attempt(plan, plan.tasks[0].task_id, 1)
+    capture = _CaptureRedis()
+    message_id = RedisStreamTaskQueue(capture).enqueue(
+        materialize_queue_task(instance)
+    )
+    queue_name, fields = capture.entries[0]
+    record = [
+        message_id,
+        [b"task", fields["task"].encode("utf-8")],
+    ]
+    redis = _AtomicReadRedis(
+        [
+            b"ok",
+            b"1",
+            b"0-0",
+            b"1",
+            [record],
+            b"0",
+            [],
+            b"0",
+            [],
+        ]
+    )
+    adapter = RedisTaskPlanQueueReadAdapter(redis, max_scan=10)
+
+    readbacks = adapter.read_task_plan_queue(
+        queue_name=queue_name,
+        task_instance_ids=(instance.task_instance_id,),
+    )
+
+    assert len(readbacks) == 1
+    assert readbacks[0].message_id == message_id.decode()
+    assert readbacks[0].projection.task_instance == instance
+    script, key_count, called_queue, group_name, scan_limit = redis.calls[0]
+    assert key_count == 1
+    assert called_queue == queue_name
+    assert group_name == "framework-workers"
+    assert scan_limit == 11
+    assert all(command in script for command in ("XINFO", "XPENDING", "XRANGE"))
+    assert all(command not in script for command in ("XADD", "XACK", "XCLAIM"))
+
+
+@pytest.mark.parametrize("delivery_state", ("pending", "acknowledged"))
+def test_graph_only_redis_queue_reader_rejects_delivered_ready_attempts(
+    delivery_state,
+):
+    class _AtomicReadRedis:
+        def __init__(self, response):
+            self.response = response
+
+        def eval(self, *args):
+            return self.response
+
+    _, plan = _graph_only_candidate_and_plan()
+    instance = task_instance_for_attempt(plan, plan.tasks[0].task_id, 1)
+    task = materialize_queue_task(instance)
+    task.status = WorkerTaskStatus.QUEUED
+    task_payload = json.dumps(task.to_dict(), ensure_ascii=False, sort_keys=True)
+    record = [b"1700000000000-0", [b"task", task_payload.encode("utf-8")]]
+    pending_records = [record] if delivery_state == "pending" else []
+    response = [
+        b"ok",
+        b"1",
+        b"1700000000000-0",
+        b"0",
+        [],
+        str(len(pending_records)).encode(),
+        pending_records,
+        b"1",
+        [record],
+    ]
+    adapter = RedisTaskPlanQueueReadAdapter(_AtomicReadRedis(response))
+
+    with pytest.raises(HarnessValidationError) as error:
+        adapter.read_task_plan_queue(
+            queue_name=task.queue_name,
+            task_instance_ids=(instance.task_instance_id,),
+        )
+
+    assert error.value.code == "task_plan_queue_delivery_state_mismatch"
+
+
+def test_graph_only_redis_queue_reader_fails_closed_when_scan_is_incomplete():
+    class _AtomicReadRedis:
+        def eval(self, *args):
+            return [b"ok", b"1", b"2-0", b"0", [], b"0", [], b"2", []]
+
+    _, plan = _graph_only_candidate_and_plan()
+    instance = task_instance_for_attempt(plan, plan.tasks[0].task_id, 1)
+    adapter = RedisTaskPlanQueueReadAdapter(_AtomicReadRedis(), max_scan=1)
+
+    with pytest.raises(HarnessValidationError) as error:
+        adapter.read_task_plan_queue(
+            queue_name="framework:queue:default",
+            task_instance_ids=(instance.task_instance_id,),
+        )
+
+    assert error.value.code == "task_plan_queue_readback_scan_incomplete"
 
 
 def test_graph_only_lifecycle_rejects_legacy_event_before_store_mutation():
