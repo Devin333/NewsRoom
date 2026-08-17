@@ -976,16 +976,21 @@ class InMemoryTaskPlanStore:
         if not isinstance(patch, PlanPatch):
             raise TypeError("patch must be PlanPatch")
         with self._lock:
-            existing = self._patches.get(patch.patch_checksum)
-            if existing is not None and existing != patch:
-                raise HarnessValidationError("patch checksum identity conflict", code="task_plan_checksum_conflict")
-            self._patches[patch.patch_checksum] = patch
             plan = self._current_plan(patch.run_id, patch.stage_id)
             if plan is None:
                 raise HarnessValidationError(
                     "cannot append a patch without an accepted base plan",
                     code="task_plan_projection_missing",
                 )
+            if not patch.matches_plan_identity(plan):
+                raise HarnessValidationError(
+                    "patch identity does not match the accepted base plan",
+                    code="task_plan_patch_scope_mismatch",
+                )
+            existing = self._patches.get(patch.patch_checksum)
+            if existing is not None and existing != patch:
+                raise HarnessValidationError("patch checksum identity conflict", code="task_plan_checksum_conflict")
+            self._patches[patch.patch_checksum] = patch
             event_type = "PLAN_PATCH_ACCEPTED" if accepted else "PLAN_PATCH_PROPOSED"
             sequence = self._next_sequence(patch.run_id, patch.stage_id)
             event = TaskPlanEvent.for_plan(
@@ -1019,10 +1024,19 @@ class InMemoryTaskPlanStore:
         skip_ids = tuple(sorted(set(identifier(item, "skipped_task_ids") for item in skipped_task_ids)))
         with self._lock:
             current = self._current_plan(patch.run_id, patch.stage_id)
-            if current is None or current.plan_id != patch.base_plan_id or current.version != patch.base_plan_version:
+            if current is None or not patch.matches_plan_identity(current):
                 raise HarnessValidationError(
                     "patched plan base is stale",
                     code="task_plan_stale_patch",
+                )
+            if (
+                not plan.shares_stage_identity(current)
+                or plan.policy_ref != current.policy_ref
+                or plan.policy_checksum != current.policy_checksum
+            ):
+                raise HarnessValidationError(
+                    "patched plan identity does not match its accepted base",
+                    code="task_plan_patch_scope_mismatch",
                 )
             if plan.parent_plan_id != current.plan_id or plan.version != current.version + 1:
                 raise HarnessValidationError(

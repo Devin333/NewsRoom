@@ -23,6 +23,7 @@ GRAPH_ONLY_PLAN_CANDIDATE_SCHEMA = "newsroom.harness-task-plan-candidate/v2"
 VALIDATED_TASK_PLAN_SCHEMA = "newsroom.harness-task-plan/v1"
 GRAPH_ONLY_VALIDATED_TASK_PLAN_SCHEMA = "newsroom.harness-task-plan/v2"
 TASK_PLAN_PATCH_SCHEMA = "newsroom.harness-task-plan-patch/v1"
+GRAPH_ONLY_TASK_PLAN_PATCH_SCHEMA = "newsroom.harness-task-plan-patch/v2"
 TASK_PLAN_POLICY_SCHEMA = "newsroom.harness-task-plan-policy/v1"
 TASK_INSTANCE_SCHEMA = "newsroom.harness-task-instance/v1"
 GRAPH_ONLY_TASK_INSTANCE_SCHEMA = "newsroom.harness-task-instance/v2"
@@ -195,6 +196,9 @@ _ADDITIONAL_SCHEMAS: Mapping[TaskPlanContractKind, tuple[str, ...]] = (
             TaskPlanContractKind.VALIDATED_PLAN: (
                 GRAPH_ONLY_VALIDATED_TASK_PLAN_SCHEMA,
             ),
+            TaskPlanContractKind.PLAN_PATCH: (
+                GRAPH_ONLY_TASK_PLAN_PATCH_SCHEMA,
+            ),
             TaskPlanContractKind.TASK_INSTANCE: (
                 GRAPH_ONLY_TASK_INSTANCE_SCHEMA,
             ),
@@ -231,6 +235,7 @@ __all__ = [
     "DEFAULT_TASK_PLAN_SCHEMA_REGISTRY",
     "GRAPH_ONLY_PLAN_CANDIDATE_SCHEMA",
     "GRAPH_ONLY_TASK_INSTANCE_SCHEMA",
+    "GRAPH_ONLY_TASK_PLAN_PATCH_SCHEMA",
     "GRAPH_ONLY_TASK_PLAN_PROJECTION_SCHEMA",
     "GRAPH_ONLY_TASK_PROJECTION_SCHEMA",
     "GRAPH_ONLY_TASK_PLAN_STAGE_BINDING_SCHEMA",

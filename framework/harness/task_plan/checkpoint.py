@@ -25,13 +25,32 @@ from framework.harness.task_plan.models import (
 )
 from framework.harness.task_plan.replay import (
     TASK_PLAN_REPLAY_REDUCER_VERSION,
+    TASK_PLAN_REPLAY_REDUCER_VERSION_V1,
+    TASK_PLAN_REPLAY_REDUCER_VERSION_V2,
     TaskPlanReplayReport,
 )
 from framework.harness.task_plan.store import TaskResultRecord
 from framework.shared.time import format_datetime, parse_datetime
 
 
-TASK_PLAN_CHECKPOINT_SCHEMA = "newsroom.harness-task-plan-checkpoint/v1"
+TASK_PLAN_CHECKPOINT_SCHEMA_V1 = "newsroom.harness-task-plan-checkpoint/v1"
+TASK_PLAN_CHECKPOINT_SCHEMA_V2 = "newsroom.harness-task-plan-checkpoint/v2"
+TASK_PLAN_CHECKPOINT_SCHEMA = TASK_PLAN_CHECKPOINT_SCHEMA_V1
+TASK_PLAN_CHECKPOINT_SCHEMAS = (
+    TASK_PLAN_CHECKPOINT_SCHEMA_V1,
+    TASK_PLAN_CHECKPOINT_SCHEMA_V2,
+)
+_GRAPH_CHECKPOINT_IDENTITY_FIELDS = (
+    "graph_id",
+    "graph_version",
+    "graph_ref",
+    "graph_schema_version",
+    "compiler_version",
+    "condition_policy_version",
+    "stage_binding_checksum",
+    "stage_identity_schema",
+    "stage_identity_checksum",
+)
 _ACTIVE_TASK_STATES = frozenset(
     {TaskLifecycle.READY, TaskLifecycle.DISPATCHED, TaskLifecycle.RUNNING}
 )
@@ -50,7 +69,7 @@ class TaskPlanCheckpoint:
 
     checkpoint_id: str
     run_id: str
-    workflow_id: str
+    workflow_id: str | None
     stage_id: str
     graph_checksum: str
     plan_id: str
@@ -71,14 +90,24 @@ class TaskPlanCheckpoint:
     created_at: str
     aggregate_ref: str | None = None
     aggregate_checksum: str | None = None
+    graph_id: str | None = None
+    graph_version: str | None = None
+    graph_ref: str | None = None
+    graph_schema_version: str | None = None
+    compiler_version: str | None = None
+    condition_policy_version: str | None = None
+    stage_binding_checksum: str | None = None
+    stage_identity_schema: str | None = None
+    stage_identity_checksum: str | None = None
     schema_version: str = TASK_PLAN_CHECKPOINT_SCHEMA
     reducer_version: str = TASK_PLAN_REPLAY_REDUCER_VERSION
     checkpoint_checksum: str = field(init=False)
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "checkpoint_id", identifier(self.checkpoint_id, "checkpoint_id"))
-        for field_name in ("run_id", "workflow_id", "stage_id", "plan_id"):
+        for field_name in ("run_id", "stage_id", "plan_id"):
             object.__setattr__(self, field_name, identifier(getattr(self, field_name), field_name))
+        _normalize_checkpoint_identity(self)
         object.__setattr__(self, "graph_checksum", checksum(self.graph_checksum, "graph_checksum"))
         if isinstance(self.plan_version, bool) or not isinstance(self.plan_version, int) or self.plan_version < 1:
             raise HarnessValidationError(
@@ -93,10 +122,10 @@ class TaskPlanCheckpoint:
             projection = TaskPlanProjection.from_dict(projection)
         if not isinstance(projection, TaskPlanProjection):
             raise TypeError("projection must be TaskPlanProjection")
-        if projection.is_graph_only:
+        if projection.is_graph_only != self.is_graph_only:
             raise HarnessValidationError(
-                "Graph-only TaskPlan checkpoint contract is not available",
-                code="graph_task_plan_checkpoint_contract_unavailable",
+                "TaskPlan checkpoint schema does not match projection identity",
+                code="task_plan_checkpoint_identity_mismatch",
             )
         identity = (
             projection.run_id,
@@ -119,6 +148,14 @@ class TaskPlanCheckpoint:
         if identity != expected_identity:
             raise HarnessValidationError(
                 "TaskPlan checkpoint identity does not match projection",
+                code="task_plan_checkpoint_identity_mismatch",
+            )
+        if self.is_graph_only and any(
+            getattr(self, field_name) != getattr(projection, field_name)
+            for field_name in _GRAPH_CHECKPOINT_IDENTITY_FIELDS
+        ):
+            raise HarnessValidationError(
+                "TaskPlan checkpoint Graph identity does not match projection",
                 code="task_plan_checkpoint_identity_mismatch",
             )
         object.__setattr__(self, "projection", projection)
@@ -148,8 +185,7 @@ class TaskPlanCheckpoint:
         for instance_id, state in active_states.items():
             instance = instance_by_id[instance_id]
             if (
-                instance.run_id != self.run_id
-                or instance.stage_id != self.stage_id
+                not instance.matches_plan_projection_identity(projection)
                 or instance.task_id != state.task_id
                 or instance.task_definition_checksum != state.task_definition_checksum
                 or instance.attempt != state.attempts
@@ -196,7 +232,12 @@ class TaskPlanCheckpoint:
             raise TypeError("pending_terminal_results must contain TaskResultRecord values")
         for result in pending_results:
             instance = instance_by_id.get(result.task_instance_id)
-            if instance is None or result.attempt != instance.attempt or result.task_id != instance.task_id:
+            if (
+                instance is None
+                or result.attempt != instance.attempt
+                or result.task_id != instance.task_id
+                or not _result_matches_checkpoint_projection(result, projection)
+            ):
                 raise HarnessValidationError(
                     "TaskPlan checkpoint pending result does not match active attempt",
                     code="task_plan_checkpoint_result_mismatch",
@@ -255,17 +296,19 @@ class TaskPlanCheckpoint:
                 "TaskPlan checkpoint aggregate ref and checksum must be present together",
                 code="task_plan_checkpoint_aggregate_mismatch",
             )
-        if self.schema_version != TASK_PLAN_CHECKPOINT_SCHEMA:
-            raise HarnessValidationError(
-                "unsupported TaskPlan checkpoint schema",
-                code="unsupported_task_plan_checkpoint_schema",
-                details={"schema_version": str(self.schema_version)},
-            )
-        if self.reducer_version != TASK_PLAN_REPLAY_REDUCER_VERSION:
+        expected_reducer_version = (
+            TASK_PLAN_REPLAY_REDUCER_VERSION_V2
+            if self.is_graph_only
+            else TASK_PLAN_REPLAY_REDUCER_VERSION_V1
+        )
+        if self.reducer_version != expected_reducer_version:
             raise HarnessValidationError(
                 "unsupported TaskPlan checkpoint reducer",
                 code="unsupported_task_plan_replay_reducer",
-                details={"reducer_version": str(self.reducer_version)},
+                details={
+                    "expected": expected_reducer_version,
+                    "reducer_version": str(self.reducer_version),
+                },
             )
         created_at = required_text(self.created_at, "created_at")
         parsed = parse_datetime(created_at)
@@ -290,11 +333,6 @@ class TaskPlanCheckpoint:
             raise TypeError("plan must be ValidatedTaskPlan")
         if not isinstance(report, TaskPlanReplayReport):
             raise TypeError("report must be TaskPlanReplayReport")
-        if plan.is_graph_only:
-            raise HarnessValidationError(
-                "Graph-only TaskPlan checkpoint contract is not available",
-                code="graph_task_plan_checkpoint_contract_unavailable",
-            )
         projection = report.projection
         if (
             projection.run_id != plan.run_id
@@ -302,11 +340,20 @@ class TaskPlanCheckpoint:
             or projection.plan_id != plan.plan_id
             or projection.plan_version != plan.version
             or projection.plan_checksum != plan.plan_checksum
+            or not projection.matches_plan_identity(plan)
         ):
             raise HarnessValidationError(
                 "TaskPlan replay report does not match checkpoint plan",
                 code="task_plan_checkpoint_identity_mismatch",
             )
+        graph_identity = (
+            {
+                field_name: getattr(plan, field_name)
+                for field_name in _GRAPH_CHECKPOINT_IDENTITY_FIELDS
+            }
+            if plan.is_graph_only
+            else {}
+        )
         return cls(
             checkpoint_id=checkpoint_id,
             run_id=plan.run_id,
@@ -331,6 +378,13 @@ class TaskPlanCheckpoint:
             created_at=created_at,
             aggregate_ref=report.aggregate_ref,
             aggregate_checksum=report.aggregate_checksum,
+            schema_version=(
+                TASK_PLAN_CHECKPOINT_SCHEMA_V2
+                if plan.is_graph_only
+                else TASK_PLAN_CHECKPOINT_SCHEMA_V1
+            ),
+            reducer_version=report.reducer_version,
+            **graph_identity,
         )
 
     def verify_replay(self, report: TaskPlanReplayReport) -> None:
@@ -349,6 +403,10 @@ class TaskPlanCheckpoint:
             "replay_checksum": (self.replay_checksum, report.replay_checksum),
         }
         mismatches = sorted(name for name, values in checks.items() if values[0] != values[1])
+        if report.projection.is_graph_only != self.is_graph_only:
+            mismatches.append("identity_schema")
+        if report.reducer_version != self.reducer_version:
+            mismatches.append("reducer_version")
         if mismatches:
             raise HarnessValidationError(
                 "TaskPlan checkpoint does not match replayed history",
@@ -357,12 +415,22 @@ class TaskPlanCheckpoint:
             )
 
     def checksum_projection(self) -> dict[str, Any]:
-        return {
+        payload: dict[str, Any] = {
             "schema_version": self.schema_version,
             "reducer_version": self.reducer_version,
             "checkpoint_id": self.checkpoint_id,
             "run_id": self.run_id,
-            "workflow_id": self.workflow_id,
+        }
+        if self.is_graph_only:
+            payload.update(
+                {
+                    field_name: getattr(self, field_name)
+                    for field_name in _GRAPH_CHECKPOINT_IDENTITY_FIELDS
+                }
+            )
+        else:
+            payload["workflow_id"] = self.workflow_id
+        payload.update({
             "stage_id": self.stage_id,
             "graph_checksum": self.graph_checksum,
             "plan_id": self.plan_id,
@@ -383,48 +451,58 @@ class TaskPlanCheckpoint:
             "created_at": self.created_at,
             "aggregate_ref": self.aggregate_ref,
             "aggregate_checksum": self.aggregate_checksum,
-        }
+        })
+        return payload
 
     def to_dict(self) -> dict[str, Any]:
         return {**self.checksum_projection(), "checkpoint_checksum": self.checkpoint_checksum}
 
     @classmethod
     def from_dict(cls, value: Mapping[str, Any]) -> "TaskPlanCheckpoint":
+        schema_version = value.get("schema_version")
+        _require_checkpoint_schema(schema_version)
+        common = frozenset(
+            {
+                "schema_version",
+                "reducer_version",
+                "checkpoint_id",
+                "run_id",
+                "stage_id",
+                "graph_checksum",
+                "plan_id",
+                "plan_version",
+                "plan_checksum",
+                "policy_ref",
+                "projection",
+                "active_task_instances",
+                "ready_order",
+                "accepted_output_refs",
+                "pending_terminal_results",
+                "budget_snapshot",
+                "retry_counts",
+                "replan_count",
+                "last_sequence",
+                "event_history_checksum",
+                "replay_checksum",
+                "created_at",
+                "aggregate_ref",
+                "aggregate_checksum",
+                "checkpoint_checksum",
+            }
+        )
+        identity = (
+            frozenset(_GRAPH_CHECKPOINT_IDENTITY_FIELDS)
+            if schema_version == TASK_PLAN_CHECKPOINT_SCHEMA_V2
+            else frozenset({"workflow_id"})
+        )
         payload = exact_keys(
             value,
-            required=frozenset(
-                {
-                    "schema_version",
-                    "reducer_version",
-                    "checkpoint_id",
-                    "run_id",
-                    "workflow_id",
-                    "stage_id",
-                    "graph_checksum",
-                    "plan_id",
-                    "plan_version",
-                    "plan_checksum",
-                    "policy_ref",
-                    "projection",
-                    "active_task_instances",
-                    "ready_order",
-                    "accepted_output_refs",
-                    "pending_terminal_results",
-                    "budget_snapshot",
-                    "retry_counts",
-                    "replan_count",
-                    "last_sequence",
-                    "event_history_checksum",
-                    "replay_checksum",
-                    "created_at",
-                    "aggregate_ref",
-                    "aggregate_checksum",
-                    "checkpoint_checksum",
-                }
-            ),
+            required=common | identity,
             model=cls.__name__,
         )
         supplied = checksum(payload.pop("checkpoint_checksum"), "checkpoint_checksum")
+        if schema_version == TASK_PLAN_CHECKPOINT_SCHEMA_V2:
+            payload["workflow_id"] = None
         checkpoint = cls(**payload)
         if supplied != checkpoint.checkpoint_checksum:
             raise HarnessValidationError(
@@ -432,6 +510,10 @@ class TaskPlanCheckpoint:
                 code="task_plan_checkpoint_checksum_mismatch",
             )
         return checkpoint
+
+    @property
+    def is_graph_only(self) -> bool:
+        return self.schema_version == TASK_PLAN_CHECKPOINT_SCHEMA_V2
 
 
 class InMemoryTaskPlanCheckpointStore:
@@ -465,9 +547,107 @@ class InMemoryTaskPlanCheckpointStore:
             ) from exc
 
 
+def _require_checkpoint_schema(value: Any) -> str:
+    if value not in TASK_PLAN_CHECKPOINT_SCHEMAS:
+        raise HarnessValidationError(
+            "unsupported TaskPlan checkpoint schema",
+            code="unsupported_task_plan_checkpoint_schema",
+            details={"schema_version": str(value)},
+        )
+    return str(value)
+
+
+def _normalize_checkpoint_identity(checkpoint: TaskPlanCheckpoint) -> None:
+    _require_checkpoint_schema(checkpoint.schema_version)
+    if checkpoint.schema_version == TASK_PLAN_CHECKPOINT_SCHEMA_V1:
+        object.__setattr__(
+            checkpoint,
+            "workflow_id",
+            identifier(checkpoint.workflow_id, "workflow_id"),
+        )
+        unexpected = sorted(
+            field_name
+            for field_name in _GRAPH_CHECKPOINT_IDENTITY_FIELDS
+            if getattr(checkpoint, field_name) is not None
+        )
+        if unexpected:
+            raise HarnessValidationError(
+                "legacy TaskPlan checkpoint cannot carry Graph-only identity",
+                code="task_plan_checkpoint_identity_mismatch",
+                details={"unexpected": unexpected},
+            )
+        return
+    if checkpoint.workflow_id is not None:
+        raise HarnessValidationError(
+            "Graph-only TaskPlan checkpoint cannot carry workflow_id",
+            code="task_plan_checkpoint_identity_mismatch",
+        )
+    normalized = {
+        "graph_id": identifier(checkpoint.graph_id, "graph_id"),
+        "graph_version": identifier(checkpoint.graph_version, "graph_version"),
+        "graph_ref": exact_reference(checkpoint.graph_ref, "graph_ref"),
+        "graph_schema_version": required_text(
+            checkpoint.graph_schema_version,
+            "graph_schema_version",
+        ),
+        "compiler_version": required_text(
+            checkpoint.compiler_version,
+            "compiler_version",
+        ),
+        "condition_policy_version": required_text(
+            checkpoint.condition_policy_version,
+            "condition_policy_version",
+        ),
+        "stage_binding_checksum": checksum(
+            checkpoint.stage_binding_checksum,
+            "stage_binding_checksum",
+        ),
+        "stage_identity_schema": required_text(
+            checkpoint.stage_identity_schema,
+            "stage_identity_schema",
+        ),
+        "stage_identity_checksum": checksum(
+            checkpoint.stage_identity_checksum,
+            "stage_identity_checksum",
+        ),
+    }
+    if normalized["graph_ref"] != (
+        f"{normalized['graph_id']}@{normalized['graph_version']}"
+    ):
+        raise HarnessValidationError(
+            "Graph-only TaskPlan checkpoint ref does not match identity",
+            code="task_plan_checkpoint_identity_mismatch",
+        )
+    for field_name, normalized_value in normalized.items():
+        object.__setattr__(checkpoint, field_name, normalized_value)
+
+
+def _result_matches_checkpoint_projection(
+    result: TaskResultRecord,
+    projection: TaskPlanProjection,
+) -> bool:
+    if (
+        result.is_graph_only != projection.is_graph_only
+        or result.run_id != projection.run_id
+        or result.stage_id != projection.stage_id
+        or result.plan_id != projection.plan_id
+        or result.plan_version != projection.plan_version
+    ):
+        return False
+    if not result.is_graph_only:
+        return True
+    return all(
+        getattr(result, field_name) == getattr(projection, field_name)
+        for field_name in (*_GRAPH_CHECKPOINT_IDENTITY_FIELDS, "graph_checksum")
+    )
+
+
 __all__ = [
     "InMemoryTaskPlanCheckpointStore",
     "TASK_PLAN_CHECKPOINT_SCHEMA",
+    "TASK_PLAN_CHECKPOINT_SCHEMA_V1",
+    "TASK_PLAN_CHECKPOINT_SCHEMA_V2",
+    "TASK_PLAN_CHECKPOINT_SCHEMAS",
     "TaskPlanCheckpoint",
     "TaskPlanCheckpointStorePort",
 ]

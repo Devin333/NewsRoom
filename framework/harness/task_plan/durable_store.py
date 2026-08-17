@@ -420,6 +420,11 @@ class DurableTaskPlanStore:
                 "patch base plan is stale",
                 code="task_plan_version_conflict",
             )
+        if not patch.matches_plan_identity(plan):
+            raise HarnessValidationError(
+                "patch identity does not match the accepted base plan",
+                code="task_plan_patch_scope_mismatch",
+            )
         patch_ref = self._put_document(
             "patch",
             patch.run_id,
@@ -461,8 +466,17 @@ class DurableTaskPlanStore:
         if not isinstance(patch, PlanPatch) or not isinstance(plan, ValidatedTaskPlan):
             raise TypeError("patch and plan must use TaskPlan contracts")
         current = self.plan(patch.run_id, patch.stage_id)
-        if current is None or current.plan_id != patch.base_plan_id or current.version != patch.base_plan_version:
+        if current is None or not patch.matches_plan_identity(current):
             raise HarnessValidationError("patch base plan is stale", code="task_plan_stale_patch")
+        if (
+            not plan.shares_stage_identity(current)
+            or plan.policy_ref != current.policy_ref
+            or plan.policy_checksum != current.policy_checksum
+        ):
+            raise HarnessValidationError(
+                "patched plan identity does not match its accepted base",
+                code="task_plan_patch_scope_mismatch",
+            )
         if plan.parent_plan_id != current.plan_id or plan.version != current.version + 1:
             raise HarnessValidationError("patched plan version is not monotonic", code="task_plan_version_conflict")
         if plan.source_candidate_ref != patch.patch_checksum:

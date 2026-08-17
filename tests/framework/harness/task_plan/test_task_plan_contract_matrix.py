@@ -395,6 +395,51 @@ def test_plan_patch_payload_cannot_express_outer_graph_changes() -> None:
     assert error.value.code == "invalid_task_plan_payload_fields"
 
 
+def test_legacy_plan_patch_wire_and_checksum_remain_stable() -> None:
+    plan, _, _, _ = _accepted_plan((_task("structure"),))
+    patch = PlanPatch(
+        patch_id="legacy-patch-wire",
+        run_id=plan.run_id,
+        stage_id=plan.stage_id,
+        base_plan_id=plan.plan_id,
+        base_plan_version=plan.version,
+        reason_code="repair",
+        source_candidate_ref="candidate://legacy-patch-wire",
+        operations=(
+            PlanPatchOperation(
+                PlanPatchOperationType.UPDATE_PENDING_DEPENDENCY,
+                target_task_id="structure",
+                depends_on=("upstream",),
+            ),
+        ),
+    )
+
+    assert patch.to_dict() == {
+        "schema_version": "newsroom.harness-task-plan-patch/v1",
+        "patch_id": "legacy-patch-wire",
+        "run_id": "run-1",
+        "stage_id": "dynamic_analysis_stage",
+        "base_plan_id": (
+            "sha256:e5cc088469143e785f994b35a4756bd324c76736e50fe7e21a61610751618612"
+        ),
+        "base_plan_version": 1,
+        "reason_code": "repair",
+        "source_candidate_ref": "candidate://legacy-patch-wire",
+        "operations": [
+            {
+                "operation": "UPDATE_PENDING_DEPENDENCY",
+                "target_task_id": "structure",
+                "replacement_task": None,
+                "depends_on": ["upstream"],
+            }
+        ],
+        "patch_checksum": (
+            "sha256:5bc04734f8526529b814cdfb2b6bb3c2e28dde8eb1ce08e6403c2a51b97d9047"
+        ),
+    }
+    assert PlanPatch.from_dict(patch.to_dict()) == patch
+
+
 def test_validated_plan_policy_checksum_is_durable_and_legacy_replay_is_read_only() -> None:
     plan, policy, registry, _ = _accepted_plan((_task("structure"),))
     assert plan.policy_checksum == policy.policy_checksum

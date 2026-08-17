@@ -36,7 +36,6 @@ from framework.harness.task_plan import (
     TaskBudget,
     TaskLifecycle,
     TaskPlanPatchValidator,
-    TaskPlanProjection,
     TaskPlanStageRequest,
     TASK_PLAN_EVENT_SCHEMA_V2,
     TASK_PLAN_RESULT_SCHEMA_V3,
@@ -47,7 +46,6 @@ from framework.harness.task_plan import (
     TaskPlanStageBinding,
     TaskPlanValidationContext,
     TaskPlanValidator,
-    TaskProjection,
     ValidatedTaskPlan,
     task_instance_for_attempt,
 )
@@ -239,12 +237,9 @@ def test_graph_only_candidate_validates_to_graph_only_plan() -> None:
     assert checksum_error.value.code == "task_plan_checksum_mismatch"
 
     dependent = next(task for task in plan.tasks if task.depends_on)
-    patch = PlanPatch(
+    patch = PlanPatch.for_plan(
+        plan,
         patch_id="graph-only-plan-patch",
-        run_id=plan.run_id,
-        stage_id=plan.stage_id,
-        base_plan_id=plan.plan_id,
-        base_plan_version=plan.version,
         reason_code="replan",
         source_candidate_ref="candidate://graph-only-plan-patch",
         operations=(
@@ -255,25 +250,10 @@ def test_graph_only_candidate_validates_to_graph_only_plan() -> None:
             ),
         ),
     )
-    projection = TaskPlanProjection(
-        run_id=plan.run_id,
-        stage_id=plan.stage_id,
-        graph_checksum=plan.graph_checksum,
-        plan_id=plan.plan_id,
-        plan_version=plan.version,
-        plan_checksum=plan.plan_checksum,
-        policy_ref=plan.policy_ref,
-        tasks=tuple(
-            TaskProjection(
-                task_id=task.task_id,
-                task_definition_checksum=task.task_definition_checksum,
-                status=TaskLifecycle.PENDING,
-            )
-            for task in plan.tasks
-        ),
-        consumed_budget={},
-        last_sequence=0,
-    )
+    store = InMemoryTaskPlanStore()
+    assert store.append_candidate(candidate) == candidate.candidate_checksum
+    assert store.accept_plan(plan) == plan.plan_checksum
+    projection = store.load_projection(plan.run_id, plan.stage_id)
     next_plan = TaskPlanPatchValidator().apply(
         plan,
         patch,
@@ -288,9 +268,6 @@ def test_graph_only_candidate_validates_to_graph_only_plan() -> None:
     assert next_plan.matches_stage_identity(request.stage_identity)
     assert next_plan.stage_identity_checksum == plan.stage_identity_checksum
 
-    store = InMemoryTaskPlanStore()
-    assert store.append_candidate(candidate) == candidate.candidate_checksum
-    assert store.accept_plan(plan) == plan.plan_checksum
     events = store.read_events(candidate.run_id, candidate.stage_id)
     assert [event.event_type for event in events] == [
         "PLAN_CANDIDATE_BUILT",

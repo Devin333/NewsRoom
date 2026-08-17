@@ -16,10 +16,12 @@ from framework.harness.task_plan import (
     TaskLifecycle,
     TaskOutputContract,
     TaskPlanCheckpoint,
+    TASK_PLAN_CHECKPOINT_SCHEMA_V1,
     TaskPlanEvent,
     TaskPlanPolicy,
     TaskPlanRecoveryService,
     TaskPlanReplayReducer,
+    TASK_PLAN_REPLAY_REDUCER_VERSION_V1,
     TaskPlanValidationContext,
     TaskPlanValidator,
     TaskResultRecord,
@@ -206,6 +208,43 @@ def test_checkpoint_roundtrip_and_missing_queue_projection_recovery_are_offline(
     )
     restored = TaskPlanCheckpoint.from_dict(checkpoint.to_dict())
 
+    assert report.reducer_version == TASK_PLAN_REPLAY_REDUCER_VERSION_V1
+    assert report.replay_checksum == (
+        "sha256:e5ad569f4c4aaf92dd634a4041399751491d52c4485e6e3c736b732840e3cb98"
+    )
+    assert checkpoint.schema_version == TASK_PLAN_CHECKPOINT_SCHEMA_V1
+    assert checkpoint.checkpoint_checksum == (
+        "sha256:b4147439158783492ae0efaa23b48cb32b64896815c2688c430c772b9aac0d66"
+    )
+    assert set(checkpoint.to_dict()) == {
+        "accepted_output_refs",
+        "active_task_instances",
+        "aggregate_checksum",
+        "aggregate_ref",
+        "budget_snapshot",
+        "checkpoint_checksum",
+        "checkpoint_id",
+        "created_at",
+        "event_history_checksum",
+        "graph_checksum",
+        "last_sequence",
+        "pending_terminal_results",
+        "plan_checksum",
+        "plan_id",
+        "plan_version",
+        "policy_ref",
+        "projection",
+        "ready_order",
+        "reducer_version",
+        "replan_count",
+        "replay_checksum",
+        "retry_counts",
+        "run_id",
+        "schema_version",
+        "stage_id",
+        "workflow_id",
+    }
+
     recovery = TaskPlanRecoveryService().recover(
         (plan,),
         events,
@@ -220,6 +259,26 @@ def test_checkpoint_roundtrip_and_missing_queue_projection_recovery_are_offline(
     assert queue_task.payload == {}
     assert queue_task.metadata["fencing_token"] == instance.fencing_token
     assert worker.calls == 0
+
+
+def test_legacy_replay_rejects_plan_history_with_changed_graph_checksum():
+    plan, events, _ = _history_fixture()
+    changed_graph_plan = replace(
+        plan,
+        plan_id="recover-plan-2",
+        version=2,
+        parent_plan_id=plan.plan_id,
+        graph_checksum="sha256:" + "f" * 64,
+    )
+
+    with pytest.raises(HarnessValidationError) as captured:
+        TaskPlanReplayReducer().replay(
+            (plan, changed_graph_plan),
+            events,
+            require_latest_plan=False,
+        )
+
+    assert captured.value.code == "task_plan_replay_identity_mismatch"
 
 
 def test_recovery_preserves_committed_result_until_terminal_event_without_redispatch():

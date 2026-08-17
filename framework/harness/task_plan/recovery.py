@@ -106,6 +106,14 @@ class TaskPlanRecoveryService:
                 "TaskPlan recovery requires accepted plan history",
                 code="task_plan_recovery_plan_missing",
             )
+        first_plan = plan_history[0]
+        if not isinstance(first_plan, ValidatedTaskPlan):
+            raise TypeError("plans must contain ValidatedTaskPlan values")
+        if first_plan.is_graph_only:
+            raise HarnessValidationError(
+                "Graph-only TaskPlan recovery requires the queue and reclaim contract",
+                code="graph_task_plan_recovery_contract_unavailable",
+            )
         queued = {identifier(item, "queued_instance_ids") for item in queued_instance_ids}
         checkpoint_verified = False
         recovered_from_sequence = 0

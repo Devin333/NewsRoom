@@ -26,17 +26,21 @@ from framework.events.runtime.models import (
 from framework.events.runtime.publisher import EventPublishRequest, EventRuntime
 from framework.events.schema import default_event_schema_catalog
 from framework.harness.control_plane.errors import HarnessValidationError
+from framework.harness.task_plan.canonical import canonical_payload_checksum
 from framework.harness.task_plan import (
     DurableTaskPlanStore,
     GRAPH_ONLY_TASK_INSTANCE_SCHEMA,
+    GRAPH_ONLY_TASK_PLAN_PATCH_SCHEMA,
     GRAPH_ONLY_TASK_PLAN_PROJECTION_SCHEMA,
     GRAPH_ONLY_TASK_PROJECTION_SCHEMA,
     InMemoryTaskPlanStore,
+    TASK_PLAN_CHECKPOINT_SCHEMA_V2,
     TASK_INSTANCE_SCHEMA,
     TASK_PLAN_EVENT_SCHEMA_V1,
     TASK_PLAN_EVENT_SCHEMA_V2,
     TASK_PLAN_PROJECTION_SCHEMA,
     TASK_PROJECTION_SCHEMA,
+    TASK_PLAN_REPLAY_REDUCER_VERSION_V2,
     TASK_PLAN_RESULT_SCHEMA_V1,
     TASK_PLAN_RESULT_SCHEMA_V2,
     PlanBuildBudget,
@@ -51,7 +55,9 @@ from framework.harness.task_plan import (
     TaskLifecycle,
     TaskOutputContract,
     TaskPlanEvent,
+    TaskPlanCheckpoint,
     TaskPlanReadyDecision,
+    TaskPlanRecoveryService,
     TaskPlanReplayReducer,
     TaskPlanScheduler,
     TaskPlanValidationContext,
@@ -676,6 +682,182 @@ def test_graph_only_candidate_and_plan_round_trip_through_durable_event_store():
     assert mismatch.value.code == "task_plan_event_identity_mismatch"
 
 
+def test_graph_only_patch_is_bound_to_its_base_plan_and_replays_after_replan():
+    artifacts = _ArtifactStore()
+    event_store = _EventStore()
+    store = _store(event_store, artifacts)
+    legacy_candidate, legacy_plan, policy, registry = _accepted_plan(
+        (
+            _task("structure"),
+            _task(
+                "helper",
+                capability="research.helper",
+                role="analysis.helper",
+            ),
+        ),
+        two_tasks=True,
+    )
+    graph = HarnessGraphCompiler().compile(
+        build_dynamic_paper_analysis_graph_definition()
+    ).graph
+    identity = TaskPlanStageIdentity(
+        run_id=legacy_candidate.run_id,
+        stage_binding=TaskPlanStageBinding(graph, RESEARCH_DYNAMIC_STAGE_ID),
+    )
+    candidate = PlanCandidate.for_stage(
+        stage_identity=identity,
+        candidate_id="graph-patch-candidate-1",
+        input_context_refs=legacy_candidate.input_context_refs,
+        tasks=legacy_candidate.tasks,
+        required_output_roles=legacy_candidate.required_output_roles,
+        generated_by=legacy_candidate.generated_by,
+        requested_plan_budget=legacy_candidate.requested_plan_budget,
+    )
+    plan = ValidatedTaskPlan.from_candidate(
+        candidate,
+        plan_id="graph-patch-plan-1",
+        version=1,
+        parent_plan_id=None,
+        source_candidate_ref=candidate.candidate_checksum,
+        policy_ref=legacy_plan.policy_ref,
+        policy_checksum=legacy_plan.policy_checksum,
+        tasks=legacy_plan.tasks,
+        required_output_roles=legacy_plan.required_output_roles,
+        limits=legacy_plan.limits,
+        accepted_at=legacy_plan.accepted_at,
+    )
+    store.append_candidate(candidate)
+    store.accept_plan(plan)
+
+    patch = PlanPatch.for_plan(
+        plan,
+        patch_id="graph-patch-1",
+        reason_code="repair",
+        source_candidate_ref="candidate://graph-patch-1",
+        operations=(
+            PlanPatchOperation(
+                PlanPatchOperationType.UPDATE_PENDING_DEPENDENCY,
+                target_task_id="helper",
+                depends_on=("structure",),
+            ),
+        ),
+    )
+    assert patch.schema_version == GRAPH_ONLY_TASK_PLAN_PATCH_SCHEMA
+    assert "workflow_id" not in patch.to_dict()
+    assert PlanPatch.from_dict(patch.to_dict()) == patch
+    assert patch.matches_plan_identity(plan)
+
+    projection = store.load_projection(plan.run_id, plan.stage_id)
+    next_plan = TaskPlanPatchValidator().apply(
+        plan,
+        patch,
+        projection,
+        policy,
+        registry,
+        accepted_at="2026-08-02T00:01:00Z",
+        available_input_refs=("document",),
+    )
+    assert next_plan.shares_stage_identity(plan)
+
+    forged_plan_payload = next_plan.to_dict()
+    forged_plan_payload["graph_id"] = "research.other.dynamic"
+    forged_plan_payload["graph_ref"] = (
+        f"research.other.dynamic@{next_plan.graph_version}"
+    )
+    forged_plan_payload["stage_identity_checksum"] = canonical_payload_checksum(
+        {
+            "schema_version": forged_plan_payload["stage_identity_schema"],
+            "run_id": forged_plan_payload["run_id"],
+            "graph_schema_version": forged_plan_payload["graph_schema_version"],
+            "compiler_version": forged_plan_payload["compiler_version"],
+            "condition_policy_version": forged_plan_payload[
+                "condition_policy_version"
+            ],
+            "graph_id": forged_plan_payload["graph_id"],
+            "graph_version": forged_plan_payload["graph_version"],
+            "graph_checksum": forged_plan_payload["graph_checksum"],
+            "stage_id": forged_plan_payload["stage_id"],
+            "stage_binding_checksum": forged_plan_payload["stage_binding_checksum"],
+            "graph_ref": forged_plan_payload["graph_ref"],
+        }
+    )
+    forged_plan_payload["plan_checksum"] = canonical_payload_checksum(
+        {
+            key: value
+            for key, value in forged_plan_payload.items()
+            if key != "plan_checksum"
+        }
+    )
+    forged_plan = ValidatedTaskPlan.from_dict(forged_plan_payload)
+    memory_store = InMemoryTaskPlanStore()
+    memory_store.append_candidate(candidate)
+    memory_store.accept_plan(plan)
+    for candidate_store in (store, memory_store):
+        with pytest.raises(HarnessValidationError) as forged_plan_error:
+            candidate_store.accept_patched_plan(patch, forged_plan)
+        assert forged_plan_error.value.code == "task_plan_patch_scope_mismatch"
+
+    assert store.accept_patched_plan(patch, next_plan) == next_plan.plan_checksum
+
+    reopened = _store(event_store, artifacts)
+    events = reopened.read_events(plan.run_id, plan.stage_id)
+    replay = TaskPlanReplayReducer().replay(
+        (plan, next_plan),
+        events,
+        patches=(patch,),
+    )
+    assert replay.projection.matches_plan_identity(next_plan)
+    assert replay.projection.plan_version == 2
+    assert [event.event_type for event in events[-2:]] == [
+        "PLAN_PATCH_ACCEPTED",
+        "PLAN_ACCEPTED",
+    ]
+
+    alias_payload = patch.to_dict()
+    alias_payload["workflow_id"] = "legacy-workflow"
+    with pytest.raises(HarnessValidationError) as alias_error:
+        PlanPatch.from_dict(alias_payload)
+    assert alias_error.value.code == "invalid_task_plan_payload_fields"
+
+    cross_graph_payload = patch.to_dict()
+    cross_graph_payload["graph_id"] = "research.other.dynamic"
+    cross_graph_payload["graph_ref"] = (
+        f"research.other.dynamic@{patch.graph_version}"
+    )
+    cross_graph_payload["stage_identity_checksum"] = canonical_payload_checksum(
+        {
+            "schema_version": cross_graph_payload["stage_identity_schema"],
+            "run_id": cross_graph_payload["run_id"],
+            "graph_schema_version": cross_graph_payload["graph_schema_version"],
+            "compiler_version": cross_graph_payload["compiler_version"],
+            "condition_policy_version": cross_graph_payload[
+                "condition_policy_version"
+            ],
+            "graph_id": cross_graph_payload["graph_id"],
+            "graph_version": cross_graph_payload["graph_version"],
+            "graph_checksum": cross_graph_payload["graph_checksum"],
+            "stage_id": cross_graph_payload["stage_id"],
+            "stage_binding_checksum": cross_graph_payload["stage_binding_checksum"],
+            "graph_ref": cross_graph_payload["graph_ref"],
+        }
+    )
+    cross_graph_payload["patch_checksum"] = canonical_payload_checksum(
+        {
+            key: value
+            for key, value in cross_graph_payload.items()
+            if key != "patch_checksum"
+        }
+    )
+    cross_graph_patch = PlanPatch.from_dict(cross_graph_payload)
+    assert not cross_graph_patch.matches_plan_identity(plan)
+    cross_graph_store = _store(_EventStore(), _ArtifactStore())
+    cross_graph_store.append_candidate(candidate)
+    cross_graph_store.accept_plan(plan)
+    with pytest.raises(HarnessValidationError) as cross_graph_error:
+        cross_graph_store.append_patch(cross_graph_patch)
+    assert cross_graph_error.value.code == "task_plan_patch_scope_mismatch"
+
+
 def test_graph_only_task_lifecycle_and_result_round_trip_through_durable_store():
     artifacts = _ArtifactStore()
     event_store = _EventStore()
@@ -755,15 +937,176 @@ def test_graph_only_task_lifecycle_and_result_round_trip_through_durable_store()
         plan.plan_id,
         plan.version,
     ) == (result,)
-    with pytest.raises(HarnessValidationError) as replay_error:
-        TaskPlanReplayReducer().replay((plan,), events, results=(result,))
-    assert replay_error.value.code == "graph_task_plan_replay_contract_unavailable"
+    report = TaskPlanReplayReducer().replay(
+        (plan,),
+        events,
+        results=(result,),
+    )
+    assert report.reducer_version == TASK_PLAN_REPLAY_REDUCER_VERSION_V2
+    assert report.replay_checksum == (
+        "sha256:32d1af8d0de83739103b924527129a1de21240db0c1a9475f13284ee0ed59d90"
+    )
+    assert report.projection.projection_checksum == projection.projection_checksum
+    assert report.projection.matches_plan_identity(plan)
+    checkpoint = TaskPlanCheckpoint.from_replay(
+        "graph-checkpoint-1",
+        plan,
+        report,
+        created_at="2026-08-02T00:00:01Z",
+    )
+    checkpoint_payload = checkpoint.to_dict()
+    assert checkpoint.schema_version == TASK_PLAN_CHECKPOINT_SCHEMA_V2
+    assert checkpoint.reducer_version == TASK_PLAN_REPLAY_REDUCER_VERSION_V2
+    assert checkpoint.checkpoint_checksum == (
+        "sha256:330bf49a045026ca9d77d0c249678ad6d40f8a789400a158367b82182946e0b1"
+    )
+    assert checkpoint.graph_ref == plan.graph_ref
+    assert "workflow_id" not in checkpoint_payload
+    restored_checkpoint = TaskPlanCheckpoint.from_dict(checkpoint_payload)
+    assert restored_checkpoint == checkpoint
+    restored_checkpoint.verify_replay(report)
+
+    aliased_checkpoint = dict(checkpoint_payload)
+    aliased_checkpoint["workflow_id"] = "legacy-workflow"
+    with pytest.raises(HarnessValidationError) as checkpoint_alias_error:
+        TaskPlanCheckpoint.from_dict(aliased_checkpoint)
+    assert checkpoint_alias_error.value.code == "invalid_task_plan_payload_fields"
+
+    unknown_checkpoint = dict(checkpoint_payload)
+    unknown_checkpoint["schema_version"] = (
+        "newsroom.harness-task-plan-checkpoint/v999"
+    )
+    with pytest.raises(HarnessValidationError) as checkpoint_version_error:
+        TaskPlanCheckpoint.from_dict(unknown_checkpoint)
+    assert (
+        checkpoint_version_error.value.code
+        == "unsupported_task_plan_checkpoint_schema"
+    )
+
+    cross_graph_checkpoint = dict(checkpoint_payload)
+    cross_graph_checkpoint["graph_id"] = "research.other.dynamic"
+    cross_graph_checkpoint["graph_ref"] = (
+        f"research.other.dynamic@{checkpoint.graph_version}"
+    )
+    with pytest.raises(HarnessValidationError) as checkpoint_identity_error:
+        TaskPlanCheckpoint.from_dict(cross_graph_checkpoint)
+    assert (
+        checkpoint_identity_error.value.code
+        == "task_plan_checkpoint_identity_mismatch"
+    )
+
+    with pytest.raises(HarnessValidationError) as missing_terminal_error:
+        TaskPlanReplayReducer().replay(
+            (plan,),
+            events[:-1],
+            results=(result,),
+        )
+    assert (
+        missing_terminal_error.value.code
+        == "task_plan_replay_terminal_event_missing"
+    )
+    pending_projection = TaskPlanReplayReducer().reduce(
+        plan,
+        events[:-1],
+        results=(result,),
+        require_terminal_events=False,
+    )
+    assert pending_projection.tasks[0].status is TaskLifecycle.RUNNING
+    assert pending_projection.tasks[0].result is None
+    pending_report = TaskPlanReplayReducer().replay(
+        (plan,),
+        events[:-1],
+        results=(result,),
+        require_terminal_events=False,
+        apply_unterminated_results=False,
+    )
+    pending_checkpoint = TaskPlanCheckpoint.from_replay(
+        "graph-checkpoint-pending-result",
+        plan,
+        pending_report,
+        created_at="2026-08-02T00:00:02Z",
+    )
+    assert pending_checkpoint.active_task_instances == (instance,)
+    assert pending_checkpoint.pending_terminal_results == (result,)
+    assert TaskPlanCheckpoint.from_dict(pending_checkpoint.to_dict()) == (
+        pending_checkpoint
+    )
+    with pytest.raises(HarnessValidationError) as inferred_terminal_error:
+        TaskPlanReplayReducer().replay(
+            (plan,),
+            events[:-1],
+            results=(result,),
+            require_terminal_events=False,
+            apply_unterminated_results=True,
+        )
+    assert (
+        inferred_terminal_error.value.code
+        == "task_plan_replay_terminal_event_missing"
+    )
     assert any("/result/" in path for _, path in artifacts._content)
     assert all(
         stored.business_context.workflow_id is None
         and stored.business_context.step_id is None
         for stored in event_store._events
     )
+
+
+def test_graph_only_recovery_remains_closed_until_queue_and_reclaim_are_available():
+    artifacts = _ArtifactStore()
+    event_store = _EventStore()
+    store = _store(event_store, artifacts)
+    candidate, plan = _graph_only_candidate_and_plan()
+    store.append_candidate(candidate)
+    store.accept_plan(plan)
+    accepted_events = store.read_events(plan.run_id, plan.stage_id)
+    instance = _start(store, plan, plan.tasks[0].task_id)
+    running_events = store.read_events(plan.run_id, plan.stage_id)
+    result = _result(plan, instance, status=TaskLifecycle.SUCCEEDED)
+    store.append_result(result)
+    terminal_events = store.read_events(plan.run_id, plan.stage_id)
+    pending_result_events = terminal_events[:-1]
+    pending_report = TaskPlanReplayReducer().replay(
+        (plan,),
+        pending_result_events,
+        results=(result,),
+        require_terminal_events=False,
+        apply_unterminated_results=False,
+    )
+    pending_checkpoint = TaskPlanCheckpoint.from_replay(
+        "graph-recovery-pending-result",
+        plan,
+        pending_report,
+        created_at="2026-08-02T00:00:03Z",
+    )
+    terminal_report = TaskPlanReplayReducer().replay(
+        (plan,),
+        terminal_events,
+        results=(result,),
+    )
+    terminal_checkpoint = TaskPlanCheckpoint.from_replay(
+        "graph-recovery-terminal",
+        plan,
+        terminal_report,
+        created_at="2026-08-02T00:00:04Z",
+    )
+    histories = (
+        ("pending", accepted_events, (), None),
+        ("ready", running_events[:3], (), None),
+        ("dispatched", running_events[:4], (), None),
+        ("running", running_events, (), None),
+        ("pending_result", pending_result_events, (result,), pending_checkpoint),
+        ("terminal", terminal_events, (result,), terminal_checkpoint),
+    )
+
+    for state, events, results, checkpoint in histories:
+        with pytest.raises(HarnessValidationError) as error:
+            TaskPlanRecoveryService().recover(
+                (plan,),
+                events,
+                results=results,
+                checkpoint=checkpoint,
+            )
+        assert error.value.code == "graph_task_plan_recovery_contract_unavailable", state
 
 
 def test_graph_only_lifecycle_rejects_legacy_event_before_store_mutation():

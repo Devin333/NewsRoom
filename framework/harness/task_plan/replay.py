@@ -38,7 +38,25 @@ from framework.harness.task_plan.store import (
 from framework.harness.task_plan.models import PlanPatch
 
 
-TASK_PLAN_REPLAY_REDUCER_VERSION = "newsroom.harness-task-plan-replay/v1"
+TASK_PLAN_REPLAY_REDUCER_VERSION_V1 = "newsroom.harness-task-plan-replay/v1"
+TASK_PLAN_REPLAY_REDUCER_VERSION_V2 = "newsroom.harness-task-plan-replay/v2"
+TASK_PLAN_REPLAY_REDUCER_VERSION = TASK_PLAN_REPLAY_REDUCER_VERSION_V1
+TASK_PLAN_REPLAY_REDUCER_VERSIONS = (
+    TASK_PLAN_REPLAY_REDUCER_VERSION_V1,
+    TASK_PLAN_REPLAY_REDUCER_VERSION_V2,
+)
+_GRAPH_REPLAY_IDENTITY_FIELDS = (
+    "graph_id",
+    "graph_version",
+    "graph_ref",
+    "graph_schema_version",
+    "compiler_version",
+    "condition_policy_version",
+    "graph_checksum",
+    "stage_binding_checksum",
+    "stage_identity_schema",
+    "stage_identity_checksum",
+)
 _ACTIVE_TASK_STATES = frozenset(
     {TaskLifecycle.READY, TaskLifecycle.DISPATCHED, TaskLifecycle.RUNNING}
 )
@@ -110,11 +128,35 @@ class TaskPlanReplayReport:
             identifier(task_id, "retry_counts.task_id"): non_negative_int(count, "retry_counts.count")
             for task_id, count in self.retry_counts.items()
         }
-        if self.reducer_version != TASK_PLAN_REPLAY_REDUCER_VERSION:
+        expected_reducer_version = (
+            TASK_PLAN_REPLAY_REDUCER_VERSION_V2
+            if self.projection.is_graph_only
+            else TASK_PLAN_REPLAY_REDUCER_VERSION_V1
+        )
+        if self.reducer_version != expected_reducer_version:
             raise HarnessValidationError(
                 "unsupported TaskPlan replay reducer",
                 code="unsupported_task_plan_replay_reducer",
-                details={"reducer_version": str(self.reducer_version)},
+                details={
+                    "expected": expected_reducer_version,
+                    "reducer_version": str(self.reducer_version),
+                },
+            )
+        if any(
+            not item.matches_plan_projection_identity(self.projection)
+            for item in instances
+        ):
+            raise HarnessValidationError(
+                "TaskPlan replay active attempt identity does not match projection",
+                code="task_plan_replay_identity_mismatch",
+            )
+        if any(
+            not _result_matches_projection_identity(item, self.projection)
+            for item in pending_results
+        ):
+            raise HarnessValidationError(
+                "TaskPlan replay pending result identity does not match projection",
+                code="task_plan_replay_result_mismatch",
             )
         object.__setattr__(self, "active_task_instances", instances)
         object.__setattr__(self, "ready_order", ready_order)
@@ -204,13 +246,20 @@ class TaskPlanReplayReducer:
         require_terminal_events: bool = False,
     ) -> TaskPlanProjection:
         plan_history = (plan,) if isinstance(plan, ValidatedTaskPlan) else tuple(plan)
+        graph_only = bool(
+            plan_history
+            and isinstance(plan_history[0], ValidatedTaskPlan)
+            and plan_history[0].is_graph_only
+        )
         return self.replay(
             plan_history,
             events,
             results=results,
             patches=patches,
             require_terminal_events=require_terminal_events,
-            apply_unterminated_results=not require_terminal_events,
+            apply_unterminated_results=(
+                not require_terminal_events and not graph_only
+            ),
         ).projection
 
     def replay(
@@ -226,11 +275,6 @@ class TaskPlanReplayReducer:
         require_latest_plan: bool = True,
     ) -> TaskPlanReplayReport:
         plan_history = _validated_plan_history(plans)
-        if any(plan.is_graph_only for plan in plan_history):
-            raise HarnessValidationError(
-                "Graph-only TaskPlan replay contract is not available",
-                code="graph_task_plan_replay_contract_unavailable",
-            )
         plans_by_version = {item.version: item for item in plan_history}
         ordered_events = _validated_event_prefix(
             tuple(events),
@@ -483,6 +527,16 @@ class TaskPlanReplayReducer:
                     details={"task_instance_ids": sorted({key[0] for key in pending_results})},
                 )
             if apply_unterminated_results:
+                if current_plan.is_graph_only:
+                    raise HarnessValidationError(
+                        "Graph-only TaskPlan replay requires durable terminal events",
+                        code="task_plan_replay_terminal_event_missing",
+                        details={
+                            "task_instance_ids": sorted(
+                                {key[0] for key in pending_results}
+                            )
+                        },
+                    )
                 projection = _apply_legacy_pending_results(
                     projection,
                     pending_results.values(),
@@ -538,6 +592,11 @@ class TaskPlanReplayReducer:
             event_history_checksum=history_checksum,
             aggregate_ref=aggregate_ref,
             aggregate_checksum=aggregate_checksum,
+            reducer_version=(
+                TASK_PLAN_REPLAY_REDUCER_VERSION_V2
+                if current_plan.is_graph_only
+                else TASK_PLAN_REPLAY_REDUCER_VERSION_V1
+            ),
         )
 
     def decision_checksum(self, projection: TaskPlanProjection) -> str:
@@ -563,11 +622,16 @@ def _validated_plan_history(plans: Iterable[ValidatedTaskPlan]) -> tuple[Validat
     for index, plan in enumerate(ordered):
         if (
             plan.run_id != first.run_id
-            or plan.workflow_id != first.workflow_id
             or plan.stage_id != first.stage_id
             or plan.graph_checksum != first.graph_checksum
             or plan.policy_ref != first.policy_ref
             or plan.policy_checksum != first.policy_checksum
+            or plan.is_graph_only != first.is_graph_only
+            or (
+                plan.workflow_id != first.workflow_id
+                if not first.is_graph_only
+                else not _same_graph_replay_identity(plan, first)
+            )
         ):
             raise HarnessValidationError(
                 "TaskPlan replay plan history has incompatible pinned identity",
@@ -619,12 +683,7 @@ def _validated_event_prefix(
                 code="task_plan_replay_event_checksum_mismatch",
                 details={"sequence": event.sequence},
             )
-        if (
-            event.run_id != identity.run_id
-            or event.workflow_id != identity.workflow_id
-            or event.stage_id != identity.stage_id
-            or event.graph_checksum != identity.graph_checksum
-        ):
+        if not event.matches_contract_identity(identity):
             raise HarnessValidationError(
                 "TaskPlan event identity does not match accepted plan",
                 code="task_plan_replay_identity_mismatch",
@@ -637,7 +696,7 @@ def _validated_results(
     results: Iterable[TaskResultRecord],
     plans: tuple[ValidatedTaskPlan, ...],
 ) -> dict[tuple[str, int, int], TaskResultRecord]:
-    first = plans[0]
+    plans_by_version = {item.version: item for item in plans}
     result_map: dict[tuple[str, int, int], TaskResultRecord] = {}
     for result in results:
         if not isinstance(result, TaskResultRecord):
@@ -649,11 +708,8 @@ def _validated_results(
                 code="task_plan_replay_result_checksum_mismatch",
                 details={"task_id": result.task_id},
             )
-        if (
-            result.run_id != first.run_id
-            or result.workflow_id != first.workflow_id
-            or result.stage_id != first.stage_id
-        ):
+        plan = plans_by_version.get(result.plan_version)
+        if plan is None or not result.matches_plan_identity(plan):
             raise HarnessValidationError(
                 "TaskPlan result identity does not match plan history",
                 code="task_plan_replay_result_mismatch",
@@ -674,7 +730,7 @@ def _validated_patches(
     patches: Iterable[PlanPatch],
     plans: tuple[ValidatedTaskPlan, ...],
 ) -> dict[str, PlanPatch]:
-    first = plans[0]
+    plans_by_version = {plan.version: plan for plan in plans}
     values: dict[str, PlanPatch] = {}
     for patch in patches:
         if not isinstance(patch, PlanPatch):
@@ -686,11 +742,8 @@ def _validated_patches(
                 code="task_plan_replay_patch_checksum_mismatch",
                 details={"patch_id": patch.patch_id},
             )
-        if (
-            patch.run_id != first.run_id
-            or patch.stage_id != first.stage_id
-            or patch.base_plan_version < 1
-        ):
+        base_plan = plans_by_version.get(patch.base_plan_version)
+        if base_plan is None or not patch.matches_plan_identity(base_plan):
             raise HarnessValidationError(
                 "TaskPlan patch identity does not match plan history",
                 code="task_plan_replay_patch_mismatch",
@@ -956,12 +1009,12 @@ def _verify_replay_subagent_evidence(
         or transcript.output_ref != output.ref
         or transcript.output_checksum != output.output_checksum
         or transcript.identity.parent_run_id != result.run_id
-        or transcript.identity.workflow_id != result.workflow_id
         or transcript.identity.stage_id != result.stage_id
         or transcript.identity.task_instance_id != result.task_instance_id
         or transcript.identity.attempt != result.attempt
         or transcript.identity.task_id != result.task_id
         or transcript.identity.subagent_id != definition.subagent_id
+        or not _subagent_identity_matches_result(transcript.identity, result)
         or (
             result.status is TaskLifecycle.SUCCEEDED
             and output.status != "succeeded"
@@ -1286,8 +1339,46 @@ class _LegacyTerminalEvent:
         )
 
 
+def _same_graph_replay_identity(left: Any, right: Any) -> bool:
+    return all(
+        getattr(left, field_name) == getattr(right, field_name)
+        for field_name in _GRAPH_REPLAY_IDENTITY_FIELDS
+    )
+
+
+def _result_matches_projection_identity(
+    result: TaskResultRecord,
+    projection: TaskPlanProjection,
+) -> bool:
+    if (
+        result.is_graph_only != projection.is_graph_only
+        or result.run_id != projection.run_id
+        or result.stage_id != projection.stage_id
+        or result.plan_id != projection.plan_id
+        or result.plan_version != projection.plan_version
+    ):
+        return False
+    if not result.is_graph_only:
+        return True
+    return _same_graph_replay_identity(result, projection)
+
+
+def _subagent_identity_matches_result(identity: Any, result: TaskResultRecord) -> bool:
+    if identity.is_graph_only != result.is_graph_only:
+        return False
+    if not result.is_graph_only:
+        return identity.workflow_id == result.workflow_id
+    return identity.workflow_id is None and _same_graph_replay_identity(
+        identity,
+        result,
+    )
+
+
 __all__ = [
     "TASK_PLAN_REPLAY_REDUCER_VERSION",
+    "TASK_PLAN_REPLAY_REDUCER_VERSION_V1",
+    "TASK_PLAN_REPLAY_REDUCER_VERSION_V2",
+    "TASK_PLAN_REPLAY_REDUCER_VERSIONS",
     "TaskPlanReplayReducer",
     "TaskPlanReplayReport",
 ]

@@ -35,11 +35,11 @@ class TaskPlanPatchValidator:
         if not isinstance(plan, ValidatedTaskPlan) or not isinstance(patch, PlanPatch) or not isinstance(projection, TaskPlanProjection):
             raise TypeError("plan, patch and projection must use TaskPlan contracts")
         self.require_policy_identity(plan, policy)
-        if patch.run_id != plan.run_id or patch.stage_id != plan.stage_id:
-            raise HarnessValidationError("patch scope does not match plan", code="task_plan_patch_scope_mismatch")
         if patch.base_plan_id != plan.plan_id or patch.base_plan_version != plan.version:
             raise HarnessValidationError("patch base plan is stale", code="task_plan_stale_patch")
-        if projection.plan_id != plan.plan_id or projection.plan_version != plan.version:
+        if not patch.matches_plan_identity(plan):
+            raise HarnessValidationError("patch scope does not match plan", code="task_plan_patch_scope_mismatch")
+        if not projection.matches_plan_identity(plan):
             raise HarnessValidationError("projection does not match patch base", code="task_plan_projection_mismatch")
         if plan.version - 1 >= policy.max_replans:
             raise HarnessValidationError(

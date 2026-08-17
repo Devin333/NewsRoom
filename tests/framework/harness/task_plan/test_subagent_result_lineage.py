@@ -72,6 +72,7 @@ from framework.harness.subagents.transcript import (
 )
 from framework.harness.subagents.models import SUBAGENT_INVOCATION_SCHEMA_V2
 from framework.harness.task_plan import task_plan_subagent_attempt_identity
+from framework.harness.task_plan import TASK_PLAN_REPLAY_REDUCER_VERSION_V2
 from infrastructure.storage.harness import FilesystemSubAgentTranscriptStore
 from infrastructure.storage.events import SQLiteEventStore
 from tests.fixtures.task_plan import build_task_plan_stage_binding
@@ -342,7 +343,7 @@ def _worker_result_from_child(child, *, recovered: bool = False) -> HarnessWorke
     )
 
 
-def _graph_only_plan_for_fixture(fixture):
+def _graph_only_candidate_plan_for_fixture(fixture):
     policy = replace(fixture["policy"], stage_id=RESEARCH_DYNAMIC_STAGE_ID)
     definition = build_dynamic_paper_analysis_graph_definition()
     task_plan_binding = replace(
@@ -384,6 +385,11 @@ def _graph_only_plan_for_fixture(fixture):
         accepted_at=fixture["plan"].accepted_at,
     )
     instance = task_instance_for_attempt(plan, plan.tasks[0].task_id, 1)
+    return candidate, plan, instance
+
+
+def _graph_only_plan_for_fixture(fixture):
+    _, plan, instance = _graph_only_candidate_plan_for_fixture(fixture)
     return plan, instance
 
 
@@ -452,14 +458,9 @@ def _start_attempt(store, plan, instance) -> None:
         sequence = len(store.read_events(plan.run_id, plan.stage_id)) + 1
         projection = replace(projection, last_sequence=sequence)
         store.commit_event(
-            TaskPlanEvent(
+            TaskPlanEvent.for_plan(
                 event_type,
-                run_id=plan.run_id,
-                workflow_id=plan.workflow_id,
-                stage_id=plan.stage_id,
-                graph_checksum=plan.graph_checksum,
-                plan_id=plan.plan_id,
-                plan_version=plan.version,
+                plan,
                 task_id=instance.task_id,
                 task_instance_id=instance.task_instance_id,
                 attempt=instance.attempt,
@@ -722,6 +723,74 @@ def test_graph_only_verifier_binds_v2_transcript_to_v3_result(
     assert record.subagent_output_ref == receipt.output_ref
     assert record.transcript_ref.startswith("subagent-transcript://v2/")
     assert "workflow_id" not in record.to_dict()
+
+
+def test_graph_only_offline_replay_verifies_v2_transcript_without_worker_call(
+    tmp_path: Path,
+) -> None:
+    fixture = _fixture(tmp_path)
+    candidate, plan, instance = _graph_only_candidate_plan_for_fixture(fixture)
+    store = InMemoryTaskPlanStore()
+    store.append_candidate(candidate)
+    store.accept_plan(plan)
+    _start_attempt(store, plan, instance)
+    _, _, worker_result = _write_graph_only_attempt(fixture, plan, instance)
+    record = fixture["verifier"].verify(
+        worker_result,
+        task=plan.tasks[0],
+        request=TaskPlanResultVerificationRequest(
+            plan=plan,
+            task=plan.tasks[0],
+            instance=instance,
+            worker_result=worker_result,
+        ),
+    )
+    store.append_result(record)
+    events = store.read_events(plan.run_id, plan.stage_id)
+    worker_calls = fixture["worker"].calls
+
+    report = TaskPlanReplayReducer(fixture["transcript_store"]).replay(
+        (plan,),
+        events,
+        results=(record,),
+    )
+
+    assert report.reducer_version == TASK_PLAN_REPLAY_REDUCER_VERSION_V2
+    assert report.projection.matches_plan_identity(plan)
+    assert report.projection.tasks[0].status is TaskLifecycle.SUCCEEDED
+    assert fixture["worker"].calls == worker_calls == 0
+
+    other_graph_id = "research.other.dynamic"
+    other_graph_ref = f"{other_graph_id}@{record.graph_version}"
+    other_stage_identity_checksum = canonical_payload_checksum(
+        {
+            "schema_version": record.stage_identity_schema,
+            "run_id": record.run_id,
+            "graph_schema_version": record.graph_schema_version,
+            "compiler_version": record.compiler_version,
+            "condition_policy_version": record.condition_policy_version,
+            "graph_id": other_graph_id,
+            "graph_version": record.graph_version,
+            "graph_checksum": record.graph_checksum,
+            "stage_id": record.stage_id,
+            "stage_binding_checksum": record.stage_binding_checksum,
+            "graph_ref": other_graph_ref,
+        }
+    )
+    cross_graph_result = replace(
+        record,
+        graph_id=other_graph_id,
+        graph_ref=other_graph_ref,
+        stage_identity_checksum=other_stage_identity_checksum,
+    )
+    with pytest.raises(HarnessValidationError) as result_identity_error:
+        TaskPlanReplayReducer(fixture["transcript_store"]).replay(
+            (plan,),
+            events,
+            results=(cross_graph_result,),
+        )
+    assert result_identity_error.value.code == "task_plan_replay_result_mismatch"
+    assert fixture["worker"].calls == worker_calls
 
 
 def test_graph_only_verifier_rejects_cross_graph_transcript_identity(
