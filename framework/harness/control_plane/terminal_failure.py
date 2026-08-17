@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 from typing import Any, Self
 
 from framework.harness.control_plane.errors import HarnessValidationError
-from framework.harness.control_plane.graph_decision import HarnessGraphDecisionType
+from framework.harness.graph.decision import HarnessGraphDecisionType
 from framework.harness.control_plane.graph_runtime import (
     HarnessGraphCommitKind,
     HarnessGraphDecisionCommit,

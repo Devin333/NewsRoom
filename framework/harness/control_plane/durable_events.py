@@ -67,7 +67,7 @@ from framework.harness.control_plane.activity import (
     harness_activity_input_checksum,
     validate_activity_call_marker,
 )
-from framework.harness.control_plane.graph_decision import HarnessGraphDecision
+from framework.harness.graph.decision import HarnessGraphDecision
 from framework.harness.control_plane.graph_evaluator import (
     HarnessAcceptedGraphObservation,
     HarnessGraphObservationType,

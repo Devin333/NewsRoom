@@ -21,7 +21,7 @@ from framework.harness.control_plane.graph_checkpoint import (
     graph_history_evidence_ref,
     quarantine_graph_replay_failure,
 )
-from framework.harness.control_plane.graph_decision import (
+from framework.harness.graph.decision import (
     HarnessGraphDecision,
     HarnessGraphDecisionType,
 )

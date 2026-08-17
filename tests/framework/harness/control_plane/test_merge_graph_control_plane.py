@@ -18,7 +18,7 @@ from framework.harness.control_plane.graph_evaluator import (
     HarnessGraphObservationType,
     merge_branch_output_references,
 )
-from framework.harness.control_plane.graph_decision import HarnessGraphDecisionType
+from framework.harness.graph.decision import HarnessGraphDecisionType
 from framework.harness.control_plane.graph_state import (
     HarnessEvidenceKind,
     HarnessNodeInstanceStatus,

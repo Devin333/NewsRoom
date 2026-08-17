@@ -16,7 +16,7 @@ import framework.harness.control_plane.graph_evaluator as graph_evaluator_module
 import framework.harness.control_plane.scheduler as scheduler_module
 import framework.harness.control_plane.step_lifecycle as step_lifecycle_module
 from framework.harness.control_plane.errors import HarnessValidationError
-from framework.harness.control_plane.graph_decision import HarnessGraphDecisionType
+from framework.harness.graph.decision import HarnessGraphDecisionType
 from framework.harness.control_plane.graph_evaluator import (
     GraphEvaluation,
     HarnessAcceptedGraphObservation,

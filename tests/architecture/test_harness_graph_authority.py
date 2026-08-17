@@ -13,7 +13,7 @@ from framework.harness.graph.model import HarnessControlNode, HarnessExecutableN
 _FORBIDDEN_FRAMEWORK_IMPORTS = ("business", "interfaces", "infrastructure")
 _FORBIDDEN_BUSINESS_AUTHORITY_MODULES = frozenset(
     {
-        "framework.harness.control_plane.graph_decision",
+        "framework.harness.graph.decision",
         "framework.harness.control_plane.graph_evaluator",
         "framework.harness.control_plane.scheduler",
         "framework.harness.task_plan.scheduler",

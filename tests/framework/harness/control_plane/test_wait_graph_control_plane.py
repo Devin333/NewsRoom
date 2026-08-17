@@ -15,7 +15,7 @@ from framework.harness.control_plane.gate_registry import (
     GateRegistration,
 )
 from framework.harness.control_plane.gates import OutputSchemaGate
-from framework.harness.control_plane.graph_decision import HarnessGraphDecisionType
+from framework.harness.graph.decision import HarnessGraphDecisionType
 from framework.harness.control_plane.graph_evaluator import (
     HarnessAcceptedGraphObservation,
     HarnessGraphObservationType,

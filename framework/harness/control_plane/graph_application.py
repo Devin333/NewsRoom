@@ -17,7 +17,7 @@ from framework.harness.control_plane.compensation_runtime import (
     compensation_entry_for_node,
 )
 from framework.harness.control_plane.errors import HarnessValidationError
-from framework.harness.control_plane.graph_decision import (
+from framework.harness.graph.decision import (
     HarnessGraphDecision,
     HarnessGraphDecisionType,
 )

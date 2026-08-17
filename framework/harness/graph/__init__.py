@@ -82,6 +82,10 @@ from framework.harness.graph.model import (
     graph_node_from_dict,
 )
 from framework.harness.graph.reference import HarnessGraphReference
+from framework.harness.graph.decision import (
+    HarnessGraphDecision,
+    HarnessGraphDecisionType,
+)
 from framework.harness.graph.result_lineage import (
     HARNESS_GRAPH_RESULT_LINEAGE_SCHEMA,
     HarnessGraphArtifactRefProjection,
@@ -181,6 +185,8 @@ __all__ = [
     "HarnessGraphResultLineageStatus",
     "HarnessGraphResultPersistenceMode",
     "HarnessGraphResultSummary",
+    "HarnessGraphDecision",
+    "HarnessGraphDecisionType",
     "HarnessGraphTaskPlanStageBinding",
     "HarnessGraphEdge",
     "HarnessGraphEdgeKind",

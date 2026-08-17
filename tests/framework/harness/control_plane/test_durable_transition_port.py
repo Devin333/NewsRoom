@@ -21,7 +21,7 @@ from framework.harness.control_plane.durable_events import (
     DurableHarnessTransitionPort,
     HarnessEventCanonicalAdapter,
 )
-from framework.harness.control_plane.graph_decision import HarnessGraphDecisionType
+from framework.harness.graph.decision import HarnessGraphDecisionType
 from framework.harness.control_plane.graph_evaluator import (
     HarnessAcceptedGraphObservation,
     HarnessGraphObservationType,

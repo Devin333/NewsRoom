@@ -44,10 +44,6 @@ from framework.harness.control_plane.gate_registry import (
     GateReference,
     GateRegistration,
 )
-from framework.harness.control_plane.graph_decision import (
-    HarnessGraphDecision,
-    HarnessGraphDecisionType,
-)
 from framework.harness.control_plane.graph_checkpoint import (
     HARNESS_LEGACY_EVENT_EVIDENCE_SCHEMA,
     HarnessGraphCheckpoint,
@@ -297,11 +293,9 @@ __all__ = [
     "HarnessGraphCheckpointReadResult",
     "HarnessGraphCheckpointStore",
     "HarnessGraphDecisionInputSnapshot",
-    "HarnessGraphDecision",
     "HarnessGraphDecisionApplier",
     "HarnessGraphDecisionCommit",
     "HarnessGraphObservationCommit",
-    "HarnessGraphDecisionType",
     "HarnessGraphCommitKind",
     "HarnessGraphControlPlaneRuntime",
     "HarnessGraphEvaluationContext",

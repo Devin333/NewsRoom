@@ -10,7 +10,7 @@ from framework.harness.control_plane.graph_application import (
     HarnessGraphDecisionApplier,
 )
 from framework.harness.control_plane.gates import DeterministicGate, HarnessGateResult
-from framework.harness.control_plane.graph_decision import (
+from framework.harness.graph.decision import (
     HarnessGraphDecision,
     HarnessGraphDecisionType,
 )

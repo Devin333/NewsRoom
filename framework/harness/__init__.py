@@ -167,10 +167,8 @@ from framework.harness.control_plane import (
     HarnessGraphCheckpointReadResult,
     HarnessGraphCheckpointStore,
     HarnessGraphDecisionInputSnapshot,
-    HarnessGraphDecision,
     HarnessGraphDecisionApplier,
     HarnessGraphDecisionCommit,
-    HarnessGraphDecisionType,
     HarnessGraphEvaluator,
     HarnessGraphCommitKind,
     HarnessGraphControlPlaneRuntime,
@@ -435,6 +433,10 @@ from framework.harness.graph.result_lineage import (
     HarnessGraphResultLineageStatus,
     HarnessGraphResultPersistenceMode,
     HarnessGraphResultSummary,
+)
+from framework.harness.graph.decision import (
+    HarnessGraphDecision,
+    HarnessGraphDecisionType,
 )
 from framework.harness.side_effects import (
     CountingHarnessSideEffectHandler,

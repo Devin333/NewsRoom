@@ -6,7 +6,7 @@ import pytest
 
 from framework.events.canonical import checksum_for
 from framework.harness.control_plane.errors import HarnessValidationError
-from framework.harness.control_plane.graph_decision import HarnessGraphDecisionType
+from framework.harness.graph.decision import HarnessGraphDecisionType
 from framework.harness.control_plane.graph_operations import (
     HARNESS_GRAPH_RUN_OPERATION_CONTRACT_ID,
     HARNESS_GRAPH_RUN_OPERATION_CONTRACT_VERSION,

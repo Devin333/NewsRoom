@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 
 from framework.harness.control_plane.errors import HarnessValidationError
-from framework.harness.control_plane.graph_decision import (
+from framework.harness.graph.decision import (
     HarnessGraphDecision,
     HarnessGraphDecisionType,
 )
