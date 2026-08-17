@@ -24,7 +24,7 @@ from framework.harness.control_plane.graph_state import (
     HarnessWaitStatus,
     RunLifecycle,
 )
-from framework.harness.control_plane.graph_operations import (
+from framework.harness.graph.operations import (
     HARNESS_GRAPH_RUN_OPERATION_CONTRACT_ID,
     HARNESS_GRAPH_RUN_OPERATION_CONTRACT_VERSION,
     HARNESS_GRAPH_RUN_OPERATION_NODE_ID,

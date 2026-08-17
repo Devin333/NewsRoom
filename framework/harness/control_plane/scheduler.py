@@ -20,7 +20,7 @@ from framework.harness.control_plane.graph_evaluator import (
     HarnessGraphEvaluationContext,
     HarnessGraphEvaluator,
 )
-from framework.harness.control_plane.graph_operations import HarnessGraphRunOperation
+from framework.harness.graph.operations import HarnessGraphRunOperation
 from framework.harness.control_plane.graph_state import (
     HarnessEvidenceKind,
     HarnessGraphState,

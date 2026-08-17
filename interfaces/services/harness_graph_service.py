@@ -12,7 +12,7 @@ from framework.harness.control_plane.graph_checkpoint import (
     HarnessGraphReplayReadResult,
 )
 from framework.harness.control_plane.graph_inspection import HarnessGraphInspection
-from framework.harness.control_plane.graph_operations import (
+from framework.harness.graph.operations import (
     HarnessGraphRunOperation,
     HarnessGraphRunOperationType,
 )

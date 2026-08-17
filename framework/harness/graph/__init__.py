@@ -86,6 +86,14 @@ from framework.harness.graph.decision import (
     HarnessGraphDecision,
     HarnessGraphDecisionType,
 )
+from framework.harness.graph.operations import (
+    HARNESS_GRAPH_RUN_OPERATION_CONTRACT_ID,
+    HARNESS_GRAPH_RUN_OPERATION_CONTRACT_VERSION,
+    HARNESS_GRAPH_RUN_OPERATION_NODE_ID,
+    HARNESS_GRAPH_RUN_OPERATION_SCHEMA,
+    HarnessGraphRunOperation,
+    HarnessGraphRunOperationType,
+)
 from framework.harness.graph.result_lineage import (
     HARNESS_GRAPH_RESULT_LINEAGE_SCHEMA,
     HarnessGraphArtifactRefProjection,
@@ -156,6 +164,10 @@ __all__ = [
     "HARNESS_GRAPH_INSPECTION_SCHEMA",
     "HARNESS_GRAPH_MERGE_VERSION",
     "HARNESS_GRAPH_RESULT_LINEAGE_SCHEMA",
+    "HARNESS_GRAPH_RUN_OPERATION_CONTRACT_ID",
+    "HARNESS_GRAPH_RUN_OPERATION_CONTRACT_VERSION",
+    "HARNESS_GRAPH_RUN_OPERATION_NODE_ID",
+    "HARNESS_GRAPH_RUN_OPERATION_SCHEMA",
     "HARNESS_GRAPH_REDUCER_VERSION",
     "HARNESS_GRAPH_RUNTIME_VERSION",
     "HARNESS_GRAPH_STATE_SCHEMA",
@@ -187,6 +199,8 @@ __all__ = [
     "HarnessGraphResultSummary",
     "HarnessGraphDecision",
     "HarnessGraphDecisionType",
+    "HarnessGraphRunOperation",
+    "HarnessGraphRunOperationType",
     "HarnessGraphTaskPlanStageBinding",
     "HarnessGraphEdge",
     "HarnessGraphEdgeKind",

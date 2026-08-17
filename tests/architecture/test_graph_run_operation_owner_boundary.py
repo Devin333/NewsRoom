@@ -5,7 +5,7 @@ from pathlib import Path
 
 
 _PROJECT_ROOT = Path(__file__).resolve().parents[2]
-_OWNER = _PROJECT_ROOT / "framework/harness/control_plane/graph_operations.py"
+_OWNER = _PROJECT_ROOT / "framework/harness/graph/operations.py"
 _APPLICATION_SERVICE = _PROJECT_ROOT / "interfaces/services/harness_graph_service.py"
 _WAIT_APPLICATION_SERVICE = _PROJECT_ROOT / "interfaces/services/harness_wait_service.py"
 _FORBIDDEN_APPLICATION_IMPORTS = (
@@ -30,6 +30,10 @@ def test_graph_run_operation_owner_is_framework_only() -> None:
         or module == "framework.workflow"
         or module.startswith("framework.workflow.")
     ] == []
+
+    assert not (
+        _PROJECT_ROOT / "framework/harness/control_plane/graph_operations.py"
+    ).exists()
 
 
 def test_graph_application_service_uses_ports_not_legacy_runtime_or_stores() -> None:

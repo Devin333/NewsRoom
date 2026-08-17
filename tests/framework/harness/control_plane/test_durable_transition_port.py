@@ -26,7 +26,7 @@ from framework.harness.control_plane.graph_evaluator import (
     HarnessAcceptedGraphObservation,
     HarnessGraphObservationType,
 )
-from framework.harness.control_plane.graph_operations import (
+from framework.harness.graph.operations import (
     HarnessGraphRunOperation,
     HarnessGraphRunOperationType,
 )

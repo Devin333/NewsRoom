@@ -68,7 +68,7 @@ from framework.harness.control_plane.graph_checkpoint import (
     quarantine_graph_replay_failure,
 )
 from framework.harness.control_plane.graph_inspection import HarnessGraphInspection
-from framework.harness.control_plane.graph_operations import (
+from framework.harness.graph.operations import (
     HARNESS_GRAPH_RUN_OPERATION_CONTRACT_ID,
     HARNESS_GRAPH_RUN_OPERATION_CONTRACT_VERSION,
     HARNESS_GRAPH_RUN_OPERATION_NODE_ID,

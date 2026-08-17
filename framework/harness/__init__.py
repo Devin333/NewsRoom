@@ -182,8 +182,6 @@ from framework.harness.control_plane import (
     HarnessGraphMetricSample,
     HarnessGraphOperatorDiagnostic,
     HarnessGraphObservationType,
-    HarnessGraphRunOperation,
-    HarnessGraphRunOperationType,
     HarnessGraphProjectionCommit,
     HarnessGraphRecovery,
     HarnessGraphReplayReport,
@@ -437,6 +435,10 @@ from framework.harness.graph.result_lineage import (
 from framework.harness.graph.decision import (
     HarnessGraphDecision,
     HarnessGraphDecisionType,
+)
+from framework.harness.graph.operations import (
+    HarnessGraphRunOperation,
+    HarnessGraphRunOperationType,
 )
 from framework.harness.side_effects import (
     CountingHarnessSideEffectHandler,
