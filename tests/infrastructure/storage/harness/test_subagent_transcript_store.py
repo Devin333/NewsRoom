@@ -11,6 +11,7 @@ from typing import Any
 
 import pytest
 
+from framework.events.canonical import checksum_for
 from framework.harness import (
     HarnessValidationError,
     SubAgentAttemptIdentity,
@@ -20,6 +21,23 @@ from framework.harness import (
     SubAgentTranscriptConflictError,
     SubAgentTranscriptStoreError,
     SubAgentTranscriptObservation,
+)
+from framework.harness.graph.versioning import (
+    GRAPH_ONLY_NORMALIZED_HARNESS_GRAPH_SCHEMA,
+    HARNESS_CONDITION_POLICY_VERSION,
+    HARNESS_GRAPH_ONLY_COMPILER_VERSION,
+)
+from framework.harness.subagents.transcript import (
+    SUBAGENT_ATTEMPT_IDENTITY_SCHEMA_V2,
+    SUBAGENT_BUNDLE_SCHEMA_V1,
+    SUBAGENT_BUNDLE_SCHEMA_V2,
+    SUBAGENT_CONTEXT_SCHEMA_V1,
+    SUBAGENT_CONTEXT_SCHEMA_V2,
+    SUBAGENT_OUTPUT_SCHEMA_V1,
+    SUBAGENT_OUTPUT_SCHEMA_V2,
+    SUBAGENT_RECEIPT_SCHEMA_V2,
+    SUBAGENT_TRANSCRIPT_SCHEMA_V1,
+    SUBAGENT_TRANSCRIPT_SCHEMA_V2,
 )
 from framework.shared.json import stable_json_dumps
 from infrastructure.storage.harness import FilesystemSubAgentTranscriptStore
@@ -42,13 +60,43 @@ def _identity(*, parent_run_id: str = "run-1", attempt: int = 1) -> SubAgentAtte
     )
 
 
+def _graph_identity(
+    *,
+    graph_id: str = "research.paper_analysis.dynamic",
+) -> SubAgentAttemptIdentity:
+    graph_version = "2"
+    return SubAgentAttemptIdentity(
+        invocation_id="invocation://graph-run/task-1/1",
+        parent_run_id="graph-run",
+        child_run_id="graph-run:dynamic-analysis:task-instance-1",
+        workflow_id=None,
+        stage_id="dynamic_analysis_stage",
+        task_id="structure",
+        task_instance_id="task-instance-1",
+        attempt=1,
+        subagent_id="research-structure-analyst",
+        graph_id=graph_id,
+        graph_version=graph_version,
+        graph_ref=f"{graph_id}@{graph_version}",
+        graph_schema_version=GRAPH_ONLY_NORMALIZED_HARNESS_GRAPH_SCHEMA,
+        compiler_version=HARNESS_GRAPH_ONLY_COMPILER_VERSION,
+        condition_policy_version=HARNESS_CONDITION_POLICY_VERSION,
+        graph_checksum="sha256:" + "1" * 64,
+        stage_binding_checksum="sha256:" + "2" * 64,
+        stage_identity_schema="newsroom.harness-task-plan-stage-identity/v2",
+        stage_identity_checksum="sha256:" + "3" * 64,
+        schema_version=SUBAGENT_ATTEMPT_IDENTITY_SCHEMA_V2,
+    )
+
+
 def _documents(
     *,
     identity: SubAgentAttemptIdentity | None = None,
     result: str = "ok",
 ) -> tuple[SubAgentContextEvidence, SubAgentOutputDocument, SubAgentTranscript]:
     resolved = identity or _identity()
-    context_ref = f"subagent-context://v1/{resolved.parent_run_id}/{resolved.transcript_id}"
+    version = "v2" if resolved.is_graph_only else "v1"
+    context_ref = f"subagent-context://{version}/{resolved.parent_run_id}/{resolved.transcript_id}"
     context = SubAgentContextEvidence(
         identity=resolved,
         context_envelope_ref=context_ref,
@@ -58,12 +106,22 @@ def _documents(
             "raw_parent_messages_included": False,
             "sibling_history_included": False,
         },
+        schema_version=(
+            SUBAGENT_CONTEXT_SCHEMA_V2
+            if resolved.is_graph_only
+            else SUBAGENT_CONTEXT_SCHEMA_V1
+        ),
     )
     output = SubAgentOutputDocument(
         identity=resolved,
         status="succeeded",
         output={"result": result},
         artifact_refs=("artifact://analysis/structure",),
+        schema_version=(
+            SUBAGENT_OUTPUT_SCHEMA_V2
+            if resolved.is_graph_only
+            else SUBAGENT_OUTPUT_SCHEMA_V1
+        ),
     )
     gate_projection = {
         "gate_id": "subagent_output_schema",
@@ -72,8 +130,6 @@ def _documents(
         "passed": True,
         "reason_code": "subagent_output_schema_passed",
     }
-    from framework.events.canonical import checksum_for
-
     transcript = SubAgentTranscript(
         identity=resolved,
         context_envelope_ref=context_ref,
@@ -86,8 +142,113 @@ def _documents(
         redaction_report=context.redaction_report,
         events=({"event_type": "subagent_completed"},),
         observed_at=FIXED_TIME,
+        schema_version=(
+            SUBAGENT_TRANSCRIPT_SCHEMA_V2
+            if resolved.is_graph_only
+            else SUBAGENT_TRANSCRIPT_SCHEMA_V1
+        ),
     )
     return context, output, transcript
+
+
+def test_legacy_bundle_checksum_oracles_are_unchanged(tmp_path: Path) -> None:
+    context, output, transcript = _documents()
+    receipt = FilesystemSubAgentTranscriptStore(
+        tmp_path,
+        clock=lambda: FIXED_TIME,
+    ).write(context, output, transcript)
+    payload = json.loads(next(tmp_path.rglob("*.json")).read_text(encoding="utf-8"))
+
+    assert context.identity.identity_checksum == (
+        "sha256:95cb3d131943ea91606f308842f23523ab68558312ac81db82713dbf6c256718"
+    )
+    assert context.context_checksum == (
+        "sha256:36c9c5db87751cde583d76db5bcc7624168462ed5f8f9be5c4c5619d6177db5d"
+    )
+    assert output.output_checksum == (
+        "sha256:f50f49210fa2b81da3151b93273c58841dc37bf1dd25cc26f7367cb73e995232"
+    )
+    assert transcript.transcript_checksum == (
+        "sha256:c11dab101c429af747a1d18aebd6d59bd7896d043923b2d7ed88de0be82460de"
+    )
+    assert receipt.receipt_checksum == (
+        "sha256:a07dc2302175f1f1455507cb624c95bd21cec6ccce726307e7238779e55cfd6d"
+    )
+    assert checksum_for(payload) == (
+        "sha256:062a05f078d4998a26844d2add4da85271e353ca4a4e45f7c623152b4ed251da"
+    )
+
+
+def test_graph_only_bundle_reopens_with_exact_v2_identity(tmp_path: Path) -> None:
+    documents = _documents(identity=_graph_identity())
+    first = FilesystemSubAgentTranscriptStore(tmp_path, clock=lambda: FIXED_TIME)
+
+    receipt = first.write(*documents)
+    reopened = FilesystemSubAgentTranscriptStore(tmp_path)
+    payload = json.loads(next(tmp_path.rglob("*.json")).read_text(encoding="utf-8"))
+
+    assert payload["schema_version"] == SUBAGENT_BUNDLE_SCHEMA_V2
+    assert receipt.schema_version == SUBAGENT_RECEIPT_SCHEMA_V2
+    assert receipt.identity_checksum == documents[2].identity.identity_checksum
+    assert receipt.transcript_ref.startswith("subagent-transcript://v2/")
+    assert receipt.context_ref.startswith("subagent-context://v2/")
+    assert receipt.output_ref.startswith("subagent-output://v2/")
+    assert "workflow_id" not in documents[2].identity.to_dict()
+    assert documents[2].identity.identity_checksum == (
+        "sha256:876e354da1ae4b6bbc67153cebf5c9a394393f58f4f8e44b12e195209d27ad37"
+    )
+    assert documents[0].context_checksum == (
+        "sha256:a4cda46f176239c9862939fbef2cafac12f5ed6554c80f93e171499e7a144825"
+    )
+    assert documents[1].output_checksum == (
+        "sha256:f8d20872c98ed7227d378db4a56468b8909955f75d016df7c74b764fa9528f5e"
+    )
+    assert documents[2].transcript_checksum == (
+        "sha256:1f25fc39fff64e3c46cf8367babba057680d6102c6aba720f4eedeb297791950"
+    )
+    assert receipt.receipt_checksum == (
+        "sha256:2216736182cc1ad617b103b156ba12dbf39eeaa4044c41fd20911f8643929a46"
+    )
+    assert checksum_for(payload) == (
+        "sha256:675b105b20cd29882c86b8e1cf0d84e13ee62407094ec254003f18b156b99222"
+    )
+    assert reopened.verify(receipt) == receipt
+    assert reopened.read(receipt.transcript_ref) == documents[2]
+    assert reopened.read_context(receipt.context_ref) == documents[0]
+    assert reopened.read_output(receipt.output_ref) == documents[1]
+
+
+def test_graph_only_bundle_rejects_legacy_alias_and_mixed_bundle_schema(
+    tmp_path: Path,
+) -> None:
+    store = FilesystemSubAgentTranscriptStore(tmp_path, clock=lambda: FIXED_TIME)
+    receipt = store.write(*_documents(identity=_graph_identity()))
+    path = next(tmp_path.rglob("*.json"))
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    payload["transcript"]["identity"]["workflow_id"] = "legacy-alias"
+    path.write_text(stable_json_dumps(payload) + "\n", encoding="utf-8")
+
+    with pytest.raises(SubAgentTranscriptStoreError) as alias_error:
+        store.verify(receipt)
+    assert alias_error.value.code == "subagent_transcript_corrupt"
+
+    clean_root = tmp_path / "mixed"
+    mixed_store = FilesystemSubAgentTranscriptStore(
+        clean_root,
+        clock=lambda: FIXED_TIME,
+    )
+    mixed_receipt = mixed_store.write(*_documents(identity=_graph_identity()))
+    mixed_path = next(clean_root.rglob("*.json"))
+    mixed_payload = json.loads(mixed_path.read_text(encoding="utf-8"))
+    mixed_payload["schema_version"] = SUBAGENT_BUNDLE_SCHEMA_V1
+    mixed_path.write_text(
+        stable_json_dumps(mixed_payload) + "\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(SubAgentTranscriptStoreError) as mixed_error:
+        mixed_store.verify(mixed_receipt)
+    assert mixed_error.value.code == "subagent_transcript_identity_mismatch"
 
 
 def test_store_reopens_and_resolves_every_typed_section(tmp_path: Path) -> None:

@@ -15,6 +15,8 @@ from typing import Any, Protocol, runtime_checkable
 from framework.harness.artifacts import ArtifactReferenceVerifierPort
 from framework.harness.control_plane.errors import HarnessValidationError
 from framework.harness.subagents.transcript import (
+    SUBAGENT_ATTEMPT_IDENTITY_SCHEMA_V2,
+    SubAgentAttemptIdentity,
     SubAgentOutputDocument,
     SubAgentTranscriptReceipt,
     SubAgentTranscriptStorePort,
@@ -31,7 +33,9 @@ from framework.harness.task_plan.models import (
     ResolvedTaskSpec,
     TaskInstance,
     TaskLifecycle,
+    ValidatedTaskPlan,
 )
+from framework.harness.task_plan.scheduler import task_instance_for_attempt
 from framework.harness.task_plan.store import TaskResultRecord
 from framework.harness.workers.result import (
     HarnessWorkerEvidence,
@@ -190,20 +194,21 @@ class TaskPlanGateRegistry(TaskPlanGateEvaluatorPort):
 
 @dataclass(frozen=True, slots=True)
 class TaskPlanResultVerificationRequest:
+    plan: ValidatedTaskPlan
     task: ResolvedTaskSpec
     instance: TaskInstance
     worker_result: HarnessWorkerResult
-    workflow_id: str
 
     def __post_init__(self) -> None:
+        if not isinstance(self.plan, ValidatedTaskPlan):
+            raise TypeError("plan must be ValidatedTaskPlan")
         if not isinstance(self.task, ResolvedTaskSpec):
             raise TypeError("task must be ResolvedTaskSpec")
         if not isinstance(self.instance, TaskInstance):
             raise TypeError("instance must be TaskInstance")
         if not isinstance(self.worker_result, HarnessWorkerResult):
             raise TypeError("worker_result must be HarnessWorkerResult")
-        object.__setattr__(self, "workflow_id", identifier(self.workflow_id, "workflow_id"))
-        _require_task_instance_identity(self.task, self.instance)
+        _require_plan_task_instance_identity(self.plan, self.task, self.instance)
 
 
 class TaskPlanResultVerifier:
@@ -240,37 +245,17 @@ class TaskPlanResultVerifier:
         result: HarnessWorkerResult,
         *,
         task: ResolvedTaskSpec,
-        request: TaskPlanResultVerificationRequest | TaskInstance,
-        workflow_id: str | None = None,
+        request: TaskPlanResultVerificationRequest,
     ) -> TaskResultRecord:
-        instance = request.instance if isinstance(request, TaskPlanResultVerificationRequest) else request
-        resolved_workflow_id = (
-            request.workflow_id
-            if isinstance(request, TaskPlanResultVerificationRequest)
-            else identifier(workflow_id, "workflow_id")
-            if workflow_id is not None
-            else None
-        )
-        if resolved_workflow_id is None:
-            raise HarnessValidationError(
-                "TaskPlan result verification requires accepted workflow identity",
-                code="task_plan_workflow_identity_required",
-            )
-        verification = (
-            request
-            if isinstance(request, TaskPlanResultVerificationRequest)
-            else TaskPlanResultVerificationRequest(
-                task=task,
-                instance=instance,
-                worker_result=result,
-                workflow_id=resolved_workflow_id,
-            )
-        )
-        if verification.worker_result is not result:
+        if not isinstance(request, TaskPlanResultVerificationRequest):
+            raise TypeError("request must be TaskPlanResultVerificationRequest")
+        if request.task != task or request.worker_result is not result:
             raise HarnessValidationError(
                 "TaskPlan verification request result does not match verifier input",
                 code="task_plan_result_identity_mismatch",
             )
+        plan = request.plan
+        instance = request.instance
         if result.effect_intent is not None:
             raise HarnessValidationError(
                 "dynamic TaskPlan workers cannot propose side effects",
@@ -279,18 +264,18 @@ class TaskPlanResultVerifier:
 
         receipt, output_document = self._verify_subagent_evidence(
             result,
+            plan=plan,
             task=task,
             instance=instance,
-            workflow_id=resolved_workflow_id,
         )
 
         if result.status is not HarnessWorkerStatus.SUCCEEDED:
             return _failure_record(
+                plan,
                 task,
                 instance,
                 result,
                 "task_worker_failed",
-                workflow_id=resolved_workflow_id,
                 receipt=receipt,
             )
 
@@ -315,27 +300,20 @@ class TaskPlanResultVerifier:
         failed = next((item for item in evidence if not item.passed), None)
         if failed is not None:
             return _failure_record(
+                plan,
                 task,
                 instance,
                 result,
                 failed.reason_code or "task_gate_failed",
-                workflow_id=resolved_workflow_id,
                 verified_gate_refs=tuple(item.gate_ref for item in evidence),
                 gate_evidence_refs=tuple(item.evidence_checksum for item in evidence),
                 receipt=receipt,
             )
-        return TaskResultRecord(
-            run_id=instance.run_id,
-            workflow_id=resolved_workflow_id,
-            stage_id=instance.stage_id,
-            plan_id=instance.plan_id,
-            plan_version=instance.plan_version,
+        return TaskResultRecord.for_plan(
+            plan,
             task_id=instance.task_id,
             task_instance_id=instance.task_instance_id,
             attempt=instance.attempt,
-            worker_ref=instance.worker_ref,
-            task_checksum=instance.task_definition_checksum,
-            binding_checksum=task.binding_checksum,
             status=TaskLifecycle.SUCCEEDED,
             result_ref=(
                 receipt.output_ref if receipt is not None else result.candidate_result_ref
@@ -360,9 +338,9 @@ class TaskPlanResultVerifier:
         self,
         result: HarnessWorkerResult,
         *,
+        plan: ValidatedTaskPlan,
         task: ResolvedTaskSpec,
         instance: TaskInstance,
-        workflow_id: str,
     ) -> tuple[SubAgentTranscriptReceipt | None, SubAgentOutputDocument | None]:
         entries = tuple(
             item
@@ -392,13 +370,7 @@ class TaskPlanResultVerifier:
         output = self._transcript_store.read_output(receipt.output_ref)
         identity = transcript.identity
         if (
-            identity.parent_run_id != instance.run_id
-            or identity.workflow_id != workflow_id
-            or identity.stage_id != instance.stage_id
-            or identity.task_id != instance.task_id
-            or identity.task_instance_id != instance.task_instance_id
-            or identity.attempt != instance.attempt
-            or identity.subagent_id != task.subagent_id
+            not _subagent_identity_matches_plan(identity, plan, task, instance)
             or identity.invocation_id != receipt.invocation_id
             or output.identity != identity
         ):
@@ -460,28 +432,21 @@ def _verify_artifact_references(
 
 
 def _failure_record(
+    plan: ValidatedTaskPlan,
     task: ResolvedTaskSpec,
     instance: TaskInstance,
     result: HarnessWorkerResult,
     reason_code: str,
     *,
-    workflow_id: str,
     verified_gate_refs: tuple[str, ...] = (),
     gate_evidence_refs: tuple[str, ...] = (),
     receipt: SubAgentTranscriptReceipt | None = None,
 ) -> TaskResultRecord:
-    return TaskResultRecord(
-        run_id=instance.run_id,
-        workflow_id=workflow_id,
-        stage_id=instance.stage_id,
-        plan_id=instance.plan_id,
-        plan_version=instance.plan_version,
+    return TaskResultRecord.for_plan(
+        plan,
         task_id=instance.task_id,
         task_instance_id=instance.task_instance_id,
         attempt=instance.attempt,
-        worker_ref=instance.worker_ref,
-        task_checksum=instance.task_definition_checksum,
-        binding_checksum=task.binding_checksum,
         status=TaskLifecycle.FAILED,
         output_schema_ref=task.task.output_contract.schema_ref,
         usage=dict(result.metrics),
@@ -518,6 +483,129 @@ def _receipt_from_evidence(
             "subagent worker evidence receipt is invalid",
             code="task_plan_subagent_evidence_mismatch",
         ) from exc
+
+
+def task_plan_subagent_attempt_identity(
+    plan: ValidatedTaskPlan,
+    instance: TaskInstance,
+    *,
+    invocation_id: str,
+    child_run_id: str,
+    subagent_id: str,
+) -> SubAgentAttemptIdentity:
+    """Derive one SubAgent attempt identity from accepted TaskPlan authority."""
+
+    if not isinstance(plan, ValidatedTaskPlan):
+        raise TypeError("plan must be ValidatedTaskPlan")
+    if not isinstance(instance, TaskInstance):
+        raise TypeError("instance must be TaskInstance")
+    definition = next(
+        (item for item in plan.tasks if item.task_id == instance.task_id),
+        None,
+    )
+    if definition is None:
+        raise HarnessValidationError(
+            "SubAgent attempt task is outside the accepted plan",
+            code="task_plan_result_identity_mismatch",
+        )
+    _require_plan_task_instance_identity(plan, definition, instance)
+    if definition.subagent_id is None or definition.subagent_id != subagent_id:
+        raise HarnessValidationError(
+            "SubAgent attempt identity does not match the accepted capability binding",
+            code="task_plan_subagent_evidence_mismatch",
+        )
+    common: dict[str, Any] = {
+        "invocation_id": invocation_id,
+        "parent_run_id": plan.run_id,
+        "child_run_id": child_run_id,
+        "workflow_id": plan.workflow_id,
+        "stage_id": plan.stage_id,
+        "task_id": instance.task_id,
+        "task_instance_id": instance.task_instance_id,
+        "attempt": instance.attempt,
+        "subagent_id": subagent_id,
+    }
+    if plan.is_graph_only:
+        common.update(
+            {
+                "schema_version": SUBAGENT_ATTEMPT_IDENTITY_SCHEMA_V2,
+                "graph_id": plan.graph_id,
+                "graph_version": plan.graph_version,
+                "graph_ref": plan.graph_ref,
+                "graph_schema_version": plan.graph_schema_version,
+                "compiler_version": plan.compiler_version,
+                "condition_policy_version": plan.condition_policy_version,
+                "graph_checksum": plan.graph_checksum,
+                "stage_binding_checksum": plan.stage_binding_checksum,
+                "stage_identity_schema": plan.stage_identity_schema,
+                "stage_identity_checksum": plan.stage_identity_checksum,
+            }
+        )
+    return SubAgentAttemptIdentity(**common)
+
+
+def _subagent_identity_matches_plan(
+    identity: SubAgentAttemptIdentity,
+    plan: ValidatedTaskPlan,
+    task: ResolvedTaskSpec,
+    instance: TaskInstance,
+) -> bool:
+    if (
+        identity.parent_run_id != plan.run_id
+        or identity.stage_id != plan.stage_id
+        or identity.task_id != instance.task_id
+        or identity.task_instance_id != instance.task_instance_id
+        or identity.attempt != instance.attempt
+        or identity.subagent_id != task.subagent_id
+        or identity.is_graph_only != plan.is_graph_only
+    ):
+        return False
+    if not plan.is_graph_only:
+        return identity.workflow_id == plan.workflow_id
+    graph_fields = (
+        "graph_id",
+        "graph_version",
+        "graph_ref",
+        "graph_schema_version",
+        "compiler_version",
+        "condition_policy_version",
+        "graph_checksum",
+        "stage_binding_checksum",
+        "stage_identity_schema",
+        "stage_identity_checksum",
+    )
+    return identity.workflow_id is None and all(
+        getattr(identity, field_name) == getattr(plan, field_name)
+        for field_name in graph_fields
+    )
+
+
+def _require_plan_task_instance_identity(
+    plan: ValidatedTaskPlan,
+    task: ResolvedTaskSpec,
+    instance: TaskInstance,
+) -> None:
+    definition = next(
+        (item for item in plan.tasks if item.task_id == task.task_id),
+        None,
+    )
+    if definition != task:
+        raise HarnessValidationError(
+            "TaskPlan result verification task is outside the accepted plan",
+            code="task_plan_result_identity_mismatch",
+        )
+    expected_instance = task_instance_for_attempt(
+        plan,
+        task.task_id,
+        instance.attempt,
+        task_instance_id=instance.task_instance_id,
+    )
+    if expected_instance != instance:
+        raise HarnessValidationError(
+            "TaskPlan result verification attempt is outside the accepted plan",
+            code="task_plan_result_identity_mismatch",
+        )
+    _require_task_instance_identity(task, instance)
 
 
 def _require_task_instance_identity(task: ResolvedTaskSpec, instance: TaskInstance) -> None:
@@ -589,4 +677,5 @@ __all__ = [
     "TaskPlanResultVerificationRequest",
     "TaskPlanResultVerifier",
     "subagent_attempt_evidence",
+    "task_plan_subagent_attempt_identity",
 ]

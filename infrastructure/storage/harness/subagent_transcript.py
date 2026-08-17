@@ -37,7 +37,10 @@ from framework.harness.subagents.transcript import (
     DEFAULT_MAX_OUTPUT_BYTES,
     DEFAULT_MAX_TRANSCRIPT_BYTES,
     MAX_PARENT_QUERY,
-    SUBAGENT_BUNDLE_SCHEMA,
+    SUBAGENT_BUNDLE_SCHEMA_V1,
+    SUBAGENT_BUNDLE_SCHEMA_V2,
+    SUBAGENT_RECEIPT_SCHEMA_V1,
+    SUBAGENT_RECEIPT_SCHEMA_V2,
     SubAgentAttemptIdentity,
     SubAgentContextEvidence,
     SubAgentOutputDocument,
@@ -46,6 +49,9 @@ from framework.harness.subagents.transcript import (
     SubAgentTranscriptCorruptError,
     SubAgentTranscriptReceipt,
     SubAgentTranscriptStoreError,
+    _bundle_schema_for_identity,
+    _context_ref,
+    _receipt_matches_bundle,
     _validate_bundle_identity,
 )
 from framework.shared.json import json_loads, stable_json_dumps
@@ -115,6 +121,7 @@ class FilesystemSubAgentTranscriptStore:
         started_at = self._monotonic()
         _validate_bundle_identity(context, output, transcript)
         identity = transcript.identity
+        version = "v2" if identity.is_graph_only else "v1"
         receipt = SubAgentTranscriptReceipt(
             transcript_ref=transcript.ref,
             transcript_checksum=transcript.transcript_checksum,
@@ -124,15 +131,21 @@ class FilesystemSubAgentTranscriptStore:
             child_run_id=identity.child_run_id,
             task_instance_id=identity.task_instance_id,
             attempt=identity.attempt,
-            context_ref=f"subagent-context://v1/{identity.parent_run_id}/{identity.transcript_id}",
+            context_ref=_context_ref(identity, context.schema_version),
             context_checksum=context.context_checksum,
             output_ref=output.ref,
             output_checksum=output.output_checksum,
-            storage_revision=f"bundle:{identity.transcript_id}:v1",
+            storage_revision=f"bundle:{identity.transcript_id}:{version}",
             committed_at=self._clock(),
+            identity_checksum=(identity.identity_checksum if identity.is_graph_only else None),
+            schema_version=(
+                SUBAGENT_RECEIPT_SCHEMA_V2
+                if identity.is_graph_only
+                else SUBAGENT_RECEIPT_SCHEMA_V1
+            ),
         )
         payload = {
-            "schema_version": SUBAGENT_BUNDLE_SCHEMA,
+            "schema_version": _bundle_schema_for_identity(identity),
             "context": context.to_dict(),
             "output": output.to_dict(),
             "transcript": transcript.to_dict(),
@@ -205,22 +218,22 @@ class FilesystemSubAgentTranscriptStore:
         return committed
 
     def read(self, transcript_ref: str) -> SubAgentTranscript:
-        parent, transcript_id = _parse_ref(transcript_ref, "subagent-transcript")
+        _, parent, transcript_id = _parse_ref(transcript_ref, "subagent-transcript")
         transcript = self._read_bundle(self._bundle_path(parent, transcript_id))[2]
         if transcript.ref != transcript_ref:
             raise _corrupt("subagent transcript ref does not match stored identity")
         return transcript
 
     def read_context(self, context_ref: str) -> SubAgentContextEvidence:
-        parent, transcript_id = _parse_ref(context_ref, "subagent-context")
+        _, parent, transcript_id = _parse_ref(context_ref, "subagent-context")
         context = self._read_bundle(self._bundle_path(parent, transcript_id))[0]
-        expected = f"subagent-context://v1/{parent}/{transcript_id}"
+        expected = _context_ref(context.identity, context.schema_version)
         if context_ref != expected:
             raise _corrupt("subagent context ref does not match stored identity")
         return context
 
     def read_output(self, output_ref: str) -> SubAgentOutputDocument:
-        parent, transcript_id = _parse_ref(output_ref, "subagent-output")
+        _, parent, transcript_id = _parse_ref(output_ref, "subagent-output")
         output = self._read_bundle(self._bundle_path(parent, transcript_id))[1]
         if output.ref != output_ref:
             raise _corrupt("subagent output ref does not match stored identity")
@@ -230,7 +243,7 @@ class FilesystemSubAgentTranscriptStore:
         if not isinstance(receipt, SubAgentTranscriptReceipt):
             raise TypeError("receipt must be SubAgentTranscriptReceipt")
         try:
-            parent, transcript_id = _parse_ref(
+            _, parent, transcript_id = _parse_ref(
                 receipt.transcript_ref,
                 "subagent-transcript",
             )
@@ -245,26 +258,7 @@ class FilesystemSubAgentTranscriptStore:
             if stored != receipt:
                 raise _corrupt("subagent receipt does not match committed bundle")
             _validate_bundle_identity(context, output, transcript)
-            identity = transcript.identity
-            if (
-                context.identity != identity
-                or output.identity != identity
-                or receipt.transcript_id != identity.transcript_id
-                or receipt.invocation_id != identity.invocation_id
-                or receipt.parent_run_id != identity.parent_run_id
-                or receipt.child_run_id != identity.child_run_id
-                or receipt.task_instance_id != identity.task_instance_id
-                or receipt.attempt != identity.attempt
-                or context.context_checksum != receipt.context_checksum
-                or output.output_checksum != receipt.output_checksum
-                or transcript.transcript_checksum != receipt.transcript_checksum
-                or output.ref != receipt.output_ref
-                or transcript.ref != receipt.transcript_ref
-                or receipt.context_ref
-                != f"subagent-context://v1/{identity.parent_run_id}/{identity.transcript_id}"
-                or transcript.output_ref != output.ref
-                or transcript.output_checksum != output.output_checksum
-            ):
+            if not _receipt_matches_bundle(receipt, context, output, transcript):
                 raise _corrupt("subagent receipt checksum or ref mismatch")
             return receipt
         except Exception as exc:
@@ -387,12 +381,23 @@ class FilesystemSubAgentTranscriptStore:
                 "schema_version", "context", "output", "transcript", "receipt"
             }:
                 raise _corrupt("subagent transcript bundle fields are invalid")
-            if payload["schema_version"] != SUBAGENT_BUNDLE_SCHEMA:
+            if payload["schema_version"] not in {
+                SUBAGENT_BUNDLE_SCHEMA_V1,
+                SUBAGENT_BUNDLE_SCHEMA_V2,
+            }:
                 raise _corrupt("subagent transcript bundle schema is unsupported", code="subagent_transcript_schema_unsupported")
             context = SubAgentContextEvidence.from_dict(_object(payload["context"], "context"))
             output = SubAgentOutputDocument.from_dict(_object(payload["output"], "output"))
             transcript = SubAgentTranscript.from_dict(_object(payload["transcript"], "transcript"))
             receipt = SubAgentTranscriptReceipt.from_dict(_object(payload["receipt"], "receipt"))
+            _validate_bundle_identity(context, output, transcript)
+            if payload["schema_version"] != _bundle_schema_for_identity(transcript.identity):
+                raise _corrupt(
+                    "subagent transcript bundle schema does not match its identity",
+                    code="subagent_transcript_identity_mismatch",
+                )
+            if not _receipt_matches_bundle(receipt, context, output, transcript):
+                raise _corrupt("subagent receipt checksum or ref mismatch")
             self._enforce_sizes(context, output, transcript, content)
             return context, output, transcript, receipt
         except SubAgentTranscriptStoreError:
@@ -507,14 +512,22 @@ class FilesystemSubAgentTranscriptStore:
         )
 
 
-def _parse_ref(value: str, kind: str) -> tuple[str, str]:
-    prefix = f"{kind}://v1/"
-    if not isinstance(value, str) or not value.startswith(prefix):
+def _parse_ref(value: str, kind: str) -> tuple[str, str, str]:
+    version = next(
+        (
+            candidate
+            for candidate in ("v1", "v2")
+            if isinstance(value, str) and value.startswith(f"{kind}://{candidate}/")
+        ),
+        None,
+    )
+    if version is None:
         raise _store_error(
             "subagent_transcript_identity_mismatch",
             "subagent evidence ref is invalid",
             ref=str(value),
         )
+    prefix = f"{kind}://{version}/"
     parts = value.removeprefix(prefix).split("/")
     if len(parts) != 2:
         raise _store_error(
@@ -530,7 +543,7 @@ def _parse_ref(value: str, kind: str) -> tuple[str, str]:
             "subagent_transcript_identity_mismatch",
             "subagent evidence ref path is invalid",
         ) from exc
-    return parent, transcript_id
+    return version, parent, transcript_id
 
 
 def _path_segment(value: str, field_name: str) -> str:

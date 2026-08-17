@@ -13,6 +13,7 @@ from framework.harness import (
     ResolvedSubAgentTaskAdapter,
     SubAgentRuntime,
     TaskLifecycle,
+    TaskPlanResultVerificationRequest,
 )
 from framework.harness.control_plane.graph_application import (
     HarnessGraphControlPlaneRuntime,
@@ -119,8 +120,12 @@ def test_dynamic_child_materialization_is_independent_and_worker_free_on_recover
     first = verifier.verify(
         worker_result,
         task=resolved,
-        request=instance,
-        workflow_id=plan.workflow_id,
+        request=TaskPlanResultVerificationRequest(
+            plan=plan,
+            task=resolved,
+            instance=instance,
+            worker_result=worker_result,
+        ),
     )
     assert first.status is TaskLifecycle.SUCCEEDED
     assert artifact.write_count == 1
@@ -136,8 +141,12 @@ def test_dynamic_child_materialization_is_independent_and_worker_free_on_recover
     second = verifier.verify(
         recovered_result,
         task=resolved,
-        request=instance,
-        workflow_id=plan.workflow_id,
+        request=TaskPlanResultVerificationRequest(
+            plan=plan,
+            task=resolved,
+            instance=instance,
+            worker_result=recovered_result,
+        ),
     )
 
     assert second.status is TaskLifecycle.SUCCEEDED
@@ -177,8 +186,12 @@ def test_dynamic_child_materialization_is_independent_and_worker_free_on_recover
     read_only_result = read_only_verifier.verify(
         recovered_result,
         task=resolved,
-        request=instance,
-        workflow_id=plan.workflow_id,
+        request=TaskPlanResultVerificationRequest(
+            plan=plan,
+            task=resolved,
+            instance=instance,
+            worker_result=recovered_result,
+        ),
     )
 
     assert read_only_result.status is TaskLifecycle.SUCCEEDED

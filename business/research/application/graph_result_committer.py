@@ -43,6 +43,9 @@ from framework.harness.task_plan.models import (
 )
 from framework.harness.task_plan.ports import TaskPlanResultVerifierPort
 from framework.harness.task_plan.store import TaskResultRecord
+from framework.harness.task_plan.verification import (
+    TaskPlanResultVerificationRequest,
+)
 from framework.harness.graph.model import (
     HarnessExecutableNode,
     NormalizedHarnessGraph,
@@ -638,18 +641,16 @@ class ResearchTaskPlanResultMaterializer(TaskPlanResultVerifierPort):
         result: HarnessWorkerResult,
         *,
         task: ResolvedTaskSpec,
-        request: Any,
-        workflow_id: str | None = None,
+        request: TaskPlanResultVerificationRequest,
     ) -> TaskResultRecord:
+        if not isinstance(request, TaskPlanResultVerificationRequest):
+            raise TypeError("request must be TaskPlanResultVerificationRequest")
         verified = self._verifier.verify(
             result,
             task=task,
             request=request,
-            workflow_id=workflow_id,
         )
-        instance = request.instance if hasattr(request, "instance") else request
-        if not isinstance(instance, TaskInstance):
-            raise TypeError("request must contain a TaskInstance")
+        instance = request.instance
         invocation = self._invocation_factory(task, instance)
         identity = subagent_attempt_identity(invocation)
         binding = NodeResultBinding(

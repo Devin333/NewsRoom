@@ -57,20 +57,13 @@ class _Worker:
 
 
 class _AcceptingResultVerifier:
-    def verify(self, result, *, task, request, workflow_id=None):
+    def verify(self, result, *, task, request):
         instance = request.instance
-        return TaskResultRecord(
-            run_id=instance.run_id,
-            workflow_id=request.workflow_id,
-            stage_id=instance.stage_id,
-            plan_id=instance.plan_id,
-            plan_version=instance.plan_version,
+        return TaskResultRecord.for_plan(
+            request.plan,
             task_id=instance.task_id,
             task_instance_id=instance.task_instance_id,
             attempt=instance.attempt,
-            worker_ref=instance.worker_ref,
-            task_checksum=instance.task_definition_checksum,
-            binding_checksum=task.binding_checksum,
             status=TaskLifecycle.SUCCEEDED,
             result_ref=f"result://{instance.task_id}",
             output_roles=(task.output_role,),

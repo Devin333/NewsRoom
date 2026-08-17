@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Mapping, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, Mapping, Protocol, runtime_checkable
 
 from framework.harness.control_plane.errors import HarnessValidationError
 from framework.harness.control_plane.policy import HarnessBudgetSnapshot
@@ -14,11 +14,16 @@ from framework.harness.task_plan.canonical import (
     thaw_mapping,
 )
 from framework.harness.task_plan.identity import TaskPlanStageIdentity
-from framework.harness.task_plan.models import PlanCandidate
+from framework.harness.task_plan.models import PlanCandidate, ResolvedTaskSpec
 from framework.harness.task_plan.policy import TaskPlanPolicy
 from framework.harness.task_plan.stage_binding import TaskPlanStageBinding
 from framework.harness.task_plan.store import TaskResultRecord
 from framework.harness.workers.result import HarnessWorkerResult
+
+if TYPE_CHECKING:
+    from framework.harness.task_plan.verification import (
+        TaskPlanResultVerificationRequest,
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -315,9 +320,8 @@ class TaskPlanResultVerifierPort(Protocol):
         self,
         result: HarnessWorkerResult,
         *,
-        task: Any,
-        request: Any,
-        workflow_id: str | None = None,
+        task: ResolvedTaskSpec,
+        request: TaskPlanResultVerificationRequest,
     ) -> TaskResultRecord: ...
 
 

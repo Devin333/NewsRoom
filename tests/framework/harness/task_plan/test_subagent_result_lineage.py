@@ -5,6 +5,10 @@ from pathlib import Path
 
 import pytest
 
+from business.research.graphs import (
+    RESEARCH_DYNAMIC_STAGE_ID,
+    build_dynamic_paper_analysis_graph_definition,
+)
 from framework.agent.artifacts import FilesystemArtifactStore
 from framework.events.runtime.publisher import EventRuntime
 from framework.events.schema import default_event_schema_catalog
@@ -23,6 +27,9 @@ from framework.harness import (
     SubAgentRuntime,
     SubAgentSpec,
     SubAgentStatus,
+    SubAgentContextEvidence,
+    SubAgentOutputDocument,
+    SubAgentTranscript,
     TaskAcceptanceCriteria,
     TaskBudget,
     TaskCapabilityRegistration,
@@ -34,9 +41,12 @@ from framework.harness import (
     TaskPlanPolicy,
     TaskPlanReadyDecision,
     TaskPlanReplayReducer,
+    TaskPlanResultVerificationRequest,
     TaskPlanResultVerifier,
     TaskPlanScheduler,
     TaskPlanStageRequest,
+    TaskPlanStageBinding,
+    TaskPlanStageIdentity,
     TaskPlanStageRunner,
     TaskPlanValidationContext,
     TaskPlanValidator,
@@ -48,12 +58,18 @@ from framework.harness import (
     task_instance_for_attempt,
 )
 from framework.harness.task_plan.store import TASK_PLAN_RESULT_SCHEMA_V1
-from framework.harness.graph import HarnessWorkerType
+from framework.harness.graph import HarnessGraphCompiler, HarnessWorkerType
 from framework.harness.graph.bindings import HarnessWorkerBinding
 from framework.harness.graph.model import (
     HarnessContractKind,
     HarnessContractReference,
 )
+from framework.harness.subagents.transcript import (
+    SUBAGENT_CONTEXT_SCHEMA_V2,
+    SUBAGENT_OUTPUT_SCHEMA_V2,
+    SUBAGENT_TRANSCRIPT_SCHEMA_V2,
+)
+from framework.harness.task_plan import task_plan_subagent_attempt_identity
 from infrastructure.storage.harness import FilesystemSubAgentTranscriptStore
 from infrastructure.storage.events import SQLiteEventStore
 from tests.fixtures.task_plan import build_task_plan_stage_binding
@@ -328,6 +344,100 @@ def _worker_result_from_child(child, *, recovered: bool = False) -> HarnessWorke
     )
 
 
+def _graph_only_plan_for_fixture(fixture):
+    policy = replace(fixture["policy"], stage_id=RESEARCH_DYNAMIC_STAGE_ID)
+    definition = build_dynamic_paper_analysis_graph_definition()
+    task_plan_binding = replace(
+        definition.task_plan_stage_bindings[0],
+        policy_ref=policy.exact_ref,
+        required_output_roles=policy.required_output_roles,
+    )
+    graph = HarnessGraphCompiler().compile(
+        replace(
+            definition,
+            task_plan_stage_bindings=(task_plan_binding,),
+            definition_checksum=None,
+        )
+    ).graph
+    stage_binding = TaskPlanStageBinding(graph, RESEARCH_DYNAMIC_STAGE_ID)
+    stage_identity = TaskPlanStageIdentity(
+        fixture["plan"].run_id,
+        stage_binding,
+    )
+    candidate = PlanCandidate.for_stage(
+        stage_identity=stage_identity,
+        candidate_id="graph-lineage-candidate",
+        input_context_refs=fixture["candidate"].input_context_refs,
+        tasks=fixture["candidate"].tasks,
+        required_output_roles=fixture["candidate"].required_output_roles,
+        generated_by=fixture["candidate"].generated_by,
+        requested_plan_budget=fixture["candidate"].requested_plan_budget,
+    )
+    plan = TaskPlanValidator().accept(
+        candidate,
+        policy,
+        fixture["registry"],
+        context=TaskPlanValidationContext(
+            run_id=candidate.run_id,
+            stage_binding=stage_binding,
+            available_input_refs=("document",),
+            registered_gate_refs=policy.allowed_gate_refs,
+        ),
+        accepted_at=fixture["plan"].accepted_at,
+    )
+    instance = task_instance_for_attempt(plan, plan.tasks[0].task_id, 1)
+    return plan, instance
+
+
+def _write_graph_only_attempt(
+    fixture,
+    plan,
+    instance,
+    *,
+    worker_status: str = "succeeded",
+    identity=None,
+):
+    resolved_identity = identity or task_plan_subagent_attempt_identity(
+        plan,
+        instance,
+        invocation_id=f"invocation://{instance.task_instance_id}",
+        child_run_id=f"{plan.run_id}:{plan.stage_id}:{instance.task_instance_id}",
+        subagent_id=plan.tasks[0].subagent_id,
+    )
+    context = SubAgentContextEvidence(
+        identity=resolved_identity,
+        context_envelope_ref=f"context://{instance.task_instance_id}",
+        input_refs=("document",),
+        memory_context_refs=(),
+        schema_version=SUBAGENT_CONTEXT_SCHEMA_V2,
+    )
+    output = SubAgentOutputDocument(
+        identity=resolved_identity,
+        status=worker_status,
+        output={"result": "durable graph candidate"},
+        error_code=None if worker_status == "succeeded" else "worker_failed",
+        schema_version=SUBAGENT_OUTPUT_SCHEMA_V2,
+    )
+    transcript = SubAgentTranscript(
+        identity=resolved_identity,
+        context_envelope_ref=context.context_envelope_ref,
+        input_refs=context.input_refs,
+        output_ref=output.ref,
+        output_checksum=output.output_checksum,
+        observed_at=plan.accepted_at,
+        schema_version=SUBAGENT_TRANSCRIPT_SCHEMA_V2,
+    )
+    receipt = fixture["transcript_store"].write(context, output, transcript)
+    result = HarnessWorkerResult(
+        status=worker_status,
+        output=output.output,
+        diagnostics={"subagent_id": resolved_identity.subagent_id},
+        evidence=(subagent_attempt_evidence(receipt),),
+        error=None if worker_status == "succeeded" else "worker failed",
+    )
+    return resolved_identity, receipt, result
+
+
 def _start_attempt(store, plan, instance) -> None:
     scheduler = TaskPlanScheduler()
     projection = scheduler.reserve_ready_tasks(
@@ -383,8 +493,12 @@ def _committed_lineage(
     record = fixture["verifier"].verify(
         worker_result,
         task=fixture["resolved"],
-        request=fixture["instance"],
-        workflow_id=fixture["plan"].workflow_id,
+        request=TaskPlanResultVerificationRequest(
+            plan=fixture["plan"],
+            task=fixture["resolved"],
+            instance=fixture["instance"],
+            worker_result=worker_result,
+        ),
     )
     store.append_result(record)
     fixture.update(store=store, worker_result=worker_result, record=record)
@@ -424,6 +538,104 @@ def test_success_and_failure_events_carry_complete_typed_lineage(tmp_path: Path)
         assert transcript.identity.task_instance_id == record.task_instance_id
         assert transcript.identity.attempt == record.attempt
         assert output.output_checksum == record.subagent_output_checksum
+
+
+@pytest.mark.parametrize("worker_status", ("succeeded", "failed"))
+def test_graph_only_verifier_binds_v2_transcript_to_v3_result(
+    tmp_path: Path,
+    worker_status: str,
+) -> None:
+    fixture = _fixture(tmp_path)
+    plan, instance = _graph_only_plan_for_fixture(fixture)
+    _, receipt, worker_result = _write_graph_only_attempt(
+        fixture,
+        plan,
+        instance,
+        worker_status=worker_status,
+    )
+
+    record = fixture["verifier"].verify(
+        worker_result,
+        task=plan.tasks[0],
+        request=TaskPlanResultVerificationRequest(
+            plan=plan,
+            task=plan.tasks[0],
+            instance=instance,
+            worker_result=worker_result,
+        ),
+    )
+
+    assert record.is_graph_only is True
+    assert record.matches_plan_identity(plan)
+    assert record.status is (
+        TaskLifecycle.SUCCEEDED
+        if worker_status == "succeeded"
+        else TaskLifecycle.FAILED
+    )
+    assert record.transcript_ref == receipt.transcript_ref
+    assert record.subagent_output_ref == receipt.output_ref
+    assert record.transcript_ref.startswith("subagent-transcript://v2/")
+    assert "workflow_id" not in record.to_dict()
+
+
+def test_graph_only_verifier_rejects_cross_graph_transcript_identity(
+    tmp_path: Path,
+) -> None:
+    fixture = _fixture(tmp_path)
+    plan, instance = _graph_only_plan_for_fixture(fixture)
+    identity = task_plan_subagent_attempt_identity(
+        plan,
+        instance,
+        invocation_id=f"invocation://{instance.task_instance_id}",
+        child_run_id=f"{plan.run_id}:{plan.stage_id}:{instance.task_instance_id}",
+        subagent_id=plan.tasks[0].subagent_id,
+    )
+    other_graph_identity = replace(
+        identity,
+        graph_id="research.other.dynamic",
+        graph_ref=f"research.other.dynamic@{identity.graph_version}",
+    )
+    _, _, worker_result = _write_graph_only_attempt(
+        fixture,
+        plan,
+        instance,
+        identity=other_graph_identity,
+    )
+
+    with pytest.raises(HarnessValidationError) as captured:
+        fixture["verifier"].verify(
+            worker_result,
+            task=plan.tasks[0],
+            request=TaskPlanResultVerificationRequest(
+                plan=plan,
+                task=plan.tasks[0],
+                instance=instance,
+                worker_result=worker_result,
+            ),
+        )
+
+    assert captured.value.code == "task_plan_subagent_evidence_mismatch"
+
+
+def test_verification_request_rejects_forged_task_instance_identity(
+    tmp_path: Path,
+) -> None:
+    fixture = _fixture(tmp_path)
+    plan, instance = _graph_only_plan_for_fixture(fixture)
+    worker_result = HarnessWorkerResult(
+        status="succeeded",
+        output={"result": "candidate"},
+    )
+
+    with pytest.raises(HarnessValidationError) as captured:
+        TaskPlanResultVerificationRequest(
+            plan=plan,
+            task=plan.tasks[0],
+            instance=replace(instance, task_instance_id="forged-instance"),
+            worker_result=worker_result,
+        )
+
+    assert captured.value.code == "task_plan_task_instance_mismatch"
 
 
 def test_offline_replay_verifies_transcript_and_rejects_event_lineage_mismatch(
@@ -474,12 +686,17 @@ def test_subagent_artifact_refs_require_the_canonical_owner(tmp_path: Path) -> N
         tmp_path / "missing-verifier",
         worker_artifacts=(artifact_ref,),
     )
+    missing_result = missing["invoke"]()
     with pytest.raises(HarnessValidationError) as missing_error:
         missing["verifier"].verify(
-            missing["invoke"](),
+            missing_result,
             task=missing["resolved"],
-            request=missing["instance"],
-            workflow_id=missing["plan"].workflow_id,
+            request=TaskPlanResultVerificationRequest(
+                plan=missing["plan"],
+                task=missing["resolved"],
+                instance=missing["instance"],
+                worker_result=missing_result,
+            ),
         )
     assert missing_error.value.code == "task_plan_subagent_artifact_verifier_required"
 
@@ -489,12 +706,17 @@ def test_subagent_artifact_refs_require_the_canonical_owner(tmp_path: Path) -> N
         worker_artifacts=(artifact_ref,),
         artifact_reference_verifier=rejecting_verifier,
     )
+    fabricated_result = fabricated["invoke"]()
     with pytest.raises(HarnessValidationError) as fabricated_error:
         fabricated["verifier"].verify(
-            fabricated["invoke"](),
+            fabricated_result,
             task=fabricated["resolved"],
-            request=fabricated["instance"],
-            workflow_id=fabricated["plan"].workflow_id,
+            request=TaskPlanResultVerificationRequest(
+                plan=fabricated["plan"],
+                task=fabricated["resolved"],
+                instance=fabricated["instance"],
+                worker_result=fabricated_result,
+            ),
         )
     assert fabricated_error.value.code == "task_plan_subagent_artifact_unverified"
     assert fabricated_error.value.details == {"artifact_index": 0}

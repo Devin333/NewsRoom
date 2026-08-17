@@ -345,10 +345,10 @@ class TaskPlanStageRunner(TaskPlanStageRunnerPort):
                 candidate,
                 task=definition,
                 request=TaskPlanResultVerificationRequest(
+                    plan=plan,
                     task=definition,
                     instance=instance,
                     worker_result=candidate,
-                    workflow_id=plan.workflow_id,
                 ),
             )
             self.store.append_result(verified)
@@ -392,10 +392,10 @@ class TaskPlanStageRunner(TaskPlanStageRunnerPort):
             worker_result,
             task=resolved,
             request=TaskPlanResultVerificationRequest(
+                plan=plan,
                 task=resolved,
                 instance=task_request,
                 worker_result=worker_result,
-                workflow_id=plan.workflow_id,
             ),
         )
         return verified
