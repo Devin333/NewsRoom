@@ -29,6 +29,9 @@ HARNESS_GRAPH_REDUCER_VERSION = "newsroom.harness-graph-state-reducer/v1"
 HARNESS_GRAPH_CONTROL_POLICY_VERSION = "newsroom.harness-graph-control-policy/v1"
 HARNESS_GRAPH_MERGE_VERSION = "newsroom.harness-graph-merge/v1"
 HARNESS_WORKER_ACTIVITY_SCHEMA = "newsroom.harness-worker-activity/v1"
+GRAPH_EXECUTION_VERSION_MANIFEST_SCHEMA = (
+    "newsroom.graph-execution-version-manifest/v1"
+)
 
 HARNESS_GRAPH_EVENT_SCHEMAS: Mapping[str, str] = MappingProxyType(
     {
@@ -53,6 +56,7 @@ HARNESS_GRAPH_EVENT_SCHEMA = HARNESS_GRAPH_EVENT_SCHEMAS[
 ]
 
 __all__ = [
+    "GRAPH_EXECUTION_VERSION_MANIFEST_SCHEMA",
     "HARNESS_CONDITION_POLICY_VERSION",
     "HARNESS_GRAPH_CHECKPOINT_SCHEMA",
     "HARNESS_GRAPH_COMPILER_VERSION",

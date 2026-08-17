@@ -30,6 +30,11 @@ from framework.harness.graph.definition import (
     HarnessGraphTaskPlanStageBinding,
     MAX_GRAPH_DEFINITION_ACTIVITIES,
 )
+from framework.harness.graph.execution_versions import (
+    GraphExecutionNodeVersion,
+    GraphExecutionVersionManifest,
+    GraphTerminalPolicyVersion,
+)
 from framework.harness.graph.dsl import (
     BoundedLoop,
     Choice,
@@ -78,6 +83,7 @@ from framework.harness.graph.model import (
 )
 from framework.harness.graph.reference import HarnessGraphReference
 from framework.harness.graph.versioning import (
+    GRAPH_EXECUTION_VERSION_MANIFEST_SCHEMA,
     GRAPH_ONLY_HARNESS_GRAPH_CHECKPOINT_SCHEMA,
     GRAPH_ONLY_HARNESS_GRAPH_DECISION_SCHEMA,
     GRAPH_ONLY_HARNESS_GRAPH_STATE_SCHEMA,
@@ -118,6 +124,7 @@ __all__ = [
     "ConditionAny",
     "ConditionOperator",
     "ConditionPredicate",
+    "GRAPH_EXECUTION_VERSION_MANIFEST_SCHEMA",
     "GRAPH_ONLY_HARNESS_GRAPH_CHECKPOINT_SCHEMA",
     "GRAPH_ONLY_HARNESS_GRAPH_DECISION_SCHEMA",
     "GRAPH_ONLY_HARNESS_GRAPH_STATE_SCHEMA",
@@ -181,6 +188,9 @@ __all__ = [
     "MAX_GRAPH_DEFINITION_ACTIVITIES",
     "NORMALIZED_HARNESS_GRAPH_SCHEMA",
     "NormalizedHarnessGraph",
+    "GraphExecutionNodeVersion",
+    "GraphExecutionVersionManifest",
+    "GraphTerminalPolicyVersion",
     "ParallelAll",
     "ParallelAllFailurePolicy",
     "ParallelAny",

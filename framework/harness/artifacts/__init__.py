@@ -48,6 +48,7 @@ from framework.harness.artifacts.reporting import (
 )
 from framework.harness.artifacts.terminal_manifest import (
     GRAPH_TERMINAL_MANIFEST_SCHEMA,
+    GRAPH_TERMINAL_MANIFEST_V2_SCHEMA,
     GraphArtifactContentPort,
     GraphArtifactContentRecord,
     GraphArtifactStagingPort,
@@ -55,6 +56,7 @@ from framework.harness.artifacts.terminal_manifest import (
     GraphManifestHistoryDiagnostic,
     GraphTerminalArtifact,
     GraphTerminalManifest,
+    GraphTerminalManifestV2,
     GraphTerminalManifestCommitRequest,
     GraphTerminalManifestContext,
     GraphTerminalManifestError,
@@ -64,8 +66,10 @@ from framework.harness.artifacts.terminal_manifest import (
     GraphTerminalManifestRecorderPort,
     GraphTerminalPublicationEvidence,
     GraphTerminalStatus,
+    build_graph_terminal_manifest_v2,
     graph_terminal_manifest_hash,
     parse_graph_terminal_manifest,
+    parse_graph_terminal_manifest_v2,
 )
 
 __all__ = [
@@ -79,6 +83,7 @@ __all__ = [
     "DEFAULT_MAX_GC_OPERATIONS",
     "FakeArtifactPort",
     "GRAPH_TERMINAL_MANIFEST_SCHEMA",
+    "GRAPH_TERMINAL_MANIFEST_V2_SCHEMA",
     "GraphArtifactContentPort",
     "GraphArtifactContentRecord",
     "GraphArtifactStagingPort",
@@ -109,6 +114,7 @@ __all__ = [
     "GraphManifestHistoryDiagnostic",
     "GraphTerminalArtifact",
     "GraphTerminalManifest",
+    "GraphTerminalManifestV2",
     "GraphTerminalManifestCommitRequest",
     "GraphTerminalManifestContext",
     "GraphTerminalManifestError",
@@ -118,6 +124,7 @@ __all__ = [
     "GraphTerminalManifestRecorderPort",
     "GraphTerminalPublicationEvidence",
     "GraphTerminalStatus",
+    "build_graph_terminal_manifest_v2",
     "graph_artifact_gc_transition_usage_fact",
     "graph_terminal_manifest_hash",
     "MAX_GC_OPERATIONS",
@@ -126,4 +133,5 @@ __all__ = [
     "evaluate_graph_artifact_alerts",
     "evaluate_graph_artifact_reconciliation_alerts",
     "parse_graph_terminal_manifest",
+    "parse_graph_terminal_manifest_v2",
 ]

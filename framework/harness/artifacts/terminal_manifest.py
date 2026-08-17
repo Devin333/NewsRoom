@@ -17,10 +17,16 @@ from framework.events.canonical import (
     normalize_canonical_json,
     thaw_canonical_json,
 )
+from framework.harness.control_plane.errors import HarnessValidationError
+from framework.harness.graph.execution_versions import (
+    GraphExecutionVersionManifest,
+)
+from framework.harness.graph.model import NormalizedHarnessGraph
 from framework.shared.time import ensure_utc, format_datetime, parse_datetime
 
 
 GRAPH_TERMINAL_MANIFEST_SCHEMA = "newsroom.graph-terminal-manifest/v1"
+GRAPH_TERMINAL_MANIFEST_V2_SCHEMA = "newsroom.graph-terminal-manifest/v2"
 MAX_GRAPH_TERMINAL_ARTIFACTS = 10_000
 MAX_GRAPH_TERMINAL_METADATA_BYTES = 64 * 1024
 MAX_GRAPH_ARTIFACT_CONTENT_BYTES = 64 * 1024 * 1024
@@ -173,6 +179,7 @@ class GraphTerminalManifestErrorCode(StrEnum):
     SCHEMA_UNSUPPORTED = "graph_terminal_manifest_schema_unsupported"
     HASH_MISMATCH = "graph_terminal_manifest_hash_mismatch"
     IDENTITY_MISMATCH = "graph_terminal_manifest_identity_mismatch"
+    EXECUTION_VERSION_MISMATCH = "graph_terminal_manifest_execution_version_mismatch"
     ARTIFACT_NOT_FOUND = "graph_terminal_manifest_artifact_not_found"
     ARTIFACT_CONTENT_TOO_LARGE = "graph_terminal_manifest_artifact_content_too_large"
     ARTIFACT_SIZE_MISMATCH = "graph_terminal_manifest_artifact_size_mismatch"
@@ -662,6 +669,212 @@ class GraphTerminalManifest:
 
 
 @dataclass(frozen=True, slots=True)
+class GraphTerminalManifestV2:
+    """Inactive Graph-only terminal manifest with exact execution lineage.
+
+    The live Artifact ports intentionally continue to accept only
+    ``GraphTerminalManifest`` v1. This separate type prevents the Gate A reader
+    and builder from becoming a production writer through structural typing.
+    """
+
+    terminal: GraphTerminalManifest
+    execution_versions: GraphExecutionVersionManifest
+    schema_version: str = GRAPH_TERMINAL_MANIFEST_V2_SCHEMA
+    manifest_hash: str | None = None
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.terminal, GraphTerminalManifest):
+            raise TypeError("terminal must be GraphTerminalManifest")
+        if not isinstance(self.execution_versions, GraphExecutionVersionManifest):
+            raise TypeError(
+                "execution_versions must be GraphExecutionVersionManifest"
+            )
+        if self.schema_version != GRAPH_TERMINAL_MANIFEST_V2_SCHEMA:
+            raise GraphTerminalManifestError(
+                GraphTerminalManifestErrorCode.SCHEMA_UNSUPPORTED,
+                f"unsupported Graph terminal manifest schema: {self.schema_version}",
+                field="schema_version",
+            )
+        self.execution_versions.verify_integrity()
+        version_pairs = (
+            (
+                "graph_id",
+                self.terminal.graph_id,
+                self.execution_versions.graph_id,
+            ),
+            (
+                "graph_version",
+                self.terminal.graph_version,
+                self.execution_versions.graph_version,
+            ),
+            (
+                "graph_schema_version",
+                self.terminal.graph_schema_version,
+                self.execution_versions.normalized_graph_schema_version,
+            ),
+            (
+                "compiler_version",
+                self.terminal.compiler_version,
+                self.execution_versions.compiler_version,
+            ),
+            (
+                "normalized_graph_checksum",
+                self.terminal.normalized_graph_checksum,
+                self.execution_versions.normalized_graph_checksum,
+            ),
+            (
+                "terminal_node_ids",
+                self.terminal.terminal_node_ids,
+                self.execution_versions.terminal_node_ids,
+            ),
+        )
+        mismatch = next(
+            (
+                field_name
+                for field_name, terminal_value, execution_value in version_pairs
+                if terminal_value != execution_value
+            ),
+            None,
+        )
+        if mismatch is not None:
+            raise GraphTerminalManifestError(
+                GraphTerminalManifestErrorCode.EXECUTION_VERSION_MISMATCH,
+                "Graph terminal manifest does not match its execution versions",
+                field=mismatch,
+            )
+        expected_hash = checksum_for(self.content_projection())
+        supplied_hash = self.manifest_hash
+        if supplied_hash is not None:
+            supplied_hash = _checksum(supplied_hash, "manifest_hash")
+            if supplied_hash != expected_hash:
+                raise GraphTerminalManifestError(
+                    GraphTerminalManifestErrorCode.HASH_MISMATCH,
+                    "Graph terminal manifest hash does not match canonical content",
+                    field="manifest_hash",
+                )
+        object.__setattr__(self, "manifest_hash", expected_hash)
+
+    @property
+    def run_id(self) -> str:
+        return self.terminal.run_id
+
+    @property
+    def graph_id(self) -> str:
+        return self.terminal.graph_id
+
+    @property
+    def graph_version(self) -> str:
+        return self.terminal.graph_version
+
+    @property
+    def normalized_graph_checksum(self) -> str:
+        return self.terminal.normalized_graph_checksum
+
+    @property
+    def terminal_node_ids(self) -> tuple[str, ...]:
+        return self.terminal.terminal_node_ids
+
+    @property
+    def artifacts(self) -> tuple[GraphTerminalArtifact, ...]:
+        return self.terminal.artifacts
+
+    @property
+    def publication(self) -> GraphTerminalPublicationEvidence | None:
+        return self.terminal.publication
+
+    def artifact(self, artifact_key: str) -> GraphTerminalArtifact | None:
+        return self.terminal.artifact(artifact_key)
+
+    def content_projection(self) -> dict[str, Any]:
+        projection = self.terminal.content_projection()
+        projection["schema_version"] = self.schema_version
+        projection["execution_versions"] = self.execution_versions.to_dict()
+        return projection
+
+    def to_dict(self) -> dict[str, Any]:
+        return {**self.content_projection(), "manifest_hash": self.manifest_hash}
+
+    @classmethod
+    def from_dict(
+        cls,
+        value: Mapping[str, Any],
+        *,
+        expected_run_id: str | None = None,
+        expected_graph: NormalizedHarnessGraph,
+    ) -> Self:
+        if not isinstance(expected_graph, NormalizedHarnessGraph):
+            raise TypeError("expected_graph must be NormalizedHarnessGraph")
+        payload = _exact_keys(
+            value,
+            required=frozenset(
+                {
+                    "schema_version",
+                    "tenant_id",
+                    "run_id",
+                    "graph_id",
+                    "graph_version",
+                    "graph_schema_version",
+                    "compiler_version",
+                    "normalized_graph_checksum",
+                    "status",
+                    "started_at",
+                    "completed_at",
+                    "terminal_state_ref",
+                    "checkpoint_ref",
+                    "terminal_node_ids",
+                    "gate_evidence_refs",
+                    "artifacts",
+                    "publication",
+                    "execution_versions",
+                    "manifest_hash",
+                }
+            ),
+            model=cls.__name__,
+        )
+        if payload["schema_version"] != GRAPH_TERMINAL_MANIFEST_V2_SCHEMA:
+            raise GraphTerminalManifestError(
+                GraphTerminalManifestErrorCode.SCHEMA_UNSUPPORTED,
+                f"unsupported Graph terminal manifest schema: {payload['schema_version']}",
+                field="schema_version",
+            )
+        raw_execution_versions = payload.pop("execution_versions")
+        if not isinstance(raw_execution_versions, Mapping):
+            raise _schema_error("execution_versions")
+        supplied_hash = _checksum(payload["manifest_hash"], "manifest_hash")
+        payload["schema_version"] = GRAPH_TERMINAL_MANIFEST_SCHEMA
+        payload["manifest_hash"] = None
+        terminal = GraphTerminalManifest.from_dict(
+            payload,
+            expected_run_id=expected_run_id,
+        )
+        try:
+            execution_versions = GraphExecutionVersionManifest.from_dict(
+                raw_execution_versions
+            )
+        except HarnessValidationError as exc:
+            raise _schema_error("execution_versions") from exc
+        parsed = cls(
+            terminal=terminal,
+            execution_versions=execution_versions,
+            manifest_hash=supplied_hash,
+        )
+        try:
+            expected_versions = GraphExecutionVersionManifest.from_normalized_graph(
+                expected_graph
+            )
+        except HarnessValidationError as exc:
+            raise _schema_error("expected_graph") from exc
+        if parsed.execution_versions != expected_versions:
+            raise GraphTerminalManifestError(
+                GraphTerminalManifestErrorCode.EXECUTION_VERSION_MISMATCH,
+                "Graph terminal manifest execution versions do not match the pinned "
+                "Graph",
+                field="execution_versions",
+            )
+        return parsed
+
+
+@dataclass(frozen=True, slots=True)
 class GraphTerminalManifestCommitRequest:
     """Harness-decided terminal state ready for one artifact visibility commit."""
 
@@ -754,6 +967,53 @@ def parse_graph_terminal_manifest(
             field="schema_version",
         )
     return GraphTerminalManifest.from_dict(value, expected_run_id=expected)
+
+
+def build_graph_terminal_manifest_v2(
+    manifest: GraphTerminalManifest,
+    graph: NormalizedHarnessGraph,
+) -> GraphTerminalManifestV2:
+    """Build inactive v2 evidence from one frozen Graph and v1 terminal record."""
+
+    if not isinstance(manifest, GraphTerminalManifest):
+        raise TypeError("manifest must be GraphTerminalManifest")
+    if not isinstance(graph, NormalizedHarnessGraph):
+        raise TypeError("graph must be NormalizedHarnessGraph")
+    execution_versions = GraphExecutionVersionManifest.from_normalized_graph(graph)
+    return GraphTerminalManifestV2(
+        terminal=manifest,
+        execution_versions=execution_versions,
+    )
+
+
+def parse_graph_terminal_manifest_v2(
+    value: Mapping[str, Any],
+    *,
+    expected_run_id: str,
+    expected_graph: NormalizedHarnessGraph,
+) -> GraphTerminalManifestV2:
+    """Read v2 evidence only with the externally pinned Graph as a witness.
+
+    The ordinary live parser intentionally remains v1-only until the production
+    manifest writer/reader cutover is qualified by Gate B.
+    """
+
+    expected = _identifier(expected_run_id, "expected_run_id")
+    if not isinstance(expected_graph, NormalizedHarnessGraph):
+        raise TypeError("expected_graph must be NormalizedHarnessGraph")
+    schema = value.get("schema_version") if isinstance(value, Mapping) else None
+    if schema != GRAPH_TERMINAL_MANIFEST_V2_SCHEMA:
+        raise GraphTerminalManifestError(
+            GraphTerminalManifestErrorCode.SCHEMA_UNSUPPORTED,
+            f"unsupported Graph terminal manifest schema: {schema}",
+            field="schema_version",
+        )
+    parsed = GraphTerminalManifestV2.from_dict(
+        value,
+        expected_run_id=expected,
+        expected_graph=expected_graph,
+    )
+    return parsed
 
 
 def graph_terminal_manifest_hash(
@@ -1184,6 +1444,7 @@ def _schema_error(field_name: str) -> GraphTerminalManifestError:
 
 __all__ = [
     "GRAPH_TERMINAL_MANIFEST_SCHEMA",
+    "GRAPH_TERMINAL_MANIFEST_V2_SCHEMA",
     "GraphArtifactContentPort",
     "GraphArtifactContentRecord",
     "GraphArtifactStagingPort",
@@ -1191,6 +1452,7 @@ __all__ = [
     "GraphManifestHistoryDiagnostic",
     "GraphTerminalArtifact",
     "GraphTerminalManifest",
+    "GraphTerminalManifestV2",
     "GraphTerminalManifestCommitRequest",
     "GraphTerminalManifestContext",
     "GraphTerminalManifestError",
@@ -1200,6 +1462,8 @@ __all__ = [
     "GraphTerminalManifestRecorderPort",
     "GraphTerminalPublicationEvidence",
     "GraphTerminalStatus",
+    "build_graph_terminal_manifest_v2",
     "graph_terminal_manifest_hash",
     "parse_graph_terminal_manifest",
+    "parse_graph_terminal_manifest_v2",
 ]

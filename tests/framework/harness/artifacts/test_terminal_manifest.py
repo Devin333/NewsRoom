@@ -9,8 +9,16 @@ from pathlib import Path
 
 import pytest
 
+from business.research.graphs import (
+    build_dynamic_paper_analysis_graph_definition,
+    build_paper_analysis_graph_definition,
+)
+from business.research.workflows.paper_analysis_workflow import (
+    build_paper_analysis_workflow_spec,
+)
 from framework.harness.artifacts import (
     GRAPH_TERMINAL_MANIFEST_SCHEMA,
+    GRAPH_TERMINAL_MANIFEST_V2_SCHEMA,
     GraphArtifactStrictContentReader,
     GraphManifestHistoryDiagnostic,
     GraphTerminalArtifact,
@@ -18,11 +26,24 @@ from framework.harness.artifacts import (
     GraphTerminalManifestError,
     GraphTerminalManifestErrorCode,
     GraphTerminalManifestHistoryError,
+    GraphTerminalManifestV2,
     GraphTerminalPublicationEvidence,
     GraphTerminalStatus,
+    build_graph_terminal_manifest_v2,
     graph_terminal_manifest_hash,
     parse_graph_terminal_manifest,
+    parse_graph_terminal_manifest_v2,
 )
+from framework.harness.graph import (
+    GRAPH_ONLY_HARNESS_GRAPH_CHECKPOINT_SCHEMA,
+    GRAPH_ONLY_HARNESS_GRAPH_DECISION_SCHEMA,
+    GRAPH_ONLY_HARNESS_GRAPH_STATE_SCHEMA,
+    GraphExecutionVersionManifest,
+    HARNESS_GRAPH_EVENT_SCHEMAS,
+    HarnessGraphCompiler,
+    NormalizedHarnessGraph,
+)
+from framework.harness.workflow.compiler import HarnessWorkflowGraphCompiler
 
 
 _NOW = datetime(2026, 8, 14, 10, 30, tzinfo=UTC)
@@ -111,6 +132,33 @@ def _manifest(
     )
 
 
+def _graph_only_graph():
+    return HarnessGraphCompiler().compile(
+        build_paper_analysis_graph_definition()
+    ).graph
+
+
+def _v2_manifest() -> tuple[GraphTerminalManifestV2, NormalizedHarnessGraph]:
+    graph = _graph_only_graph()
+    manifest = GraphTerminalManifest(
+        tenant_id="tenant-1",
+        run_id="run-1",
+        graph_id=graph.graph_id,
+        graph_version=graph.graph_version,
+        graph_schema_version=graph.schema_version,
+        compiler_version=graph.compiler_version,
+        normalized_graph_checksum=graph.checksum,
+        status=GraphTerminalStatus.SUCCEEDED,
+        started_at=_NOW,
+        completed_at=_NOW + timedelta(seconds=2),
+        terminal_state_ref=_SHA_B,
+        checkpoint_ref="checkpoint://run-1/terminal",
+        terminal_node_ids=graph.terminal_node_ids,
+        gate_evidence_refs=(_SHA_C,),
+    )
+    return build_graph_terminal_manifest_v2(manifest, graph), graph
+
+
 def test_graph_terminal_manifest_round_trips_with_canonical_hash() -> None:
     artifact = _artifact()
     manifest = _manifest(artifact, publication=_publication())
@@ -123,6 +171,236 @@ def test_graph_terminal_manifest_round_trips_with_canonical_hash() -> None:
     assert restored.manifest_hash == graph_terminal_manifest_hash(restored)
     assert restored.artifact("analysis") == artifact
     assert restored.publication == _publication()
+
+
+def test_graph_terminal_manifest_v1_checksum_oracle_remains_stable() -> None:
+    assert _manifest().manifest_hash == (
+        "sha256:7dcdf58ac715bfa5b810e741461c34d3aab092c4430cb56ec8411af97bf3a64c"
+    )
+
+
+def test_graph_terminal_manifest_v2_round_trips_exact_execution_versions() -> None:
+    manifest, graph = _v2_manifest()
+
+    payload = json.loads(json.dumps(manifest.to_dict()))
+    restored = parse_graph_terminal_manifest_v2(
+        payload,
+        expected_run_id="run-1",
+        expected_graph=graph,
+    )
+
+    assert restored == manifest
+    assert restored.schema_version == GRAPH_TERMINAL_MANIFEST_V2_SCHEMA
+    assert restored.execution_versions.condition_policy_version == (
+        graph.condition_policy_version
+    )
+    assert restored.execution_versions.state_schema_version == (
+        GRAPH_ONLY_HARNESS_GRAPH_STATE_SCHEMA
+    )
+    assert restored.execution_versions.decision_schema_version == (
+        GRAPH_ONLY_HARNESS_GRAPH_DECISION_SCHEMA
+    )
+    assert restored.execution_versions.checkpoint_schema_version == (
+        GRAPH_ONLY_HARNESS_GRAPH_CHECKPOINT_SCHEMA
+    )
+    assert dict(restored.execution_versions.event_schema_versions) == dict(
+        HARNESS_GRAPH_EVENT_SCHEMAS
+    )
+    assert restored.execution_versions.node_versions
+    assert "workflow_id" not in payload
+    assert "workflow_ref" not in json.dumps(payload)
+
+
+def test_live_manifest_parser_remains_v1_only_until_cutover() -> None:
+    manifest, _graph = _v2_manifest()
+
+    with pytest.raises(GraphTerminalManifestError) as raised:
+        parse_graph_terminal_manifest(manifest.to_dict(), expected_run_id="run-1")
+
+    assert raised.value.code is GraphTerminalManifestErrorCode.SCHEMA_UNSUPPORTED
+
+
+def test_graph_terminal_manifest_v2_rejects_unknown_execution_schema() -> None:
+    manifest, graph = _v2_manifest()
+    payload = json.loads(json.dumps(manifest.to_dict()))
+    payload["execution_versions"]["schema_version"] = (
+        "newsroom.graph-execution-version-manifest/v999"
+    )
+
+    with pytest.raises(GraphTerminalManifestError) as raised:
+        parse_graph_terminal_manifest_v2(
+            payload,
+            expected_run_id="run-1",
+            expected_graph=graph,
+        )
+
+    assert raised.value.code is GraphTerminalManifestErrorCode.SCHEMA_INVALID
+
+
+def test_graph_terminal_manifest_v2_rejects_unknown_event_schema() -> None:
+    manifest, graph = _v2_manifest()
+    payload = json.loads(json.dumps(manifest.to_dict()))
+    payload["execution_versions"]["event_schema_versions"][
+        "harness_graph_created"
+    ] = "newsroom.harness-graph-created/v999"
+
+    with pytest.raises(GraphTerminalManifestError) as raised:
+        parse_graph_terminal_manifest_v2(
+            payload,
+            expected_run_id="run-1",
+            expected_graph=graph,
+        )
+
+    assert raised.value.code is GraphTerminalManifestErrorCode.SCHEMA_INVALID
+
+
+def test_graph_terminal_manifest_v2_rejects_workflow_alias() -> None:
+    manifest, graph = _v2_manifest()
+    payload = json.loads(json.dumps(manifest.to_dict()))
+    payload["workflow_id"] = "legacy-workflow"
+
+    with pytest.raises(GraphTerminalManifestError) as raised:
+        parse_graph_terminal_manifest_v2(
+            payload,
+            expected_run_id="run-1",
+            expected_graph=graph,
+        )
+
+    assert raised.value.code is GraphTerminalManifestErrorCode.SCHEMA_INVALID
+
+
+def test_graph_terminal_manifest_v2_rejects_execution_checksum_tampering() -> None:
+    manifest, graph = _v2_manifest()
+    payload = json.loads(json.dumps(manifest.to_dict()))
+    payload["execution_versions"]["execution_manifest_checksum"] = _SHA_A
+
+    with pytest.raises(GraphTerminalManifestError) as raised:
+        parse_graph_terminal_manifest_v2(
+            payload,
+            expected_run_id="run-1",
+            expected_graph=graph,
+        )
+
+    assert raised.value.code is GraphTerminalManifestErrorCode.SCHEMA_INVALID
+
+
+@pytest.mark.parametrize(
+    "checksum_path",
+    [
+        ("manifest_hash",),
+        ("execution_versions", "execution_manifest_checksum"),
+    ],
+)
+def test_graph_terminal_manifest_v2_requires_wire_checksums(
+    checksum_path: tuple[str, ...],
+) -> None:
+    manifest, graph = _v2_manifest()
+    payload = json.loads(json.dumps(manifest.to_dict()))
+    target = payload
+    for key in checksum_path[:-1]:
+        target = target[key]
+    target[checksum_path[-1]] = None
+
+    with pytest.raises(GraphTerminalManifestError) as raised:
+        parse_graph_terminal_manifest_v2(
+            payload,
+            expected_run_id="run-1",
+            expected_graph=graph,
+        )
+
+    assert raised.value.code is GraphTerminalManifestErrorCode.SCHEMA_INVALID
+
+
+def test_graph_terminal_manifest_v2_reader_requires_graph_witness() -> None:
+    manifest, _graph = _v2_manifest()
+
+    with pytest.raises(TypeError):
+        GraphTerminalManifestV2.from_dict(
+            manifest.to_dict(),
+            expected_run_id="run-1",
+        )
+
+
+def test_graph_terminal_manifest_v2_rejects_cross_graph_substitution() -> None:
+    manifest, _graph = _v2_manifest()
+    other_graph = HarnessGraphCompiler().compile(
+        build_dynamic_paper_analysis_graph_definition()
+    ).graph
+
+    with pytest.raises(GraphTerminalManifestError) as raised:
+        parse_graph_terminal_manifest_v2(
+            manifest.to_dict(),
+            expected_run_id="run-1",
+            expected_graph=other_graph,
+        )
+
+    assert (
+        raised.value.code
+        is GraphTerminalManifestErrorCode.EXECUTION_VERSION_MISMATCH
+    )
+
+
+def test_graph_terminal_manifest_v2_rejects_legacy_graph_witness() -> None:
+    manifest, _graph = _v2_manifest()
+    legacy_graph = HarnessWorkflowGraphCompiler().compile(
+        build_paper_analysis_workflow_spec()
+    ).graph
+
+    with pytest.raises(GraphTerminalManifestError) as raised:
+        parse_graph_terminal_manifest_v2(
+            manifest.to_dict(),
+            expected_run_id="run-1",
+            expected_graph=legacy_graph,
+        )
+
+    assert raised.value.code is GraphTerminalManifestErrorCode.SCHEMA_INVALID
+    assert raised.value.field == "expected_graph"
+
+
+def test_execution_versions_pin_dynamic_task_plan_support_contracts() -> None:
+    graph = HarnessGraphCompiler().compile(
+        build_dynamic_paper_analysis_graph_definition()
+    ).graph
+    versions = GraphExecutionVersionManifest.from_normalized_graph(graph)
+    task_plan_node = next(
+        node for node in versions.node_versions if node.task_plan_policy_ref is not None
+    )
+
+    assert task_plan_node.task_plan_schema is not None
+    assert task_plan_node.task_plan_support_refs["checkpoint_ref"]
+    assert task_plan_node.task_plan_support_refs["event_schema"].endswith("/v2")
+    with pytest.raises(TypeError):
+        task_plan_node.task_plan_support_refs["event_schema"] = "tampered/v1"
+
+
+def test_graph_terminal_manifest_v2_rejects_moving_execution_version() -> None:
+    manifest, graph = _v2_manifest()
+    payload = json.loads(json.dumps(manifest.to_dict()))
+    payload["execution_versions"]["graph_version"] = "latest"
+
+    with pytest.raises(GraphTerminalManifestError) as raised:
+        parse_graph_terminal_manifest_v2(
+            payload,
+            expected_run_id="run-1",
+            expected_graph=graph,
+        )
+
+    assert raised.value.code is GraphTerminalManifestErrorCode.SCHEMA_INVALID
+
+
+def test_graph_terminal_manifest_v2_rejects_oversized_execution_identifier() -> None:
+    manifest, graph = _v2_manifest()
+    payload = json.loads(json.dumps(manifest.to_dict()))
+    payload["execution_versions"]["node_versions"][0]["node_id"] = "x" * 513
+
+    with pytest.raises(GraphTerminalManifestError) as raised:
+        parse_graph_terminal_manifest_v2(
+            payload,
+            expected_run_id="run-1",
+            expected_graph=graph,
+        )
+
+    assert raised.value.code is GraphTerminalManifestErrorCode.SCHEMA_INVALID
 
 
 def test_graph_terminal_manifest_rejects_hash_tampering() -> None:
