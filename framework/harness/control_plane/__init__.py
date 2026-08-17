@@ -67,11 +67,6 @@ from framework.harness.control_plane.graph_checkpoint import (
 )
 from framework.harness.control_plane.graph_inspection import HarnessGraphInspection
 from framework.harness.control_plane.graph_observability import (
-    HarnessGraphDiagnosticSeverity,
-    HarnessGraphHealthReport,
-    HarnessGraphHealthStatus,
-    HarnessGraphMetricSample,
-    HarnessGraphOperatorDiagnostic,
     graph_health_report,
     graph_metric_samples,
 )
@@ -296,11 +291,6 @@ __all__ = [
     "HarnessGraphFailedNodeRecord",
     "HarnessGraphHistoryReducer",
     "HarnessGraphInspection",
-    "HarnessGraphDiagnosticSeverity",
-    "HarnessGraphHealthReport",
-    "HarnessGraphHealthStatus",
-    "HarnessGraphMetricSample",
-    "HarnessGraphOperatorDiagnostic",
     "HarnessGraphObservationType",
     "HarnessGraphProjectionCommit",
     "HarnessGraphRecovery",

@@ -16,9 +16,9 @@ from framework.harness.graph.operations import (
     HarnessGraphRunOperation,
     HarnessGraphRunOperationType,
 )
-from framework.harness.control_plane.graph_observability import (
+from framework.harness.control_plane.graph_observability import graph_health_report
+from framework.harness.graph.observability import (
     HarnessGraphHealthReport,
-    graph_health_report,
 )
 from framework.harness.control_plane.harness import HarnessRunResult
 from framework.harness.control_plane.state import HarnessRunSpec

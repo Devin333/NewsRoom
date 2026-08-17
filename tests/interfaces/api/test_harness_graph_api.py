@@ -12,9 +12,7 @@ from fastapi.testclient import TestClient
 from framework.events import EventStoreUnavailableError
 from framework.harness import HarnessValidationError
 from framework.harness.control_plane.graph_inspection import HarnessGraphInspection
-from framework.harness.control_plane.graph_observability import (
-    HarnessGraphHealthReport,
-)
+from framework.harness.graph.observability import HarnessGraphHealthReport
 from interfaces.api import create_app
 from interfaces.models import ActorContext
 from interfaces.services.harness_graph_service import (

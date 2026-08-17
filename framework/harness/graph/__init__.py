@@ -94,6 +94,13 @@ from framework.harness.graph.operations import (
     HarnessGraphRunOperation,
     HarnessGraphRunOperationType,
 )
+from framework.harness.graph.observability import (
+    HarnessGraphDiagnosticSeverity,
+    HarnessGraphHealthReport,
+    HarnessGraphHealthStatus,
+    HarnessGraphMetricSample,
+    HarnessGraphOperatorDiagnostic,
+)
 from framework.harness.graph.result_lineage import (
     HARNESS_GRAPH_RESULT_LINEAGE_SCHEMA,
     HarnessGraphArtifactRefProjection,
@@ -199,6 +206,11 @@ __all__ = [
     "HarnessGraphResultSummary",
     "HarnessGraphDecision",
     "HarnessGraphDecisionType",
+    "HarnessGraphDiagnosticSeverity",
+    "HarnessGraphHealthReport",
+    "HarnessGraphHealthStatus",
+    "HarnessGraphMetricSample",
+    "HarnessGraphOperatorDiagnostic",
     "HarnessGraphRunOperation",
     "HarnessGraphRunOperationType",
     "HarnessGraphTaskPlanStageBinding",

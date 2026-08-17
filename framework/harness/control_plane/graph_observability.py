@@ -2,12 +2,6 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
-from dataclasses import dataclass
-from enum import StrEnum
-from types import MappingProxyType
-from typing import Any
-
 from framework.harness.control_plane.errors import HarnessValidationError
 from framework.harness.control_plane.graph_state import (
     HarnessCompensationStatus,
@@ -15,106 +9,13 @@ from framework.harness.control_plane.graph_state import (
     HarnessWaitStatus,
     RunOutcome,
 )
-from framework.harness.graph.canonical import required_text
-
-
-class HarnessGraphHealthStatus(StrEnum):
-    HEALTHY = "healthy"
-    DEGRADED = "degraded"
-    UNHEALTHY = "unhealthy"
-
-
-class HarnessGraphDiagnosticSeverity(StrEnum):
-    WARNING = "warning"
-    ERROR = "error"
-
-
-@dataclass(frozen=True, slots=True)
-class HarnessGraphMetricSample:
-    name: str
-    value: float
-    labels: Mapping[str, str]
-
-    def __post_init__(self) -> None:
-        object.__setattr__(self, "name", required_text(self.name, "metric.name"))
-        if not isinstance(self.value, int | float) or isinstance(self.value, bool):
-            raise TypeError("metric value must be numeric")
-        labels = dict(self.labels)
-        allowed = {"lifecycle", "outcome", "result"}
-        if set(labels).difference(allowed):
-            raise HarnessValidationError(
-                "graph metric contains a high-cardinality label",
-                code="graph_metric_label_rejected",
-            )
-        object.__setattr__(
-            self,
-            "labels",
-            MappingProxyType({key: str(labels[key]) for key in sorted(labels)}),
-        )
-        object.__setattr__(self, "value", float(self.value))
-
-    def to_dict(self) -> dict[str, Any]:
-        return {"name": self.name, "value": self.value, "labels": dict(self.labels)}
-
-
-@dataclass(frozen=True, slots=True)
-class HarnessGraphOperatorDiagnostic:
-    code: str
-    severity: HarnessGraphDiagnosticSeverity | str
-    evidence_refs: tuple[str, ...] = ()
-    current_value: int | None = None
-    threshold: int | None = None
-
-    def __post_init__(self) -> None:
-        object.__setattr__(self, "code", required_text(self.code, "diagnostic.code"))
-        object.__setattr__(
-            self,
-            "severity",
-            HarnessGraphDiagnosticSeverity(self.severity),
-        )
-        refs = tuple(sorted(str(item) for item in self.evidence_refs))
-        if any(not _is_checksum(item) for item in refs):
-            raise HarnessValidationError(
-                "operator diagnostics may expose checksum evidence only",
-                code="graph_diagnostic_reference_rejected",
-            )
-        object.__setattr__(self, "evidence_refs", refs)
-
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "code": self.code,
-            "severity": self.severity.value,
-            "evidence_refs": list(self.evidence_refs),
-            "current_value": self.current_value,
-            "threshold": self.threshold,
-        }
-
-
-@dataclass(frozen=True, slots=True)
-class HarnessGraphHealthReport:
-    status: HarnessGraphHealthStatus | str
-    diagnostics: tuple[HarnessGraphOperatorDiagnostic, ...]
-    last_event_sequence: int
-
-    def __post_init__(self) -> None:
-        object.__setattr__(self, "status", HarnessGraphHealthStatus(self.status))
-        diagnostics = tuple(self.diagnostics)
-        if not all(
-            isinstance(item, HarnessGraphOperatorDiagnostic) for item in diagnostics
-        ):
-            raise TypeError("diagnostics must contain HarnessGraphOperatorDiagnostic")
-        object.__setattr__(
-            self,
-            "diagnostics",
-            tuple(sorted(diagnostics, key=lambda item: (item.severity.value, item.code))),
-        )
-
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "status": self.status.value,
-            "diagnostics": [item.to_dict() for item in self.diagnostics],
-            "last_event_sequence": self.last_event_sequence,
-        }
+from framework.harness.graph.observability import (
+    HarnessGraphDiagnosticSeverity as _HarnessGraphDiagnosticSeverity,
+    HarnessGraphHealthReport as _HarnessGraphHealthReport,
+    HarnessGraphHealthStatus as _HarnessGraphHealthStatus,
+    HarnessGraphMetricSample as _HarnessGraphMetricSample,
+    HarnessGraphOperatorDiagnostic as _HarnessGraphOperatorDiagnostic,
+)
 
 
 def graph_metric_samples(
@@ -123,7 +24,7 @@ def graph_metric_samples(
     decision_latency_ms: float | None = None,
     replay_mismatch: bool = False,
     validation_failure: bool = False,
-) -> tuple[HarnessGraphMetricSample, ...]:
+) -> tuple[_HarnessGraphMetricSample, ...]:
     if not isinstance(state, HarnessGraphState):
         raise TypeError("state must be HarnessGraphState")
     labels = {"lifecycle": state.lifecycle.value, "outcome": state.outcome.value}
@@ -159,7 +60,10 @@ def graph_metric_samples(
         "harness_graph_replay_mismatch": int(replay_mismatch),
         "harness_graph_validation_failure": int(validation_failure),
     }
-    samples = [HarnessGraphMetricSample(name, value, labels) for name, value in values.items()]
+    samples = [
+        _HarnessGraphMetricSample(name, value, labels)
+        for name, value in values.items()
+    ]
     if decision_latency_ms is not None:
         if decision_latency_ms < 0:
             raise HarnessValidationError(
@@ -167,7 +71,7 @@ def graph_metric_samples(
                 code="invalid_graph_decision_latency",
             )
         samples.append(
-            HarnessGraphMetricSample(
+            _HarnessGraphMetricSample(
                 "harness_graph_decision_latency_ms",
                 decision_latency_ms,
                 labels,
@@ -183,7 +87,7 @@ def graph_health_report(
     stuck_wait_sequence_threshold: int = 1_000,
     event_lag_threshold: int = 100,
     incompatible_history: bool = False,
-) -> HarnessGraphHealthReport:
+) -> _HarnessGraphHealthReport:
     if not isinstance(state, HarnessGraphState):
         raise TypeError("state must be HarnessGraphState")
     for name, value in (
@@ -195,12 +99,12 @@ def graph_health_report(
                 f"{name} must be a nonnegative integer",
                 code="invalid_graph_health_policy",
             )
-    diagnostics: list[HarnessGraphOperatorDiagnostic] = []
+    diagnostics: list[_HarnessGraphOperatorDiagnostic] = []
     for wait in state.wait_registrations:
         age = state.last_event_sequence - wait.registered_sequence
         if wait.unresolved and age > stuck_wait_sequence_threshold:
             diagnostics.append(
-                HarnessGraphOperatorDiagnostic(
+                _HarnessGraphOperatorDiagnostic(
                     "stuck_wait",
                     "warning",
                     current_value=age,
@@ -209,7 +113,7 @@ def graph_health_report(
             )
     if state.outcome is RunOutcome.INDETERMINATE:
         diagnostics.append(
-            HarnessGraphOperatorDiagnostic(
+            _HarnessGraphOperatorDiagnostic(
                 "indeterminate_activity",
                 "error",
                 evidence_refs=(
@@ -228,7 +132,7 @@ def graph_health_report(
     )
     if failed_compensation_refs:
         diagnostics.append(
-            HarnessGraphOperatorDiagnostic(
+            _HarnessGraphOperatorDiagnostic(
                 "compensation_failure",
                 "error",
                 evidence_refs=failed_compensation_refs,
@@ -237,7 +141,7 @@ def graph_health_report(
     if canonical_high_watermark is not None:
         if canonical_high_watermark < state.last_event_sequence:
             diagnostics.append(
-                HarnessGraphOperatorDiagnostic(
+                _HarnessGraphOperatorDiagnostic(
                     "history_high_watermark_regression",
                     "error",
                     current_value=canonical_high_watermark,
@@ -248,7 +152,7 @@ def graph_health_report(
             lag = canonical_high_watermark - state.last_event_sequence
             if lag > event_lag_threshold:
                 diagnostics.append(
-                    HarnessGraphOperatorDiagnostic(
+                    _HarnessGraphOperatorDiagnostic(
                         "event_projection_lag",
                         "warning",
                         current_value=lag,
@@ -257,30 +161,20 @@ def graph_health_report(
                 )
     if incompatible_history:
         diagnostics.append(
-            HarnessGraphOperatorDiagnostic("incompatible_history", "error")
+            _HarnessGraphOperatorDiagnostic("incompatible_history", "error")
         )
-    status = HarnessGraphHealthStatus.HEALTHY
-    if any(item.severity is HarnessGraphDiagnosticSeverity.ERROR for item in diagnostics):
-        status = HarnessGraphHealthStatus.UNHEALTHY
+    status = _HarnessGraphHealthStatus.HEALTHY
+    if any(
+        item.severity is _HarnessGraphDiagnosticSeverity.ERROR
+        for item in diagnostics
+    ):
+        status = _HarnessGraphHealthStatus.UNHEALTHY
     elif diagnostics:
-        status = HarnessGraphHealthStatus.DEGRADED
-    return HarnessGraphHealthReport(status, tuple(diagnostics), state.last_event_sequence)
-
-
-def _is_checksum(value: str) -> bool:
-    return (
-        len(value) == 71
-        and value.startswith("sha256:")
-        and all(character in "0123456789abcdef" for character in value[7:])
-    )
+        status = _HarnessGraphHealthStatus.DEGRADED
+    return _HarnessGraphHealthReport(status, tuple(diagnostics), state.last_event_sequence)
 
 
 __all__ = [
-    "HarnessGraphDiagnosticSeverity",
-    "HarnessGraphHealthReport",
-    "HarnessGraphHealthStatus",
-    "HarnessGraphMetricSample",
-    "HarnessGraphOperatorDiagnostic",
     "graph_health_report",
     "graph_metric_samples",
 ]

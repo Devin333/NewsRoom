@@ -6,9 +6,17 @@ from pathlib import Path
 import framework.harness as harness_api
 import framework.harness.control_plane as control_plane_api
 import framework.harness.control_plane.graph_state as graph_state_api
+import framework.harness.control_plane.graph_observability as control_plane_observability
 import framework.harness.graph as graph_api
 from framework.harness.graph.reference import HarnessGraphReference
 from framework.harness.graph.decision import HarnessGraphDecision
+from framework.harness.graph.observability import (
+    HarnessGraphDiagnosticSeverity,
+    HarnessGraphHealthReport,
+    HarnessGraphHealthStatus,
+    HarnessGraphMetricSample,
+    HarnessGraphOperatorDiagnostic,
+)
 from framework.harness.graph.result_lineage import HarnessGraphResultLineage
 
 
@@ -246,6 +254,30 @@ def test_graph_decision_has_one_graph_owned_public_definition() -> None:
         / "control_plane"
         / "graph_decision.py"
     ).exists()
+
+
+def test_graph_observability_values_have_one_graph_owned_public_definition() -> None:
+    value_names = {
+        "HarnessGraphDiagnosticSeverity": HarnessGraphDiagnosticSeverity,
+        "HarnessGraphHealthReport": HarnessGraphHealthReport,
+        "HarnessGraphHealthStatus": HarnessGraphHealthStatus,
+        "HarnessGraphMetricSample": HarnessGraphMetricSample,
+        "HarnessGraphOperatorDiagnostic": HarnessGraphOperatorDiagnostic,
+    }
+
+    for name, value_type in value_names.items():
+        assert getattr(graph_api, name) is value_type
+        assert getattr(harness_api, name) is value_type
+        assert name in graph_api.__all__
+        assert name in harness_api.__all__
+        assert name not in control_plane_api.__all__
+        assert not hasattr(control_plane_api, name)
+        assert not hasattr(control_plane_observability, name)
+
+    assert set(control_plane_observability.__all__) == {
+        "graph_health_report",
+        "graph_metric_samples",
+    }
 
 
 def test_harness_root_public_api_excludes_legacy_workflow_facade() -> None:
