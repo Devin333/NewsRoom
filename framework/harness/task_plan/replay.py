@@ -226,6 +226,11 @@ class TaskPlanReplayReducer:
         require_latest_plan: bool = True,
     ) -> TaskPlanReplayReport:
         plan_history = _validated_plan_history(plans)
+        if any(plan.is_graph_only for plan in plan_history):
+            raise HarnessValidationError(
+                "Graph-only TaskPlan replay contract is not available",
+                code="graph_task_plan_replay_contract_unavailable",
+            )
         plans_by_version = {item.version: item for item in plan_history}
         ordered_events = _validated_event_prefix(
             tuple(events),

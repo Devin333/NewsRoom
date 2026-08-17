@@ -16,17 +16,28 @@ from framework.harness.control_plane.errors import HarnessValidationError
 from framework.harness.graph import HarnessGraphCompiler
 from framework.harness.task_plan import (
     DEFAULT_TASK_PLAN_SCHEMA_REGISTRY,
+    FakePlanCandidateBuilder,
     GRAPH_ONLY_PLAN_CANDIDATE_SCHEMA,
+    GRAPH_ONLY_TASK_INSTANCE_SCHEMA,
+    GRAPH_ONLY_TASK_PLAN_PROJECTION_SCHEMA,
+    GRAPH_ONLY_TASK_PROJECTION_SCHEMA,
     GRAPH_ONLY_TASK_PLAN_STAGE_IDENTITY_SCHEMA,
     GRAPH_ONLY_VALIDATED_TASK_PLAN_SCHEMA,
+    InMemoryTaskPlanStore,
     PLAN_CANDIDATE_SCHEMA,
+    TASK_INSTANCE_SCHEMA,
+    TASK_PLAN_PROJECTION_SCHEMA,
+    TASK_PROJECTION_SCHEMA,
     TASK_PLAN_STAGE_IDENTITY_SCHEMA,
+    TASK_PLAN_EVENT_SCHEMA_V2,
     VALIDATED_TASK_PLAN_SCHEMA,
     PlanBuildRequest,
     TaskPlanContractKind,
+    TaskCapabilityRegistry,
     TaskPlanStageBinding,
     TaskPlanStageIdentity,
     TaskPlanStageRequest,
+    TaskPlanStageRunner,
     TaskPlanValidationContext,
 )
 from tests.fixtures.task_plan import build_task_plan_stage_binding
@@ -80,7 +91,7 @@ def test_stage_identity_registry_keeps_v1_writer_and_admits_v2() -> None:
     )
 
 
-def test_candidate_and_plan_registries_keep_v1_writers_and_admit_v2() -> None:
+def test_graph_task_plan_registries_keep_v1_writers_and_admit_v2() -> None:
     registrations = {
         item.contract_kind: item
         for item in DEFAULT_TASK_PLAN_SCHEMA_REGISTRY.registrations
@@ -101,6 +112,28 @@ def test_candidate_and_plan_registries_keep_v1_writers_and_admit_v2() -> None:
         GRAPH_ONLY_VALIDATED_TASK_PLAN_SCHEMA,
     }
     assert set(plan.executable_schemas) == set(plan.readable_schemas)
+
+    expected_runtime_contracts = {
+        TaskPlanContractKind.TASK_INSTANCE: (
+            TASK_INSTANCE_SCHEMA,
+            GRAPH_ONLY_TASK_INSTANCE_SCHEMA,
+        ),
+        TaskPlanContractKind.TASK_PROJECTION: (
+            TASK_PROJECTION_SCHEMA,
+            GRAPH_ONLY_TASK_PROJECTION_SCHEMA,
+        ),
+        TaskPlanContractKind.PLAN_PROJECTION: (
+            TASK_PLAN_PROJECTION_SCHEMA,
+            GRAPH_ONLY_TASK_PLAN_PROJECTION_SCHEMA,
+        ),
+    }
+    for contract_kind, (legacy_schema, graph_schema) in expected_runtime_contracts.items():
+        registration = registrations[contract_kind]
+        assert registration.writer_schema == legacy_schema
+        assert set(registration.readable_schemas) == {legacy_schema, graph_schema}
+        assert set(registration.executable_schemas) == set(
+            registration.readable_schemas
+        )
 
 
 def test_legacy_stage_identity_round_trips_without_changing_request_wire() -> None:
@@ -186,6 +219,38 @@ def test_graph_only_contexts_share_the_frozen_stage_identity() -> None:
         with pytest.raises(HarnessValidationError) as error:
             _ = context.workflow_id
         assert error.value.code == "legacy_task_plan_identity_forbidden"
+
+
+def test_graph_only_preplan_failure_records_v2_halt_without_workflow_alias() -> None:
+    binding = _graph_only_binding()
+    policy = build_research_analysis_task_plan_policy()
+    store = InMemoryTaskPlanStore()
+    request = TaskPlanStageRequest(
+        run_id="research-run",
+        stage_binding=binding,
+        context_refs={name: name for name in RESEARCH_DYNAMIC_INPUT_REFS},
+        policy=policy,
+        accepted_at="2026-08-17T00:00:00Z",
+    )
+    runner = TaskPlanStageRunner(
+        candidate_builder=FakePlanCandidateBuilder(
+            HarnessValidationError("planner unavailable", code="planner_unavailable")
+        ),
+        capability_registry=TaskCapabilityRegistry(),
+        store=store,
+    )
+
+    result = runner.run(request)
+    events = store.read_events(request.run_id, request.stage_id)
+
+    assert result.status.value == "blocked"
+    assert result.diagnostics["reason_code"] == "planner_unavailable"
+    assert len(events) == 1
+    assert events[0].event_type == "TASK_PLAN_HALTED"
+    assert events[0].schema_version == TASK_PLAN_EVENT_SCHEMA_V2
+    assert events[0].is_graph_only is True
+    assert events[0].workflow_id is None
+    assert "workflow_id" not in events[0].to_dict()
 
 
 def test_graph_only_stage_identity_rejects_alias_tamper_and_cross_graph_restore() -> None:

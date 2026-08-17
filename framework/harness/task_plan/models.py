@@ -31,6 +31,9 @@ from framework.harness.task_plan.identity import TaskPlanStageIdentity
 from framework.harness.task_plan.schema import (
     DEFAULT_TASK_PLAN_SCHEMA_REGISTRY,
     GRAPH_ONLY_PLAN_CANDIDATE_SCHEMA,
+    GRAPH_ONLY_TASK_INSTANCE_SCHEMA,
+    GRAPH_ONLY_TASK_PLAN_PROJECTION_SCHEMA,
+    GRAPH_ONLY_TASK_PROJECTION_SCHEMA,
     GRAPH_ONLY_TASK_PLAN_STAGE_IDENTITY_SCHEMA,
     GRAPH_ONLY_VALIDATED_TASK_PLAN_SCHEMA,
     PLAN_CANDIDATE_SCHEMA,
@@ -412,6 +415,44 @@ def _normalize_model_identity(
             code="legacy_task_plan_identity_forbidden",
         )
     object.__setattr__(model, "workflow_id", None)
+    _normalize_graph_only_identity_fields(model)
+
+
+def _normalize_graph_bound_identity(
+    model: Any,
+    *,
+    legacy_schema: str,
+    graph_only_schema: str,
+    legacy_has_graph_checksum: bool,
+) -> None:
+    graph_fields = set(_GRAPH_ONLY_MODEL_IDENTITY_FIELDS)
+    if not legacy_has_graph_checksum:
+        graph_fields.add("graph_checksum")
+    if model.schema_version == legacy_schema:
+        unexpected = sorted(
+            name for name in graph_fields if getattr(model, name) is not None
+        )
+        if unexpected:
+            raise HarnessValidationError(
+                "legacy TaskPlan contract cannot carry Graph-only identity",
+                code="task_plan_identity_schema_mismatch",
+                details={"unexpected": unexpected},
+            )
+        return
+    if model.schema_version != graph_only_schema:
+        raise HarnessValidationError(
+            "TaskPlan contract schema does not select a supported identity",
+            code="task_plan_identity_schema_mismatch",
+        )
+    object.__setattr__(
+        model,
+        "graph_checksum",
+        checksum(model.graph_checksum, "graph_checksum"),
+    )
+    _normalize_graph_only_identity_fields(model)
+
+
+def _normalize_graph_only_identity_fields(model: Any) -> None:
     normalized = {
         "graph_id": identifier(model.graph_id, "graph_id"),
         "graph_version": identifier(model.graph_version, "graph_version"),
@@ -1333,6 +1374,16 @@ class TaskInstance:
     idempotency_key: str
     fencing_token: str
     budget_snapshot: TaskBudget | Mapping[str, Any]
+    graph_checksum: str | None = None
+    graph_id: str | None = None
+    graph_version: str | None = None
+    graph_ref: str | None = None
+    graph_schema_version: str | None = None
+    compiler_version: str | None = None
+    condition_policy_version: str | None = None
+    stage_binding_checksum: str | None = None
+    stage_identity_schema: str | None = None
+    stage_identity_checksum: str | None = None
     schema_version: str = TASK_INSTANCE_SCHEMA
     instance_checksum: str = field(init=False)
 
@@ -1343,6 +1394,12 @@ class TaskInstance:
         )
         for field_name in ("run_id", "stage_id", "plan_id", "task_id", "task_instance_id"):
             object.__setattr__(self, field_name, identifier(getattr(self, field_name), field_name))
+        _normalize_graph_bound_identity(
+            self,
+            legacy_schema=TASK_INSTANCE_SCHEMA,
+            graph_only_schema=GRAPH_ONLY_TASK_INSTANCE_SCHEMA,
+            legacy_has_graph_checksum=False,
+        )
         object.__setattr__(self, "plan_version", positive_int(self.plan_version, "plan_version"))
         object.__setattr__(self, "plan_checksum", checksum(self.plan_checksum, "plan_checksum"))
         object.__setattr__(
@@ -1358,9 +1415,26 @@ class TaskInstance:
         object.__setattr__(self, "instance_checksum", canonical_payload_checksum(self.checksum_projection()))
 
     def checksum_projection(self) -> dict[str, Any]:
-        return {
+        payload: dict[str, Any] = {
             "schema_version": self.schema_version,
             "run_id": self.run_id,
+        }
+        if self.is_graph_only:
+            payload.update(
+                {
+                    "graph_id": self.graph_id,
+                    "graph_version": self.graph_version,
+                    "graph_ref": self.graph_ref,
+                    "graph_schema_version": self.graph_schema_version,
+                    "compiler_version": self.compiler_version,
+                    "condition_policy_version": self.condition_policy_version,
+                    "graph_checksum": self.graph_checksum,
+                    "stage_binding_checksum": self.stage_binding_checksum,
+                    "stage_identity_schema": self.stage_identity_schema,
+                    "stage_identity_checksum": self.stage_identity_checksum,
+                }
+            )
+        payload.update({
             "stage_id": self.stage_id,
             "plan_id": self.plan_id,
             "plan_version": self.plan_version,
@@ -1373,13 +1447,65 @@ class TaskInstance:
             "idempotency_key": self.idempotency_key,
             "fencing_token": self.fencing_token,
             "budget_snapshot": self.budget_snapshot.to_dict(),
-        }
+        })
+        return payload
 
     def to_dict(self) -> dict[str, Any]:
         return {**self.checksum_projection(), "instance_checksum": self.instance_checksum}
 
+    @property
+    def is_graph_only(self) -> bool:
+        return self.schema_version == GRAPH_ONLY_TASK_INSTANCE_SCHEMA
+
+    def matches_plan_identity(self, plan: ValidatedTaskPlan) -> bool:
+        if not isinstance(plan, ValidatedTaskPlan):
+            raise TypeError("plan must be ValidatedTaskPlan")
+        if (
+            self.is_graph_only != plan.is_graph_only
+            or self.run_id != plan.run_id
+            or self.stage_id != plan.stage_id
+            or self.plan_id != plan.plan_id
+            or self.plan_version != plan.version
+            or self.plan_checksum != plan.plan_checksum
+        ):
+            return False
+        return not self.is_graph_only or all(
+            getattr(self, name) == getattr(plan, name)
+            for name in _GRAPH_ONLY_MODEL_IDENTITY_FIELDS | {"graph_checksum"}
+        )
+
+    def matches_plan_projection_identity(
+        self,
+        projection: TaskPlanProjection,
+    ) -> bool:
+        if not isinstance(projection, TaskPlanProjection):
+            raise TypeError("projection must be TaskPlanProjection")
+        if (
+            self.is_graph_only != projection.is_graph_only
+            or self.run_id != projection.run_id
+            or self.stage_id != projection.stage_id
+            or self.plan_id != projection.plan_id
+            or self.plan_version != projection.plan_version
+            or self.plan_checksum != projection.plan_checksum
+        ):
+            return False
+        return not self.is_graph_only or all(
+            getattr(self, name) == getattr(projection, name)
+            for name in _GRAPH_ONLY_MODEL_IDENTITY_FIELDS | {"graph_checksum"}
+        )
+
     @classmethod
     def from_dict(cls, value: Mapping[str, Any]) -> Self:
+        schema_version = value.get("schema_version")
+        DEFAULT_TASK_PLAN_SCHEMA_REGISTRY.require_readable(
+            TaskPlanContractKind.TASK_INSTANCE,
+            schema_version,
+        )
+        graph_identity = (
+            _GRAPH_ONLY_MODEL_IDENTITY_FIELDS | {"graph_checksum"}
+            if schema_version == GRAPH_ONLY_TASK_INSTANCE_SCHEMA
+            else frozenset()
+        )
         payload = exact_keys(
             value,
             required=frozenset(
@@ -1400,7 +1526,8 @@ class TaskInstance:
                     "budget_snapshot",
                     "instance_checksum",
                 }
-            ),
+            )
+            | graph_identity,
             model=cls.__name__,
         )
         supplied = checksum(payload.pop("instance_checksum"), "instance_checksum")
@@ -1489,8 +1616,16 @@ class TaskProjection:
     def to_dict(self) -> dict[str, Any]:
         return {**self.checksum_projection(), "projection_checksum": self.projection_checksum}
 
+    @property
+    def is_graph_only(self) -> bool:
+        return self.schema_version == GRAPH_ONLY_TASK_PROJECTION_SCHEMA
+
     @classmethod
     def from_dict(cls, value: Mapping[str, Any]) -> Self:
+        DEFAULT_TASK_PLAN_SCHEMA_REGISTRY.require_readable(
+            TaskPlanContractKind.TASK_PROJECTION,
+            value.get("schema_version"),
+        )
         payload = exact_keys(
             value,
             required=frozenset(
@@ -1528,6 +1663,15 @@ class TaskPlanProjection:
     tasks: tuple[TaskProjection, ...]
     consumed_budget: Mapping[str, Any]
     last_sequence: int
+    graph_id: str | None = None
+    graph_version: str | None = None
+    graph_ref: str | None = None
+    graph_schema_version: str | None = None
+    compiler_version: str | None = None
+    condition_policy_version: str | None = None
+    stage_binding_checksum: str | None = None
+    stage_identity_schema: str | None = None
+    stage_identity_checksum: str | None = None
     schema_version: str = TASK_PLAN_PROJECTION_SCHEMA
     projection_checksum: str = field(init=False)
 
@@ -1539,6 +1683,12 @@ class TaskPlanProjection:
         for field_name in ("run_id", "stage_id", "plan_id"):
             object.__setattr__(self, field_name, identifier(getattr(self, field_name), field_name))
         object.__setattr__(self, "graph_checksum", checksum(self.graph_checksum, "graph_checksum"))
+        _normalize_graph_bound_identity(
+            self,
+            legacy_schema=TASK_PLAN_PROJECTION_SCHEMA,
+            graph_only_schema=GRAPH_ONLY_TASK_PLAN_PROJECTION_SCHEMA,
+            legacy_has_graph_checksum=True,
+        )
         object.__setattr__(self, "plan_version", positive_int(self.plan_version, "plan_version"))
         object.__setattr__(self, "plan_checksum", checksum(self.plan_checksum, "plan_checksum"))
         object.__setattr__(self, "policy_ref", exact_reference(self.policy_ref, "policy_ref"))
@@ -1549,17 +1699,60 @@ class TaskPlanProjection:
                 "TaskPlanProjection task ids must be unique",
                 code="duplicate_task_projection",
             )
+        expected_task_schema = (
+            GRAPH_ONLY_TASK_PROJECTION_SCHEMA
+            if self.is_graph_only
+            else TASK_PROJECTION_SCHEMA
+        )
+        mismatched_task_schemas = sorted(
+            {
+                task.schema_version
+                for task in tasks
+                if task.schema_version != expected_task_schema
+            }
+        )
+        if mismatched_task_schemas:
+            raise HarnessValidationError(
+                "TaskPlanProjection contains mixed task projection schemas",
+                code="task_plan_projection_schema_mismatch",
+                details={
+                    "expected": expected_task_schema,
+                    "actual": mismatched_task_schemas,
+                },
+            )
         object.__setattr__(self, "tasks", tuple(sorted(tasks, key=lambda item: item.task_id)))
         object.__setattr__(self, "consumed_budget", frozen_mapping(self.consumed_budget, "consumed_budget"))
         object.__setattr__(self, "last_sequence", non_negative_int(self.last_sequence, "last_sequence"))
         object.__setattr__(self, "projection_checksum", canonical_payload_checksum(self.checksum_projection()))
 
     def checksum_projection(self) -> dict[str, Any]:
-        return {
+        payload: dict[str, Any] = {
             "schema_version": self.schema_version,
             "run_id": self.run_id,
+        }
+        if self.is_graph_only:
+            payload.update(
+                {
+                    "graph_id": self.graph_id,
+                    "graph_version": self.graph_version,
+                    "graph_ref": self.graph_ref,
+                    "graph_schema_version": self.graph_schema_version,
+                    "compiler_version": self.compiler_version,
+                    "condition_policy_version": self.condition_policy_version,
+                }
+            )
+        payload.update({
             "stage_id": self.stage_id,
             "graph_checksum": self.graph_checksum,
+            **(
+                {
+                    "stage_binding_checksum": self.stage_binding_checksum,
+                    "stage_identity_schema": self.stage_identity_schema,
+                    "stage_identity_checksum": self.stage_identity_checksum,
+                }
+                if self.is_graph_only
+                else {}
+            ),
             "plan_id": self.plan_id,
             "plan_version": self.plan_version,
             "plan_checksum": self.plan_checksum,
@@ -1567,13 +1760,47 @@ class TaskPlanProjection:
             "tasks": [task.to_dict() for task in self.tasks],
             "consumed_budget": thaw_mapping(self.consumed_budget),
             "last_sequence": self.last_sequence,
-        }
+        })
+        return payload
 
     def to_dict(self) -> dict[str, Any]:
         return {**self.checksum_projection(), "projection_checksum": self.projection_checksum}
 
+    @property
+    def is_graph_only(self) -> bool:
+        return self.schema_version == GRAPH_ONLY_TASK_PLAN_PROJECTION_SCHEMA
+
+    def matches_plan_identity(self, plan: ValidatedTaskPlan) -> bool:
+        if not isinstance(plan, ValidatedTaskPlan):
+            raise TypeError("plan must be ValidatedTaskPlan")
+        if (
+            self.is_graph_only != plan.is_graph_only
+            or self.run_id != plan.run_id
+            or self.stage_id != plan.stage_id
+            or self.graph_checksum != plan.graph_checksum
+            or self.plan_id != plan.plan_id
+            or self.plan_version != plan.version
+            or self.plan_checksum != plan.plan_checksum
+            or self.policy_ref != plan.policy_ref
+        ):
+            return False
+        return not self.is_graph_only or all(
+            getattr(self, name) == getattr(plan, name)
+            for name in _GRAPH_ONLY_MODEL_IDENTITY_FIELDS
+        )
+
     @classmethod
     def from_dict(cls, value: Mapping[str, Any]) -> Self:
+        schema_version = value.get("schema_version")
+        DEFAULT_TASK_PLAN_SCHEMA_REGISTRY.require_readable(
+            TaskPlanContractKind.PLAN_PROJECTION,
+            schema_version,
+        )
+        graph_identity = (
+            _GRAPH_ONLY_MODEL_IDENTITY_FIELDS
+            if schema_version == GRAPH_ONLY_TASK_PLAN_PROJECTION_SCHEMA
+            else frozenset()
+        )
         payload = exact_keys(
             value,
             required=frozenset(
@@ -1591,7 +1818,8 @@ class TaskPlanProjection:
                     "last_sequence",
                     "projection_checksum",
                 }
-            ),
+            )
+            | graph_identity,
             model=cls.__name__,
         )
         supplied = checksum(payload.pop("projection_checksum"), "projection_checksum")

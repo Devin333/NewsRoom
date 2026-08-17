@@ -25,8 +25,13 @@ GRAPH_ONLY_VALIDATED_TASK_PLAN_SCHEMA = "newsroom.harness-task-plan/v2"
 TASK_PLAN_PATCH_SCHEMA = "newsroom.harness-task-plan-patch/v1"
 TASK_PLAN_POLICY_SCHEMA = "newsroom.harness-task-plan-policy/v1"
 TASK_INSTANCE_SCHEMA = "newsroom.harness-task-instance/v1"
+GRAPH_ONLY_TASK_INSTANCE_SCHEMA = "newsroom.harness-task-instance/v2"
 TASK_PROJECTION_SCHEMA = "newsroom.harness-task-projection/v1"
+GRAPH_ONLY_TASK_PROJECTION_SCHEMA = "newsroom.harness-task-projection/v2"
 TASK_PLAN_PROJECTION_SCHEMA = "newsroom.harness-task-plan-projection/v1"
+GRAPH_ONLY_TASK_PLAN_PROJECTION_SCHEMA = (
+    "newsroom.harness-task-plan-projection/v2"
+)
 TASK_RESULT_REFERENCE_SCHEMA = "newsroom.harness-task-result-reference/v1"
 TASK_CAPABILITY_BINDING_SCHEMA = "newsroom.harness-task-capability-binding/v1"
 TASK_PLAN_STAGE_BINDING_SCHEMA = "newsroom.harness-task-plan-stage-binding/v1"
@@ -190,6 +195,15 @@ _ADDITIONAL_SCHEMAS: Mapping[TaskPlanContractKind, tuple[str, ...]] = (
             TaskPlanContractKind.VALIDATED_PLAN: (
                 GRAPH_ONLY_VALIDATED_TASK_PLAN_SCHEMA,
             ),
+            TaskPlanContractKind.TASK_INSTANCE: (
+                GRAPH_ONLY_TASK_INSTANCE_SCHEMA,
+            ),
+            TaskPlanContractKind.TASK_PROJECTION: (
+                GRAPH_ONLY_TASK_PROJECTION_SCHEMA,
+            ),
+            TaskPlanContractKind.PLAN_PROJECTION: (
+                GRAPH_ONLY_TASK_PLAN_PROJECTION_SCHEMA,
+            ),
             TaskPlanContractKind.STAGE_BINDING: (
                 GRAPH_ONLY_TASK_PLAN_STAGE_BINDING_SCHEMA,
             ),
@@ -216,6 +230,9 @@ DEFAULT_TASK_PLAN_SCHEMA_REGISTRY = TaskPlanSchemaRegistry(
 __all__ = [
     "DEFAULT_TASK_PLAN_SCHEMA_REGISTRY",
     "GRAPH_ONLY_PLAN_CANDIDATE_SCHEMA",
+    "GRAPH_ONLY_TASK_INSTANCE_SCHEMA",
+    "GRAPH_ONLY_TASK_PLAN_PROJECTION_SCHEMA",
+    "GRAPH_ONLY_TASK_PROJECTION_SCHEMA",
     "GRAPH_ONLY_TASK_PLAN_STAGE_BINDING_SCHEMA",
     "GRAPH_ONLY_TASK_PLAN_STAGE_IDENTITY_SCHEMA",
     "GRAPH_ONLY_VALIDATED_TASK_PLAN_SCHEMA",

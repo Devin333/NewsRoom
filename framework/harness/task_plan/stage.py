@@ -21,7 +21,12 @@ from framework.harness.task_plan.scheduler import (
     TaskPlanReadyDecision,
     task_instance_for_attempt,
 )
-from framework.harness.task_plan.store import TaskPlanEvent, TaskPlanStorePort, TaskResultRecord
+from framework.harness.task_plan.store import (
+    TaskPlanEvent,
+    TaskPlanStorePort,
+    TaskResultRecord,
+    _task_plan_event_identity_kwargs,
+)
 from framework.harness.task_plan.validation import TaskPlanValidationContext, TaskPlanValidator
 from framework.harness.workers.result import HarnessWorkerResult, HarnessWorkerStatus
 from framework.harness.task_plan.canonical import canonical_payload_checksum
@@ -90,14 +95,9 @@ class TaskPlanStageRunner(TaskPlanStageRunnerPort):
             )
         except HarnessValidationError as exc:
             self.store.append_event(
-                TaskPlanEvent(
+                TaskPlanEvent.for_plan(
                     "PLAN_PATCH_REJECTED",
-                    run_id=patch.run_id,
-                    workflow_id=current.workflow_id,
-                    stage_id=patch.stage_id,
-                    graph_checksum=current.graph_checksum,
-                    plan_id=patch.base_plan_id,
-                    plan_version=patch.base_plan_version,
+                    current,
                     input_checksum=patch.patch_checksum,
                     reason_code=exc.code or "task_plan_patch_rejected",
                     payload={"patch_ref": patch.patch_checksum},
@@ -125,14 +125,9 @@ class TaskPlanStageRunner(TaskPlanStageRunnerPort):
             projection = self.store.load_projection(request.run_id, request.stage_id)
             results = self.store.results_for(request.run_id, request.stage_id, plan.plan_id, plan.version)
             aggregate = self.aggregator.aggregate(results, request.policy)
-            self.store.append_event(TaskPlanEvent(
+            self.store.append_event(TaskPlanEvent.for_plan(
                 "STAGE_OUTPUT_AGGREGATED",
-                run_id=request.run_id,
-                workflow_id=request.workflow_id,
-                stage_id=request.stage_id,
-                graph_checksum=request.graph_checksum,
-                plan_id=plan.plan_id,
-                plan_version=plan.version,
+                plan,
                 input_checksum=aggregate.aggregate_checksum,
                 output_refs=tuple(aggregate.output_refs_by_role.values()),
                 payload={
@@ -144,14 +139,9 @@ class TaskPlanStageRunner(TaskPlanStageRunnerPort):
                 },
                 sequence=self._next_sequence(request),
             ))
-            self.store.append_event(TaskPlanEvent(
+            self.store.append_event(TaskPlanEvent.for_plan(
                 "TASK_PLAN_VERIFIED",
-                run_id=request.run_id,
-                workflow_id=request.workflow_id,
-                stage_id=request.stage_id,
-                graph_checksum=request.graph_checksum,
-                plan_id=plan.plan_id,
-                plan_version=plan.version,
+                plan,
                 input_checksum=aggregate.aggregate_checksum,
                 output_refs=tuple(aggregate.output_refs_by_role.values()),
                 sequence=self._next_sequence(request),
@@ -287,9 +277,8 @@ class TaskPlanStageRunner(TaskPlanStageRunnerPort):
                             tasks=retry_tasks,
                             last_sequence=sequence,
                         )
-                        self.store.commit_event(TaskPlanEvent(
-                            "TASK_RETRY_SCHEDULED", run_id=request.run_id, workflow_id=request.workflow_id, stage_id=request.stage_id,
-                            graph_checksum=request.graph_checksum, plan_id=plan.plan_id, plan_version=plan.version,
+                        self.store.commit_event(TaskPlanEvent.for_plan(
+                            "TASK_RETRY_SCHEDULED", plan,
                             task_id=result.task_id, task_instance_id=result.task_instance_id, attempt=result.attempt,
                             input_checksum=result.result_checksum, reason_code=result.error_code, sequence=sequence,
                         ), retry_projection)
@@ -365,14 +354,9 @@ class TaskPlanStageRunner(TaskPlanStageRunnerPort):
     ) -> None:
         sequence = self._next_sequence(request)
         self.store.commit_event(
-            TaskPlanEvent(
+            TaskPlanEvent.for_plan(
                 event_type,
-                run_id=request.run_id,
-                workflow_id=request.workflow_id,
-                stage_id=request.stage_id,
-                graph_checksum=request.graph_checksum,
-                plan_id=plan.plan_id,
-                plan_version=plan.version,
+                plan,
                 task_id=instance.task_id,
                 task_instance_id=instance.task_instance_id,
                 attempt=instance.attempt,
@@ -431,15 +415,24 @@ class TaskPlanStageRunner(TaskPlanStageRunnerPort):
         try:
             plan = self.store.plan(request.run_id, request.stage_id)
             diagnostic_ref = canonical_payload_checksum({"reason_code": reason_code})
-            self.store.append_event(TaskPlanEvent(
-                "TASK_PLAN_HALTED", run_id=request.run_id, workflow_id=request.workflow_id, stage_id=request.stage_id,
-                graph_checksum=request.graph_checksum,
-                plan_id=plan.plan_id if plan is not None else None,
-                plan_version=plan.version if plan is not None else None,
-                reason_code=reason_code,
-                payload={"diagnostic_ref": diagnostic_ref},
-                sequence=self._next_sequence(request),
-            ))
+            event = (
+                TaskPlanEvent.for_plan(
+                    "TASK_PLAN_HALTED",
+                    plan,
+                    reason_code=reason_code,
+                    payload={"diagnostic_ref": diagnostic_ref},
+                    sequence=self._next_sequence(request),
+                )
+                if plan is not None
+                else TaskPlanEvent(
+                    "TASK_PLAN_HALTED",
+                    **_task_plan_event_identity_kwargs(request.stage_identity),
+                    reason_code=reason_code,
+                    payload={"diagnostic_ref": diagnostic_ref},
+                    sequence=self._next_sequence(request),
+                )
+            )
+            self.store.append_event(event)
         except Exception as exc:
             raise HarnessValidationError(
                 "TaskPlan halt could not be durably committed",
@@ -471,26 +464,17 @@ def _require_plan_stage_binding(
     plan: ValidatedTaskPlan,
     request: TaskPlanStageRequest,
 ) -> None:
-    expected = (
-        request.workflow_id,
-        request.stage_id,
-        request.graph_checksum,
-        request.stage_binding.policy_ref,
-    )
-    actual = (
-        plan.workflow_id,
-        plan.stage_id,
-        plan.graph_checksum,
-        plan.policy_ref,
-    )
-    if actual != expected:
+    if (
+        not plan.matches_stage_identity(request.stage_identity)
+        or plan.policy_ref != request.stage_binding.policy_ref
+    ):
         raise HarnessValidationError(
             "existing TaskPlan is outside the frozen Graph stage binding",
             code="task_plan_pinned_version_mismatch",
             details={
                 "expected_stage_binding_ref": request.stage_binding.binding_checksum,
-                "expected": expected,
-                "actual": actual,
+                "expected_stage_identity": request.stage_identity.to_dict(),
+                "actual_plan_identity": plan.to_dict(),
             },
         )
 

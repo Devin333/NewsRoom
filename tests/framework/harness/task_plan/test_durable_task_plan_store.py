@@ -28,8 +28,15 @@ from framework.events.schema import default_event_schema_catalog
 from framework.harness.control_plane.errors import HarnessValidationError
 from framework.harness.task_plan import (
     DurableTaskPlanStore,
+    GRAPH_ONLY_TASK_INSTANCE_SCHEMA,
+    GRAPH_ONLY_TASK_PLAN_PROJECTION_SCHEMA,
+    GRAPH_ONLY_TASK_PROJECTION_SCHEMA,
+    InMemoryTaskPlanStore,
+    TASK_INSTANCE_SCHEMA,
     TASK_PLAN_EVENT_SCHEMA_V1,
     TASK_PLAN_EVENT_SCHEMA_V2,
+    TASK_PLAN_PROJECTION_SCHEMA,
+    TASK_PROJECTION_SCHEMA,
     TASK_PLAN_RESULT_SCHEMA_V1,
     TASK_PLAN_RESULT_SCHEMA_V2,
     PlanBuildBudget,
@@ -45,6 +52,7 @@ from framework.harness.task_plan import (
     TaskOutputContract,
     TaskPlanEvent,
     TaskPlanReadyDecision,
+    TaskPlanReplayReducer,
     TaskPlanScheduler,
     TaskPlanValidationContext,
     TaskPlanValidator,
@@ -54,6 +62,7 @@ from framework.harness.task_plan import (
     TaskRetryPolicy,
     TaskSpec,
     ValidatedTaskPlan,
+    materialize_queue_task,
     task_instance_for_attempt,
 )
 from framework.harness.task_plan.patches import TaskPlanPatchValidator
@@ -419,14 +428,9 @@ def _store(event_store: _EventStore, artifacts: _ArtifactStore, *, runtime=None)
 
 
 def _lifecycle_event(event_type: str, sequence: int, plan: ValidatedTaskPlan, instance) -> TaskPlanEvent:
-    return TaskPlanEvent(
+    return TaskPlanEvent.for_plan(
         event_type,
-        run_id=plan.run_id,
-        workflow_id=plan.workflow_id,
-        stage_id=plan.stage_id,
-        graph_checksum=plan.graph_checksum,
-        plan_id=plan.plan_id,
-        plan_version=plan.version,
+        plan,
         task_id=instance.task_id,
         task_instance_id=instance.task_instance_id,
         attempt=instance.attempt,
@@ -454,6 +458,27 @@ def _start(store: DurableTaskPlanStore, plan: ValidatedTaskPlan, task_id: str):
 
 def _result(plan: ValidatedTaskPlan, instance, *, status: TaskLifecycle, role: str = "analysis.structure") -> TaskResultRecord:
     definition = next(item for item in plan.tasks if item.task_id == instance.task_id)
+    if plan.is_graph_only:
+        return TaskResultRecord.for_plan(
+            plan,
+            task_id=instance.task_id,
+            task_instance_id=instance.task_instance_id,
+            attempt=instance.attempt,
+            status=status,
+            result_ref=(
+                f"result://{instance.task_id}"
+                if status is TaskLifecycle.SUCCEEDED
+                else None
+            ),
+            output_refs=(
+                (f"artifact://{instance.task_id}",)
+                if status is TaskLifecycle.SUCCEEDED
+                else ()
+            ),
+            output_roles=(role,) if status is TaskLifecycle.SUCCEEDED else (),
+            output_schema_ref=f"schema://{role}@1",
+            error_code=None if status is TaskLifecycle.SUCCEEDED else "worker_failed",
+        )
     if status is TaskLifecycle.SUCCEEDED:
         return TaskResultRecord(
             run_id=plan.run_id,
@@ -529,6 +554,28 @@ def test_legacy_task_plan_event_v1_wire_and_checksum_remain_stable():
     )
     assert "graph_id" not in event.to_dict()
     assert TaskPlanEvent.from_dict(event.to_dict()) == event
+
+
+def test_legacy_task_instance_and_projection_wire_checksums_remain_stable():
+    candidate, plan, _, _ = _accepted_plan((_task("structure"),))
+    in_memory = InMemoryTaskPlanStore()
+    in_memory.append_candidate(candidate)
+    in_memory.accept_plan(plan)
+    instance = task_instance_for_attempt(plan, "structure", 1)
+    projection = in_memory.load_projection(plan.run_id, plan.stage_id)
+
+    assert instance.schema_version == TASK_INSTANCE_SCHEMA
+    assert projection.schema_version == TASK_PLAN_PROJECTION_SCHEMA
+    assert instance.instance_checksum == (
+        "sha256:d1980b09e86a86fffe0bb6d55991832a80ee3586b554ffdd8193509113e2e273"
+    )
+    assert projection.projection_checksum == (
+        "sha256:cf09ae4d8e830c2cc8a630fc1f4c9653826ebcfd4eb04c79b68532a620d20035"
+    )
+    assert "graph_id" not in instance.to_dict()
+    assert "graph_id" not in projection.to_dict()
+    assert type(instance).from_dict(instance.to_dict()) == instance
+    assert type(projection).from_dict(projection.to_dict()) == projection
 
 
 def test_legacy_task_result_v1_and_v2_wire_checksums_remain_stable():
@@ -629,39 +676,129 @@ def test_graph_only_candidate_and_plan_round_trip_through_durable_event_store():
     assert mismatch.value.code == "task_plan_event_identity_mismatch"
 
 
-def test_durable_store_rejects_graph_only_result_without_side_effects():
+def test_graph_only_task_lifecycle_and_result_round_trip_through_durable_store():
     artifacts = _ArtifactStore()
     event_store = _EventStore()
     store = _store(event_store, artifacts)
     candidate, plan = _graph_only_candidate_and_plan()
     store.append_candidate(candidate)
     store.accept_plan(plan)
-    definition = plan.tasks[0]
-    result = TaskResultRecord.for_plan(
-        plan,
-        task_id=definition.task_id,
-        task_instance_id=f"{definition.task_id}-attempt-1",
-        attempt=1,
-        status=TaskLifecycle.SUCCEEDED,
-        result_ref=f"result://{definition.task_id}",
-        output_roles=(definition.output_role,),
-        output_schema_ref=definition.task.output_contract.schema_ref,
+    instance = _start(store, plan, plan.tasks[0].task_id)
+    result = _result(plan, instance, status=TaskLifecycle.SUCCEEDED)
+
+    assert instance.schema_version == GRAPH_ONLY_TASK_INSTANCE_SCHEMA
+    assert instance.instance_checksum == (
+        "sha256:a7e59839179dec5e37323ed8f82a93104a0f3a8c2c401113c76c807de187cdb3"
+    )
+    assert instance.matches_plan_identity(plan)
+    assert "workflow_id" not in instance.to_dict()
+    assert type(instance).from_dict(instance.to_dict()) == instance
+    invalid_instance = instance.to_dict()
+    invalid_instance["workflow_id"] = "legacy-workflow"
+    with pytest.raises(HarnessValidationError) as instance_schema_error:
+        type(instance).from_dict(invalid_instance)
+    assert instance_schema_error.value.code == "invalid_task_plan_payload_fields"
+    unknown_instance = instance.to_dict()
+    unknown_instance["schema_version"] = "newsroom.harness-task-instance/v999"
+    with pytest.raises(HarnessValidationError) as instance_version_error:
+        type(instance).from_dict(unknown_instance)
+    assert instance_version_error.value.code == "unsupported_task_plan_schema"
+    with pytest.raises(HarnessValidationError) as queue_error:
+        materialize_queue_task(instance, workflow_id="legacy-workflow")
+    assert queue_error.value.code == "graph_task_plan_queue_contract_unavailable"
+
+    assert store.append_result(result) == result.result_checksum
+    reopened = _store(event_store, artifacts)
+    projection = reopened.load_projection(plan.run_id, plan.stage_id)
+    events = reopened.read_events(plan.run_id, plan.stage_id)
+
+    assert projection.schema_version == GRAPH_ONLY_TASK_PLAN_PROJECTION_SCHEMA
+    assert projection.matches_plan_identity(plan)
+    assert projection.tasks[0].schema_version == GRAPH_ONLY_TASK_PROJECTION_SCHEMA
+    assert projection.tasks[0].status is TaskLifecycle.SUCCEEDED
+    invalid_projection = projection.to_dict()
+    invalid_projection["workflow_id"] = "legacy-workflow"
+    with pytest.raises(HarnessValidationError) as projection_schema_error:
+        type(projection).from_dict(invalid_projection)
+    assert projection_schema_error.value.code == "invalid_task_plan_payload_fields"
+    unknown_projection = projection.to_dict()
+    unknown_projection["schema_version"] = (
+        "newsroom.harness-task-plan-projection/v999"
+    )
+    with pytest.raises(HarnessValidationError) as projection_version_error:
+        type(projection).from_dict(unknown_projection)
+    assert projection_version_error.value.code == "unsupported_task_plan_schema"
+    with pytest.raises(HarnessValidationError) as nested_schema_error:
+        replace(
+            projection,
+            tasks=(
+                replace(
+                    projection.tasks[0],
+                    schema_version=TASK_PROJECTION_SCHEMA,
+                ),
+            ),
+        )
+    assert nested_schema_error.value.code == "task_plan_projection_schema_mismatch"
+    assert projection.last_sequence == len(events) == 7
+    assert [event.event_type for event in events[-5:]] == [
+        "TASK_READY",
+        "TASK_DISPATCHED",
+        "TASK_STARTED",
+        "TASK_RESULT_ACCEPTED",
+        "TASK_COMPLETED",
+    ]
+    assert all(event.schema_version == TASK_PLAN_EVENT_SCHEMA_V2 for event in events)
+    assert all(event.matches_contract_identity(plan) for event in events)
+    assert reopened.results_for(
+        plan.run_id,
+        plan.stage_id,
+        plan.plan_id,
+        plan.version,
+    ) == (result,)
+    with pytest.raises(HarnessValidationError) as replay_error:
+        TaskPlanReplayReducer().replay((plan,), events, results=(result,))
+    assert replay_error.value.code == "graph_task_plan_replay_contract_unavailable"
+    assert any("/result/" in path for _, path in artifacts._content)
+    assert all(
+        stored.business_context.workflow_id is None
+        and stored.business_context.step_id is None
+        for stored in event_store._events
+    )
+
+
+def test_graph_only_lifecycle_rejects_legacy_event_before_store_mutation():
+    artifacts = _ArtifactStore()
+    event_store = _EventStore()
+    store = _store(event_store, artifacts)
+    candidate, plan = _graph_only_candidate_and_plan()
+    store.append_candidate(candidate)
+    store.accept_plan(plan)
+    instance = task_instance_for_attempt(plan, plan.tasks[0].task_id, 1)
+    projection = store.load_projection(plan.run_id, plan.stage_id)
+    sequence = len(store.read_events(plan.run_id, plan.stage_id)) + 1
+    event = TaskPlanEvent(
+        "TASK_READY",
+        run_id=plan.run_id,
+        workflow_id="legacy-workflow",
+        stage_id=plan.stage_id,
+        graph_checksum=plan.graph_checksum,
+        plan_id=plan.plan_id,
+        plan_version=plan.version,
+        task_id=instance.task_id,
+        task_instance_id=instance.task_instance_id,
+        attempt=instance.attempt,
+        input_checksum=instance.task_definition_checksum,
+        sequence=sequence,
     )
     before_events = tuple(event_store._events)
     before_artifacts = dict(artifacts._content)
 
     with pytest.raises(HarnessValidationError) as error:
-        store.append_result(result)
+        store.commit_event(event, replace(projection, last_sequence=sequence))
 
-    assert error.value.code == "graph_task_plan_result_runtime_unavailable"
+    assert error.value.code == "task_plan_event_identity_mismatch"
     assert tuple(event_store._events) == before_events
     assert artifacts._content == before_artifacts
-    assert store.results_for(
-        plan.run_id,
-        plan.stage_id,
-        plan.plan_id,
-        plan.version,
-    ) == ()
 
 
 def test_rejected_candidate_batch_is_atomic_when_second_event_fails():

@@ -41,12 +41,15 @@ from framework.harness.task_plan import (
     TASK_PLAN_EVENT_SCHEMA_V2,
     TASK_PLAN_RESULT_SCHEMA_V3,
     TaskPlanEvent,
+    TaskPlanReadyDecision,
     TaskResultRecord,
+    TaskPlanScheduler,
     TaskPlanStageBinding,
     TaskPlanValidationContext,
     TaskPlanValidator,
     TaskProjection,
     ValidatedTaskPlan,
+    task_instance_for_attempt,
 )
 from framework.harness.task_plan.canonical import canonical_payload_checksum
 from framework.harness.graph.bindings import HarnessWorkerBinding
@@ -305,7 +308,7 @@ def test_graph_only_candidate_validates_to_graph_only_plan() -> None:
     assert all(TaskPlanEvent.from_dict(event.to_dict()) == event for event in events)
 
 
-def test_graph_only_task_result_contract_is_strict_and_runtime_fail_closed() -> None:
+def test_graph_only_task_result_contract_is_strict_and_lifecycle_bound() -> None:
     policy = build_research_analysis_task_plan_policy()
     request = _plan_build_request(policy)
     candidate = ResearchAnalysisPlanCandidateBuilder(
@@ -325,11 +328,12 @@ def test_graph_only_task_result_contract_is_strict_and_runtime_fail_closed() -> 
         accepted_at="2026-08-17T00:00:00Z",
     )
     definition = plan.tasks[0]
+    instance = task_instance_for_attempt(plan, definition.task_id, 1)
     result_ref = f"result://{definition.task_id}"
     result = TaskResultRecord.for_plan(
         plan,
         task_id=definition.task_id,
-        task_instance_id=f"{definition.task_id}-attempt-1",
+        task_instance_id=instance.task_instance_id,
         attempt=1,
         status=TaskLifecycle.SUCCEEDED,
         result_ref=result_ref,
@@ -406,17 +410,54 @@ def test_graph_only_task_result_contract_is_strict_and_runtime_fail_closed() -> 
     store = InMemoryTaskPlanStore()
     store.append_candidate(candidate)
     store.accept_plan(plan)
-    before_events = store.read_events(plan.run_id, plan.stage_id)
-    with pytest.raises(HarnessValidationError) as runtime_error:
-        store.append_result(result)
-    assert runtime_error.value.code == "graph_task_plan_result_runtime_unavailable"
-    assert store.read_events(plan.run_id, plan.stage_id) == before_events
+    scheduler = TaskPlanScheduler()
+    projection = scheduler.reserve_ready_tasks(
+        store.load_projection(plan.run_id, plan.stage_id),
+        TaskPlanReadyDecision((instance,)),
+    )
+    for event_type, transition in (
+        ("TASK_READY", lambda value: value),
+        (
+            "TASK_DISPATCHED",
+            lambda value: scheduler.mark_dispatched(value, instance),
+        ),
+        (
+            "TASK_STARTED",
+            lambda value: scheduler.mark_started(value, instance),
+        ),
+    ):
+        projection = transition(projection)
+        sequence = len(store.read_events(plan.run_id, plan.stage_id)) + 1
+        projection = replace(projection, last_sequence=sequence)
+        store.commit_event(
+            TaskPlanEvent.for_plan(
+                event_type,
+                plan,
+                task_id=instance.task_id,
+                task_instance_id=instance.task_instance_id,
+                attempt=instance.attempt,
+                input_checksum=instance.task_definition_checksum,
+                sequence=sequence,
+            ),
+            projection,
+        )
+
+    assert store.append_result(result) == result.result_checksum
+    events = store.read_events(plan.run_id, plan.stage_id)
+    assert [event.event_type for event in events[-5:]] == [
+        "TASK_READY",
+        "TASK_DISPATCHED",
+        "TASK_STARTED",
+        "TASK_RESULT_ACCEPTED",
+        "TASK_COMPLETED",
+    ]
+    assert all(event.schema_version == TASK_PLAN_EVENT_SCHEMA_V2 for event in events)
     assert store.results_for(
         plan.run_id,
         plan.stage_id,
         plan.plan_id,
         plan.version,
-    ) == ()
+    ) == (result,)
 
 
 def test_graph_only_candidate_and_plan_readers_fail_closed() -> None:

@@ -34,11 +34,16 @@ from framework.harness.task_plan.models import (
     TaskResultReference,
     ValidatedTaskPlan,
 )
+from framework.harness.task_plan.identity import TaskPlanStageIdentity
 from framework.harness.task_plan.schema import (
+    GRAPH_ONLY_TASK_PLAN_PROJECTION_SCHEMA,
+    GRAPH_ONLY_TASK_PROJECTION_SCHEMA,
     GRAPH_ONLY_TASK_PLAN_STAGE_IDENTITY_SCHEMA,
+    TASK_PLAN_PROJECTION_SCHEMA,
     TASK_PLAN_EVENT_SCHEMA_V1,
     TASK_PLAN_EVENT_SCHEMA_V2,
     TASK_PLAN_EVENT_SCHEMAS,
+    TASK_PROJECTION_SCHEMA,
 )
 
 
@@ -724,6 +729,42 @@ class TaskPlanEvent:
         return payload
 
     @classmethod
+    def for_plan(
+        cls,
+        event_type: str,
+        plan: ValidatedTaskPlan,
+        *,
+        sequence: int,
+        task_id: str | None = None,
+        task_instance_id: str | None = None,
+        attempt: int | None = None,
+        actor_type: str = "harness",
+        causal_event_ref: str | None = None,
+        input_checksum: str | None = None,
+        output_refs: tuple[str, ...] = (),
+        reason_code: str | None = None,
+        payload: Mapping[str, Any] | None = None,
+    ) -> "TaskPlanEvent":
+        if not isinstance(plan, ValidatedTaskPlan):
+            raise TypeError("plan must be ValidatedTaskPlan")
+        return cls(
+            event_type,
+            **_task_plan_event_identity_kwargs(plan),
+            plan_id=plan.plan_id,
+            plan_version=plan.version,
+            task_id=task_id,
+            task_instance_id=task_instance_id,
+            attempt=attempt,
+            actor_type=actor_type,
+            causal_event_ref=causal_event_ref,
+            input_checksum=input_checksum,
+            output_refs=output_refs,
+            reason_code=reason_code,
+            payload=payload or {},
+            sequence=sequence,
+        )
+
+    @classmethod
     def from_dict(cls, value: Mapping[str, Any]) -> "TaskPlanEvent":
         schema_version = value.get("schema_version")
         if schema_version not in TASK_PLAN_EVENT_SCHEMAS:
@@ -846,8 +887,16 @@ class InMemoryTaskPlanStore:
                 raise HarnessValidationError("candidate checksum identity conflict", code="task_plan_checksum_conflict")
             if existing is not None:
                 return existing.candidate_checksum
+            event = _candidate_event(
+                candidate,
+                event_type,
+                self._next_sequence(candidate.run_id, candidate.stage_id),
+            )
+            current = self._current_plan(candidate.run_id, candidate.stage_id)
+            if current is not None:
+                _require_event_matches_plan(event, current)
             self._candidates[candidate.candidate_checksum] = candidate
-            self._append_event(_candidate_event(candidate, event_type, self._next_sequence(candidate.run_id, candidate.stage_id)))
+            self._append_event(event)
         return candidate.candidate_checksum
 
     def append_rejected_candidate(self, candidate: PlanCandidate, *, reason_code: str) -> str:
@@ -860,7 +909,6 @@ class InMemoryTaskPlanStore:
                     "candidate checksum identity conflict",
                     code="task_plan_checksum_conflict",
                 )
-            self._candidates.setdefault(candidate.candidate_checksum, candidate)
             sequence = self._next_sequence(candidate.run_id, candidate.stage_id)
             rejected = _candidate_event(
                 candidate,
@@ -874,6 +922,11 @@ class InMemoryTaskPlanStore:
                 sequence + 1,
                 reason_code=reason_code,
             )
+            current = self._current_plan(candidate.run_id, candidate.stage_id)
+            if current is not None:
+                _require_event_matches_plan(rejected, current)
+                _require_event_matches_plan(validation_failed, current)
+            self._candidates.setdefault(candidate.candidate_checksum, candidate)
             self._append_event(rejected)
             self._append_event(validation_failed)
             projection = self._projections.get((candidate.run_id, candidate.stage_id))
@@ -906,11 +959,17 @@ class InMemoryTaskPlanStore:
                 if existing.plan_checksum != plan.plan_checksum:
                     raise HarnessValidationError("plan version checksum conflict", code="task_plan_checksum_conflict")
                 return existing.plan_checksum
-            self._plans[key] = plan
             sequence = self._next_sequence(plan.run_id, plan.stage_id)
             previous_projection = self._projections.get((plan.run_id, plan.stage_id))
-            self._projections[(plan.run_id, plan.stage_id)] = _projection_for_plan(plan, sequence=sequence, previous=previous_projection)
-            self._append_event(_plan_event(plan, "PLAN_ACCEPTED", sequence))
+            projection = _projection_for_plan(
+                plan,
+                sequence=sequence,
+                previous=previous_projection,
+            )
+            event = _plan_event(plan, "PLAN_ACCEPTED", sequence)
+            self._plans[key] = plan
+            self._projections[(plan.run_id, plan.stage_id)] = projection
+            self._append_event(event)
             return plan.plan_checksum
 
     def append_patch(self, patch: PlanPatch, *, accepted: bool = False) -> str:
@@ -927,11 +986,16 @@ class InMemoryTaskPlanStore:
                     "cannot append a patch without an accepted base plan",
                     code="task_plan_projection_missing",
                 )
-            graph_checksum = plan.graph_checksum
-            workflow_id = plan.workflow_id
             event_type = "PLAN_PATCH_ACCEPTED" if accepted else "PLAN_PATCH_PROPOSED"
             sequence = self._next_sequence(patch.run_id, patch.stage_id)
-            event = TaskPlanEvent(event_type, run_id=patch.run_id, workflow_id=workflow_id, stage_id=patch.stage_id, graph_checksum=graph_checksum, plan_id=patch.base_plan_id, plan_version=patch.base_plan_version, input_checksum=patch.patch_checksum, reason_code=patch.reason_code, payload={"patch_ref": patch.patch_checksum}, sequence=sequence)
+            event = TaskPlanEvent.for_plan(
+                event_type,
+                plan,
+                input_checksum=patch.patch_checksum,
+                reason_code=patch.reason_code,
+                payload={"patch_ref": patch.patch_checksum},
+                sequence=sequence,
+            )
             self._append_event(event)
             projection = self._projections.get((patch.run_id, patch.stage_id))
             if projection is not None:
@@ -979,16 +1043,10 @@ class InMemoryTaskPlanStore:
                     )
                 return existing.plan_checksum
             self._patches.setdefault(patch.patch_checksum, patch)
-            graph_checksum = current.graph_checksum
             sequence = self._next_sequence(plan.run_id, plan.stage_id)
-            patch_event = TaskPlanEvent(
+            patch_event = TaskPlanEvent.for_plan(
                 "PLAN_PATCH_ACCEPTED",
-                run_id=patch.run_id,
-                workflow_id=current.workflow_id,
-                stage_id=patch.stage_id,
-                graph_checksum=graph_checksum,
-                plan_id=patch.base_plan_id,
-                plan_version=patch.base_plan_version,
+                current,
                 input_checksum=patch.patch_checksum,
                 reason_code=patch.reason_code,
                 payload={"patch_ref": patch.patch_checksum},
@@ -1020,14 +1078,9 @@ class InMemoryTaskPlanStore:
                     last_sequence=next_projection.last_sequence + 1,
                 )
                 events.append(
-                    TaskPlanEvent(
+                    TaskPlanEvent.for_plan(
                         "TASK_SKIPPED",
-                        run_id=plan.run_id,
-                        workflow_id=plan.workflow_id,
-                        stage_id=plan.stage_id,
-                        graph_checksum=plan.graph_checksum,
-                        plan_id=plan.plan_id,
-                        plan_version=plan.version,
+                        plan,
                         task_id=task_id,
                         reason_code="plan_patch_skip",
                         input_checksum=plan.plan_checksum,
@@ -1043,11 +1096,6 @@ class InMemoryTaskPlanStore:
     def append_result(self, result: TaskResultRecord) -> str:
         if not isinstance(result, TaskResultRecord):
             raise TypeError("result must be TaskResultRecord")
-        if result.is_graph_only:
-            raise HarnessValidationError(
-                "Graph-only TaskPlan result runtime is not available",
-                code="graph_task_plan_result_runtime_unavailable",
-            )
         key = (result.run_id, result.stage_id, result.task_instance_id, result.attempt, result.plan_version)
         with self._lock:
             existing = self._results.get(key)
@@ -1061,6 +1109,16 @@ class InMemoryTaskPlanStore:
             plan = self._plans.get((result.run_id, result.stage_id, result.plan_version))
             if plan is None:
                 raise HarnessValidationError("task result plan is unavailable", code="task_plan_stale_result")
+            if not result.matches_plan_identity(plan):
+                raise HarnessValidationError(
+                    "task result identity does not match accepted plan",
+                    code="task_plan_result_identity_mismatch",
+                )
+            if not projection.matches_plan_identity(plan):
+                raise HarnessValidationError(
+                    "TaskPlan projection does not match accepted plan identity",
+                    code="task_plan_projection_identity_mismatch",
+                )
             task = next((item for item in projection.tasks if item.task_id == result.task_id), None)
             if task is None:
                 raise HarnessValidationError("task result references unknown task", code="task_plan_unknown_task")
@@ -1104,18 +1162,17 @@ class InMemoryTaskPlanStore:
             tasks = tuple(updated if item.task_id == result.task_id else item for item in projection.tasks)
             result_sequence = self._next_sequence(result.run_id, result.stage_id)
             terminal_sequence = result_sequence + 1
-            graph_checksum = self._graph_checksum(result.run_id, result.stage_id)
             result_event = _result_event(
                 result,
                 result_event_type,
                 result_sequence,
-                graph_checksum=graph_checksum,
+                plan=plan,
             )
             terminal_event = _terminal_result_event(
                 result,
                 terminal_event_type,
                 terminal_sequence,
-                graph_checksum=graph_checksum,
+                plan=plan,
             )
             settled_budget = _settle_result_budget(
                 projection.consumed_budget,
@@ -1160,11 +1217,15 @@ class InMemoryTaskPlanStore:
                     "TaskPlan projection update requires a durable accepted baseline",
                     code="task_plan_projection_missing",
                 )
-            if current is not None:
-                if projection.plan_id != current.plan_id or projection.plan_version != current.plan_version or projection.plan_checksum != current.plan_checksum:
-                    raise HarnessValidationError("projection plan identity changed", code="task_plan_projection_mismatch")
-                if projection.last_sequence < current.last_sequence:
-                    raise HarnessValidationError("projection sequence moved backwards", code="task_plan_sequence_conflict")
+            _require_projection_transition_identity(current, projection)
+            plan = self._current_plan(projection.run_id, projection.stage_id)
+            if plan is None or not projection.matches_plan_identity(plan):
+                raise HarnessValidationError(
+                    "projection does not match the accepted plan",
+                    code="task_plan_projection_mismatch",
+                )
+            if projection.last_sequence < current.last_sequence:
+                raise HarnessValidationError("projection sequence moved backwards", code="task_plan_sequence_conflict")
             self._projections[(projection.run_id, projection.stage_id)] = projection
 
     def results_for(self, run_id: str, stage_id: str, plan_id: str, plan_version: int) -> tuple[TaskResultRecord, ...]:
@@ -1195,6 +1256,9 @@ class InMemoryTaskPlanStore:
             current = self._next_sequence(event.run_id, event.stage_id)
             if event.sequence != current:
                 raise HarnessValidationError("event sequence is not monotonic", code="task_plan_sequence_conflict", details={"expected": current, "actual": event.sequence})
+            plan = self._current_plan(event.run_id, event.stage_id)
+            if plan is not None:
+                _require_event_matches_plan(event, plan)
             self._append_event(event)
             key = (event.run_id, event.stage_id)
             projection = self._projections.get(key)
@@ -1230,6 +1294,18 @@ class InMemoryTaskPlanStore:
                     "event sequence is not monotonic",
                     code="task_plan_sequence_conflict",
                     details={"expected": expected_sequence, "actual": event.sequence},
+                )
+            plan = self._current_plan(event.run_id, event.stage_id)
+            if plan is None:
+                raise HarnessValidationError(
+                    "TaskPlan transition requires an accepted plan",
+                    code="task_plan_projection_missing",
+                )
+            _require_event_matches_plan(event, plan)
+            if not projection.matches_plan_identity(plan):
+                raise HarnessValidationError(
+                    "projection does not match the accepted plan",
+                    code="task_plan_projection_mismatch",
                 )
             _require_projection_transition_identity(current, projection)
             if projection.last_sequence != event.sequence:
@@ -1271,6 +1347,11 @@ class InMemoryTaskPlanStore:
 
 
 def _projection_for_plan(plan: ValidatedTaskPlan, *, sequence: int, previous: TaskPlanProjection | None = None) -> TaskPlanProjection:
+    if previous is not None and previous.is_graph_only != plan.is_graph_only:
+        raise HarnessValidationError(
+            "TaskPlan projection identity schema cannot change across plan versions",
+            code="task_plan_projection_schema_mismatch",
+        )
     previous_by_id = {item.task_id: item for item in previous.tasks} if previous is not None else {}
     states = []
     for item in plan.tasks:
@@ -1278,7 +1359,26 @@ def _projection_for_plan(plan: ValidatedTaskPlan, *, sequence: int, previous: Ta
         if old is not None and old.task_definition_checksum == item.task_definition_checksum and old.status in {TaskLifecycle.SUCCEEDED, TaskLifecycle.FAILED, TaskLifecycle.SKIPPED}:
             states.append(old)
         else:
-            states.append(TaskProjection(task_id=item.task_id, task_definition_checksum=item.task_definition_checksum, status=TaskLifecycle.PENDING))
+            states.append(
+                TaskProjection(
+                    task_id=item.task_id,
+                    task_definition_checksum=item.task_definition_checksum,
+                    status=TaskLifecycle.PENDING,
+                    schema_version=(
+                        GRAPH_ONLY_TASK_PROJECTION_SCHEMA
+                        if plan.is_graph_only
+                        else TASK_PROJECTION_SCHEMA
+                    ),
+                )
+            )
+    graph_identity = (
+        {
+            name: getattr(plan, name)
+            for name in _GRAPH_ONLY_TASK_PLAN_IDENTITY_FIELDS
+        }
+        if plan.is_graph_only
+        else {}
+    )
     return TaskPlanProjection(
         run_id=plan.run_id,
         stage_id=plan.stage_id,
@@ -1290,6 +1390,12 @@ def _projection_for_plan(plan: ValidatedTaskPlan, *, sequence: int, previous: Ta
         tasks=tuple(states),
         consumed_budget=previous.consumed_budget if previous is not None else {},
         last_sequence=sequence,
+        schema_version=(
+            GRAPH_ONLY_TASK_PLAN_PROJECTION_SCHEMA
+            if plan.is_graph_only
+            else TASK_PLAN_PROJECTION_SCHEMA
+        ),
+        **graph_identity,
     )
 
 
@@ -1328,11 +1434,11 @@ def _plan_event(plan: ValidatedTaskPlan, event_type: str, sequence: int) -> Task
 
 
 def _task_plan_event_identity_kwargs(
-    value: PlanCandidate | ValidatedTaskPlan,
+    value: PlanCandidate | ValidatedTaskPlan | TaskPlanStageIdentity,
 ) -> dict[str, Any]:
     identity: dict[str, Any] = {
         "run_id": value.run_id,
-        "workflow_id": value.workflow_id,
+        "workflow_id": None if value.is_graph_only else value.workflow_id,
         "stage_id": value.stage_id,
         "graph_checksum": value.graph_checksum,
         "schema_version": (
@@ -1342,24 +1448,44 @@ def _task_plan_event_identity_kwargs(
         ),
     }
     if value.is_graph_only:
-        identity.update(
+        graph_identity = {
+            name: getattr(value, name)
+            for name in _GRAPH_ONLY_TASK_PLAN_IDENTITY_FIELDS
+            if name not in {"stage_identity_schema", "stage_identity_checksum"}
+        }
+        graph_identity.update(
             {
-                name: getattr(value, name)
-                for name in _GRAPH_ONLY_TASK_PLAN_IDENTITY_FIELDS
+                "stage_identity_schema": (
+                    value.schema_version
+                    if isinstance(value, TaskPlanStageIdentity)
+                    else value.stage_identity_schema
+                ),
+                "stage_identity_checksum": (
+                    value.identity_checksum
+                    if isinstance(value, TaskPlanStageIdentity)
+                    else value.stage_identity_checksum
+                ),
             }
         )
+        identity.update(graph_identity)
     return identity
 
 
-def _result_event(result: TaskResultRecord, event_type: str, sequence: int, *, graph_checksum: str) -> TaskPlanEvent:
-    return TaskPlanEvent(
+def _result_event(
+    result: TaskResultRecord,
+    event_type: str,
+    sequence: int,
+    *,
+    plan: ValidatedTaskPlan,
+) -> TaskPlanEvent:
+    if not result.matches_plan_identity(plan):
+        raise HarnessValidationError(
+            "task result identity does not match accepted plan",
+            code="task_plan_result_identity_mismatch",
+        )
+    return TaskPlanEvent.for_plan(
         event_type,
-        run_id=result.run_id,
-        workflow_id=result.workflow_id,
-        stage_id=result.stage_id,
-        graph_checksum=graph_checksum,
-        plan_id=result.plan_id,
-        plan_version=result.plan_version,
+        plan,
         task_id=result.task_id,
         task_instance_id=result.task_instance_id,
         attempt=result.attempt,
@@ -1385,16 +1511,16 @@ def _terminal_result_event(
     event_type: str,
     sequence: int,
     *,
-    graph_checksum: str,
+    plan: ValidatedTaskPlan,
 ) -> TaskPlanEvent:
-    return TaskPlanEvent(
+    if not result.matches_plan_identity(plan):
+        raise HarnessValidationError(
+            "task result identity does not match accepted plan",
+            code="task_plan_result_identity_mismatch",
+        )
+    return TaskPlanEvent.for_plan(
         event_type,
-        run_id=result.run_id,
-        workflow_id=result.workflow_id,
-        stage_id=result.stage_id,
-        graph_checksum=graph_checksum,
-        plan_id=result.plan_id,
-        plan_version=result.plan_version,
+        plan,
         task_id=result.task_id,
         task_instance_id=result.task_instance_id,
         attempt=result.attempt,
@@ -1512,6 +1638,7 @@ def _require_projection_transition_identity(
     proposed: TaskPlanProjection,
 ) -> None:
     identity_fields = (
+        "schema_version",
         "run_id",
         "stage_id",
         "graph_checksum",
@@ -1520,10 +1647,36 @@ def _require_projection_transition_identity(
         "plan_checksum",
         "policy_ref",
     )
-    if any(getattr(current, name) != getattr(proposed, name) for name in identity_fields):
+    graph_identity_fields = (
+        _GRAPH_ONLY_TASK_PLAN_IDENTITY_FIELDS
+        if current.is_graph_only or proposed.is_graph_only
+        else frozenset()
+    )
+    if any(
+        getattr(current, name) != getattr(proposed, name)
+        for name in (*identity_fields, *graph_identity_fields)
+    ):
         raise HarnessValidationError(
             "projection transition changed accepted plan identity",
             code="task_plan_projection_mismatch",
+        )
+
+
+def _require_event_matches_plan(
+    event: TaskPlanEvent,
+    plan: ValidatedTaskPlan,
+) -> None:
+    if not event.matches_contract_identity(plan):
+        raise HarnessValidationError(
+            "TaskPlan event identity does not match the accepted plan",
+            code="task_plan_event_identity_mismatch",
+        )
+    if event.plan_id is not None and (
+        event.plan_id != plan.plan_id or event.plan_version != plan.version
+    ):
+        raise HarnessValidationError(
+            "TaskPlan event plan version does not match the accepted plan",
+            code="task_plan_event_identity_mismatch",
         )
 
 

@@ -22,6 +22,9 @@ from framework.harness.task_plan.models import (
     ValidatedTaskPlan,
 )
 from framework.harness.task_plan.policy import TaskPlanPolicy
+from framework.harness.task_plan.schema import (
+    GRAPH_ONLY_TASK_INSTANCE_SCHEMA,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -197,6 +200,12 @@ class TaskPlanScheduler:
                     code="task_plan_task_not_pending",
                     details={"task_id": task_id, "status": state.status.value},
                 )
+            if not instance.matches_plan_projection_identity(projection):
+                raise HarnessValidationError(
+                    "ready decision task instance is outside the accepted projection",
+                    code="task_plan_task_instance_mismatch",
+                    details={"task_id": task_id},
+                )
         tasks = tuple(
             replace(
                 state,
@@ -258,6 +267,11 @@ def materialize_queue_task(
     queue_name: str = "framework:queue:default",
 ) -> Any:
     """Create a generic execution projection containing identity metadata only."""
+    if instance.is_graph_only:
+        raise HarnessValidationError(
+            "Graph-only TaskPlan queue contract is not available",
+            code="graph_task_plan_queue_contract_unavailable",
+        )
     from framework.workers.models.task import Task
 
     metadata = {
@@ -308,7 +322,7 @@ def task_instance_for_attempt(
             code="task_plan_unknown_task",
             details={"task_id": normalized_task_id, "plan_version": plan.version},
         )
-    identity = {
+    identity: dict[str, Any] = {
         "run_id": plan.run_id,
         "stage_id": plan.stage_id,
         "plan_id": plan.plan_id,
@@ -318,6 +332,21 @@ def task_instance_for_attempt(
         "task_definition_checksum": definition.task_definition_checksum,
         "attempt": normalized_attempt,
     }
+    graph_identity: dict[str, Any] = {}
+    if plan.is_graph_only:
+        graph_identity = {
+            "graph_id": plan.graph_id,
+            "graph_version": plan.graph_version,
+            "graph_ref": plan.graph_ref,
+            "graph_schema_version": plan.graph_schema_version,
+            "compiler_version": plan.compiler_version,
+            "condition_policy_version": plan.condition_policy_version,
+            "graph_checksum": plan.graph_checksum,
+            "stage_binding_checksum": plan.stage_binding_checksum,
+            "stage_identity_schema": plan.stage_identity_schema,
+            "stage_identity_checksum": plan.stage_identity_checksum,
+            "schema_version": GRAPH_ONLY_TASK_INSTANCE_SCHEMA,
+        }
     digest = canonical_payload_checksum(identity).removeprefix("sha256:")
     expected_instance_id = f"ti_{digest}"
     if task_instance_id is not None:
@@ -347,21 +376,16 @@ def task_instance_for_attempt(
         idempotency_key=f"idem_{digest}",
         fencing_token=f"fence_{digest}",
         budget_snapshot=definition.normalized_budget,
+        **graph_identity,
     )
 
 
 def _require_projection_matches_plan(projection: TaskPlanProjection, plan: ValidatedTaskPlan) -> None:
     if not isinstance(projection, TaskPlanProjection) or not isinstance(plan, ValidatedTaskPlan):
         raise TypeError("projection and plan must be typed TaskPlan values")
-    fields = ("run_id", "stage_id", "graph_checksum", "plan_id", "plan_checksum")
-    if any(getattr(projection, field_name) != getattr(plan, field_name) for field_name in fields):
+    if not projection.matches_plan_identity(plan):
         raise HarnessValidationError(
             "TaskPlan projection does not match accepted plan identity",
-            code="task_plan_projection_identity_mismatch",
-        )
-    if projection.plan_version != plan.version or projection.policy_ref != plan.policy_ref:
-        raise HarnessValidationError(
-            "TaskPlan projection version does not match accepted plan",
             code="task_plan_projection_identity_mismatch",
         )
 
@@ -371,6 +395,12 @@ def _transition_task(
     instance: TaskInstance,
     status: TaskLifecycle,
 ) -> TaskPlanProjection:
+    if not instance.matches_plan_projection_identity(projection):
+        raise HarnessValidationError(
+            "task instance is outside the accepted projection",
+            code="task_plan_task_instance_mismatch",
+            details={"task_id": instance.task_id},
+        )
     found = False
     tasks: list[TaskProjection] = []
     for state in projection.tasks:

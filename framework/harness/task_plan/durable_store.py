@@ -51,6 +51,7 @@ from framework.harness.task_plan.store import (
     _plan_contains_task_version,
     _plan_event,
     _projection_for_plan,
+    _require_event_matches_plan,
     _require_subagent_result_evidence,
     _require_projection_transition_identity,
     _result_event,
@@ -272,6 +273,7 @@ class DurableTaskPlanStore:
         refs: dict[str, _DocumentReference] = {"candidate": candidate_ref}
         current = self._optional_projection(candidate.run_id, candidate.stage_id)
         if current is not None:
+            _require_projection_matches_event(current, event)
             projection = replace(current, last_sequence=sequence)
             refs["projection"] = self._put_projection(projection)
         self._publish((event,), (refs,))
@@ -327,6 +329,8 @@ class DurableTaskPlanStore:
         second_refs: dict[str, _DocumentReference] = {"candidate": candidate_ref}
         current = self._optional_projection(candidate.run_id, candidate.stage_id)
         if current is not None:
+            _require_projection_matches_event(current, rejected_event)
+            _require_projection_matches_event(current, failed_event)
             first_refs["projection"] = self._put_projection(
                 replace(current, last_sequence=first_sequence)
             )
@@ -431,14 +435,9 @@ class DurableTaskPlanStore:
         sequence = len(events) + 1
         projection = replace(self.load_projection(patch.run_id, patch.stage_id), last_sequence=sequence)
         projection_ref = self._put_projection(projection)
-        event = TaskPlanEvent(
+        event = TaskPlanEvent.for_plan(
             event_type,
-            run_id=patch.run_id,
-            workflow_id=plan.workflow_id,
-            stage_id=patch.stage_id,
-            graph_checksum=plan.graph_checksum,
-            plan_id=patch.base_plan_id,
-            plan_version=patch.base_plan_version,
+            plan,
             input_checksum=patch.patch_checksum,
             reason_code=patch.reason_code,
             payload={"patch_ref": patch.patch_checksum},
@@ -485,14 +484,9 @@ class DurableTaskPlanStore:
         )
         events = self.read_events(plan.run_id, plan.stage_id)
         first_sequence = len(events) + 1
-        patch_event = TaskPlanEvent(
+        patch_event = TaskPlanEvent.for_plan(
             "PLAN_PATCH_ACCEPTED",
-            run_id=patch.run_id,
-            workflow_id=current.workflow_id,
-            stage_id=patch.stage_id,
-            graph_checksum=current.graph_checksum,
-            plan_id=patch.base_plan_id,
-            plan_version=patch.base_plan_version,
+            current,
             input_checksum=patch.patch_checksum,
             reason_code=patch.reason_code,
             payload={"patch_ref": patch.patch_checksum},
@@ -524,14 +518,9 @@ class DurableTaskPlanStore:
                 last_sequence=projection.last_sequence + 1,
             )
             events_to_publish.append(
-                TaskPlanEvent(
+                TaskPlanEvent.for_plan(
                     "TASK_SKIPPED",
-                    run_id=plan.run_id,
-                    workflow_id=plan.workflow_id,
-                    stage_id=plan.stage_id,
-                    graph_checksum=plan.graph_checksum,
-                    plan_id=plan.plan_id,
-                    plan_version=plan.version,
+                    plan,
                     task_id=task_id,
                     input_checksum=plan.plan_checksum,
                     reason_code="plan_patch_skip",
@@ -545,11 +534,6 @@ class DurableTaskPlanStore:
     def append_result(self, result: TaskResultRecord) -> str:
         if not isinstance(result, TaskResultRecord):
             raise TypeError("result must be TaskResultRecord")
-        if result.is_graph_only:
-            raise HarnessValidationError(
-                "Graph-only TaskPlan result runtime is not available",
-                code="graph_task_plan_result_runtime_unavailable",
-            )
         events = self.read_events(result.run_id, result.stage_id)
         existing_events = [
             event
@@ -597,6 +581,16 @@ class DurableTaskPlanStore:
             raise HarnessValidationError(
                 "task result plan is unavailable",
                 code="task_plan_stale_result",
+            )
+        if not result.matches_plan_identity(plan):
+            raise HarnessValidationError(
+                "task result identity does not match accepted plan",
+                code="task_plan_result_identity_mismatch",
+            )
+        if not projection.matches_plan_identity(plan):
+            raise HarnessValidationError(
+                "TaskPlan projection does not match accepted plan identity",
+                code="task_plan_projection_identity_mismatch",
             )
         state = next(
             (item for item in projection.tasks if item.task_id == result.task_id),
@@ -691,13 +685,13 @@ class DurableTaskPlanStore:
             result,
             result_event_type,
             result_sequence,
-            graph_checksum=plan.graph_checksum,
+            plan=plan,
         )
         terminal_event = _terminal_result_event(
             result,
             terminal_event_type,
             terminal_sequence,
-            graph_checksum=plan.graph_checksum,
+            plan=plan,
         )
         intermediate_projection = replace(projection, last_sequence=result_sequence)
         settled_budget = _settle_result_budget(
@@ -744,6 +738,13 @@ class DurableTaskPlanStore:
             ):
                 raise HarnessValidationError(
                     "TaskPlan projection reference conflicts with its event",
+                    code="task_plan_projection_mismatch",
+                )
+            _require_projection_matches_event(projection, event)
+            plan = self.plan(run, stage, projection.plan_version)
+            if plan is None or not projection.matches_plan_identity(plan):
+                raise HarnessValidationError(
+                    "TaskPlan projection conflicts with its accepted plan",
                     code="task_plan_projection_mismatch",
                 )
             return projection
@@ -824,6 +825,22 @@ class DurableTaskPlanStore:
                 raw_checksum,
                 TaskResultRecord,
             )
+            record_plan = plans.get((run, stage, record.plan_version))
+            if (
+                record_plan is None
+                or not record.matches_plan_identity(record_plan)
+                or not event.matches_contract_identity(record_plan)
+                or event.plan_id != record.plan_id
+                or event.plan_version != record.plan_version
+                or event.task_id != record.task_id
+                or event.task_instance_id != record.task_instance_id
+                or event.attempt != record.attempt
+                or event.payload.get("result_checksum") != record.result_checksum
+            ):
+                raise HarnessValidationError(
+                    "TaskPlan result artifact conflicts with its event or accepted plan",
+                    code="task_plan_result_identity_mismatch",
+                )
             if not (
                 record.plan_id == plan_id and record.plan_version == plan_version
             ) and not _plan_contains_task_version(plans, requested_plan, record):
@@ -854,9 +871,13 @@ class DurableTaskPlanStore:
                 code="task_plan_sequence_conflict",
                 details={"expected": len(events) + 1, "actual": event.sequence},
             )
+        plan = self.plan(event.run_id, event.stage_id)
+        if plan is not None:
+            _require_event_matches_plan(event, plan)
         refs: dict[str, _DocumentReference] = {}
         current = self._optional_projection(event.run_id, event.stage_id)
         if current is not None:
+            _require_projection_matches_event(current, event)
             refs["projection"] = self._put_projection(
                 replace(current, last_sequence=event.sequence)
             )
@@ -894,6 +915,18 @@ class DurableTaskPlanStore:
                 details={"expected": len(events) + 1, "actual": event.sequence},
             )
         current = self.load_projection(event.run_id, event.stage_id)
+        plan = self.plan(event.run_id, event.stage_id)
+        if plan is None:
+            raise HarnessValidationError(
+                "TaskPlan transition requires an accepted plan",
+                code="task_plan_projection_missing",
+            )
+        _require_event_matches_plan(event, plan)
+        if not projection.matches_plan_identity(plan):
+            raise HarnessValidationError(
+                "projection does not match the accepted plan",
+                code="task_plan_projection_mismatch",
+            )
         _require_projection_transition_identity(current, projection)
         if projection.last_sequence != event.sequence:
             raise HarnessValidationError(
@@ -1588,6 +1621,49 @@ def _graph_event_context_for_task_plan_event(
             normalized_graph_checksum=event.graph_checksum,
         )
     )
+
+
+def _require_projection_matches_event(
+    projection: TaskPlanProjection,
+    event: TaskPlanEvent,
+) -> None:
+    if (
+        projection.is_graph_only != event.is_graph_only
+        or projection.run_id != event.run_id
+        or projection.stage_id != event.stage_id
+        or projection.graph_checksum != event.graph_checksum
+    ):
+        raise HarnessValidationError(
+            "TaskPlan projection identity conflicts with its event",
+            code="task_plan_projection_mismatch",
+        )
+    if event.plan_id is not None and (
+        projection.plan_id != event.plan_id
+        or projection.plan_version != event.plan_version
+    ):
+        raise HarnessValidationError(
+            "TaskPlan projection plan version conflicts with its event",
+            code="task_plan_projection_mismatch",
+        )
+    graph_fields = (
+        "graph_id",
+        "graph_version",
+        "graph_ref",
+        "graph_schema_version",
+        "compiler_version",
+        "condition_policy_version",
+        "stage_binding_checksum",
+        "stage_identity_schema",
+        "stage_identity_checksum",
+    )
+    if projection.is_graph_only and any(
+        getattr(projection, name) != getattr(event, name)
+        for name in graph_fields
+    ):
+        raise HarnessValidationError(
+            "Graph-only TaskPlan projection identity conflicts with its event",
+            code="task_plan_projection_mismatch",
+        )
 
 
 __all__ = [

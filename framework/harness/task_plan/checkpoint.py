@@ -93,6 +93,11 @@ class TaskPlanCheckpoint:
             projection = TaskPlanProjection.from_dict(projection)
         if not isinstance(projection, TaskPlanProjection):
             raise TypeError("projection must be TaskPlanProjection")
+        if projection.is_graph_only:
+            raise HarnessValidationError(
+                "Graph-only TaskPlan checkpoint contract is not available",
+                code="graph_task_plan_checkpoint_contract_unavailable",
+            )
         identity = (
             projection.run_id,
             projection.stage_id,
@@ -285,6 +290,11 @@ class TaskPlanCheckpoint:
             raise TypeError("plan must be ValidatedTaskPlan")
         if not isinstance(report, TaskPlanReplayReport):
             raise TypeError("report must be TaskPlanReplayReport")
+        if plan.is_graph_only:
+            raise HarnessValidationError(
+                "Graph-only TaskPlan checkpoint contract is not available",
+                code="graph_task_plan_checkpoint_contract_unavailable",
+            )
         projection = report.projection
         if (
             projection.run_id != plan.run_id
