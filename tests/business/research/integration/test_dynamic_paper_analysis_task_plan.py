@@ -50,7 +50,7 @@ from framework.harness import (
 )
 from framework.harness.control_plane.gates import GateContext
 from framework.harness.graph import HarnessWorkerType
-from framework.harness.workflow import HarnessWorkflowGraphCompiler
+from framework.harness.workflow.compiler import HarnessWorkflowGraphCompiler
 from framework.harness.graph.bindings import HarnessWorkerBinding
 from framework.harness.graph.model import (
     HarnessContractKind,

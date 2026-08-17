@@ -1,7 +1,7 @@
 {
   "active": {
     "import_edges": {
-      "business/research/workflows/paper_analysis_workflow.py|<module>|framework.harness.workflow|HarnessWorkflowSpec": 1,
+      "business/research/workflows/paper_analysis_workflow.py|<module>|framework.harness.workflow.spec|HarnessWorkflowSpec": 1,
       "framework/__init__.py|<module>|framework.workflow.runtime.run_result|RunResult": 1,
       "framework/__init__.py|<module>|framework.workflow.runtime.runner|WorkflowRunner": 1,
       "framework/harness/control_plane/graph_checkpoint.py|<module>|framework.harness.workflow.versioning|LEGACY_CHECKPOINT_SCHEMA,LEGACY_EVENT_SCHEMA,LEGACY_STATE_SCHEMA": 1,
@@ -9,10 +9,6 @@
       "framework/harness/control_plane/harness.py|<module>|framework.harness.workflow.compiler|HarnessWorkflowGraphCompiler": 1,
       "framework/harness/control_plane/harness.py|<module>|framework.harness.workflow.spec|HarnessRouteKind": 1,
       "framework/harness/control_plane/state.py|<module>|framework.harness.workflow.spec|HarnessWorkflowSpec": 1,
-      "framework/harness/workflow/__init__.py|<module>|framework.harness.workflow.compiler|HarnessGraphCompileResult,HarnessWorkflowGraphCompiler": 1,
-      "framework/harness/workflow/__init__.py|<module>|framework.harness.workflow.reader|HarnessWorkflowContractReader": 1,
-      "framework/harness/workflow/__init__.py|<module>|framework.harness.workflow.spec|HarnessRouteKind,HarnessRoutingRule,HarnessWorkflowSpec": 1,
-      "framework/harness/workflow/__init__.py|<module>|framework.harness.workflow.versioning|DEFAULT_HARNESS_GRAPH_SCHEMA_REGISTRY,HarnessGraphSchemaRegistry": 1,
       "framework/harness/workflow/compiler.py|<module>|framework.harness.workflow.spec|HarnessRouteKind,HarnessRoutingRule,HarnessWorkflowSpec": 1,
       "framework/harness/workflow/reader.py|<module>|framework.harness.workflow.spec|HarnessRoutingRule,HarnessWorkflowSpec": 1,
       "framework/harness/workflow/reader.py|<module>|framework.harness.workflow.versioning|DEFAULT_HARNESS_GRAPH_SCHEMA_REGISTRY,HarnessGraphContractKind,HarnessGraphSchemaRegistry,LEGACY_WORKFLOW_SCHEMA": 1,
@@ -326,7 +322,7 @@
       "framework/workflow/scheduling/scheduler.py|<module>|framework.workflow.routing|RoutingEngine": 1,
       "framework/workflow/scheduling/scheduler.py|<module>|framework.workflow.runtime.result|StepOutcome as RuntimeStepOutcome": 1,
       "framework/workflow/scheduling/scheduler.py|<module>|framework.workflow.runtime.state_machine|StepRuntimeEvent,StepRuntimeEventType,StepStateMachine,WorkflowStateMachine": 1,
-      "interfaces/composition/research.py|<module>|framework.harness.workflow|HarnessWorkflowGraphCompiler": 1,
+      "interfaces/composition/research.py|<module>|framework.harness.workflow.compiler|HarnessWorkflowGraphCompiler": 1,
       "interfaces/services/event_projection_service.py|<module>|framework.workflow.runtime.event_projection|WorkflowEventProjection,WorkflowEventProjectionExporter": 1,
       "interfaces/services/run_inspection_service.py|<module>|framework.workflow.inspection|WorkflowArtifactContentRecord,WorkflowEventRecord,WorkflowReplayContentBundle,WorkflowRunInspectionError,WorkflowRunInspector,WorkflowRunListItem,redact_sensitive_values": 1,
       "interfaces/services/run_inspection_service.py|<module>|framework.workflow.runtime.event_projection|project_workflow_event": 1,
@@ -487,17 +483,6 @@
       "framework/agent/artifacts/runtime/publisher.py|WorkflowArtifactPublisher": 1,
       "framework/agent/artifacts/runtime/publisher.py|WorkflowArtifactRef": 1,
       "framework/events/schema/__init__.py|LEGACY_WORKFLOW_EVENT_ALIASES": 1,
-      "framework/harness/__init__.py|WorkflowGraphEvaluator": 1,
-      "framework/harness/control_plane/__init__.py|WorkflowGraphEvaluator": 1,
-      "framework/harness/control_plane/graph_evaluator.py|WorkflowGraphEvaluator": 1,
-      "framework/harness/workflow/__init__.py|DEFAULT_HARNESS_GRAPH_SCHEMA_REGISTRY": 1,
-      "framework/harness/workflow/__init__.py|HarnessGraphCompileResult": 1,
-      "framework/harness/workflow/__init__.py|HarnessGraphSchemaRegistry": 1,
-      "framework/harness/workflow/__init__.py|HarnessRouteKind": 1,
-      "framework/harness/workflow/__init__.py|HarnessRoutingRule": 1,
-      "framework/harness/workflow/__init__.py|HarnessWorkflowContractReader": 1,
-      "framework/harness/workflow/__init__.py|HarnessWorkflowGraphCompiler": 1,
-      "framework/harness/workflow/__init__.py|HarnessWorkflowSpec": 1,
       "framework/harness/workflow/compiler.py|HarnessGraphCompileResult": 1,
       "framework/harness/workflow/compiler.py|HarnessWorkflowGraphCompiler": 1,
       "framework/harness/workflow/reader.py|HarnessWorkflowContractReader": 1,
@@ -752,11 +737,7 @@
       "framework/events/schema/__init__.py|<module>|string_literal|LEGACY_WORKFLOW_EVENT_ALIASES": 1,
       "framework/events/schema/catalog.py|<module>|name_load|LEGACY_WORKFLOW_EVENT_ALIASES": 1,
       "framework/events/schema/catalog.py|<module>|name_store|LEGACY_WORKFLOW_EVENT_ALIASES": 1,
-      "framework/harness/__init__.py|<module>|import|WorkflowGraphEvaluator": 1,
-      "framework/harness/__init__.py|<module>|string_literal|WorkflowGraphEvaluator": 1,
       "framework/harness/context/assembler.py|<module>.ContextAssembler._collect_segments|string_literal|Workflow": 1,
-      "framework/harness/control_plane/__init__.py|<module>|import|WorkflowGraphEvaluator": 1,
-      "framework/harness/control_plane/__init__.py|<module>|string_literal|WorkflowGraphEvaluator": 1,
       "framework/harness/control_plane/graph_checkpoint.py|<module>.HarnessGraphCheckpointReader.read_or_quarantine|name_load|LEGACY_CHECKPOINT_SCHEMA": 1,
       "framework/harness/control_plane/graph_checkpoint.py|<module>.HarnessGraphCheckpointReader.upcast_legacy|name_load|LEGACY_CHECKPOINT_SCHEMA": 3,
       "framework/harness/control_plane/graph_checkpoint.py|<module>.HarnessGraphCheckpointReader.upcast_legacy|name_load|LEGACY_STATE_SCHEMA": 1,
@@ -768,15 +749,11 @@
       "framework/harness/control_plane/graph_checkpoint.py|<module>|import|LEGACY_CHECKPOINT_SCHEMA": 1,
       "framework/harness/control_plane/graph_checkpoint.py|<module>|import|LEGACY_EVENT_SCHEMA": 1,
       "framework/harness/control_plane/graph_checkpoint.py|<module>|import|LEGACY_STATE_SCHEMA": 1,
-      "framework/harness/control_plane/graph_evaluator.py|<module>|class_definition|WorkflowGraphEvaluator": 1,
-      "framework/harness/control_plane/graph_evaluator.py|<module>|string_literal|WorkflowGraphEvaluator": 1,
       "framework/harness/control_plane/graph_state.py|<module>.HarnessLegacyStatusProjection.__post_init__|name_load|LEGACY_STATE_SCHEMA": 1,
       "framework/harness/control_plane/graph_state.py|<module>.HarnessLegacyStatusProjection|name_load|LEGACY_STATE_SCHEMA": 1,
       "framework/harness/control_plane/graph_state.py|<module>|import|LEGACY_STATE_SCHEMA": 1,
       "framework/harness/control_plane/harness.py|<module>.HarnessControlPlane._graph_replay_recovery|name_load|HarnessWorkflowGraphCompiler": 1,
       "framework/harness/control_plane/harness.py|<module>|import|HarnessWorkflowGraphCompiler": 1,
-      "framework/harness/control_plane/scheduler.py|<module>.HarnessScheduler.__init__|name_load|WorkflowGraphEvaluator": 2,
-      "framework/harness/control_plane/scheduler.py|<module>|import|WorkflowGraphEvaluator": 1,
       "framework/harness/control_plane/state.py|<module>.HarnessRunSpec.__post_init__|name_load|HarnessWorkflowSpec": 1,
       "framework/harness/control_plane/state.py|<module>.HarnessRunSpec.__post_init__|string_literal|HarnessWorkflowSpec": 1,
       "framework/harness/control_plane/state.py|<module>.HarnessRunSpec|name_load|HarnessWorkflowSpec": 1,
@@ -791,12 +768,6 @@
       "framework/harness/control_plane/step_lifecycle.py|<module>.StepLifecycleTransition.__post_init__|attribute|LEGACY_UNBOUND": 1,
       "framework/harness/control_plane/step_lifecycle.py|<module>.StepLifecycleTransition|attribute|LEGACY_UNBOUND": 1,
       "framework/harness/control_plane/step_lifecycle.py|<module>._validate_state_observation_binding|attribute|LEGACY_UNBOUND": 1,
-      "framework/harness/workflow/__init__.py|<module>|import|HarnessWorkflowContractReader": 1,
-      "framework/harness/workflow/__init__.py|<module>|import|HarnessWorkflowGraphCompiler": 1,
-      "framework/harness/workflow/__init__.py|<module>|import|HarnessWorkflowSpec": 1,
-      "framework/harness/workflow/__init__.py|<module>|string_literal|HarnessWorkflowContractReader": 1,
-      "framework/harness/workflow/__init__.py|<module>|string_literal|HarnessWorkflowGraphCompiler": 1,
-      "framework/harness/workflow/__init__.py|<module>|string_literal|HarnessWorkflowSpec": 1,
       "framework/harness/workflow/compiler.py|<module>.HarnessWorkflowGraphCompiler.compile|name_load|HarnessWorkflowSpec": 2,
       "framework/harness/workflow/compiler.py|<module>.HarnessWorkflowGraphCompiler.compile|string_literal|HarnessWorkflowSpec": 1,
       "framework/harness/workflow/compiler.py|<module>._CompilerContext.__init__|name_load|HarnessWorkflowSpec": 1,
@@ -2177,12 +2148,12 @@
       "scripts/dev.py|<module>|import|LocalWorkflowRunOperationService": 1
     }
   },
-  "captured_at": "2026-08-16",
+  "captured_at": "2026-08-17",
   "forbidden_namespace_prefixes": [
     "framework.workflow",
     "framework.harness.workflow"
   ],
-  "generation": 10,
+  "generation": 11,
   "legacy_schema_ids": [
     "newsroom.harness-checkpoint-legacy/v1",
     "newsroom.harness-decision-legacy/v1",
@@ -6850,9 +6821,207 @@
       "count": 1,
       "generation": 10,
       "key": "framework/harness/control_plane/durable_events.py|<module>._graph_activity_from_dict|call_keyword:schema_version"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 11,
+      "key": "framework/harness/workflow/__init__.py|<module>|framework.harness.workflow.compiler|HarnessGraphCompileResult"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 11,
+      "key": "framework/harness/workflow/__init__.py|<module>|framework.harness.workflow.reader|HarnessWorkflowContractReader"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 11,
+      "key": "framework/harness/workflow/__init__.py|<module>|framework.harness.workflow.spec|HarnessRouteKind"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 11,
+      "key": "framework/harness/workflow/__init__.py|<module>|framework.harness.workflow.spec|HarnessRoutingRule"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 11,
+      "key": "framework/harness/workflow/__init__.py|<module>|framework.harness.workflow.versioning|DEFAULT_HARNESS_GRAPH_SCHEMA_REGISTRY"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 11,
+      "key": "framework/harness/workflow/__init__.py|<module>|framework.harness.workflow.versioning|HarnessGraphSchemaRegistry"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 11,
+      "key": "framework/harness/workflow/__init__.py|<module>|framework.harness.workflow|HarnessWorkflowGraphCompiler"
+    },
+    {
+      "category": "import_edges",
+      "count": 1,
+      "generation": 11,
+      "key": "framework/harness/workflow/__init__.py|<module>|framework.harness.workflow|HarnessWorkflowSpec"
+    },
+    {
+      "category": "retired_symbols",
+      "count": 1,
+      "generation": 11,
+      "key": "framework/harness/__init__.py|<module>|import|WorkflowGraphEvaluator"
+    },
+    {
+      "category": "retired_symbols",
+      "count": 1,
+      "generation": 11,
+      "key": "framework/harness/__init__.py|<module>|string_literal|WorkflowGraphEvaluator"
+    },
+    {
+      "category": "retired_symbols",
+      "count": 1,
+      "generation": 11,
+      "key": "framework/harness/control_plane/__init__.py|<module>|import|WorkflowGraphEvaluator"
+    },
+    {
+      "category": "retired_symbols",
+      "count": 1,
+      "generation": 11,
+      "key": "framework/harness/control_plane/__init__.py|<module>|string_literal|WorkflowGraphEvaluator"
+    },
+    {
+      "category": "retired_symbols",
+      "count": 1,
+      "generation": 11,
+      "key": "framework/harness/control_plane/graph_evaluator.py|<module>|class_definition|WorkflowGraphEvaluator"
+    },
+    {
+      "category": "retired_symbols",
+      "count": 1,
+      "generation": 11,
+      "key": "framework/harness/control_plane/graph_evaluator.py|<module>|string_literal|WorkflowGraphEvaluator"
+    },
+    {
+      "category": "retired_symbols",
+      "count": 2,
+      "generation": 11,
+      "key": "framework/harness/control_plane/scheduler.py|<module>.HarnessScheduler.__init__|name_load|WorkflowGraphEvaluator"
+    },
+    {
+      "category": "retired_symbols",
+      "count": 1,
+      "generation": 11,
+      "key": "framework/harness/control_plane/scheduler.py|<module>|import|WorkflowGraphEvaluator"
+    },
+    {
+      "category": "retired_symbols",
+      "count": 1,
+      "generation": 11,
+      "key": "framework/harness/workflow/__init__.py|<module>|import|HarnessWorkflowContractReader"
+    },
+    {
+      "category": "retired_symbols",
+      "count": 1,
+      "generation": 11,
+      "key": "framework/harness/workflow/__init__.py|<module>|import|HarnessWorkflowGraphCompiler"
+    },
+    {
+      "category": "retired_symbols",
+      "count": 1,
+      "generation": 11,
+      "key": "framework/harness/workflow/__init__.py|<module>|import|HarnessWorkflowSpec"
+    },
+    {
+      "category": "retired_symbols",
+      "count": 1,
+      "generation": 11,
+      "key": "framework/harness/workflow/__init__.py|<module>|string_literal|HarnessWorkflowContractReader"
+    },
+    {
+      "category": "retired_symbols",
+      "count": 1,
+      "generation": 11,
+      "key": "framework/harness/workflow/__init__.py|<module>|string_literal|HarnessWorkflowGraphCompiler"
+    },
+    {
+      "category": "retired_symbols",
+      "count": 1,
+      "generation": 11,
+      "key": "framework/harness/workflow/__init__.py|<module>|string_literal|HarnessWorkflowSpec"
+    },
+    {
+      "category": "public_exports",
+      "count": 1,
+      "generation": 11,
+      "key": "framework/harness/__init__.py|WorkflowGraphEvaluator"
+    },
+    {
+      "category": "public_exports",
+      "count": 1,
+      "generation": 11,
+      "key": "framework/harness/control_plane/__init__.py|WorkflowGraphEvaluator"
+    },
+    {
+      "category": "public_exports",
+      "count": 1,
+      "generation": 11,
+      "key": "framework/harness/control_plane/graph_evaluator.py|WorkflowGraphEvaluator"
+    },
+    {
+      "category": "public_exports",
+      "count": 1,
+      "generation": 11,
+      "key": "framework/harness/workflow/__init__.py|DEFAULT_HARNESS_GRAPH_SCHEMA_REGISTRY"
+    },
+    {
+      "category": "public_exports",
+      "count": 1,
+      "generation": 11,
+      "key": "framework/harness/workflow/__init__.py|HarnessGraphCompileResult"
+    },
+    {
+      "category": "public_exports",
+      "count": 1,
+      "generation": 11,
+      "key": "framework/harness/workflow/__init__.py|HarnessGraphSchemaRegistry"
+    },
+    {
+      "category": "public_exports",
+      "count": 1,
+      "generation": 11,
+      "key": "framework/harness/workflow/__init__.py|HarnessRouteKind"
+    },
+    {
+      "category": "public_exports",
+      "count": 1,
+      "generation": 11,
+      "key": "framework/harness/workflow/__init__.py|HarnessRoutingRule"
+    },
+    {
+      "category": "public_exports",
+      "count": 1,
+      "generation": 11,
+      "key": "framework/harness/workflow/__init__.py|HarnessWorkflowContractReader"
+    },
+    {
+      "category": "public_exports",
+      "count": 1,
+      "generation": 11,
+      "key": "framework/harness/workflow/__init__.py|HarnessWorkflowGraphCompiler"
+    },
+    {
+      "category": "public_exports",
+      "count": 1,
+      "generation": 11,
+      "key": "framework/harness/workflow/__init__.py|HarnessWorkflowSpec"
     }
   ],
   "schema": "newsroom.graph-only-freeze-baseline/v1",
-  "source_commit": "4a5a4ce57d0e601dbff6879af106215f1dc93de1",
-  "source_tree": "730ade6770458a2ef14466abab1e20c954c316f6"
+  "source_commit": "10d4552090c38e456b134112a3846e0f2aa5d3d0",
+  "source_tree": "8905ebab4e0c52a47e673a1bd6771f53984eec8a"
 }

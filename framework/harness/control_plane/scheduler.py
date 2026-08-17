@@ -18,7 +18,7 @@ from framework.harness.control_plane.graph_evaluator import (
     HarnessGraphCandidate,
     HarnessGraphCandidateType,
     HarnessGraphEvaluationContext,
-    WorkflowGraphEvaluator,
+    HarnessGraphEvaluator,
 )
 from framework.harness.control_plane.graph_operations import HarnessGraphRunOperation
 from framework.harness.control_plane.graph_state import (
@@ -239,13 +239,13 @@ class HarnessScheduler:
     def __init__(
         self,
         *,
-        graph_evaluator: WorkflowGraphEvaluator | None = None,
+        graph_evaluator: HarnessGraphEvaluator | None = None,
         step_state_machine: StepLifecycleStateMachine | None = None,
         task_plan_scheduler: Any | None = None,
     ) -> None:
         from framework.harness.task_plan.scheduler import TaskPlanScheduler
 
-        self._graph_evaluator = graph_evaluator or WorkflowGraphEvaluator()
+        self._graph_evaluator = graph_evaluator or HarnessGraphEvaluator()
         self._step_state_machine = step_state_machine or StepLifecycleStateMachine()
         if task_plan_scheduler is not None and not isinstance(
             task_plan_scheduler,

@@ -11,7 +11,8 @@ from framework.harness.graph import (
 )
 from framework.harness.task_plan import TaskPlanStageBinding
 from framework.harness.task_plan.schema import VALIDATED_TASK_PLAN_SCHEMA
-from framework.harness.workflow import HarnessWorkflowGraphCompiler, HarnessWorkflowSpec
+from framework.harness.workflow.compiler import HarnessWorkflowGraphCompiler
+from framework.harness.workflow.spec import HarnessWorkflowSpec
 
 
 _DEFAULT_SUPPORT_REFS = {

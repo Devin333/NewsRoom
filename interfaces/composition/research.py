@@ -91,7 +91,7 @@ from framework.harness import (
     transcript_entry_from_event,
 )
 from framework.harness.graph import HarnessWorkerType
-from framework.harness.workflow import HarnessWorkflowGraphCompiler
+from framework.harness.workflow.compiler import HarnessWorkflowGraphCompiler
 from framework.harness.graph.bindings import HarnessWorkerBinding
 from framework.harness.graph.model import HarnessContractKind, HarnessContractReference
 from framework.harness.task_plan.stage_binding import TaskPlanStageBinding

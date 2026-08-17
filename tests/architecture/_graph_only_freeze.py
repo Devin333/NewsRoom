@@ -24,6 +24,10 @@ FORBIDDEN_NAMESPACE_PREFIXES = (
     "framework.workflow",
     "framework.harness.workflow",
 )
+HARNESS_WORKFLOW_FACADE_OWNER_MODULES = {
+    "HarnessWorkflowGraphCompiler": "framework.harness.workflow.compiler",
+    "HarnessWorkflowSpec": "framework.harness.workflow.spec",
+}
 CATEGORIES = (
     "namespace_files",
     "import_edges",
@@ -757,8 +761,19 @@ def _comparison_rows(
         for symbol in parts[3].split(","):
             if not symbol:
                 raise FreezeBaselineError(f"invalid import edge symbol: {key!r}")
-            normalized["|".join((*parts[:3], symbol))] += count
+            module = _comparison_import_module(parts[2], symbol)
+            normalized["|".join((*parts[:2], module, symbol))] += count
     return dict(sorted(normalized.items()))
+
+
+def _comparison_import_module(module: str, symbol: str) -> str:
+    owner_module = HARNESS_WORKFLOW_FACADE_OWNER_MODULES.get(symbol)
+    if owner_module is not None and module in {
+        "framework.harness.workflow",
+        owner_module,
+    }:
+        return "framework.harness.workflow"
+    return module
 
 
 def _path_and_scope(category: str, key: str) -> tuple[str, str]:

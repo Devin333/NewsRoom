@@ -581,7 +581,7 @@ class GraphEvaluation:
         }
 
 
-class WorkflowGraphEvaluator:
+class HarnessGraphEvaluator:
     evaluator_version = HARNESS_GRAPH_EVALUATOR_VERSION
 
     def evaluate(
@@ -4112,6 +4112,6 @@ __all__ = [
     "HarnessGraphCandidateType",
     "HarnessGraphEvaluationContext",
     "HarnessGraphObservationType",
-    "WorkflowGraphEvaluator",
+    "HarnessGraphEvaluator",
     "merge_branch_output_references",
 ]

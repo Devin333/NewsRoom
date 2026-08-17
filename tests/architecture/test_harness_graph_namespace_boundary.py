@@ -159,13 +159,33 @@ def test_production_and_tests_do_not_import_moved_workflow_modules() -> None:
     assert violations == []
 
 
-def test_legacy_workflow_package_does_not_forward_moved_graph_contracts() -> None:
+def test_legacy_workflow_package_has_no_public_facade() -> None:
     tree = ast.parse(
         (_WORKFLOW_ROOT / "__init__.py").read_text(encoding="utf-8")
     )
     exported = _literal_all(tree)
 
-    assert exported.isdisjoint(_MOVED_PUBLIC_NAMES)
+    assert exported == set()
+
+
+def test_production_and_tests_do_not_import_legacy_workflow_facade() -> None:
+    violations: list[str] = []
+    for root_name in (
+        "business",
+        "framework",
+        "infrastructure",
+        "interfaces",
+        "scripts",
+        "tests",
+    ):
+        for path in (_PROJECT_ROOT / root_name).rglob("*.py"):
+            tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+            for node in ast.walk(tree):
+                if "framework.harness.workflow" in _imported_modules(node):
+                    relative = path.relative_to(_PROJECT_ROOT).as_posix()
+                    violations.append(f"{relative}:{node.lineno}")
+
+    assert violations == []
 
 
 def test_graph_public_api_excludes_legacy_declaration_and_compiler() -> None:
@@ -213,10 +233,20 @@ def test_harness_root_public_api_excludes_legacy_workflow_facade() -> None:
         "HarnessWorkflowContractReader",
         "HarnessWorkflowGraphCompiler",
         "HarnessWorkflowSpec",
+        "WorkflowGraphEvaluator",
     }
 
     assert set(harness_api.__all__).isdisjoint(legacy_names)
     assert {name for name in legacy_names if hasattr(harness_api, name)} == set()
+    assert "HarnessGraphEvaluator" in harness_api.__all__
+    assert hasattr(harness_api, "HarnessGraphEvaluator")
+
+
+def test_control_plane_public_api_excludes_workflow_evaluator_name() -> None:
+    assert "WorkflowGraphEvaluator" not in control_plane_api.__all__
+    assert not hasattr(control_plane_api, "WorkflowGraphEvaluator")
+    assert "HarnessGraphEvaluator" in control_plane_api.__all__
+    assert hasattr(control_plane_api, "HarnessGraphEvaluator")
 
 
 def test_harness_root_public_api_retains_artifact_contracts() -> None:

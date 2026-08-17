@@ -10,7 +10,7 @@ from business.research.workflows.paper_analysis_workflow import (
     build_paper_analysis_workflow_spec,
 )
 from framework.harness.graph import HarnessWorkerType
-from framework.harness.workflow import HarnessWorkflowGraphCompiler
+from framework.harness.workflow.compiler import HarnessWorkflowGraphCompiler
 from framework.harness.graph.validation import HarnessGraphPreflight
 
 

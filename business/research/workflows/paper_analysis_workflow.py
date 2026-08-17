@@ -12,7 +12,7 @@ from framework.harness.graph import (
     StepRef,
     VerifiedAggregation,
 )
-from framework.harness.workflow import HarnessWorkflowSpec
+from framework.harness.workflow.spec import HarnessWorkflowSpec
 
 from business.research.ports.artifact_publication import (
     RESEARCH_ARTIFACT_HANDLER_REF,

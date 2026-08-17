@@ -127,6 +127,68 @@ def test_import_symbol_subtraction_can_advance_the_baseline(tmp_path: Path) -> N
 
 
 @pytest.mark.parametrize(
+    ("symbol", "owner_module"),
+    [
+        ("HarnessWorkflowSpec", "framework.harness.workflow.spec"),
+        (
+            "HarnessWorkflowGraphCompiler",
+            "framework.harness.workflow.compiler",
+        ),
+    ],
+)
+def test_harness_workflow_facade_import_can_refine_to_exact_owner(
+    tmp_path: Path,
+    symbol: str,
+    owner_module: str,
+) -> None:
+    baseline = _capture(
+        tmp_path,
+        {"business/service.py": f"from framework.harness.workflow import {symbol}\n"},
+    )
+    _write(
+        tmp_path,
+        "business/service.py",
+        f"from {owner_module} import {symbol}\n",
+    )
+    current = scan_tree(tmp_path)
+
+    assert verify_tree(tmp_path, baseline) == []
+    updated = update_baseline(
+        baseline,
+        current,
+        source_commit="b" * 40,
+        source_tree="c" * 40,
+    )
+    assert verify_tree(tmp_path, updated) == []
+
+
+def test_harness_workflow_facade_import_rejects_wrong_concrete_owner(
+    tmp_path: Path,
+) -> None:
+    baseline = _capture(
+        tmp_path,
+        {
+            "business/service.py": (
+                "from framework.harness.workflow import HarnessWorkflowSpec\n"
+            )
+        },
+    )
+    _write(
+        tmp_path,
+        "business/service.py",
+        (
+            "from framework.harness.workflow.compiler import "
+            "HarnessWorkflowSpec\n"
+        ),
+    )
+
+    assert _has_code(
+        verify_tree(tmp_path, baseline),
+        "graph_only_freeze_new_legacy_import_edge",
+    )
+
+
+@pytest.mark.parametrize(
     "source,code",
     [
         ("class WorkflowRunner:\n    pass\n", "graph_only_freeze_new_workflow_runner_symbol"),

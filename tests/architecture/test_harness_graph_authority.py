@@ -25,6 +25,7 @@ _FORBIDDEN_BUSINESS_AUTHORITY_SYMBOLS = frozenset(
         "HarnessDecisionType",
         "HarnessGraphDecision",
         "HarnessGraphDecisionType",
+        "HarnessGraphEvaluator",
         "HarnessRoutingEvaluator",
         "HarnessScheduler",
         "TaskPlanReadyDecision",

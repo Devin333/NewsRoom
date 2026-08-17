@@ -24,7 +24,7 @@ from framework.harness.control_plane.graph_evaluator import (
     HarnessGraphCandidateType,
     HarnessGraphEvaluationContext,
     HarnessGraphObservationType,
-    WorkflowGraphEvaluator,
+    HarnessGraphEvaluator,
 )
 from framework.harness.control_plane.graph_state import (
     HarnessActiveActivityState,
@@ -69,7 +69,7 @@ from framework.harness.workflow.spec import HarnessWorkflowSpec
 from framework.harness.graph.activity import HarnessStepSpec
 
 
-class _CandidateEvaluator(WorkflowGraphEvaluator):
+class _CandidateEvaluator(HarnessGraphEvaluator):
     __slots__ = (
         "_candidates",
         "_context_checksum",

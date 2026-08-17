@@ -10,7 +10,7 @@ from framework.harness.control_plane.graph_evaluator import (
     HarnessGraphCandidateType,
     HarnessGraphEvaluationContext,
     HarnessGraphObservationType,
-    WorkflowGraphEvaluator,
+    HarnessGraphEvaluator,
 )
 from framework.harness.control_plane.graph_application import (
     HarnessGraphDecisionApplier,
@@ -67,7 +67,7 @@ def test_sequence_entry_and_successor_readiness_are_deterministic() -> None:
         "collect",
         "analyze",
     )
-    evaluator = WorkflowGraphEvaluator()
+    evaluator = HarnessGraphEvaluator()
 
     initial = evaluator.evaluate(graph, _state(graph))
     collect = _node(graph, "collect", "succeeded", ordinal=0, sequence=2)
@@ -110,7 +110,7 @@ def test_choice_uses_stable_priority_and_ignores_worker_shaped_suggestions() -> 
     choice = _node(graph, "route", "ready", ordinal=0, sequence=1)
     context = HarnessGraphEvaluationContext(inputs={"kind": "primary"})
 
-    evaluation = WorkflowGraphEvaluator().evaluate(
+    evaluation = HarnessGraphEvaluator().evaluate(
         graph,
         _state(graph, nodes=(choice,)),
         context=context,
@@ -145,7 +145,7 @@ def test_choice_without_match_or_default_halts_with_typed_reason() -> None:
     choice = _node(graph, "route", "ready", ordinal=0, sequence=1)
 
     candidate = (
-        WorkflowGraphEvaluator()
+        HarnessGraphEvaluator()
         .evaluate(
             graph,
             _state(graph, nodes=(choice,)),
@@ -183,7 +183,7 @@ def test_committed_choice_selection_precedes_target_activation() -> None:
     )
 
     candidate = (
-        WorkflowGraphEvaluator()
+        HarnessGraphEvaluator()
         .evaluate(
             graph,
             _state(graph, nodes=(selected,)),
@@ -212,7 +212,7 @@ def test_parallel_all_fork_and_join_facts_are_explicit() -> None:
     )
     fork_ready = _node(graph, "fork", "ready", ordinal=0, sequence=1)
     opened = (
-        WorkflowGraphEvaluator()
+        HarnessGraphEvaluator()
         .evaluate(
             graph,
             _state(graph, nodes=(fork_ready,)),
@@ -254,7 +254,7 @@ def test_parallel_all_fork_and_join_facts_are_explicit() -> None:
     )
 
     satisfied = (
-        WorkflowGraphEvaluator()
+        HarnessGraphEvaluator()
         .evaluate(
             graph,
             _state(
@@ -315,7 +315,7 @@ def test_parallel_any_winner_uses_lowest_durable_terminal_sequence() -> None:
     )
 
     winner = (
-        WorkflowGraphEvaluator()
+        HarnessGraphEvaluator()
         .evaluate(
             graph,
             _state(graph, nodes=(slow, join, fast, fork), joins=(join_state,)),
@@ -368,7 +368,7 @@ def test_bounded_loop_produces_continue_exit_and_exhaustion_facts(
     )
 
     candidate = (
-        WorkflowGraphEvaluator()
+        HarnessGraphEvaluator()
         .evaluate(
             graph,
             _state(graph, nodes=(guard,), loops=(counter,)),
@@ -395,7 +395,7 @@ def test_wait_registration_resume_and_run_waiting_projection_are_separate() -> N
     )
     ready = _node(graph, "approval", "ready", ordinal=0, sequence=1)
     registration_candidate = (
-        WorkflowGraphEvaluator()
+        HarnessGraphEvaluator()
         .evaluate(
             graph,
             _state(graph, nodes=(ready,)),
@@ -410,7 +410,7 @@ def test_wait_registration_resume_and_run_waiting_projection_are_separate() -> N
     waiting = _node(graph, "approval", "waiting", ordinal=0, sequence=2)
     registered = _wait_registration(waiting.instance_id, "registered", sequence=2)
     waiting_candidate = (
-        WorkflowGraphEvaluator()
+        HarnessGraphEvaluator()
         .evaluate(
             graph,
             _state(graph, nodes=(waiting,), waits=(registered,)),
@@ -424,7 +424,7 @@ def test_wait_registration_resume_and_run_waiting_projection_are_separate() -> N
 
     resumed = _wait_registration(waiting.instance_id, "resumed", sequence=2)
     resume_candidate = (
-        WorkflowGraphEvaluator()
+        HarnessGraphEvaluator()
         .evaluate(
             graph,
             _state(graph, nodes=(waiting,), waits=(resumed,)),
@@ -439,7 +439,7 @@ def test_compensation_progress_selects_reverse_durable_effect_order() -> None:
     graph, state, earlier, later = _compensation_state()
 
     candidate = (
-        WorkflowGraphEvaluator()
+        HarnessGraphEvaluator()
         .evaluate(graph, state)
         .candidates[0]
     )
@@ -484,7 +484,7 @@ def test_compensation_schedule_atomically_projects_selected_entry_and_instance()
     assert compensation.metadata["effect_outcome_ref"] == later.effect_outcome_ref
     assert applied.budgets.require("node_activations").used == 1
     assert applied.budgets.require("compensations").used == 1
-    assert WorkflowGraphEvaluator().evaluate(graph, applied).candidates == ()
+    assert HarnessGraphEvaluator().evaluate(graph, applied).candidates == ()
 
 
 def test_compensation_budget_exhaustion_halts_before_scheduling() -> None:
@@ -499,7 +499,7 @@ def test_compensation_budget_exhaustion_halts_before_scheduling() -> None:
     )
     exhausted = replace(state, budgets=budgets, projection_checksum=None)
 
-    evaluation = WorkflowGraphEvaluator().evaluate(graph, exhausted)
+    evaluation = HarnessGraphEvaluator().evaluate(graph, exhausted)
 
     assert _candidate_types(evaluation) == (HarnessGraphCandidateType.HALT_RUN,)
     candidate = evaluation.candidates[0]
@@ -514,7 +514,7 @@ def test_graph_completion_uses_terminal_projection_without_live_activity() -> No
     graph = _compile(StepRef("done"), "done")
     terminal = _node(graph, "done", "succeeded", ordinal=0, sequence=2)
 
-    evaluation = WorkflowGraphEvaluator().evaluate(
+    evaluation = HarnessGraphEvaluator().evaluate(
         graph,
         _state(graph, nodes=(terminal,)),
     )
@@ -535,8 +535,8 @@ def test_evaluation_is_stable_under_state_input_permutation() -> None:
     one = _state(graph, nodes=(first, unrelated))
     two = _state(graph, nodes=(unrelated, first))
 
-    first_eval = WorkflowGraphEvaluator().evaluate(graph, one)
-    second_eval = WorkflowGraphEvaluator().evaluate(graph, two)
+    first_eval = HarnessGraphEvaluator().evaluate(graph, one)
+    second_eval = HarnessGraphEvaluator().evaluate(graph, two)
 
     assert one.projection_checksum == two.projection_checksum
     assert first_eval.to_dict() == second_eval.to_dict()
@@ -600,7 +600,7 @@ def test_parallel_all_failure_is_stable_under_join_mapping_permutation() -> None
             nodes=(fork, left, right, join),
             joins=(join_state,),
         )
-        return state, WorkflowGraphEvaluator().evaluate(graph, state)
+        return state, HarnessGraphEvaluator().evaluate(graph, state)
 
     first_state, first = evaluation(False)
     second_state, second = evaluation(True)
@@ -652,7 +652,7 @@ def test_sequence_readiness_is_isolated_per_loop_iteration_scope() -> None:
     )
     counter = HarnessLoopCounterState("loop", (), (), 1, 2, "active", 4)
 
-    evaluation = WorkflowGraphEvaluator().evaluate(
+    evaluation = HarnessGraphEvaluator().evaluate(
         graph,
         _state(
             graph,
@@ -732,7 +732,7 @@ def test_choice_reads_only_durable_attempt_bound_observations() -> None:
     )
     state = _state(graph, nodes=(source, choice))
 
-    selected = WorkflowGraphEvaluator().evaluate(
+    selected = HarnessGraphEvaluator().evaluate(
         graph,
         state,
         context=HarnessGraphEvaluationContext(observations=(observation,)),
@@ -740,7 +740,7 @@ def test_choice_reads_only_durable_attempt_bound_observations() -> None:
     assert selected.candidates[0].branch_id == "accepted"
 
     with pytest.raises(HarnessValidationError) as stale_attempt:
-        WorkflowGraphEvaluator().evaluate(
+        HarnessGraphEvaluator().evaluate(
             graph,
             state,
             context=HarnessGraphEvaluationContext(
@@ -799,7 +799,7 @@ def test_choice_converges_through_selected_branch_before_common_successor() -> N
         branch_path=("left",),
     )
 
-    join_activation = WorkflowGraphEvaluator().evaluate(
+    join_activation = HarnessGraphEvaluator().evaluate(
         graph,
         _state(graph, nodes=(choice, left)),
     )
@@ -817,7 +817,7 @@ def test_choice_converges_through_selected_branch_before_common_successor() -> N
         ordinal=2,
         sequence=3,
     )
-    successor = WorkflowGraphEvaluator().evaluate(
+    successor = HarnessGraphEvaluator().evaluate(
         graph,
         _state(graph, nodes=(choice, left, join)),
     )
@@ -872,7 +872,7 @@ def test_loop_terminal_route_converges_before_common_successor(
         sequence=2,
     )
 
-    join_activation = WorkflowGraphEvaluator().evaluate(
+    join_activation = HarnessGraphEvaluator().evaluate(
         graph,
         _state(graph, nodes=(guard, terminal)),
     )
@@ -889,7 +889,7 @@ def test_loop_terminal_route_converges_before_common_successor(
         ordinal=2,
         sequence=3,
     )
-    successor = WorkflowGraphEvaluator().evaluate(
+    successor = HarnessGraphEvaluator().evaluate(
         graph,
         _state(graph, nodes=(guard, terminal, join)),
     )
@@ -927,7 +927,7 @@ def test_loop_join_uses_only_final_terminal_route_guard_in_parent_scope() -> Non
     )
     exit_node = _node(graph, "exit", "succeeded", ordinal=3, sequence=4)
 
-    evaluation = WorkflowGraphEvaluator().evaluate(
+    evaluation = HarnessGraphEvaluator().evaluate(
         graph,
         _state(graph, nodes=(continued, exited, exit_node)),
     )
@@ -1043,7 +1043,7 @@ def test_verified_output_requires_explicit_pinned_control_fact_projection() -> N
     )
     state = _state(graph, nodes=(source, choice))
 
-    selected = WorkflowGraphEvaluator().evaluate(
+    selected = HarnessGraphEvaluator().evaluate(
         graph,
         state,
         context=HarnessGraphEvaluationContext(
@@ -1058,7 +1058,7 @@ def test_verified_output_requires_explicit_pinned_control_fact_projection() -> N
         control_fact_paths=("recommended_route",),
     )
     with pytest.raises(HarnessValidationError) as undeclared_fact:
-        WorkflowGraphEvaluator().evaluate(
+        HarnessGraphEvaluator().evaluate(
             graph,
             state,
             context=HarnessGraphEvaluationContext(
@@ -1072,7 +1072,7 @@ def test_verified_output_requires_explicit_pinned_control_fact_projection() -> N
         payload={"classification": "hold"},
     )
     with pytest.raises(HarnessValidationError) as evidence_mismatch:
-        WorkflowGraphEvaluator().evaluate(
+        HarnessGraphEvaluator().evaluate(
             graph,
             state,
             context=HarnessGraphEvaluationContext(
@@ -1099,7 +1099,7 @@ def test_evaluator_rejects_mismatched_graph_reference_versions() -> None:
     )
 
     with pytest.raises(HarnessValidationError) as captured:
-        WorkflowGraphEvaluator().evaluate(graph, mismatched)
+        HarnessGraphEvaluator().evaluate(graph, mismatched)
     assert captured.value.code == "graph_evaluator_graph_mismatch"
 
 
@@ -1113,7 +1113,7 @@ def test_activation_budget_exhaustion_blocks_new_work() -> None:
         )
     )
 
-    evaluation = WorkflowGraphEvaluator().evaluate(
+    evaluation = HarnessGraphEvaluator().evaluate(
         graph,
         _state(graph, budgets=budgets),
     )

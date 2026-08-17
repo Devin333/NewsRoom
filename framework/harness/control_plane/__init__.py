@@ -89,9 +89,9 @@ from framework.harness.control_plane.graph_evaluator import (
     HarnessAcceptedGraphObservation,
     HarnessGraphCandidate,
     HarnessGraphCandidateType,
+    HarnessGraphEvaluator,
     HarnessGraphEvaluationContext,
     HarnessGraphObservationType,
-    WorkflowGraphEvaluator,
 )
 from framework.harness.control_plane.graph_application import (
     HarnessGraphActivityCancellationDispatcherPort,
@@ -415,7 +415,7 @@ __all__ = [
     "StepQualityObservation",
     "StepWorkerObservation",
     "ToolAllowlistGate",
-    "WorkflowGraphEvaluator",
+    "HarnessGraphEvaluator",
     "assert_step_completion_allowed",
     "resolve_harness_cumulative_budget_fact",
     "build_harness_history_verifier",

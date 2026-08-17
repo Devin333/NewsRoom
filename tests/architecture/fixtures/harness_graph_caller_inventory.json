@@ -42,7 +42,6 @@
       "framework/harness/graph/activity.py",
       "framework/harness/ports.py",
       "framework/harness/runtime/__init__.py",
-      "framework/harness/workflow/__init__.py",
       "framework/harness/workflow/compiler.py",
       "framework/harness/workflow/reader.py",
       "framework/harness/workflow/spec.py",
@@ -188,7 +187,8 @@
   },
   "audit_self_exclusions": [
     "tests/architecture/_graph_only_freeze.py",
-    "tests/architecture/test_agent_loop_graph_artifact_boundary.py"
+    "tests/architecture/test_agent_loop_graph_artifact_boundary.py",
+    "tests/architecture/test_graph_only_freeze.py"
   ],
   "migration_rules": [
     "A callers adopt versioned Graph contracts without changing runtime authority.",
