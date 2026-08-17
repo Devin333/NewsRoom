@@ -18,6 +18,7 @@ from framework.harness.subagents.handoff import verify_handoff
 from framework.harness.subagents.models import (
     FORBIDDEN_SUBAGENT_CONTEXT_KEYS,
     FORBIDDEN_SUBAGENT_RESULT_KEYS,
+    SUBAGENT_INVOCATION_SCHEMA_V2,
     SubAgentContextEnvelope,
     SubAgentHandoff,
     SubAgentInvocation,
@@ -60,6 +61,7 @@ from framework.harness.subagents.transcript import (
     SUBAGENT_TRANSCRIPT_SCHEMA_V2,
     SubAgentAttemptIdentity,
     SubAgentContextEvidence,
+    SubAgentEvidenceSchemas,
     SubAgentOutputDocument,
     SubAgentTranscript,
     SubAgentTranscriptConflictError,
@@ -67,6 +69,8 @@ from framework.harness.subagents.transcript import (
     SubAgentTranscriptReceipt,
     SubAgentTranscriptStoreError,
     SubAgentTranscriptStorePort,
+    subagent_context_ref,
+    subagent_evidence_schemas,
 )
 
 __all__ = [
@@ -81,6 +85,7 @@ __all__ = [
     "SUBAGENT_BUNDLE_SCHEMA_V2",
     "SUBAGENT_CONTEXT_SCHEMA_V1",
     "SUBAGENT_CONTEXT_SCHEMA_V2",
+    "SUBAGENT_INVOCATION_SCHEMA_V2",
     "SUBAGENT_OUTPUT_SCHEMA_V1",
     "SUBAGENT_OUTPUT_SCHEMA_V2",
     "SUBAGENT_RECEIPT_SCHEMA_V1",
@@ -113,6 +118,7 @@ __all__ = [
     "SubAgentTranscript",
     "SubAgentAttemptIdentity",
     "SubAgentContextEvidence",
+    "SubAgentEvidenceSchemas",
     "SubAgentOutputDocument",
     "SubAgentTranscriptConflictError",
     "SubAgentTranscriptCorruptError",
@@ -133,4 +139,6 @@ __all__ = [
     "fake_subagent_spec",
     "verify_handoff",
     "subagent_attempt_identity",
+    "subagent_context_ref",
+    "subagent_evidence_schemas",
 ]

@@ -9,7 +9,12 @@ from framework.harness.context.models import ContextEnvelope
 from framework.harness.control_plane.errors import HarnessValidationError
 from framework.harness.control_plane.policy import HarnessBudgetSnapshot
 from framework.harness.subagents.context import SubAgentContextBuilder
-from framework.harness.subagents.models import SubAgentInvocation, SubAgentResult, SubAgentSpec
+from framework.harness.subagents.models import (
+    SUBAGENT_INVOCATION_SCHEMA_V2,
+    SubAgentInvocation,
+    SubAgentResult,
+    SubAgentSpec,
+)
 from framework.harness.subagents.runtime import SubAgentRuntime
 from framework.harness.task_plan.canonical import (
     canonical_payload_checksum,
@@ -17,9 +22,18 @@ from framework.harness.task_plan.canonical import (
     identifier,
     required_text,
 )
-from framework.harness.task_plan.models import ResolvedTaskSpec, TaskRetryPolicy, TaskSpec
+from framework.harness.task_plan.models import (
+    ResolvedTaskSpec,
+    TaskInstance,
+    TaskRetryPolicy,
+    TaskSpec,
+    ValidatedTaskPlan,
+)
 from framework.harness.task_plan.policy import TaskPlanPolicy
 from framework.harness.task_plan.schema import TASK_CAPABILITY_BINDING_SCHEMA, TASK_PLAN_RUNTIME_VERSION
+from framework.harness.task_plan.verification import (
+    task_plan_subagent_attempt_identity,
+)
 from framework.harness.graph.bindings import HarnessWorkerBinding
 from framework.harness.graph.activity import HarnessWorkerType
 
@@ -340,78 +354,84 @@ class ResolvedSubAgentTaskAdapter:
     def invoke(
         self,
         *,
+        plan: ValidatedTaskPlan,
         resolved_task: ResolvedTaskSpec,
         binding: ResolvedCapabilityBinding,
-        task_instance_id: str,
-        parent_run_id: str,
-        workflow_id: str,
-        stage_id: str,
+        instance: TaskInstance,
         context_pack: ContextEnvelope,
         budget_snapshot: HarnessBudgetSnapshot,
-        attempt: int,
-        observed_at: Any,
     ) -> SubAgentResult:
         invocation = self.build_invocation(
+            plan=plan,
             resolved_task=resolved_task,
             binding=binding,
-            task_instance_id=task_instance_id,
-            parent_run_id=parent_run_id,
-            workflow_id=workflow_id,
-            stage_id=stage_id,
+            instance=instance,
             context_pack=context_pack,
             budget_snapshot=budget_snapshot,
-            attempt=attempt,
-            observed_at=observed_at,
         )
         return self._runtime.invoke(invocation)
 
     def recover(
         self,
         *,
+        plan: ValidatedTaskPlan,
         resolved_task: ResolvedTaskSpec,
         binding: ResolvedCapabilityBinding,
-        task_instance_id: str,
-        parent_run_id: str,
-        workflow_id: str,
-        stage_id: str,
+        instance: TaskInstance,
         context_pack: ContextEnvelope,
         budget_snapshot: HarnessBudgetSnapshot,
-        attempt: int,
-        observed_at: Any,
     ) -> SubAgentResult | None:
         invocation = self.build_invocation(
+            plan=plan,
             resolved_task=resolved_task,
             binding=binding,
-            task_instance_id=task_instance_id,
-            parent_run_id=parent_run_id,
-            workflow_id=workflow_id,
-            stage_id=stage_id,
+            instance=instance,
             context_pack=context_pack,
             budget_snapshot=budget_snapshot,
-            attempt=attempt,
-            observed_at=observed_at,
         )
         return self._runtime.recover(invocation)
 
     def build_invocation(
         self,
         *,
+        plan: ValidatedTaskPlan,
         resolved_task: ResolvedTaskSpec,
         binding: ResolvedCapabilityBinding,
-        task_instance_id: str,
-        parent_run_id: str,
-        workflow_id: str,
-        stage_id: str,
+        instance: TaskInstance,
         context_pack: ContextEnvelope,
         budget_snapshot: HarnessBudgetSnapshot,
-        attempt: int,
-        observed_at: Any,
     ) -> SubAgentInvocation:
+        if not isinstance(plan, ValidatedTaskPlan):
+            raise TypeError("plan must be ValidatedTaskPlan")
+        if not isinstance(instance, TaskInstance):
+            raise TypeError("instance must be TaskInstance")
+        accepted_task = next(
+            (item for item in plan.tasks if item.task_id == instance.task_id),
+            None,
+        )
+        if accepted_task != resolved_task:
+            raise HarnessValidationError(
+                "dynamic task invocation is outside the accepted plan",
+                code="task_plan_result_identity_mismatch",
+            )
         if binding.worker_ref != resolved_task.worker_ref:
             raise HarnessValidationError(
                 "dynamic task worker binding changed before dispatch",
                 code="stale_task_capability_binding",
                 details={"task_id": resolved_task.task_id},
+            )
+        if context_pack.run_id not in {None, plan.run_id}:
+            raise HarnessValidationError(
+                "dynamic task context belongs to another run",
+                code="task_plan_result_identity_mismatch",
+            )
+        if (
+            not plan.is_graph_only
+            and context_pack.workflow_id not in {None, plan.workflow_id}
+        ):
+            raise HarnessValidationError(
+                "dynamic task context belongs to another orchestration identity",
+                code="task_plan_result_identity_mismatch",
             )
         source_spec = binding.subagent_spec
         if source_spec is None:
@@ -436,9 +456,11 @@ class ResolvedSubAgentTaskAdapter:
             },
             metadata={**source_spec.metadata, "task_binding_checksum": binding.binding_checksum},
         )
-        child_run_id = f"{parent_run_id}:{stage_id}:{task_instance_id}"
+        child_run_id = (
+            f"{plan.run_id}:{plan.stage_id}:{instance.task_instance_id}"
+        )
         envelope = self._context_builder.build(
-            parent_run_id=parent_run_id,
+            parent_run_id=plan.run_id,
             child_run_id=child_run_id,
             spec=bounded_spec,
             context_pack=context_pack,
@@ -446,25 +468,45 @@ class ResolvedSubAgentTaskAdapter:
             memory_context_refs=(),
             budget_snapshot=budget_snapshot,
         )
-        invocation = SubAgentInvocation(
-            invocation_id=f"invocation://{child_run_id}",
-            parent_run_id=parent_run_id,
+        invocation_id = f"invocation://{child_run_id}"
+        attempt_identity = task_plan_subagent_attempt_identity(
+            plan,
+            instance,
+            invocation_id=invocation_id,
             child_run_id=child_run_id,
-            workflow_id=workflow_id,
-            step_id=stage_id,
+            subagent_id=bounded_spec.subagent_id,
+        )
+        metadata = {
+            "input_refs": list(resolved_task.task.input_refs),
+            "task_id": resolved_task.task_id,
+            "task_definition_checksum": resolved_task.task_definition_checksum,
+        }
+        if plan.is_graph_only:
+            metadata.update(
+                {
+                    "plan_id": plan.plan_id,
+                    "plan_version": plan.version,
+                    "plan_checksum": plan.plan_checksum,
+                    "stage_identity_checksum": plan.stage_identity_checksum,
+                }
+            )
+        invocation = SubAgentInvocation(
+            invocation_id=invocation_id,
+            parent_run_id=plan.run_id,
+            child_run_id=child_run_id,
+            workflow_id=None if plan.is_graph_only else plan.workflow_id,
+            step_id=plan.stage_id,
             task_id=resolved_task.task_id,
-            task_instance_id=task_instance_id,
-            attempt=attempt,
-            observed_at=observed_at,
+            task_instance_id=instance.task_instance_id,
+            attempt=instance.attempt,
+            observed_at=plan.accepted_at,
             subagent_spec=bounded_spec,
             input_refs=resolved_task.task.input_refs,
             context_envelope=envelope,
             budget_snapshot=budget_snapshot,
-            metadata={
-                "input_refs": list(resolved_task.task.input_refs),
-                "task_id": resolved_task.task_id,
-                "task_definition_checksum": resolved_task.task_definition_checksum,
-            },
+            metadata=metadata,
+            attempt_identity=(attempt_identity if plan.is_graph_only else None),
+            schema_version=(SUBAGENT_INVOCATION_SCHEMA_V2 if plan.is_graph_only else None),
         )
         return invocation
 

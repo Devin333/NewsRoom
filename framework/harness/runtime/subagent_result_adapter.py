@@ -39,10 +39,6 @@ from framework.harness.subagents.runtime import (
     subagent_attempt_identity,
 )
 from framework.harness.subagents.transcript import (
-    SUBAGENT_CONTEXT_SCHEMA,
-    SUBAGENT_OUTPUT_SCHEMA,
-    SUBAGENT_RECEIPT_SCHEMA,
-    SUBAGENT_TRANSCRIPT_SCHEMA,
     SubAgentAttemptIdentity,
     SubAgentContextEvidence,
     SubAgentOutputDocument,
@@ -50,18 +46,27 @@ from framework.harness.subagents.transcript import (
     SubAgentTranscriptReceipt,
     SubAgentTranscriptStorePort,
     sanitize_subagent_payload,
+    subagent_evidence_schemas,
 )
 from framework.harness.graph.model import NormalizedHarnessGraph
 from framework.shared.json import stable_json_dumps
 from framework.shared.time import ensure_utc, utc_now
 
 
-SUBAGENT_NODE_RESULT_SCHEMA = "newsroom.subagent-node-result@1"
-SUBAGENT_MATERIALIZED_BUNDLE_SCHEMA = (
+SUBAGENT_NODE_RESULT_SCHEMA_V1 = "newsroom.subagent-node-result@1"
+SUBAGENT_NODE_RESULT_SCHEMA_V2 = "newsroom.subagent-node-result@2"
+SUBAGENT_MATERIALIZED_BUNDLE_SCHEMA_V1 = (
     "newsroom.subagent-materialized-bundle@1"
 )
+SUBAGENT_MATERIALIZED_BUNDLE_SCHEMA_V2 = (
+    "newsroom.subagent-materialized-bundle@2"
+)
+SUBAGENT_NODE_RESULT_SCHEMA = SUBAGENT_NODE_RESULT_SCHEMA_V1
+SUBAGENT_MATERIALIZED_BUNDLE_SCHEMA = SUBAGENT_MATERIALIZED_BUNDLE_SCHEMA_V1
 SUBAGENT_HANDOFF_SCHEMA = "newsroom.subagent-handoff@1"
-SUBAGENT_RESULT_ADAPTER_REVISION = "harness-subagent-result-adapter@1"
+SUBAGENT_RESULT_ADAPTER_REVISION_V1 = "harness-subagent-result-adapter@1"
+SUBAGENT_RESULT_ADAPTER_REVISION_V2 = "harness-subagent-result-adapter@2"
+SUBAGENT_RESULT_ADAPTER_REVISION = SUBAGENT_RESULT_ADAPTER_REVISION_V1
 _MAX_RESULT_SUMMARY_BYTES = 2 * 1024
 
 
@@ -95,7 +100,12 @@ class VerifiedSubAgentMaterializedBundle:
             SubAgentHandoff,
         ):
             raise TypeError("handoff must be SubAgentHandoff or None")
-        if self.bundle_schema != SUBAGENT_MATERIALIZED_BUNDLE_SCHEMA:
+        expected_bundle_schema = (
+            SUBAGENT_MATERIALIZED_BUNDLE_SCHEMA_V2
+            if self.identity.is_graph_only
+            else SUBAGENT_MATERIALIZED_BUNDLE_SCHEMA_V1
+        )
+        if self.bundle_schema != expected_bundle_schema:
             raise HarnessValidationError(
                 "unsupported SubAgent materialized bundle schema",
                 code="subagent_result_schema_unsupported",
@@ -296,7 +306,7 @@ class HarnessSubAgentResultAdapter:
     ) -> NodeResultBinding:
         _require_activity(activity)
         identity = subagent_attempt_identity(invocation)
-        _validate_activity_identity(activity, identity)
+        _validate_activity_identity(activity, identity, graph)
         if checksum_for(tenant_id) != tenant_scope_ref:
             raise HarnessValidationError(
                 "SubAgent tenant id does not match its Graph tenant scope",
@@ -328,11 +338,28 @@ class HarnessSubAgentResultAdapter:
         if not isinstance(binding, NodeResultBinding):
             raise TypeError("binding must be NodeResultBinding")
         identity = subagent_attempt_identity(invocation)
+        evidence_schemas = subagent_evidence_schemas(identity)
+        node_result_schema = (
+            SUBAGENT_NODE_RESULT_SCHEMA_V2
+            if identity.is_graph_only
+            else SUBAGENT_NODE_RESULT_SCHEMA_V1
+        )
+        materialized_bundle_schema = (
+            SUBAGENT_MATERIALIZED_BUNDLE_SCHEMA_V2
+            if identity.is_graph_only
+            else SUBAGENT_MATERIALIZED_BUNDLE_SCHEMA_V1
+        )
+        adapter_revision = (
+            SUBAGENT_RESULT_ADAPTER_REVISION_V2
+            if identity.is_graph_only
+            else SUBAGENT_RESULT_ADAPTER_REVISION_V1
+        )
         bundle = self._verified_bundle(
             result,
             identity=identity,
             binding=binding,
             handoff=handoff,
+            bundle_schema=materialized_bundle_schema,
         )
         projection, result_summary, summary_complete = _control_projection(
             bundle
@@ -341,15 +368,15 @@ class HarnessSubAgentResultAdapter:
         request = NodeResultRequest(
             binding=binding,
             status=_node_status(result.status),
-            output_schema_ref=SUBAGENT_NODE_RESULT_SCHEMA,
+            output_schema_ref=node_result_schema,
             output_schema_digest=checksum_for(
                 {
-                    "schema": SUBAGENT_NODE_RESULT_SCHEMA,
-                    "bundle_schema": SUBAGENT_MATERIALIZED_BUNDLE_SCHEMA,
-                    "context_schema": SUBAGENT_CONTEXT_SCHEMA,
-                    "output_document_schema": SUBAGENT_OUTPUT_SCHEMA,
-                    "transcript_schema": SUBAGENT_TRANSCRIPT_SCHEMA,
-                    "receipt_schema": SUBAGENT_RECEIPT_SCHEMA,
+                    "schema": node_result_schema,
+                    "bundle_schema": materialized_bundle_schema,
+                    "context_schema": evidence_schemas.context,
+                    "output_document_schema": evidence_schemas.output,
+                    "transcript_schema": evidence_schemas.transcript,
+                    "receipt_schema": evidence_schemas.receipt,
                     "handoff_schema": (
                         SUBAGENT_HANDOFF_SCHEMA
                         if handoff is not None
@@ -372,8 +399,8 @@ class HarnessSubAgentResultAdapter:
             inline_projection=projection,
             inline_allowed_fields=tuple(sorted(projection)),
             provenance=ResultProvenance(
-                producer_ref=SUBAGENT_RESULT_ADAPTER_REVISION,
-                producer_revision=SUBAGENT_RESULT_ADAPTER_REVISION,
+                producer_ref=adapter_revision,
+                producer_revision=adapter_revision,
                 source_refs=tuple(
                     sorted(
                         {
@@ -611,6 +638,7 @@ class HarnessSubAgentResultAdapter:
         identity: SubAgentAttemptIdentity,
         binding: NodeResultBinding,
         handoff: SubAgentHandoff | None,
+        bundle_schema: str,
     ) -> VerifiedSubAgentMaterializedBundle:
         gate = SubAgentTranscriptGate().evaluate(
             result,
@@ -641,6 +669,7 @@ class HarnessSubAgentResultAdapter:
             output=output,
             transcript=transcript,
             handoff=handoff,
+            bundle_schema=bundle_schema,
         )
 
     def _result_from_receipt(
@@ -788,7 +817,27 @@ def _verify_bundle_scope_and_identity(
     context = bundle.context
     output = bundle.output
     transcript = bundle.transcript
+    evidence_schemas = subagent_evidence_schemas(identity)
     mismatches: list[str] = []
+    expected_bundle_schema = (
+        SUBAGENT_MATERIALIZED_BUNDLE_SCHEMA_V2
+        if identity.is_graph_only
+        else SUBAGENT_MATERIALIZED_BUNDLE_SCHEMA_V1
+    )
+    if bundle.bundle_schema != expected_bundle_schema:
+        mismatches.append("bundle_schema")
+    if context.schema_version != evidence_schemas.context:
+        mismatches.append("context.schema_version")
+    if output.schema_version != evidence_schemas.output:
+        mismatches.append("output.schema_version")
+    if transcript.schema_version != evidence_schemas.transcript:
+        mismatches.append("transcript.schema_version")
+    if receipt.schema_version != evidence_schemas.receipt:
+        mismatches.append("receipt.schema_version")
+    if receipt.identity_checksum != (
+        identity.identity_checksum if identity.is_graph_only else None
+    ):
+        mismatches.append("receipt.identity_checksum")
     if bundle.binding.run_id != identity.parent_run_id:
         mismatches.append("run_id")
     if checksum_for(bundle.binding.tenant_id) != bundle.binding.tenant_scope_ref:
@@ -994,20 +1043,63 @@ def subagent_result_attempt_id(identity: SubAgentAttemptIdentity) -> str:
 def _validate_activity_identity(
     activity: HarnessGraphActivity,
     identity: SubAgentAttemptIdentity,
+    graph: NormalizedHarnessGraph,
 ) -> None:
-    mismatches = tuple(
+    mismatches = [
         field_name
         for field_name, expected, actual in (
             ("run_id", activity.run_id, identity.parent_run_id),
             ("node_id", activity.node_id, identity.stage_id),
         )
         if expected != actual
-    )
+    ]
+    if activity.graph_ref.graph_id != graph.graph_id:
+        mismatches.append("activity.graph_id")
+    if activity.graph_ref.schema_version != graph.schema_version:
+        mismatches.append("activity.graph_schema_version")
+    if activity.graph_ref.compiler_version != graph.compiler_version:
+        mismatches.append("activity.compiler_version")
+    if (
+        activity.graph_ref.condition_policy_version
+        != graph.condition_policy_version
+    ):
+        mismatches.append("activity.condition_policy_version")
+    if activity.graph_ref.checksum != graph.checksum:
+        mismatches.append("activity.graph_checksum")
+    if identity.is_graph_only:
+        graph_ref = graph.graph_ref
+        activity_graph_ref = activity.graph_ref.graph_ref
+        for field_name, expected, actual in (
+            ("graph_id", graph.graph_id, identity.graph_id),
+            ("graph_version", graph.graph_version, identity.graph_version),
+            (
+                "graph_ref",
+                None if graph_ref is None else graph_ref.exact_ref,
+                identity.graph_ref,
+            ),
+            ("graph_schema_version", graph.schema_version, identity.graph_schema_version),
+            ("compiler_version", graph.compiler_version, identity.compiler_version),
+            (
+                "condition_policy_version",
+                graph.condition_policy_version,
+                identity.condition_policy_version,
+            ),
+            ("graph_checksum", graph.checksum, identity.graph_checksum),
+            (
+                "activity.graph_ref",
+                None if graph_ref is None else graph_ref.exact_ref,
+                None if activity_graph_ref is None else activity_graph_ref.exact_ref,
+            ),
+        ):
+            if expected != actual:
+                mismatches.append(field_name)
+    elif identity.workflow_id != graph.workflow_id:
+        mismatches.append("workflow_id")
     if mismatches:
         raise HarnessValidationError(
             "SubAgent invocation does not belong to its Graph activity",
             code="subagent_result_scope_mismatch",
-            details={"mismatches": list(mismatches)},
+            details={"mismatches": sorted(set(mismatches))},
         )
 
 
@@ -1033,7 +1125,11 @@ __all__ = [
     "HarnessSubAgentResultAdapter",
     "SUBAGENT_HANDOFF_SCHEMA",
     "SUBAGENT_MATERIALIZED_BUNDLE_SCHEMA",
+    "SUBAGENT_MATERIALIZED_BUNDLE_SCHEMA_V1",
+    "SUBAGENT_MATERIALIZED_BUNDLE_SCHEMA_V2",
     "SUBAGENT_NODE_RESULT_SCHEMA",
+    "SUBAGENT_NODE_RESULT_SCHEMA_V1",
+    "SUBAGENT_NODE_RESULT_SCHEMA_V2",
     "VerifiedSubAgentMaterializedBundle",
     "subagent_result_attempt_id",
     "verify_subagent_materialized_bundle",

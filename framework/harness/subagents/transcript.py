@@ -496,6 +496,54 @@ def _schema_for_identity(
     return graph_schema if identity.is_graph_only else legacy_schema
 
 
+@dataclass(frozen=True, slots=True)
+class SubAgentEvidenceSchemas:
+    context: str
+    output: str
+    transcript: str
+    receipt: str
+    bundle: str
+
+
+def subagent_evidence_schemas(
+    identity: SubAgentAttemptIdentity,
+) -> SubAgentEvidenceSchemas:
+    if not isinstance(identity, SubAgentAttemptIdentity):
+        raise TypeError("identity must be SubAgentAttemptIdentity")
+    return SubAgentEvidenceSchemas(
+        context=_schema_for_identity(
+            identity,
+            legacy_schema=SUBAGENT_CONTEXT_SCHEMA_V1,
+            graph_schema=SUBAGENT_CONTEXT_SCHEMA_V2,
+        ),
+        output=_schema_for_identity(
+            identity,
+            legacy_schema=SUBAGENT_OUTPUT_SCHEMA_V1,
+            graph_schema=SUBAGENT_OUTPUT_SCHEMA_V2,
+        ),
+        transcript=_schema_for_identity(
+            identity,
+            legacy_schema=SUBAGENT_TRANSCRIPT_SCHEMA_V1,
+            graph_schema=SUBAGENT_TRANSCRIPT_SCHEMA_V2,
+        ),
+        receipt=_schema_for_identity(
+            identity,
+            legacy_schema=SUBAGENT_RECEIPT_SCHEMA_V1,
+            graph_schema=SUBAGENT_RECEIPT_SCHEMA_V2,
+        ),
+        bundle=_schema_for_identity(
+            identity,
+            legacy_schema=SUBAGENT_BUNDLE_SCHEMA_V1,
+            graph_schema=SUBAGENT_BUNDLE_SCHEMA_V2,
+        ),
+    )
+
+
+def subagent_context_ref(identity: SubAgentAttemptIdentity) -> str:
+    schemas = subagent_evidence_schemas(identity)
+    return _context_ref(identity, schemas.context)
+
+
 def _ref_version(schema_version: str) -> str:
     if schema_version.endswith("/v1"):
         return "v1"
@@ -1237,6 +1285,7 @@ __all__ = [
     "SUBAGENT_TRANSCRIPT_SCHEMA_V2",
     "SubAgentAttemptIdentity",
     "SubAgentContextEvidence",
+    "SubAgentEvidenceSchemas",
     "SubAgentOutputDocument",
     "SubAgentTranscript",
     "SubAgentTranscriptConflictError",
@@ -1244,5 +1293,7 @@ __all__ = [
     "SubAgentTranscriptReceipt",
     "SubAgentTranscriptStoreError",
     "SubAgentTranscriptStorePort",
+    "subagent_context_ref",
+    "subagent_evidence_schemas",
     "sanitize_subagent_payload",
 ]

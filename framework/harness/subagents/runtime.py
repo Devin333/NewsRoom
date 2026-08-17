@@ -27,6 +27,8 @@ from framework.harness.subagents.transcript import (
     SubAgentTranscript,
     SubAgentTranscriptStorePort,
     sanitize_subagent_payload,
+    subagent_context_ref,
+    subagent_evidence_schemas,
 )
 from framework.harness.workers.result import HarnessWorkerResult
 
@@ -252,12 +254,14 @@ class SubAgentRuntime:
         errors: tuple[str, ...] = (),
     ):
         identity = subagent_attempt_identity(invocation)
+        schemas = subagent_evidence_schemas(identity)
         context = SubAgentContextEvidence(
             identity=identity,
-            context_envelope_ref=f"subagent-context://v1/{identity.parent_run_id}/{identity.transcript_id}",
+            context_envelope_ref=subagent_context_ref(identity),
             input_refs=invocation.input_refs,
             memory_context_refs=invocation.context_envelope.memory_context_refs,
             redaction_report={"raw_parent_messages_included": False, "sibling_history_included": False},
+            schema_version=schemas.context,
         )
         output = SubAgentOutputDocument(
             identity=identity,
@@ -267,6 +271,7 @@ class SubAgentRuntime:
             error_code=(errors or result.errors)[0]
             if errors or result.errors
             else None,
+            schema_version=schemas.output,
         )
         transcript = SubAgentTranscript(
             identity=identity,
@@ -287,6 +292,7 @@ class SubAgentRuntime:
                 {"event_type": "subagent_completed" if result.status is SubAgentStatus.SUCCEEDED else "subagent_halted"},
             ),
             observed_at=invocation.observed_at,
+            schema_version=schemas.transcript,
         )
         receipt = self.transcript_store.write(context, output, transcript)
         return self.transcript_store.verify(receipt)
@@ -297,6 +303,9 @@ def subagent_attempt_identity(
 ) -> SubAgentAttemptIdentity:
     if not isinstance(invocation, SubAgentInvocation):
         raise TypeError("invocation must be SubAgentInvocation")
+    if invocation.is_graph_only:
+        assert invocation.attempt_identity is not None
+        return invocation.attempt_identity
     return SubAgentAttemptIdentity(
         invocation_id=invocation.invocation_id,
         parent_run_id=invocation.parent_run_id,

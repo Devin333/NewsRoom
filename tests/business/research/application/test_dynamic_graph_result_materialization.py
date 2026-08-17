@@ -1,15 +1,20 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
+
+import pytest
 
 from business.research.application.graph_result_committer import (
     ResearchTaskPlanResultMaterializer,
 )
+from business.research.graphs import RESEARCH_DYNAMIC_STAGE_ID
 from framework.events.canonical import checksum_for
 from framework.harness import (
     ContextEnvelope,
     HarnessBudget,
     HarnessBudgetSnapshot,
+    HarnessValidationError,
     ResolvedSubAgentTaskAdapter,
     SubAgentRuntime,
     TaskLifecycle,
@@ -24,8 +29,14 @@ from framework.harness.runtime import (
     GraphArtifactRolloutMode,
     HarnessGraphResultRuntime,
     HarnessSubAgentResultAdapter,
+    SUBAGENT_MATERIALIZED_BUNDLE_SCHEMA_V1,
+    SUBAGENT_MATERIALIZED_BUNDLE_SCHEMA_V2,
+    SUBAGENT_NODE_RESULT_SCHEMA_V2,
+    verify_subagent_materialized_bundle,
 )
 from framework.harness.graph import HarnessWorkerType
+from framework.harness.subagents.transcript import SUBAGENT_RECEIPT_SCHEMA_V2
+from framework.shared.json import stable_json_dumps
 from tests.framework.harness.runtime.test_materializer import (
     RecordingArtifactPort,
     RecordingAttempts,
@@ -35,7 +46,9 @@ from tests.framework.harness.runtime.test_materializer import (
     _materializer,
 )
 from tests.framework.harness.task_plan.test_subagent_result_lineage import (
+    _graph_only_plan_for_fixture,
     _fixture as _task_plan_fixture,
+    _worker_result_from_child,
 )
 
 
@@ -72,16 +85,12 @@ def test_dynamic_child_materialization_is_independent_and_worker_free_on_recover
         )
     )
     invocation = invocation_builder.build_invocation(
+        plan=plan,
         resolved_task=resolved,
         binding=binding,
-        task_instance_id=instance.task_instance_id,
-        parent_run_id=plan.run_id,
-        workflow_id=plan.workflow_id,
-        stage_id=plan.stage_id,
+        instance=instance,
         context_pack=context_pack,
         budget_snapshot=budget,
-        attempt=instance.attempt,
-        observed_at=plan.accepted_at,
     )
 
     artifact = RecordingArtifactPort()
@@ -112,9 +121,9 @@ def test_dynamic_child_materialization_is_independent_and_worker_free_on_recover
         config=config,
         tenant_id=tenant_id,
         tenant_scope_ref=checksum_for(tenant_id),
-        graph_id="research.paper_analysis.dynamic.graph",
-        graph_version="research.paper_analysis.dynamic.graph@1",
-        invocation_factory=lambda task, active: invocation,
+        invocation_factory=lambda active_plan, task, active: invocation,
+        legacy_graph_id="research.paper_analysis.dynamic.graph",
+        legacy_graph_version="research.paper_analysis.dynamic.graph@1",
     )
 
     first = verifier.verify(
@@ -178,9 +187,9 @@ def test_dynamic_child_materialization_is_independent_and_worker_free_on_recover
         config=read_only_config,
         tenant_id=tenant_id,
         tenant_scope_ref=checksum_for(tenant_id),
-        graph_id="research.paper_analysis.dynamic.graph",
-        graph_version="research.paper_analysis.dynamic.graph@1",
-        invocation_factory=lambda task, active: invocation,
+        invocation_factory=lambda active_plan, task, active: invocation,
+        legacy_graph_id="research.paper_analysis.dynamic.graph",
+        legacy_graph_version="research.paper_analysis.dynamic.graph@1",
     )
 
     read_only_result = read_only_verifier.verify(
@@ -196,5 +205,141 @@ def test_dynamic_child_materialization_is_independent_and_worker_free_on_recover
 
     assert read_only_result.status is TaskLifecycle.SUCCEEDED
     assert task_plan["worker"].calls == 1
+    assert artifact.write_count == 1
+    assert attempts.put_count == 1
+
+
+def test_graph_only_dynamic_child_materialization_uses_versioned_identity_and_artifact_owner(
+    tmp_path: Path,
+) -> None:
+    task_plan = _task_plan_fixture(tmp_path)
+    plan, instance = _graph_only_plan_for_fixture(task_plan)
+    policy = replace(task_plan["policy"], stage_id=RESEARCH_DYNAMIC_STAGE_ID)
+    resolved = plan.tasks[0]
+    binding = task_plan["registry"].resolve(
+        resolved.task.worker_capability,
+        policy,
+    )
+    context_pack = replace(
+        task_plan["context_pack"],
+        workflow_id=None,
+        step_id=plan.stage_id,
+    )
+    invocation = task_plan["adapter"].build_invocation(
+        plan=plan,
+        resolved_task=resolved,
+        binding=binding,
+        instance=instance,
+        context_pack=context_pack,
+        budget_snapshot=task_plan["budget"],
+    )
+    child = task_plan["adapter"].invoke(
+        plan=plan,
+        resolved_task=resolved,
+        binding=binding,
+        instance=instance,
+        context_pack=context_pack,
+        budget_snapshot=task_plan["budget"],
+    )
+    worker_result = _worker_result_from_child(child)
+    assert task_plan["worker"].calls == 1
+
+    artifact = RecordingArtifactPort()
+    attempts = RecordingAttempts()
+    config = GraphArtifactPersistenceConfig(mode=GraphArtifactRolloutMode.ENFORCE)
+    common_adapter = HarnessSubAgentResultAdapter(
+        materializer=_materializer(
+            artifact=artifact,
+            attempts=attempts,
+            cache=RecordingCache(),
+            catalog=RecordingCatalog(),
+            quota=RecordingQuota(),
+            config=config,
+        ),
+        graph_result_runtime=HarnessGraphResultRuntime(
+            HarnessGraphControlPlaneRuntime(InMemoryHarnessEventPort())
+        ),
+        transcript_store=task_plan["transcript_store"],
+    )
+    tenant_id = "tenant-research-graph-only"
+    materializer = ResearchTaskPlanResultMaterializer(
+        verifier=task_plan["verifier"],
+        adapter=common_adapter,
+        config=config,
+        tenant_id=tenant_id,
+        tenant_scope_ref=checksum_for(tenant_id),
+        invocation_factory=lambda active_plan, task, active: invocation,
+    )
+
+    record = materializer.verify(
+        worker_result,
+        task=resolved,
+        request=TaskPlanResultVerificationRequest(
+            plan=plan,
+            task=resolved,
+            instance=instance,
+            worker_result=worker_result,
+        ),
+    )
+
+    assert record.is_graph_only is True
+    assert "workflow_id" not in record.to_dict()
+    assert artifact.write_count == 1
+    assert attempts.put_count == 1
+    envelope = next(iter(attempts.envelopes.values()))
+    assert envelope.binding.graph_id == plan.graph_id
+    assert envelope.binding.graph_version == plan.graph_ref
+    assert envelope.output_schema_ref == SUBAGENT_NODE_RESULT_SCHEMA_V2
+    assert envelope.output_schema_digest == (
+        "sha256:4ceda242a6b595d794baba8433db600701b296f579d1f69721357769e8a890b3"
+    )
+    assert envelope.provenance.producer_revision == "harness-subagent-result-adapter@2"
+    assert envelope.materialized_refs[0].ref in record.output_refs
+
+    stored = artifact.read_artifact(envelope.materialized_refs[0].ref)["payload"]["value"]
+    bundle = verify_subagent_materialized_bundle(
+        stored,
+        expected_binding=envelope.binding,
+    )
+    assert bundle.bundle_schema == SUBAGENT_MATERIALIZED_BUNDLE_SCHEMA_V2
+    assert bundle.identity == invocation.attempt_identity
+    assert bundle.receipt.schema_version == SUBAGENT_RECEIPT_SCHEMA_V2
+    assert "workflow_id" not in stable_json_dumps(stored)
+
+    mixed_schema = dict(stored)
+    mixed_schema["bundle_schema"] = SUBAGENT_MATERIALIZED_BUNDLE_SCHEMA_V1
+    mixed_schema["bundle_checksum"] = checksum_for(
+        {
+            key: value
+            for key, value in mixed_schema.items()
+            if key != "bundle_checksum"
+        }
+    )
+    with pytest.raises(HarnessValidationError) as mixed_error:
+        verify_subagent_materialized_bundle(mixed_schema)
+    assert mixed_error.value.code == "subagent_result_schema_unsupported"
+
+    legacy_identity_materializer = ResearchTaskPlanResultMaterializer(
+        verifier=task_plan["verifier"],
+        adapter=common_adapter,
+        config=config,
+        tenant_id=tenant_id,
+        tenant_scope_ref=checksum_for(tenant_id),
+        invocation_factory=lambda active_plan, task, active: invocation,
+        legacy_graph_id="legacy.graph",
+        legacy_graph_version="legacy.graph@1",
+    )
+    with pytest.raises(HarnessValidationError) as legacy_error:
+        legacy_identity_materializer.verify(
+            worker_result,
+            task=resolved,
+            request=TaskPlanResultVerificationRequest(
+                plan=plan,
+                task=resolved,
+                instance=instance,
+                worker_result=worker_result,
+            ),
+        )
+    assert legacy_error.value.code == "legacy_graph_identity_forbidden"
     assert artifact.write_count == 1
     assert attempts.put_count == 1

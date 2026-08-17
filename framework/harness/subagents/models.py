@@ -9,7 +9,10 @@ from typing import Any
 from framework.harness.context.models import ContextEnvelope
 from framework.harness.control_plane.errors import HarnessValidationError
 from framework.harness.control_plane.policy import HarnessBudgetSnapshot
-from framework.harness.subagents.transcript import SubAgentTranscriptReceipt
+from framework.harness.subagents.transcript import (
+    SubAgentAttemptIdentity,
+    SubAgentTranscriptReceipt,
+)
 from framework.shared.json import stable_json_dumps, to_jsonable
 from framework.shared.time import format_datetime, parse_datetime, utc_now
 
@@ -36,6 +39,8 @@ FORBIDDEN_SUBAGENT_RESULT_KEYS = frozenset(
         "halt_workflow",
     }
 )
+
+SUBAGENT_INVOCATION_SCHEMA_V2 = "newsroom.subagent-invocation/v2"
 
 
 class SubAgentStatus(StrEnum):
@@ -149,7 +154,7 @@ class SubAgentInvocation:
     invocation_id: str
     parent_run_id: str
     child_run_id: str
-    workflow_id: str
+    workflow_id: str | None
     step_id: str
     task_id: str
     task_instance_id: str
@@ -160,13 +165,14 @@ class SubAgentInvocation:
     context_envelope: SubAgentContextEnvelope
     budget_snapshot: HarnessBudgetSnapshot
     metadata: dict[str, Any] = field(default_factory=dict)
+    attempt_identity: SubAgentAttemptIdentity | None = None
+    schema_version: str | None = None
 
     def __post_init__(self) -> None:
         for field_name in (
             "invocation_id",
             "parent_run_id",
             "child_run_id",
-            "workflow_id",
             "step_id",
             "task_id",
             "task_instance_id",
@@ -184,11 +190,95 @@ class SubAgentInvocation:
             raise HarnessValidationError("context_envelope must be SubAgentContextEnvelope")
         if not isinstance(self.budget_snapshot, HarnessBudgetSnapshot):
             raise HarnessValidationError("budget_snapshot must be HarnessBudgetSnapshot")
+        if self.schema_version is None:
+            if not isinstance(self.workflow_id, str) or not self.workflow_id.strip():
+                raise HarnessValidationError("workflow_id is required")
+            if self.attempt_identity is not None:
+                raise HarnessValidationError(
+                    "legacy SubAgent invocation cannot carry Graph-only identity",
+                    code="subagent_invocation_identity_schema_mismatch",
+                )
+        elif self.schema_version == SUBAGENT_INVOCATION_SCHEMA_V2:
+            if self.workflow_id is not None:
+                raise HarnessValidationError(
+                    "Graph-only SubAgent invocation cannot carry workflow_id",
+                    code="subagent_invocation_identity_schema_mismatch",
+                )
+            if (
+                not isinstance(self.attempt_identity, SubAgentAttemptIdentity)
+                or not self.attempt_identity.is_graph_only
+            ):
+                raise HarnessValidationError(
+                    "Graph-only SubAgent invocation requires Graph-only attempt identity",
+                    code="subagent_invocation_identity_schema_mismatch",
+                )
+            mismatches = tuple(
+                field_name
+                for field_name, invocation_value, identity_value in (
+                    ("invocation_id", self.invocation_id, self.attempt_identity.invocation_id),
+                    ("parent_run_id", self.parent_run_id, self.attempt_identity.parent_run_id),
+                    ("child_run_id", self.child_run_id, self.attempt_identity.child_run_id),
+                    ("step_id", self.step_id, self.attempt_identity.stage_id),
+                    ("task_id", self.task_id, self.attempt_identity.task_id),
+                    (
+                        "task_instance_id",
+                        self.task_instance_id,
+                        self.attempt_identity.task_instance_id,
+                    ),
+                    ("attempt", self.attempt, self.attempt_identity.attempt),
+                    (
+                        "subagent_id",
+                        self.subagent_spec.subagent_id,
+                        self.attempt_identity.subagent_id,
+                    ),
+                )
+                if invocation_value != identity_value
+            )
+            if mismatches:
+                raise HarnessValidationError(
+                    "Graph-only SubAgent invocation identity does not match its fields",
+                    code="subagent_invocation_identity_mismatch",
+                    details={"mismatches": list(mismatches)},
+                )
+            context_pack = self.context_envelope.context_pack
+            context_workflow_id = (
+                context_pack.workflow_id
+                if isinstance(context_pack, ContextEnvelope)
+                else context_pack.get("workflow_id")
+                if isinstance(context_pack, Mapping)
+                else None
+            )
+            if context_workflow_id is not None:
+                raise HarnessValidationError(
+                    "Graph-only SubAgent invocation context cannot carry workflow_id",
+                    code="subagent_invocation_identity_schema_mismatch",
+                )
+        else:
+            raise HarnessValidationError(
+                "unsupported SubAgent invocation schema",
+                code="subagent_invocation_schema_unsupported",
+            )
         object.__setattr__(self, "input_refs", tuple(str(ref) for ref in self.input_refs))
         object.__setattr__(self, "metadata", dict(self.metadata))
         object.__setattr__(self, "observed_at", observed_at)
 
+    @property
+    def is_graph_only(self) -> bool:
+        return self.schema_version == SUBAGENT_INVOCATION_SCHEMA_V2
+
     def to_dict(self) -> dict[str, Any]:
+        if self.is_graph_only:
+            assert self.attempt_identity is not None
+            return {
+                "schema_version": self.schema_version,
+                "attempt_identity": self.attempt_identity.to_dict(),
+                "observed_at": format_datetime(self.observed_at),
+                "subagent_spec": self.subagent_spec.to_dict(),
+                "input_refs": list(self.input_refs),
+                "context_envelope": self.context_envelope.to_dict(),
+                "budget_snapshot": self.budget_snapshot.to_dict(),
+                "metadata": to_jsonable(self.metadata),
+            }
         return {
             "invocation_id": self.invocation_id,
             "parent_run_id": self.parent_run_id,
@@ -431,6 +521,7 @@ class SubAgentResult:
 __all__ = [
     "FORBIDDEN_SUBAGENT_CONTEXT_KEYS",
     "FORBIDDEN_SUBAGENT_RESULT_KEYS",
+    "SUBAGENT_INVOCATION_SCHEMA_V2",
     "SubAgentContextEnvelope",
     "SubAgentHandoff",
     "SubAgentInvocation",

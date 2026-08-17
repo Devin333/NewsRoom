@@ -262,16 +262,12 @@ class _DynamicTaskPlanFactory:
             plan, resolved_task = resolve_task(task_instance)
             method = adapter.recover if recover else adapter.invoke
             return method(
+                plan=plan,
                 resolved_task=resolved_task,
                 binding=resolved_binding,
-                task_instance_id=task_instance.task_instance_id,
-                parent_run_id=task_instance.run_id,
-                workflow_id=plan.workflow_id,
-                stage_id=task_instance.stage_id,
+                instance=task_instance,
                 context_pack=context_pack,
                 budget_snapshot=budget,
-                attempt=task_instance.attempt,
-                observed_at=plan.accepted_at,
             )
 
         def worker_result(subagent_result, *, recovered: bool = False):

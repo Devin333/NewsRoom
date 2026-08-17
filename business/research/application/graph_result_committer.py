@@ -40,11 +40,13 @@ from framework.harness.task_plan.models import (
     ResolvedTaskSpec,
     TaskInstance,
     TaskLifecycle,
+    ValidatedTaskPlan,
 )
 from framework.harness.task_plan.ports import TaskPlanResultVerifierPort
 from framework.harness.task_plan.store import TaskResultRecord
 from framework.harness.task_plan.verification import (
     TaskPlanResultVerificationRequest,
+    task_plan_subagent_attempt_identity,
 )
 from framework.harness.graph.model import (
     HarnessExecutableNode,
@@ -602,11 +604,12 @@ class ResearchTaskPlanResultMaterializer(TaskPlanResultVerifierPort):
         config: GraphArtifactPersistenceConfig,
         tenant_id: str,
         tenant_scope_ref: str,
-        graph_id: str,
-        graph_version: str,
         invocation_factory: Callable[
-            [ResolvedTaskSpec, TaskInstance], SubAgentInvocation
+            [ValidatedTaskPlan, ResolvedTaskSpec, TaskInstance],
+            SubAgentInvocation,
         ],
+        legacy_graph_id: str | None = None,
+        legacy_graph_version: str | None = None,
     ) -> None:
         if not isinstance(verifier, TaskPlanResultVerifierPort):
             raise TypeError("verifier must implement TaskPlanResultVerifierPort")
@@ -627,14 +630,19 @@ class ResearchTaskPlanResultMaterializer(TaskPlanResultVerifierPort):
             )
         if not callable(invocation_factory):
             raise TypeError("invocation_factory must be callable")
+        if (legacy_graph_id is None) != (legacy_graph_version is None):
+            raise HarnessValidationError(
+                "legacy TaskPlan materialization Graph identity must be complete",
+                code="research_graph_result_identity_invalid",
+            )
         self._verifier = verifier
         self._adapter = adapter
         self._config = config
         self._tenant_id = tenant_id
         self._tenant_scope_ref = tenant_scope_ref
-        self._graph_id = graph_id
-        self._graph_version = graph_version
         self._invocation_factory = invocation_factory
+        self._legacy_graph_id = legacy_graph_id
+        self._legacy_graph_version = legacy_graph_version
 
     def verify(
         self,
@@ -651,14 +659,49 @@ class ResearchTaskPlanResultMaterializer(TaskPlanResultVerifierPort):
             request=request,
         )
         instance = request.instance
-        invocation = self._invocation_factory(task, instance)
+        plan = request.plan
+        invocation = self._invocation_factory(plan, task, instance)
         identity = subagent_attempt_identity(invocation)
+        expected_identity = task_plan_subagent_attempt_identity(
+            plan,
+            instance,
+            invocation_id=invocation.invocation_id,
+            child_run_id=invocation.child_run_id,
+            subagent_id=identity.subagent_id,
+        )
+        if identity != expected_identity:
+            raise HarnessValidationError(
+                "Research TaskPlan materialization invocation changed accepted-plan identity",
+                code="task_plan_subagent_evidence_mismatch",
+            )
+        if plan.is_graph_only:
+            if (
+                self._legacy_graph_id is not None
+                or self._legacy_graph_version is not None
+            ):
+                raise HarnessValidationError(
+                    "Graph-only TaskPlan materialization cannot use legacy Graph identity",
+                    code="legacy_graph_identity_forbidden",
+                )
+            graph_id = plan.graph_id
+            graph_version = plan.graph_ref
+        else:
+            if (
+                self._legacy_graph_id is None
+                or self._legacy_graph_version is None
+            ):
+                raise HarnessValidationError(
+                    "legacy TaskPlan materialization requires its Graph identity",
+                    code="research_graph_result_identity_invalid",
+                )
+            graph_id = self._legacy_graph_id
+            graph_version = self._legacy_graph_version
         binding = NodeResultBinding(
             tenant_id=self._tenant_id,
             tenant_scope_ref=self._tenant_scope_ref,
             run_id=instance.run_id,
-            graph_id=self._graph_id,
-            graph_version=self._graph_version,
+            graph_id=graph_id,
+            graph_version=graph_version,
             node_id=identity.stage_id,
             attempt_id=subagent_result_attempt_id(identity),
             parent_checkpoint_ref=_task_plan_checkpoint_ref(instance),

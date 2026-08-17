@@ -1417,33 +1417,20 @@ def _build_configured_composition(
                 }
                 result_tenant_id = research_event_tenant_id(actor_metadata)
 
-                def child_invocation(resolved, instance):
-                    plan = dynamic_task_plan_store.plan(
-                        instance.run_id,
-                        instance.stage_id,
-                        instance.plan_version,
-                    )
-                    if plan is None:
-                        raise RuntimeError(
-                            "dynamic TaskPlan plan artifact is unavailable"
-                        )
+                def child_invocation(plan, resolved, instance):
                     binding = capability_registry.resolve(
                         resolved.task.worker_capability,
                         policy,
                     )
                     return subagent_adapter.build_invocation(
+                        plan=plan,
                         resolved_task=resolved,
                         binding=binding,
-                        task_instance_id=instance.task_instance_id,
-                        parent_run_id=instance.run_id,
-                        workflow_id=plan.workflow_id,
-                        stage_id=instance.stage_id,
+                        instance=instance,
                         context_pack=context_pack,
                         budget_snapshot=HarnessBudgetSnapshot.from_budget(
                             HarnessBudget.safe_default()
                         ),
-                        attempt=instance.attempt,
-                        observed_at=plan.accepted_at,
                     )
 
                 result_verifier = ResearchTaskPlanResultMaterializer(
@@ -1452,12 +1439,12 @@ def _build_configured_composition(
                     config=settings.graph_artifact_persistence,
                     tenant_id=result_tenant_id,
                     tenant_scope_ref=checksum_for(result_tenant_id),
-                    graph_id=workflow_graph.graph_id,
-                    graph_version=(
+                    invocation_factory=child_invocation,
+                    legacy_graph_id=workflow_graph.graph_id,
+                    legacy_graph_version=(
                         f"{workflow_graph.graph_id}@"
                         f"{workflow_graph.workflow_version}"
                     ),
-                    invocation_factory=child_invocation,
                 )
 
             def execute(binding, instance):
@@ -1470,16 +1457,12 @@ def _build_configured_composition(
                     raise RuntimeError("dynamic TaskPlan plan artifact is unavailable")
                 resolved = next(item for item in plan.tasks if item.task_id == instance.task_id)
                 child = subagent_adapter.invoke(
+                    plan=plan,
                     resolved_task=resolved,
                     binding=binding,
-                    task_instance_id=instance.task_instance_id,
-                    parent_run_id=instance.run_id,
-                    workflow_id=plan.workflow_id,
-                    stage_id=instance.stage_id,
+                    instance=instance,
                     context_pack=context_pack,
                     budget_snapshot=HarnessBudgetSnapshot.from_budget(HarnessBudget.safe_default()),
-                    attempt=instance.attempt,
-                    observed_at=plan.accepted_at,
                 )
                 succeeded = child.status.value == "succeeded"
                 return HarnessWorkerResult(
@@ -1503,16 +1486,12 @@ def _build_configured_composition(
                     raise RuntimeError("dynamic TaskPlan plan artifact is unavailable")
                 resolved = next(item for item in plan.tasks if item.task_id == instance.task_id)
                 child = subagent_adapter.recover(
+                    plan=plan,
                     resolved_task=resolved,
                     binding=binding,
-                    task_instance_id=instance.task_instance_id,
-                    parent_run_id=instance.run_id,
-                    workflow_id=plan.workflow_id,
-                    stage_id=instance.stage_id,
+                    instance=instance,
                     context_pack=context_pack,
                     budget_snapshot=HarnessBudgetSnapshot.from_budget(HarnessBudget.safe_default()),
-                    attempt=instance.attempt,
-                    observed_at=plan.accepted_at,
                 )
                 if child is None:
                     return None

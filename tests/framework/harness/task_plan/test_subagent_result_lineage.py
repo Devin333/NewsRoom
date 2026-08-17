@@ -67,8 +67,10 @@ from framework.harness.graph.model import (
 from framework.harness.subagents.transcript import (
     SUBAGENT_CONTEXT_SCHEMA_V2,
     SUBAGENT_OUTPUT_SCHEMA_V2,
+    SUBAGENT_RECEIPT_SCHEMA_V2,
     SUBAGENT_TRANSCRIPT_SCHEMA_V2,
 )
+from framework.harness.subagents.models import SUBAGENT_INVOCATION_SCHEMA_V2
 from framework.harness.task_plan import task_plan_subagent_attempt_identity
 from infrastructure.storage.harness import FilesystemSubAgentTranscriptStore
 from infrastructure.storage.events import SQLiteEventStore
@@ -275,32 +277,24 @@ def _fixture(
 
     def invoke():
         child = adapter.invoke(
+            plan=plan,
             resolved_task=resolved,
             binding=binding,
-            task_instance_id=instance.task_instance_id,
-            parent_run_id=plan.run_id,
-            workflow_id=plan.workflow_id,
-            stage_id=plan.stage_id,
+            instance=instance,
             context_pack=context_pack,
             budget_snapshot=budget,
-            attempt=instance.attempt,
-            observed_at=plan.accepted_at,
         )
         return _worker_result_from_child(child)
 
     def recover(_binding, active_instance):
         assert active_instance == instance
         child = adapter.recover(
+            plan=plan,
             resolved_task=resolved,
             binding=binding,
-            task_instance_id=instance.task_instance_id,
-            parent_run_id=plan.run_id,
-            workflow_id=plan.workflow_id,
-            stage_id=plan.stage_id,
+            instance=instance,
             context_pack=context_pack,
             budget_snapshot=budget,
-            attempt=instance.attempt,
-            observed_at=plan.accepted_at,
         )
         return None if child is None else _worker_result_from_child(child, recovered=True)
 
@@ -314,7 +308,11 @@ def _fixture(
         candidate=candidate,
     )
     return {
+        "adapter": adapter,
+        "binding": binding,
+        "budget": budget,
         "candidate": candidate,
+        "context_pack": context_pack,
         "plan": plan,
         "policy": policy,
         "registry": registry,
@@ -503,6 +501,154 @@ def _committed_lineage(
     store.append_result(record)
     fixture.update(store=store, worker_result=worker_result, record=record)
     return fixture
+
+
+def test_legacy_subagent_invocation_wire_contract_remains_unversioned(
+    tmp_path: Path,
+) -> None:
+    fixture = _fixture(tmp_path)
+    invocation = fixture["adapter"].build_invocation(
+        plan=fixture["plan"],
+        resolved_task=fixture["resolved"],
+        binding=fixture["binding"],
+        instance=fixture["instance"],
+        context_pack=fixture["context_pack"],
+        budget_snapshot=fixture["budget"],
+    )
+    payload = invocation.to_dict()
+
+    assert invocation.schema_version is None
+    assert invocation.attempt_identity is None
+    assert set(payload) == {
+        "attempt",
+        "budget_snapshot",
+        "child_run_id",
+        "context_envelope",
+        "input_refs",
+        "invocation_id",
+        "metadata",
+        "observed_at",
+        "parent_run_id",
+        "step_id",
+        "subagent_spec",
+        "task_id",
+        "task_instance_id",
+        "workflow_id",
+    }
+    assert canonical_payload_checksum(payload) == (
+        "sha256:e1ab8dff2fd0f5b4d3362ed246100af164d4e8233d2a5a28d08dcb7933008082"
+    )
+
+
+def test_graph_only_subagent_invocation_uses_accepted_plan_identity_and_recovery(
+    tmp_path: Path,
+) -> None:
+    fixture = _fixture(tmp_path)
+    plan, instance = _graph_only_plan_for_fixture(fixture)
+    policy = replace(fixture["policy"], stage_id=RESEARCH_DYNAMIC_STAGE_ID)
+    binding = fixture["registry"].resolve(
+        plan.tasks[0].task.worker_capability,
+        policy,
+    )
+    context_pack = replace(
+        fixture["context_pack"],
+        workflow_id=None,
+        step_id=plan.stage_id,
+    )
+    invocation = fixture["adapter"].build_invocation(
+        plan=plan,
+        resolved_task=plan.tasks[0],
+        binding=binding,
+        instance=instance,
+        context_pack=context_pack,
+        budget_snapshot=fixture["budget"],
+    )
+    expected_identity = task_plan_subagent_attempt_identity(
+        plan,
+        instance,
+        invocation_id=invocation.invocation_id,
+        child_run_id=invocation.child_run_id,
+        subagent_id=invocation.subagent_spec.subagent_id,
+    )
+    payload = invocation.to_dict()
+
+    assert invocation.schema_version == SUBAGENT_INVOCATION_SCHEMA_V2
+    assert invocation.workflow_id is None
+    assert invocation.attempt_identity == expected_identity
+    assert set(payload) == {
+        "attempt_identity",
+        "budget_snapshot",
+        "context_envelope",
+        "input_refs",
+        "metadata",
+        "observed_at",
+        "schema_version",
+        "subagent_spec",
+    }
+    assert "workflow_id" not in payload
+    assert "workflow_id" not in payload["attempt_identity"]
+    assert canonical_payload_checksum(payload) == (
+        "sha256:80341d9b1fde169f709c24fe14081cbdd269fca664fc5571e6dbf2f927e71940"
+    )
+
+    result = fixture["adapter"].invoke(
+        plan=plan,
+        resolved_task=plan.tasks[0],
+        binding=binding,
+        instance=instance,
+        context_pack=context_pack,
+        budget_snapshot=fixture["budget"],
+    )
+    assert result.status is SubAgentStatus.SUCCEEDED
+    assert fixture["worker"].calls == 1
+    assert result.transcript_receipt is not None
+    receipt = result.transcript_receipt
+    assert receipt.schema_version == SUBAGENT_RECEIPT_SCHEMA_V2
+    assert receipt.identity_checksum == expected_identity.identity_checksum
+    assert (
+        fixture["transcript_store"].read_context(receipt.context_ref).schema_version
+        == SUBAGENT_CONTEXT_SCHEMA_V2
+    )
+    assert (
+        fixture["transcript_store"].read_output(receipt.output_ref).schema_version
+        == SUBAGENT_OUTPUT_SCHEMA_V2
+    )
+    assert (
+        fixture["transcript_store"].read(receipt.transcript_ref).schema_version
+        == SUBAGENT_TRANSCRIPT_SCHEMA_V2
+    )
+
+    recovered = fixture["adapter"].recover(
+        plan=plan,
+        resolved_task=plan.tasks[0],
+        binding=binding,
+        instance=instance,
+        context_pack=context_pack,
+        budget_snapshot=fixture["budget"],
+    )
+    assert recovered is not None
+    assert recovered.invocation_id == result.invocation_id
+    assert recovered.child_run_id == result.child_run_id
+    assert recovered.status is result.status
+    assert recovered.output == result.output
+    assert recovered.transcript_receipt == result.transcript_receipt
+    assert recovered.metadata["recovered"] is True
+    assert fixture["worker"].calls == 1
+
+    with pytest.raises(HarnessValidationError) as invocation_error:
+        replace(invocation, workflow_id="legacy-workflow")
+    assert invocation_error.value.code == "subagent_invocation_identity_schema_mismatch"
+
+    with pytest.raises(HarnessValidationError) as context_error:
+        fixture["adapter"].build_invocation(
+            plan=plan,
+            resolved_task=plan.tasks[0],
+            binding=binding,
+            instance=instance,
+            context_pack=replace(context_pack, workflow_id="legacy-workflow"),
+            budget_snapshot=fixture["budget"],
+        )
+    assert context_error.value.code == "subagent_invocation_identity_schema_mismatch"
 
 
 def test_success_and_failure_events_carry_complete_typed_lineage(tmp_path: Path) -> None:
