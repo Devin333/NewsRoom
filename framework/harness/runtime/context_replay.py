@@ -28,6 +28,11 @@ from framework.shared.json import stable_json_dumps, to_jsonable
 
 class ContextSnapshotReplayReader:
     def replay_snapshot(self, snapshot: ContextSnapshot) -> dict:
+        if snapshot.is_graph_only:
+            raise HarnessValidationError(
+                "Graph-only ContextSnapshot requires the strict identity-bound replay store",
+                code="context_snapshot_v2_replay_unavailable",
+            )
         if not snapshot.refs:
             raise HarnessValidationError("context snapshot replay requires refs")
         if not str(snapshot.checksum).startswith("sha256:"):

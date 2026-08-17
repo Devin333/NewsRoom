@@ -19,15 +19,25 @@ class ContextCachePolicyBuilder:
             for segment in envelope.segments
             if segment.cache_scope == ContextCacheScope.STABLE_PREFIX
         ]
+        if envelope.is_graph_only:
+            if envelope.graph_identity is None:  # pragma: no cover - model invariant
+                raise AssertionError("Graph-only context identity is unavailable")
+            cache_projection = {
+                "schema_version": envelope.schema_version,
+                "graph_identity": envelope.graph_identity.to_dict(),
+                "worker_id": envelope.worker_id,
+                "worker_type": envelope.worker_type,
+                "stable_segments": stable_payload,
+            }
+        else:
+            cache_projection = {
+                "workflow_id": envelope.workflow_id,
+                "worker_id": envelope.worker_id,
+                "worker_type": envelope.worker_type,
+                "stable_segments": stable_payload,
+            }
         digest = hashlib.sha256(
-            stable_json_dumps(
-                {
-                    "workflow_id": envelope.workflow_id,
-                    "worker_id": envelope.worker_id,
-                    "worker_type": envelope.worker_type,
-                    "stable_segments": stable_payload,
-                }
-            ).encode()
+            stable_json_dumps(cache_projection).encode()
         ).hexdigest()
         return ContextCachePolicy(
             cache_enabled=bool(stable_segments),

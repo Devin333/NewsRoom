@@ -48,6 +48,9 @@ from framework.harness.context.gates import (
     ContextStablePrefixGate,
 )
 from framework.harness.context.models import (
+    CONTEXT_ENVELOPE_SCHEMA_V2,
+    CONTEXT_GRAPH_TASK_PLAN_STAGE_IDENTITY_SCHEMA_V2,
+    CONTEXT_SNAPSHOT_SCHEMA_V2,
     CONTEXT_SEGMENT_ORDER,
     CONTROL_PLANE_PRESERVED_FIELDS,
     CompressionRecord,
@@ -57,9 +60,11 @@ from framework.harness.context.models import (
     ContextCompressionLevel,
     ContextCompressionSummary,
     ContextEnvelope,
+    ContextGraphIdentity,
     ContextSegment,
     ContextSegmentType,
     ContextSnapshot,
+    ContextTaskExecutionIdentity,
 )
 from framework.harness.context.group_models import (
     ContextGroup,
@@ -124,6 +129,9 @@ from framework.harness.context.verification import (
 )
 
 __all__ = [
+    "CONTEXT_ENVELOPE_SCHEMA_V2",
+    "CONTEXT_GRAPH_TASK_PLAN_STAGE_IDENTITY_SCHEMA_V2",
+    "CONTEXT_SNAPSHOT_SCHEMA_V2",
     "CONTEXT_SEGMENT_ORDER",
     "CONTROL_PLANE_PRESERVED_FIELDS",
     "CompressionRecord",
@@ -167,6 +175,7 @@ __all__ = [
     "ContextCompactionPolicy",
     "ContextCompressionRecordV2",
     "ContextEnvelope",
+    "ContextGraphIdentity",
     "ContextDurableRefs",
     "ContextGateResult",
     "ContextPrivacyGate",
@@ -206,6 +215,7 @@ __all__ = [
     "ContextSummaryVerificationResult",
     "ContextSummaryWorkerPort",
     "ContextSummaryWorkerResult",
+    "ContextTaskExecutionIdentity",
     "ContextToolTransactionState",
     "ContextVerifiedArtifactStore",
     "ContextVerifiedStorePort",

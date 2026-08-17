@@ -30,4 +30,7 @@ def test_context_assembler_builds_fixed_six_segment_order_and_snapshot() -> None
     assert [segment.cache_scope for segment in envelope.segments[:3]] == [ContextCacheScope.STABLE_PREFIX] * 3
     assert [segment.cache_scope for segment in envelope.segments[3:]] == [ContextCacheScope.DYNAMIC_TAIL] * 3
     assert envelope.snapshot_ref == "context-snapshot://1"
+    assert envelope.is_graph_only is False
+    assert envelope.to_dict()["workflow_id"] == "research-runtime"
+    assert "schema_version" not in envelope.to_dict()
     assert any(event["event_type"] == "context_snapshot_written" for event in assembler.events)

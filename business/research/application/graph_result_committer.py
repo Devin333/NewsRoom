@@ -668,6 +668,7 @@ class ResearchTaskPlanResultMaterializer(TaskPlanResultVerifierPort):
             invocation_id=invocation.invocation_id,
             child_run_id=invocation.child_run_id,
             subagent_id=identity.subagent_id,
+            context_pack=invocation.context_envelope.context_pack,
         )
         if identity != expected_identity:
             raise HarnessValidationError(

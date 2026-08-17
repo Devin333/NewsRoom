@@ -10,6 +10,7 @@ from framework.harness.context.models import ContextEnvelope
 from framework.harness.control_plane.errors import HarnessValidationError
 from framework.harness.control_plane.policy import HarnessBudgetSnapshot
 from framework.harness.subagents.transcript import (
+    SUBAGENT_ATTEMPT_IDENTITY_SCHEMA_V3,
     SubAgentAttemptIdentity,
     SubAgentTranscriptReceipt,
 )
@@ -41,6 +42,7 @@ FORBIDDEN_SUBAGENT_RESULT_KEYS = frozenset(
 )
 
 SUBAGENT_INVOCATION_SCHEMA_V2 = "newsroom.subagent-invocation/v2"
+SUBAGENT_INVOCATION_SCHEMA_V3 = "newsroom.subagent-invocation/v3"
 
 
 class SubAgentStatus(StrEnum):
@@ -199,6 +201,11 @@ class SubAgentInvocation:
                     code="subagent_invocation_identity_schema_mismatch",
                 )
         elif self.schema_version == SUBAGENT_INVOCATION_SCHEMA_V2:
+            raise HarnessValidationError(
+                "v2 SubAgent invocation is read-only durable evidence and cannot be dispatched",
+                code="subagent_invocation_identity_schema_mismatch",
+            )
+        elif self.schema_version == SUBAGENT_INVOCATION_SCHEMA_V3:
             if self.workflow_id is not None:
                 raise HarnessValidationError(
                     "Graph-only SubAgent invocation cannot carry workflow_id",
@@ -207,6 +214,8 @@ class SubAgentInvocation:
             if (
                 not isinstance(self.attempt_identity, SubAgentAttemptIdentity)
                 or not self.attempt_identity.is_graph_only
+                or self.attempt_identity.schema_version
+                != SUBAGENT_ATTEMPT_IDENTITY_SCHEMA_V3
             ):
                 raise HarnessValidationError(
                     "Graph-only SubAgent invocation requires Graph-only attempt identity",
@@ -241,17 +250,59 @@ class SubAgentInvocation:
                     details={"mismatches": list(mismatches)},
                 )
             context_pack = self.context_envelope.context_pack
-            context_workflow_id = (
-                context_pack.workflow_id
-                if isinstance(context_pack, ContextEnvelope)
-                else context_pack.get("workflow_id")
-                if isinstance(context_pack, Mapping)
-                else None
-            )
-            if context_workflow_id is not None:
+            if (
+                not isinstance(context_pack, ContextEnvelope)
+                or not context_pack.is_graph_only
+                or context_pack.phase != "EXECUTE"
+            ):
                 raise HarnessValidationError(
-                    "Graph-only SubAgent invocation context cannot carry workflow_id",
+                    "Graph-only SubAgent invocation requires a strict Graph context envelope",
                     code="subagent_invocation_identity_schema_mismatch",
+                )
+            if context_pack.task_execution_identity is None:
+                raise HarnessValidationError(
+                    "Graph-only SubAgent invocation requires the strict TaskPlan execution identity",
+                    code="subagent_invocation_identity_schema_mismatch",
+                )
+            assert self.attempt_identity is not None
+            expected_context_fields = {
+                "parent_run_id": self.attempt_identity.parent_run_id,
+                "graph_id": self.attempt_identity.graph_id,
+                "graph_version": self.attempt_identity.graph_version,
+                "graph_ref": self.attempt_identity.graph_ref,
+                "graph_schema_version": self.attempt_identity.graph_schema_version,
+                "compiler_version": self.attempt_identity.compiler_version,
+                "condition_policy_version": self.attempt_identity.condition_policy_version,
+                "graph_checksum": self.attempt_identity.graph_checksum,
+                "stage_id": self.attempt_identity.stage_id,
+                "stage_binding_checksum": self.attempt_identity.stage_binding_checksum,
+                "stage_identity_schema": self.attempt_identity.stage_identity_schema,
+                "stage_identity_checksum": self.attempt_identity.stage_identity_checksum,
+                "task_id": self.attempt_identity.task_id,
+                "task_instance_id": self.attempt_identity.task_instance_id,
+                "attempt": self.attempt_identity.attempt,
+            }
+            expected_context_fields.update(
+                {
+                    "plan_id": self.attempt_identity.plan_id,
+                    "plan_version": self.attempt_identity.plan_version,
+                    "plan_checksum": self.attempt_identity.plan_checksum,
+                    "task_definition_checksum": self.attempt_identity.task_definition_checksum,
+                }
+            )
+            if not context_pack.matches_graph_fields(expected_context_fields):
+                raise HarnessValidationError(
+                    "Graph-only SubAgent invocation context identity does not match its attempt",
+                    code="subagent_invocation_identity_mismatch",
+                )
+            if (
+                context_pack.envelope_id != self.attempt_identity.context_envelope_id
+                or context_pack.checksum
+                != self.attempt_identity.context_envelope_checksum
+            ):
+                raise HarnessValidationError(
+                    "Graph-only SubAgent invocation context content does not match its attempt",
+                    code="subagent_invocation_identity_mismatch",
                 )
         else:
             raise HarnessValidationError(
@@ -264,7 +315,10 @@ class SubAgentInvocation:
 
     @property
     def is_graph_only(self) -> bool:
-        return self.schema_version == SUBAGENT_INVOCATION_SCHEMA_V2
+        return self.schema_version in {
+            SUBAGENT_INVOCATION_SCHEMA_V2,
+            SUBAGENT_INVOCATION_SCHEMA_V3,
+        }
 
     def to_dict(self) -> dict[str, Any]:
         if self.is_graph_only:
@@ -522,6 +576,7 @@ __all__ = [
     "FORBIDDEN_SUBAGENT_CONTEXT_KEYS",
     "FORBIDDEN_SUBAGENT_RESULT_KEYS",
     "SUBAGENT_INVOCATION_SCHEMA_V2",
+    "SUBAGENT_INVOCATION_SCHEMA_V3",
     "SubAgentContextEnvelope",
     "SubAgentHandoff",
     "SubAgentInvocation",

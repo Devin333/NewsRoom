@@ -18,7 +18,9 @@ class ContextSnapshotStore:
         return snapshot
 
     def save_bound(self, envelope: ContextEnvelope) -> tuple[ContextEnvelope, ContextSnapshot]:
-        """Persist one immutable legacy projection without mutating it after save."""
+        """Persist one immutable schema-specific projection."""
+        if envelope.is_graph_only:
+            return self._save_graph_bound(envelope)
         snapshot_id = f"context-snapshot://{len(self.snapshots) + 1}"
         bound_envelope = replace(envelope, snapshot_ref=snapshot_id)
         refs = _envelope_refs(bound_envelope)
@@ -41,14 +43,74 @@ class ContextSnapshotStore:
         self.envelopes[bound_envelope.envelope_id] = bound_envelope
         return bound_envelope, snapshot
 
+    def _save_graph_bound(
+        self,
+        envelope: ContextEnvelope,
+    ) -> tuple[ContextEnvelope, ContextSnapshot]:
+        snapshot_id = f"context-snapshot://{len(self.snapshots) + 1}"
+        bound_envelope = envelope.bind_snapshot_ref(snapshot_id)
+        refs = _envelope_refs(bound_envelope)
+        snapshot = ContextSnapshot.for_graph_envelope(
+            snapshot_id=snapshot_id,
+            envelope=bound_envelope,
+            segment_refs=tuple(segment.content_ref for segment in bound_envelope.segments),
+            assembled_prompt_ref=(
+                f"artifact://assembled-context/{bound_envelope.envelope_id}"
+            ),
+            refs=refs,
+            cache_key=(
+                bound_envelope.cache_policy.cache_key
+                if bound_envelope.cache_policy
+                else f"context:{bound_envelope.envelope_id}"
+            ),
+            metadata={"payload_saved": False},
+        )
+        self.snapshots[snapshot.snapshot_id] = snapshot
+        self.envelopes[bound_envelope.envelope_id] = bound_envelope
+        return bound_envelope, snapshot
+
     def load(self, snapshot_id: str) -> ContextSnapshot:
         return self.snapshots[snapshot_id]
 
     def replay(self, snapshot_id: str) -> ContextEnvelope:
         snapshot = self.load(snapshot_id)
         envelope = self.envelopes[snapshot.envelope_id]
+        if snapshot.is_graph_only != envelope.is_graph_only:
+            raise HarnessValidationError(
+                "context snapshot and envelope schemas do not match",
+                code="context_snapshot_replay_identity_mismatch",
+            )
+        if snapshot.is_graph_only:
+            return self._replay_graph(snapshot, envelope)
         if _checksum(envelope) != snapshot.checksum:
             raise HarnessValidationError("context replay checksum mismatch")
+        return envelope
+
+    @staticmethod
+    def _replay_graph(
+        snapshot: ContextSnapshot,
+        envelope: ContextEnvelope,
+    ) -> ContextEnvelope:
+        if (
+            not envelope.is_graph_only
+            or snapshot.graph_identity != envelope.graph_identity
+            or snapshot.task_execution_identity != envelope.task_execution_identity
+            or snapshot.envelope_checksum != envelope.checksum
+            or snapshot.phase != envelope.phase
+        ):
+            raise HarnessValidationError(
+                "Graph context replay identity mismatch",
+                code="context_snapshot_replay_identity_mismatch",
+            )
+        if snapshot.envelope_id != envelope.envelope_id:
+            raise HarnessValidationError(
+                "Graph context replay envelope identity mismatch",
+                code="context_snapshot_replay_identity_mismatch",
+            )
+        # Parse the stored strict projection again so a forged mutable store entry
+        # cannot fall back to the legacy checksum path.
+        ContextSnapshot.from_dict(snapshot.to_dict())
+        ContextEnvelope.from_dict(envelope.to_dict())
         return envelope
 
 

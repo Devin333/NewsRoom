@@ -20,19 +20,25 @@ from framework.shared.time import format_datetime, parse_datetime, utc_now
 
 
 SUBAGENT_ATTEMPT_IDENTITY_SCHEMA_V2 = "newsroom.subagent-attempt-identity/v2"
+SUBAGENT_ATTEMPT_IDENTITY_SCHEMA_V3 = "newsroom.subagent-attempt-identity/v3"
 SUBAGENT_CONTEXT_SCHEMA_V1 = "newsroom.subagent-context-evidence/v1"
 SUBAGENT_CONTEXT_SCHEMA_V2 = "newsroom.subagent-context-evidence/v2"
+SUBAGENT_CONTEXT_SCHEMA_V3 = "newsroom.subagent-context-evidence/v3"
 SUBAGENT_OUTPUT_SCHEMA_V1 = "newsroom.subagent-output-document/v1"
 SUBAGENT_OUTPUT_SCHEMA_V2 = "newsroom.subagent-output-document/v2"
+SUBAGENT_OUTPUT_SCHEMA_V3 = "newsroom.subagent-output-document/v3"
 SUBAGENT_TRANSCRIPT_SCHEMA_V1 = "newsroom.subagent-transcript/v1"
 SUBAGENT_TRANSCRIPT_SCHEMA_V2 = "newsroom.subagent-transcript/v2"
+SUBAGENT_TRANSCRIPT_SCHEMA_V3 = "newsroom.subagent-transcript/v3"
 SUBAGENT_RECEIPT_SCHEMA_V1 = "newsroom.subagent-transcript-receipt/v1"
 SUBAGENT_RECEIPT_SCHEMA_V2 = "newsroom.subagent-transcript-receipt/v2"
+SUBAGENT_RECEIPT_SCHEMA_V3 = "newsroom.subagent-transcript-receipt/v3"
 SUBAGENT_BUNDLE_SCHEMA_V1 = "newsroom.subagent-attempt-bundle/v1"
 SUBAGENT_BUNDLE_SCHEMA_V2 = "newsroom.subagent-attempt-bundle/v2"
+SUBAGENT_BUNDLE_SCHEMA_V3 = "newsroom.subagent-attempt-bundle/v3"
 
-# Existing callers and persisted data keep v1 as their explicit default. Graph-only
-# callers must opt into the v2 contracts; no schema is inferred from a legacy alias.
+# Existing callers and persisted data keep v1 as their explicit default. Active
+# Graph-only writers use v3; v2 remains an explicit durable-reader contract.
 SUBAGENT_CONTEXT_SCHEMA = SUBAGENT_CONTEXT_SCHEMA_V1
 SUBAGENT_OUTPUT_SCHEMA = SUBAGENT_OUTPUT_SCHEMA_V1
 SUBAGENT_TRANSCRIPT_SCHEMA = SUBAGENT_TRANSCRIPT_SCHEMA_V1
@@ -68,6 +74,16 @@ _GRAPH_ATTEMPT_IDENTITY_FIELDS = frozenset(
         "task_instance_id",
         "attempt",
         "subagent_id",
+    }
+)
+_GRAPH_ATTEMPT_IDENTITY_V3_FIELDS = _GRAPH_ATTEMPT_IDENTITY_FIELDS | frozenset(
+    {
+        "plan_id",
+        "plan_version",
+        "plan_checksum",
+        "task_definition_checksum",
+        "context_envelope_id",
+        "context_envelope_checksum",
     }
 )
 _LEGACY_ATTEMPT_IDENTITY_FIELDS = frozenset(
@@ -314,6 +330,12 @@ class SubAgentAttemptIdentity:
     stage_binding_checksum: str | None = None
     stage_identity_schema: str | None = None
     stage_identity_checksum: str | None = None
+    plan_id: str | None = None
+    plan_version: int | None = None
+    plan_checksum: str | None = None
+    task_definition_checksum: str | None = None
+    context_envelope_id: str | None = None
+    context_envelope_checksum: str | None = None
     schema_version: str | None = None
 
     def __post_init__(self) -> None:
@@ -332,7 +354,11 @@ class SubAgentAttemptIdentity:
             object.__setattr__(self, "workflow_id", _required(self.workflow_id, "workflow_id"))
             unexpected = sorted(
                 field_name
-                for field_name in _graph_identity_attribute_names()
+                for field_name in (
+                    _graph_identity_attribute_names()
+                    + _graph_task_plan_identity_attribute_names()
+                    + _context_envelope_identity_attribute_names()
+                )
                 if getattr(self, field_name) is not None
             )
             if unexpected:
@@ -342,7 +368,10 @@ class SubAgentAttemptIdentity:
                     details={"unexpected": unexpected},
                 )
             return
-        if self.schema_version != SUBAGENT_ATTEMPT_IDENTITY_SCHEMA_V2:
+        if self.schema_version not in {
+            SUBAGENT_ATTEMPT_IDENTITY_SCHEMA_V2,
+            SUBAGENT_ATTEMPT_IDENTITY_SCHEMA_V3,
+        }:
             raise HarnessValidationError(
                 "unsupported SubAgent attempt identity schema",
                 code="subagent_transcript_schema_unsupported",
@@ -395,6 +424,52 @@ class SubAgentAttemptIdentity:
                 "Graph-only SubAgent attempt requires an exact stage identity schema",
                 code="subagent_transcript_schema_unsupported",
             )
+        if self.schema_version == SUBAGENT_ATTEMPT_IDENTITY_SCHEMA_V3:
+            object.__setattr__(self, "plan_id", _required(self.plan_id, "plan_id"))
+            if (
+                isinstance(self.plan_version, bool)
+                or not isinstance(self.plan_version, int)
+                or self.plan_version <= 0
+            ):
+                raise HarnessValidationError(
+                    "plan_version must be a positive integer",
+                    code="subagent_transcript_identity_mismatch",
+                )
+            object.__setattr__(
+                self,
+                "plan_checksum",
+                _checksum(self.plan_checksum, "plan_checksum"),
+            )
+            object.__setattr__(
+                self,
+                "task_definition_checksum",
+                _checksum(self.task_definition_checksum, "task_definition_checksum"),
+            )
+            object.__setattr__(
+                self,
+                "context_envelope_id",
+                _required(self.context_envelope_id, "context_envelope_id"),
+            )
+            object.__setattr__(
+                self,
+                "context_envelope_checksum",
+                _checksum(self.context_envelope_checksum, "context_envelope_checksum"),
+            )
+        elif any(
+            getattr(self, field_name) is not None
+            for field_name in (
+                "plan_id",
+                "plan_version",
+                "plan_checksum",
+                "task_definition_checksum",
+                "context_envelope_id",
+                "context_envelope_checksum",
+            )
+        ):
+            raise HarnessValidationError(
+                "v2 SubAgent attempt identity cannot carry v3 authority fields",
+                code="subagent_transcript_identity_schema_mismatch",
+            )
 
     def to_dict(self) -> dict[str, Any]:
         payload: dict[str, Any] = {
@@ -407,7 +482,7 @@ class SubAgentAttemptIdentity:
             "attempt": self.attempt,
             "subagent_id": self.subagent_id,
         }
-        if self.is_graph_only:
+        if self.schema_version == SUBAGENT_ATTEMPT_IDENTITY_SCHEMA_V2:
             payload = {
                 "schema_version": self.schema_version,
                 "invocation_id": self.invocation_id,
@@ -429,13 +504,44 @@ class SubAgentAttemptIdentity:
                 "attempt": self.attempt,
                 "subagent_id": self.subagent_id,
             }
+        elif self.schema_version == SUBAGENT_ATTEMPT_IDENTITY_SCHEMA_V3:
+            payload = {
+                "schema_version": self.schema_version,
+                "invocation_id": self.invocation_id,
+                "parent_run_id": self.parent_run_id,
+                "child_run_id": self.child_run_id,
+                "graph_id": self.graph_id,
+                "graph_version": self.graph_version,
+                "graph_ref": self.graph_ref,
+                "graph_schema_version": self.graph_schema_version,
+                "compiler_version": self.compiler_version,
+                "condition_policy_version": self.condition_policy_version,
+                "graph_checksum": self.graph_checksum,
+                "stage_id": self.stage_id,
+                "stage_binding_checksum": self.stage_binding_checksum,
+                "stage_identity_schema": self.stage_identity_schema,
+                "stage_identity_checksum": self.stage_identity_checksum,
+                "plan_id": self.plan_id,
+                "plan_version": self.plan_version,
+                "plan_checksum": self.plan_checksum,
+                "task_id": self.task_id,
+                "task_definition_checksum": self.task_definition_checksum,
+                "context_envelope_id": self.context_envelope_id,
+                "context_envelope_checksum": self.context_envelope_checksum,
+                "task_instance_id": self.task_instance_id,
+                "attempt": self.attempt,
+                "subagent_id": self.subagent_id,
+            }
         else:
             payload["workflow_id"] = self.workflow_id
         return payload
 
     @property
     def is_graph_only(self) -> bool:
-        return self.schema_version == SUBAGENT_ATTEMPT_IDENTITY_SCHEMA_V2
+        return self.schema_version in {
+            SUBAGENT_ATTEMPT_IDENTITY_SCHEMA_V2,
+            SUBAGENT_ATTEMPT_IDENTITY_SCHEMA_V3,
+        }
 
     @property
     def identity_checksum(self) -> str:
@@ -452,11 +558,15 @@ class SubAgentAttemptIdentity:
                 "SubAgentAttemptIdentity must be an object",
                 code="subagent_transcript_invalid_payload",
             )
-        expected = (
-            _GRAPH_ATTEMPT_IDENTITY_FIELDS
-            if value.get("schema_version") is not None
-            else _LEGACY_ATTEMPT_IDENTITY_FIELDS
-        )
+        schema_version = value.get("schema_version")
+        if schema_version == SUBAGENT_ATTEMPT_IDENTITY_SCHEMA_V2:
+            expected = _GRAPH_ATTEMPT_IDENTITY_FIELDS
+        elif schema_version == SUBAGENT_ATTEMPT_IDENTITY_SCHEMA_V3:
+            expected = _GRAPH_ATTEMPT_IDENTITY_V3_FIELDS
+        elif schema_version is None:
+            expected = _LEGACY_ATTEMPT_IDENTITY_FIELDS
+        else:
+            expected = frozenset({"schema_version"})
         if set(value) != expected:
             raise HarnessValidationError(
                 "SubAgentAttemptIdentity fields are invalid",
@@ -467,7 +577,10 @@ class SubAgentAttemptIdentity:
                 },
             )
         payload = dict(value)
-        if expected is _GRAPH_ATTEMPT_IDENTITY_FIELDS:
+        if schema_version in {
+            SUBAGENT_ATTEMPT_IDENTITY_SCHEMA_V2,
+            SUBAGENT_ATTEMPT_IDENTITY_SCHEMA_V3,
+        }:
             payload["workflow_id"] = None
         return cls(**payload)
 
@@ -487,13 +600,39 @@ def _graph_identity_attribute_names() -> tuple[str, ...]:
     )
 
 
+def _graph_task_plan_identity_attribute_names() -> tuple[str, ...]:
+    return (
+        "plan_id",
+        "plan_version",
+        "plan_checksum",
+        "task_definition_checksum",
+    )
+
+
+def _context_envelope_identity_attribute_names() -> tuple[str, ...]:
+    return (
+        "context_envelope_id",
+        "context_envelope_checksum",
+    )
+
+
 def _schema_for_identity(
     identity: SubAgentAttemptIdentity,
     *,
     legacy_schema: str,
-    graph_schema: str,
+    graph_schema_v2: str,
+    graph_schema_v3: str,
 ) -> str:
-    return graph_schema if identity.is_graph_only else legacy_schema
+    if not identity.is_graph_only:
+        return legacy_schema
+    if identity.schema_version == SUBAGENT_ATTEMPT_IDENTITY_SCHEMA_V2:
+        return graph_schema_v2
+    if identity.schema_version == SUBAGENT_ATTEMPT_IDENTITY_SCHEMA_V3:
+        return graph_schema_v3
+    raise HarnessValidationError(
+        "unsupported SubAgent attempt identity schema",
+        code="subagent_transcript_schema_unsupported",
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -514,27 +653,32 @@ def subagent_evidence_schemas(
         context=_schema_for_identity(
             identity,
             legacy_schema=SUBAGENT_CONTEXT_SCHEMA_V1,
-            graph_schema=SUBAGENT_CONTEXT_SCHEMA_V2,
+            graph_schema_v2=SUBAGENT_CONTEXT_SCHEMA_V2,
+            graph_schema_v3=SUBAGENT_CONTEXT_SCHEMA_V3,
         ),
         output=_schema_for_identity(
             identity,
             legacy_schema=SUBAGENT_OUTPUT_SCHEMA_V1,
-            graph_schema=SUBAGENT_OUTPUT_SCHEMA_V2,
+            graph_schema_v2=SUBAGENT_OUTPUT_SCHEMA_V2,
+            graph_schema_v3=SUBAGENT_OUTPUT_SCHEMA_V3,
         ),
         transcript=_schema_for_identity(
             identity,
             legacy_schema=SUBAGENT_TRANSCRIPT_SCHEMA_V1,
-            graph_schema=SUBAGENT_TRANSCRIPT_SCHEMA_V2,
+            graph_schema_v2=SUBAGENT_TRANSCRIPT_SCHEMA_V2,
+            graph_schema_v3=SUBAGENT_TRANSCRIPT_SCHEMA_V3,
         ),
         receipt=_schema_for_identity(
             identity,
             legacy_schema=SUBAGENT_RECEIPT_SCHEMA_V1,
-            graph_schema=SUBAGENT_RECEIPT_SCHEMA_V2,
+            graph_schema_v2=SUBAGENT_RECEIPT_SCHEMA_V2,
+            graph_schema_v3=SUBAGENT_RECEIPT_SCHEMA_V3,
         ),
         bundle=_schema_for_identity(
             identity,
             legacy_schema=SUBAGENT_BUNDLE_SCHEMA_V1,
-            graph_schema=SUBAGENT_BUNDLE_SCHEMA_V2,
+            graph_schema_v2=SUBAGENT_BUNDLE_SCHEMA_V2,
+            graph_schema_v3=SUBAGENT_BUNDLE_SCHEMA_V3,
         ),
     )
 
@@ -549,6 +693,8 @@ def _ref_version(schema_version: str) -> str:
         return "v1"
     if schema_version.endswith("/v2"):
         return "v2"
+    if schema_version.endswith("/v3"):
+        return "v3"
     raise HarnessValidationError(
         "unsupported SubAgent evidence ref schema",
         code="subagent_transcript_schema_unsupported",
@@ -601,7 +747,8 @@ class SubAgentContextEvidence:
         expected_schema = _schema_for_identity(
             self.identity,
             legacy_schema=SUBAGENT_CONTEXT_SCHEMA_V1,
-            graph_schema=SUBAGENT_CONTEXT_SCHEMA_V2,
+            graph_schema_v2=SUBAGENT_CONTEXT_SCHEMA_V2,
+            graph_schema_v3=SUBAGENT_CONTEXT_SCHEMA_V3,
         )
         if self.schema_version != expected_schema:
             raise HarnessValidationError("unsupported subagent context schema", code="subagent_transcript_schema_unsupported")
@@ -666,7 +813,8 @@ class SubAgentOutputDocument:
         expected_schema = _schema_for_identity(
             self.identity,
             legacy_schema=SUBAGENT_OUTPUT_SCHEMA_V1,
-            graph_schema=SUBAGENT_OUTPUT_SCHEMA_V2,
+            graph_schema_v2=SUBAGENT_OUTPUT_SCHEMA_V2,
+            graph_schema_v3=SUBAGENT_OUTPUT_SCHEMA_V3,
         )
         if self.schema_version != expected_schema:
             raise HarnessValidationError("unsupported subagent output schema", code="subagent_transcript_schema_unsupported")
@@ -750,7 +898,8 @@ class SubAgentTranscript:
         expected_schema = _schema_for_identity(
             self.identity,
             legacy_schema=SUBAGENT_TRANSCRIPT_SCHEMA_V1,
-            graph_schema=SUBAGENT_TRANSCRIPT_SCHEMA_V2,
+            graph_schema_v2=SUBAGENT_TRANSCRIPT_SCHEMA_V2,
+            graph_schema_v3=SUBAGENT_TRANSCRIPT_SCHEMA_V3,
         )
         if self.schema_version != expected_schema:
             raise HarnessValidationError("unsupported subagent transcript schema", code="subagent_transcript_schema_unsupported")
@@ -953,6 +1102,7 @@ class SubAgentTranscriptReceipt:
         if self.schema_version not in {
             SUBAGENT_RECEIPT_SCHEMA_V1,
             SUBAGENT_RECEIPT_SCHEMA_V2,
+            SUBAGENT_RECEIPT_SCHEMA_V3,
         }:
             raise HarnessValidationError("unsupported subagent receipt schema", code="subagent_transcript_schema_unsupported")
         for field_name in ("transcript_ref", "context_ref", "output_ref", "storage_revision"):
@@ -963,7 +1113,10 @@ class SubAgentTranscriptReceipt:
             object.__setattr__(self, field_name, _required(getattr(self, field_name), field_name))
         object.__setattr__(self, "attempt", _positive(self.attempt, "attempt"))
         object.__setattr__(self, "committed_at", _timestamp(self.committed_at, "committed_at"))
-        if self.schema_version == SUBAGENT_RECEIPT_SCHEMA_V2:
+        if self.schema_version in {
+            SUBAGENT_RECEIPT_SCHEMA_V2,
+            SUBAGENT_RECEIPT_SCHEMA_V3,
+        }:
             object.__setattr__(
                 self,
                 "identity_checksum",
@@ -978,7 +1131,10 @@ class SubAgentTranscriptReceipt:
 
     @property
     def is_graph_only(self) -> bool:
-        return self.schema_version == SUBAGENT_RECEIPT_SCHEMA_V2
+        return self.schema_version in {
+            SUBAGENT_RECEIPT_SCHEMA_V2,
+            SUBAGENT_RECEIPT_SCHEMA_V3,
+        }
 
     def checksum_projection(self) -> dict[str, Any]:
         payload = {
@@ -1033,7 +1189,8 @@ class SubAgentTranscriptReceipt:
         )
         expected = (
             common | {"identity_checksum"}
-            if schema_version == SUBAGENT_RECEIPT_SCHEMA_V2
+            if schema_version
+            in {SUBAGENT_RECEIPT_SCHEMA_V2, SUBAGENT_RECEIPT_SCHEMA_V3}
             else common
         )
         payload = _require_exact_fields(value, frozenset(expected), cls.__name__)
@@ -1092,7 +1249,8 @@ class FakeSubAgentTranscriptStore:
         receipt_schema = _schema_for_identity(
             identity,
             legacy_schema=SUBAGENT_RECEIPT_SCHEMA_V1,
-            graph_schema=SUBAGENT_RECEIPT_SCHEMA_V2,
+            graph_schema_v2=SUBAGENT_RECEIPT_SCHEMA_V2,
+            graph_schema_v3=SUBAGENT_RECEIPT_SCHEMA_V3,
         )
         receipt = SubAgentTranscriptReceipt(
             transcript_ref=transcript.ref,
@@ -1108,7 +1266,8 @@ class FakeSubAgentTranscriptStore:
             output_ref=output.ref,
             output_checksum=output.output_checksum,
             storage_revision=(
-                f"memory:{transcript.transcript_id}:v2"
+                f"memory:{transcript.transcript_id}:"
+                f"{_ref_version(receipt_schema)}"
                 if identity.is_graph_only
                 else f"memory:{transcript.transcript_id}"
             ),
@@ -1190,17 +1349,20 @@ def _validate_bundle_identity(context: SubAgentContextEvidence, output: SubAgent
         _schema_for_identity(
             identity,
             legacy_schema=SUBAGENT_CONTEXT_SCHEMA_V1,
-            graph_schema=SUBAGENT_CONTEXT_SCHEMA_V2,
+            graph_schema_v2=SUBAGENT_CONTEXT_SCHEMA_V2,
+            graph_schema_v3=SUBAGENT_CONTEXT_SCHEMA_V3,
         ),
         _schema_for_identity(
             identity,
             legacy_schema=SUBAGENT_OUTPUT_SCHEMA_V1,
-            graph_schema=SUBAGENT_OUTPUT_SCHEMA_V2,
+            graph_schema_v2=SUBAGENT_OUTPUT_SCHEMA_V2,
+            graph_schema_v3=SUBAGENT_OUTPUT_SCHEMA_V3,
         ),
         _schema_for_identity(
             identity,
             legacy_schema=SUBAGENT_TRANSCRIPT_SCHEMA_V1,
-            graph_schema=SUBAGENT_TRANSCRIPT_SCHEMA_V2,
+            graph_schema_v2=SUBAGENT_TRANSCRIPT_SCHEMA_V2,
+            graph_schema_v3=SUBAGENT_TRANSCRIPT_SCHEMA_V3,
         ),
     )
     if (context.schema_version, output.schema_version, transcript.schema_version) != expected_schemas:
@@ -1223,7 +1385,8 @@ def _bundle_schema_for_identity(identity: SubAgentAttemptIdentity) -> str:
     return _schema_for_identity(
         identity,
         legacy_schema=SUBAGENT_BUNDLE_SCHEMA_V1,
-        graph_schema=SUBAGENT_BUNDLE_SCHEMA_V2,
+        graph_schema_v2=SUBAGENT_BUNDLE_SCHEMA_V2,
+        graph_schema_v3=SUBAGENT_BUNDLE_SCHEMA_V3,
     )
 
 
@@ -1237,7 +1400,8 @@ def _receipt_matches_bundle(
     expected_receipt_schema = _schema_for_identity(
         identity,
         legacy_schema=SUBAGENT_RECEIPT_SCHEMA_V1,
-        graph_schema=SUBAGENT_RECEIPT_SCHEMA_V2,
+        graph_schema_v2=SUBAGENT_RECEIPT_SCHEMA_V2,
+        graph_schema_v3=SUBAGENT_RECEIPT_SCHEMA_V3,
     )
     return (
         context.identity == identity
@@ -1268,21 +1432,27 @@ __all__ = [
     "DEFAULT_MAX_TRANSCRIPT_BYTES",
     "FakeSubAgentTranscriptStore",
     "SUBAGENT_ATTEMPT_IDENTITY_SCHEMA_V2",
+    "SUBAGENT_ATTEMPT_IDENTITY_SCHEMA_V3",
     "SUBAGENT_BUNDLE_SCHEMA",
     "SUBAGENT_BUNDLE_SCHEMA_V1",
     "SUBAGENT_BUNDLE_SCHEMA_V2",
+    "SUBAGENT_BUNDLE_SCHEMA_V3",
     "SUBAGENT_CONTEXT_SCHEMA",
     "SUBAGENT_CONTEXT_SCHEMA_V1",
     "SUBAGENT_CONTEXT_SCHEMA_V2",
+    "SUBAGENT_CONTEXT_SCHEMA_V3",
     "SUBAGENT_OUTPUT_SCHEMA",
     "SUBAGENT_OUTPUT_SCHEMA_V1",
     "SUBAGENT_OUTPUT_SCHEMA_V2",
+    "SUBAGENT_OUTPUT_SCHEMA_V3",
     "SUBAGENT_RECEIPT_SCHEMA",
     "SUBAGENT_RECEIPT_SCHEMA_V1",
     "SUBAGENT_RECEIPT_SCHEMA_V2",
+    "SUBAGENT_RECEIPT_SCHEMA_V3",
     "SUBAGENT_TRANSCRIPT_SCHEMA",
     "SUBAGENT_TRANSCRIPT_SCHEMA_V1",
     "SUBAGENT_TRANSCRIPT_SCHEMA_V2",
+    "SUBAGENT_TRANSCRIPT_SCHEMA_V3",
     "SubAgentAttemptIdentity",
     "SubAgentContextEvidence",
     "SubAgentEvidenceSchemas",

@@ -1,11 +1,18 @@
 from __future__ import annotations
 
+import hashlib
+import re
 from collections.abc import Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from enum import StrEnum
 from typing import Any
 
 from framework.harness.control_plane.errors import HarnessValidationError
+from framework.harness.graph.versioning import (
+    GRAPH_ONLY_NORMALIZED_HARNESS_GRAPH_SCHEMA,
+    HARNESS_CONDITION_POLICY_VERSION,
+    HARNESS_GRAPH_ONLY_COMPILER_VERSION,
+)
 from framework.shared.json import stable_json_dumps, to_jsonable
 from framework.shared.time import format_datetime, utc_now
 
@@ -64,6 +71,64 @@ CONTROL_PLANE_PRESERVED_FIELDS = frozenset(
         "source_refs",
         "artifact_refs",
         "budget",
+    }
+)
+
+CONTEXT_ENVELOPE_SCHEMA_V2 = "newsroom.context-envelope/v2"
+CONTEXT_SNAPSHOT_SCHEMA_V2 = "newsroom.context-snapshot/v2"
+CONTEXT_GRAPH_TASK_PLAN_STAGE_IDENTITY_SCHEMA_V2 = (
+    "newsroom.harness-task-plan-stage-identity/v2"
+)
+
+_CONTEXT_CHECKSUM_PATTERN = re.compile(r"^sha256:[0-9a-f]{64}$")
+_CONTEXT_EXACT_REFERENCE_PATTERN = re.compile(
+    r"(?P<identifier>[A-Za-z0-9][A-Za-z0-9._:/+-]*)@"
+    r"(?P<version>[A-Za-z0-9][A-Za-z0-9._+-]*)\Z"
+)
+_CONTEXT_MOVING_VERSION_ALIASES = frozenset(
+    {"current", "default", "latest", "stable"}
+)
+
+_GRAPH_CONTEXT_ENVELOPE_FIELDS = frozenset(
+    {
+        "schema_version",
+        "envelope_id",
+        "graph_identity",
+        "task_execution_identity",
+        "phase",
+        "worker_id",
+        "worker_type",
+        "segments",
+        "budget",
+        "cache_policy",
+        "snapshot_ref",
+        "stable_prefix",
+        "dynamic_tail",
+        "artifact_refs",
+        "memory_refs",
+        "evidence_refs",
+        "token_estimate",
+        "metadata",
+        "checksum",
+    }
+)
+
+_GRAPH_CONTEXT_SNAPSHOT_FIELDS = frozenset(
+    {
+        "schema_version",
+        "snapshot_id",
+        "envelope_id",
+        "envelope_checksum",
+        "graph_identity",
+        "task_execution_identity",
+        "phase",
+        "segment_refs",
+        "assembled_prompt_ref",
+        "refs",
+        "token_estimate",
+        "cache_key",
+        "checksum",
+        "metadata",
     }
 )
 
@@ -288,6 +353,226 @@ class ContextCachePolicy:
 
 
 @dataclass(frozen=True)
+class ContextGraphIdentity:
+    """Frozen Graph and stage identity for a Graph-only context."""
+
+    run_id: str
+    graph_id: str
+    graph_version: str
+    graph_ref: str
+    graph_schema_version: str
+    compiler_version: str
+    condition_policy_version: str
+    graph_checksum: str
+    stage_id: str
+    stage_binding_checksum: str
+    stage_identity_schema: str
+    stage_identity_checksum: str
+
+    def __post_init__(self) -> None:
+        for field_name in (
+            "run_id",
+            "graph_id",
+            "graph_version",
+            "graph_schema_version",
+            "compiler_version",
+            "condition_policy_version",
+            "stage_id",
+            "stage_identity_schema",
+        ):
+            object.__setattr__(
+                self,
+                field_name,
+                _context_required_text(getattr(self, field_name), field_name),
+            )
+        graph_ref = _context_required_text(self.graph_ref, "graph_ref")
+        reference_match = _CONTEXT_EXACT_REFERENCE_PATTERN.fullmatch(graph_ref)
+        if (
+            reference_match is None
+            or reference_match.group("version").casefold()
+            in _CONTEXT_MOVING_VERSION_ALIASES
+            or graph_ref != f"{self.graph_id}@{self.graph_version}"
+        ):
+            raise HarnessValidationError(
+                "Graph context requires an exact ref matching its Graph identity",
+                code="context_graph_identity_mismatch",
+            )
+        if self.graph_schema_version != GRAPH_ONLY_NORMALIZED_HARNESS_GRAPH_SCHEMA:
+            raise HarnessValidationError(
+                "Graph context uses an unsupported normalized Graph schema",
+                code="context_graph_identity_schema_mismatch",
+                details={"graph_schema_version": self.graph_schema_version},
+            )
+        if self.compiler_version != HARNESS_GRAPH_ONLY_COMPILER_VERSION:
+            raise HarnessValidationError(
+                "Graph context uses an unsupported compiler version",
+                code="context_graph_identity_schema_mismatch",
+                details={"compiler_version": self.compiler_version},
+            )
+        if self.condition_policy_version != HARNESS_CONDITION_POLICY_VERSION:
+            raise HarnessValidationError(
+                "Graph context uses an unsupported condition policy version",
+                code="context_graph_identity_schema_mismatch",
+                details={
+                    "condition_policy_version": self.condition_policy_version,
+                },
+            )
+        if self.stage_identity_schema != CONTEXT_GRAPH_TASK_PLAN_STAGE_IDENTITY_SCHEMA_V2:
+            raise HarnessValidationError(
+                "Graph context uses an unsupported TaskPlan stage identity schema",
+                code="context_graph_identity_schema_mismatch",
+                details={"stage_identity_schema": self.stage_identity_schema},
+            )
+        for field_name in (
+            "graph_checksum",
+            "stage_binding_checksum",
+            "stage_identity_checksum",
+        ):
+            object.__setattr__(
+                self,
+                field_name,
+                _context_checksum(getattr(self, field_name), field_name),
+            )
+        expected_stage_identity_checksum = _context_checksum_for(
+            self.stage_identity_checksum_projection()
+        )
+        if self.stage_identity_checksum != expected_stage_identity_checksum:
+            raise HarnessValidationError(
+                "Graph context stage identity checksum does not match its identity",
+                code="context_graph_identity_checksum_mismatch",
+            )
+        object.__setattr__(self, "graph_ref", graph_ref)
+
+    def stage_identity_checksum_projection(self) -> dict[str, Any]:
+        return {
+            "schema_version": self.stage_identity_schema,
+            "run_id": self.run_id,
+            "graph_schema_version": self.graph_schema_version,
+            "compiler_version": self.compiler_version,
+            "condition_policy_version": self.condition_policy_version,
+            "graph_id": self.graph_id,
+            "graph_version": self.graph_version,
+            "graph_checksum": self.graph_checksum,
+            "stage_id": self.stage_id,
+            "stage_binding_checksum": self.stage_binding_checksum,
+            "graph_ref": self.graph_ref,
+        }
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "run_id": self.run_id,
+            "graph_id": self.graph_id,
+            "graph_version": self.graph_version,
+            "graph_ref": self.graph_ref,
+            "graph_schema_version": self.graph_schema_version,
+            "compiler_version": self.compiler_version,
+            "condition_policy_version": self.condition_policy_version,
+            "graph_checksum": self.graph_checksum,
+            "stage_id": self.stage_id,
+            "stage_binding_checksum": self.stage_binding_checksum,
+            "stage_identity_schema": self.stage_identity_schema,
+            "stage_identity_checksum": self.stage_identity_checksum,
+        }
+
+    @classmethod
+    def from_dict(cls, value: Mapping[str, Any]) -> "ContextGraphIdentity":
+        payload = _context_payload(value, "ContextGraphIdentity")
+        _require_context_fields(
+            payload,
+            required=frozenset(
+                {
+                    "run_id",
+                    "graph_id",
+                    "graph_version",
+                    "graph_ref",
+                    "graph_schema_version",
+                    "compiler_version",
+                    "condition_policy_version",
+                    "graph_checksum",
+                    "stage_id",
+                    "stage_binding_checksum",
+                    "stage_identity_schema",
+                    "stage_identity_checksum",
+                }
+            ),
+            model="ContextGraphIdentity",
+        )
+        return cls(**payload)
+
+
+@dataclass(frozen=True)
+class ContextTaskExecutionIdentity:
+    """Exact TaskPlan attempt identity carried only by TaskPlan execution context."""
+
+    plan_id: str
+    plan_version: int
+    plan_checksum: str
+    task_id: str
+    task_definition_checksum: str
+    task_instance_id: str
+    attempt: int
+
+    def __post_init__(self) -> None:
+        for field_name in (
+            "plan_id",
+            "task_id",
+            "task_instance_id",
+        ):
+            object.__setattr__(
+                self,
+                field_name,
+                _context_required_text(getattr(self, field_name), field_name),
+            )
+        for field_name in (
+            "plan_checksum",
+            "task_definition_checksum",
+        ):
+            object.__setattr__(
+                self,
+                field_name,
+                _context_checksum(getattr(self, field_name), field_name),
+            )
+        for field_name in ("plan_version", "attempt"):
+            value = getattr(self, field_name)
+            if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+                raise HarnessValidationError(
+                    f"{field_name} must be a positive integer",
+                    code="context_graph_identity_mismatch",
+                )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "plan_id": self.plan_id,
+            "plan_version": self.plan_version,
+            "plan_checksum": self.plan_checksum,
+            "task_id": self.task_id,
+            "task_definition_checksum": self.task_definition_checksum,
+            "task_instance_id": self.task_instance_id,
+            "attempt": self.attempt,
+        }
+
+    @classmethod
+    def from_dict(cls, value: Mapping[str, Any]) -> "ContextTaskExecutionIdentity":
+        payload = _context_payload(value, "ContextTaskExecutionIdentity")
+        _require_context_fields(
+            payload,
+            required=frozenset(
+                {
+                    "plan_id",
+                    "plan_version",
+                    "plan_checksum",
+                    "task_id",
+                    "task_definition_checksum",
+                    "task_instance_id",
+                    "attempt",
+                }
+            ),
+            model="ContextTaskExecutionIdentity",
+        )
+        return cls(**payload)
+
+
+@dataclass(frozen=True)
 class ContextEnvelope:
     envelope_id: str
     run_id: str | None = None
@@ -307,6 +592,10 @@ class ContextEnvelope:
     evidence_refs: tuple[str, ...] = ()
     token_estimate: int = 0
     metadata: dict[str, Any] = field(default_factory=dict)
+    schema_version: str | None = None
+    graph_identity: ContextGraphIdentity | None = None
+    task_execution_identity: ContextTaskExecutionIdentity | None = None
+    checksum: str | None = None
 
     def __post_init__(self) -> None:
         if not str(self.envelope_id).strip():
@@ -329,8 +618,209 @@ class ContextEnvelope:
         object.__setattr__(self, "memory_refs", tuple(str(ref) for ref in self.memory_refs))
         object.__setattr__(self, "evidence_refs", tuple(str(ref) for ref in self.evidence_refs))
         object.__setattr__(self, "metadata", dict(self.metadata))
+        if self.schema_version is None:
+            if (
+                self.graph_identity is not None
+                or self.task_execution_identity is not None
+                or self.checksum is not None
+            ):
+                raise HarnessValidationError(
+                    "legacy ContextEnvelope cannot carry Graph-only fields",
+                    code="context_envelope_identity_schema_mismatch",
+                )
+            return
+        if self.schema_version != CONTEXT_ENVELOPE_SCHEMA_V2:
+            raise HarnessValidationError(
+                "unsupported ContextEnvelope schema",
+                code="context_envelope_schema_unsupported",
+                details={"schema_version": str(self.schema_version)},
+            )
+        if not isinstance(self.graph_identity, ContextGraphIdentity):
+            raise HarnessValidationError(
+                "Graph-only ContextEnvelope requires Graph identity",
+                code="context_envelope_identity_schema_mismatch",
+            )
+        if (
+            self.task_execution_identity is not None
+            and not isinstance(
+                self.task_execution_identity,
+                ContextTaskExecutionIdentity,
+            )
+        ):
+            raise HarnessValidationError(
+                "Graph-only ContextEnvelope task identity is invalid",
+                code="context_envelope_identity_schema_mismatch",
+            )
+        if self.workflow_id is not None:
+            raise HarnessValidationError(
+                "Graph-only ContextEnvelope cannot carry workflow_id",
+                code="context_envelope_identity_schema_mismatch",
+            )
+        if self.run_id != self.graph_identity.run_id:
+            raise HarnessValidationError(
+                "Graph context run_id does not match its identity",
+                code="context_graph_identity_mismatch",
+            )
+        if self.step_id != self.graph_identity.stage_id:
+            raise HarnessValidationError(
+                "Graph context step_id does not match its stage identity",
+                code="context_graph_identity_mismatch",
+            )
+        for field_name in ("phase", "worker_id", "worker_type"):
+            object.__setattr__(
+                self,
+                field_name,
+                _context_required_text(getattr(self, field_name), field_name),
+            )
+        if isinstance(self.token_estimate, bool) or not isinstance(self.token_estimate, int):
+            raise HarnessValidationError(
+                "Graph-only ContextEnvelope token_estimate must be an integer",
+                code="context_envelope_identity_schema_mismatch",
+            )
+        expected_checksum = _context_checksum_for(self._graph_checksum_projection())
+        if self.checksum is not None and self.checksum != expected_checksum:
+            raise HarnessValidationError(
+                "ContextEnvelope checksum does not match canonical content",
+                code="context_envelope_checksum_mismatch",
+            )
+        object.__setattr__(self, "checksum", expected_checksum)
+
+    @property
+    def is_graph_only(self) -> bool:
+        return self.schema_version == CONTEXT_ENVELOPE_SCHEMA_V2
+
+    @classmethod
+    def for_graph(
+        cls,
+        *,
+        envelope_id: str,
+        graph_identity: ContextGraphIdentity,
+        task_execution_identity: ContextTaskExecutionIdentity | None = None,
+        phase: str,
+        worker_id: str,
+        worker_type: str,
+        segments: tuple[ContextSegment, ...] = (),
+        budget: ContextBudget | None = None,
+        cache_policy: ContextCachePolicy | None = None,
+        snapshot_ref: str | None = None,
+        stable_prefix: dict[str, Any] | None = None,
+        dynamic_tail: dict[str, Any] | None = None,
+        artifact_refs: tuple[str, ...] = (),
+        memory_refs: tuple[str, ...] = (),
+        evidence_refs: tuple[str, ...] = (),
+        token_estimate: int = 0,
+        metadata: dict[str, Any] | None = None,
+    ) -> "ContextEnvelope":
+        if not isinstance(graph_identity, ContextGraphIdentity):
+            raise TypeError("graph_identity must be ContextGraphIdentity")
+        return cls(
+            envelope_id=envelope_id,
+            run_id=graph_identity.run_id,
+            workflow_id=None,
+            step_id=graph_identity.stage_id,
+            phase=phase,
+            worker_id=worker_id,
+            worker_type=worker_type,
+            segments=segments,
+            budget=budget,
+            cache_policy=cache_policy,
+            snapshot_ref=snapshot_ref,
+            stable_prefix=stable_prefix or {},
+            dynamic_tail=dynamic_tail or {},
+            artifact_refs=artifact_refs,
+            memory_refs=memory_refs,
+            evidence_refs=evidence_refs,
+            token_estimate=token_estimate,
+            metadata=metadata or {},
+            schema_version=CONTEXT_ENVELOPE_SCHEMA_V2,
+            graph_identity=graph_identity,
+            task_execution_identity=task_execution_identity,
+        )
+
+    def matches_graph_identity(self, identity: ContextGraphIdentity) -> bool:
+        return (
+            isinstance(identity, ContextGraphIdentity)
+            and self.is_graph_only
+            and self.workflow_id is None
+            and self.graph_identity == identity
+        )
+
+    def matches_task_execution_identity(
+        self,
+        identity: ContextTaskExecutionIdentity,
+    ) -> bool:
+        return (
+            isinstance(identity, ContextTaskExecutionIdentity)
+            and self.is_graph_only
+            and self.task_execution_identity == identity
+        )
+
+    def bind_cache_policy(self, policy: ContextCachePolicy) -> "ContextEnvelope":
+        if not isinstance(policy, ContextCachePolicy):
+            raise TypeError("policy must be ContextCachePolicy")
+        return replace(
+            self,
+            cache_policy=policy,
+            checksum=None if self.is_graph_only else self.checksum,
+        )
+
+    def bind_snapshot_ref(self, snapshot_ref: str) -> "ContextEnvelope":
+        reference = _context_required_text(snapshot_ref, "snapshot_ref")
+        return replace(
+            self,
+            snapshot_ref=reference,
+            checksum=None if self.is_graph_only else self.checksum,
+        )
+
+    def matches_graph_fields(self, expected: Mapping[str, Any]) -> bool:
+        if not self.is_graph_only or self.graph_identity is None:
+            return False
+        actual = self.graph_identity.to_dict()
+        if self.task_execution_identity is not None:
+            actual.update(self.task_execution_identity.to_dict())
+        aliases = {
+            "parent_run_id": "run_id",
+            "stage_id": "stage_id",
+            "task_id": "task_id",
+            "task_instance_id": "task_instance_id",
+            "attempt": "attempt",
+        }
+        return all(actual.get(aliases.get(name, name)) == value for name, value in expected.items())
+
+    def _graph_checksum_projection(self) -> dict[str, Any]:
+        if not self.is_graph_only or self.graph_identity is None:
+            raise HarnessValidationError(
+                "legacy ContextEnvelope has no Graph checksum projection",
+                code="context_envelope_identity_schema_mismatch",
+            )
+        return {
+            "schema_version": self.schema_version,
+            "envelope_id": self.envelope_id,
+            "graph_identity": self.graph_identity.to_dict(),
+            "task_execution_identity": (
+                self.task_execution_identity.to_dict()
+                if self.task_execution_identity is not None
+                else None
+            ),
+            "phase": self.phase,
+            "worker_id": self.worker_id,
+            "worker_type": self.worker_type,
+            "segments": [segment.to_dict() for segment in self.segments],
+            "budget": self.budget.to_dict() if self.budget else None,
+            "cache_policy": self.cache_policy.to_dict() if self.cache_policy else None,
+            "snapshot_ref": self.snapshot_ref,
+            "stable_prefix": to_jsonable(self.stable_prefix),
+            "dynamic_tail": to_jsonable(self.dynamic_tail),
+            "artifact_refs": list(self.artifact_refs),
+            "memory_refs": list(self.memory_refs),
+            "evidence_refs": list(self.evidence_refs),
+            "token_estimate": self.token_estimate,
+            "metadata": to_jsonable(self.metadata),
+        }
 
     def to_dict(self) -> dict[str, Any]:
+        if self.is_graph_only:
+            return {**self._graph_checksum_projection(), "checksum": self.checksum}
         return {
             "envelope_id": self.envelope_id,
             "run_id": self.run_id,
@@ -355,6 +845,12 @@ class ContextEnvelope:
     @classmethod
     def from_dict(cls, value: Mapping[str, Any]) -> "ContextEnvelope":
         payload = _context_payload(value, "ContextEnvelope")
+        if "schema_version" in payload:
+            return cls._from_graph_dict(payload)
+        return cls._from_legacy_dict(payload)
+
+    @classmethod
+    def _from_legacy_dict(cls, payload: dict[str, Any]) -> "ContextEnvelope":
         raw_segments = payload.pop("segments", ())
         if not isinstance(raw_segments, (list, tuple)):
             raise HarnessValidationError("ContextEnvelope segments must be a list")
@@ -416,6 +912,65 @@ class ContextEnvelope:
         _reject_context_fields(payload, "ContextEnvelope")
         return envelope
 
+    @classmethod
+    def _from_graph_dict(cls, payload: dict[str, Any]) -> "ContextEnvelope":
+        _require_context_fields(
+            payload,
+            required=_GRAPH_CONTEXT_ENVELOPE_FIELDS,
+            model="ContextEnvelope",
+        )
+        if payload.get("schema_version") != CONTEXT_ENVELOPE_SCHEMA_V2:
+            raise HarnessValidationError(
+                "unsupported ContextEnvelope schema",
+                code="context_envelope_schema_unsupported",
+                details={"schema_version": str(payload.get("schema_version"))},
+            )
+        raw_segments = payload["segments"]
+        if not isinstance(raw_segments, (list, tuple)):
+            raise HarnessValidationError("ContextEnvelope segments must be a list")
+        raw_budget = payload["budget"]
+        raw_cache_policy = payload["cache_policy"]
+        identity = ContextGraphIdentity.from_dict(payload["graph_identity"])
+        raw_task_identity = payload["task_execution_identity"]
+        task_identity = (
+            ContextTaskExecutionIdentity.from_dict(raw_task_identity)
+            if raw_task_identity is not None
+            else None
+        )
+        try:
+            return cls(
+                envelope_id=payload["envelope_id"],
+                run_id=identity.run_id,
+                workflow_id=None,
+                step_id=identity.stage_id,
+                phase=payload["phase"],
+                worker_id=payload["worker_id"],
+                worker_type=payload["worker_type"],
+                segments=tuple(ContextSegment.from_dict(segment) for segment in raw_segments),
+                budget=ContextBudget.from_dict(raw_budget) if raw_budget is not None else None,
+                cache_policy=(
+                    ContextCachePolicy.from_dict(raw_cache_policy)
+                    if raw_cache_policy is not None
+                    else None
+                ),
+                snapshot_ref=payload["snapshot_ref"],
+                stable_prefix=_context_mapping_value(payload["stable_prefix"], "ContextEnvelope.stable_prefix"),
+                dynamic_tail=_context_mapping_value(payload["dynamic_tail"], "ContextEnvelope.dynamic_tail"),
+                artifact_refs=_context_text_sequence(payload["artifact_refs"], "ContextEnvelope.artifact_refs"),
+                memory_refs=_context_text_sequence(payload["memory_refs"], "ContextEnvelope.memory_refs"),
+                evidence_refs=_context_text_sequence(payload["evidence_refs"], "ContextEnvelope.evidence_refs"),
+                token_estimate=payload["token_estimate"],
+                metadata=_context_mapping_value(payload["metadata"], "ContextEnvelope.metadata"),
+                schema_version=payload["schema_version"],
+                graph_identity=identity,
+                task_execution_identity=task_identity,
+                checksum=payload["checksum"],
+            )
+        except KeyError as exc:
+            raise HarnessValidationError(
+                f"ContextEnvelope field is required: {exc.args[0]}"
+            ) from exc
+
 
 @dataclass(frozen=True)
 class ContextSnapshot:
@@ -431,6 +986,10 @@ class ContextSnapshot:
     segment_refs: tuple[str, ...] = ()
     assembled_prompt_ref: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
+    schema_version: str | None = None
+    graph_identity: ContextGraphIdentity | None = None
+    task_execution_identity: ContextTaskExecutionIdentity | None = None
+    envelope_checksum: str | None = None
 
     def __post_init__(self) -> None:
         if not str(self.snapshot_id).strip():
@@ -448,8 +1007,157 @@ class ContextSnapshot:
         object.__setattr__(self, "refs", tuple(str(ref) for ref in self.refs))
         object.__setattr__(self, "segment_refs", tuple(str(ref) for ref in self.segment_refs))
         object.__setattr__(self, "metadata", dict(self.metadata))
+        if self.schema_version is None:
+            if (
+                self.graph_identity is not None
+                or self.task_execution_identity is not None
+                or self.envelope_checksum is not None
+            ):
+                raise HarnessValidationError(
+                    "legacy ContextSnapshot cannot carry Graph-only fields",
+                    code="context_snapshot_identity_schema_mismatch",
+                )
+            return
+        if self.schema_version != CONTEXT_SNAPSHOT_SCHEMA_V2:
+            raise HarnessValidationError(
+                "unsupported ContextSnapshot schema",
+                code="context_snapshot_schema_unsupported",
+                details={"schema_version": str(self.schema_version)},
+            )
+        if not isinstance(self.graph_identity, ContextGraphIdentity):
+            raise HarnessValidationError(
+                "Graph-only ContextSnapshot requires Graph identity",
+                code="context_snapshot_identity_schema_mismatch",
+            )
+        if (
+            self.task_execution_identity is not None
+            and not isinstance(
+                self.task_execution_identity,
+                ContextTaskExecutionIdentity,
+            )
+        ):
+            raise HarnessValidationError(
+                "Graph-only ContextSnapshot task identity is invalid",
+                code="context_snapshot_identity_schema_mismatch",
+            )
+        if self.run_id != self.graph_identity.run_id or self.step_id != self.graph_identity.stage_id:
+            raise HarnessValidationError(
+                "Graph context snapshot does not match its identity",
+                code="context_graph_identity_mismatch",
+            )
+        object.__setattr__(
+            self,
+            "phase",
+            _context_required_text(self.phase, "phase"),
+        )
+        if isinstance(self.token_estimate, bool) or not isinstance(self.token_estimate, int):
+            raise HarnessValidationError(
+                "Graph-only ContextSnapshot token_estimate must be an integer",
+                code="context_snapshot_identity_schema_mismatch",
+            )
+        object.__setattr__(
+            self,
+            "envelope_checksum",
+            _context_checksum(self.envelope_checksum, "envelope_checksum"),
+        )
+        expected_checksum = _context_checksum_for(self._graph_checksum_projection())
+        if self.checksum != expected_checksum:
+            raise HarnessValidationError(
+                "ContextSnapshot checksum does not match canonical content",
+                code="context_snapshot_checksum_mismatch",
+            )
+
+    @property
+    def is_graph_only(self) -> bool:
+        return self.schema_version == CONTEXT_SNAPSHOT_SCHEMA_V2
+
+    @classmethod
+    def for_graph_envelope(
+        cls,
+        *,
+        snapshot_id: str,
+        envelope: ContextEnvelope,
+        refs: tuple[str, ...],
+        segment_refs: tuple[str, ...],
+        assembled_prompt_ref: str | None,
+        cache_key: str,
+        metadata: dict[str, Any] | None = None,
+    ) -> "ContextSnapshot":
+        if not envelope.is_graph_only or envelope.graph_identity is None:
+            raise HarnessValidationError(
+                "Graph context snapshot requires a Graph-only envelope",
+                code="context_snapshot_identity_schema_mismatch",
+            )
+        if envelope.checksum is None:  # pragma: no cover - envelope invariant
+            raise AssertionError("Graph-only ContextEnvelope checksum is unavailable")
+        snapshot_metadata = metadata or {}
+        projection = {
+            "schema_version": CONTEXT_SNAPSHOT_SCHEMA_V2,
+            "snapshot_id": snapshot_id,
+            "envelope_id": envelope.envelope_id,
+            "envelope_checksum": envelope.checksum,
+            "graph_identity": envelope.graph_identity.to_dict(),
+            "task_execution_identity": (
+                envelope.task_execution_identity.to_dict()
+                if envelope.task_execution_identity is not None
+                else None
+            ),
+            "phase": envelope.phase,
+            "segment_refs": list(segment_refs),
+            "assembled_prompt_ref": assembled_prompt_ref,
+            "refs": list(refs),
+            "token_estimate": envelope.token_estimate,
+            "cache_key": cache_key,
+            "metadata": to_jsonable(snapshot_metadata),
+        }
+        return cls(
+            snapshot_id=snapshot_id,
+            envelope_id=envelope.envelope_id,
+            refs=refs,
+            token_estimate=envelope.token_estimate,
+            cache_key=cache_key,
+            checksum=_context_checksum_for(projection),
+            run_id=envelope.graph_identity.run_id,
+            step_id=envelope.graph_identity.stage_id,
+            phase=envelope.phase,
+            segment_refs=segment_refs,
+            assembled_prompt_ref=assembled_prompt_ref,
+            metadata=snapshot_metadata,
+            schema_version=CONTEXT_SNAPSHOT_SCHEMA_V2,
+            graph_identity=envelope.graph_identity,
+            task_execution_identity=envelope.task_execution_identity,
+            envelope_checksum=envelope.checksum,
+        )
+
+    def _graph_checksum_projection(self) -> dict[str, Any]:
+        if not self.is_graph_only or self.graph_identity is None:
+            raise HarnessValidationError(
+                "legacy ContextSnapshot has no Graph checksum projection",
+                code="context_snapshot_identity_schema_mismatch",
+            )
+        return {
+            "schema_version": self.schema_version,
+            "snapshot_id": self.snapshot_id,
+            "envelope_id": self.envelope_id,
+            "envelope_checksum": self.envelope_checksum,
+            "graph_identity": self.graph_identity.to_dict(),
+            "task_execution_identity": (
+                self.task_execution_identity.to_dict()
+                if self.task_execution_identity is not None
+                else None
+            ),
+            "phase": self.phase,
+            "segment_refs": list(self.segment_refs),
+            "assembled_prompt_ref": self.assembled_prompt_ref,
+            "refs": list(self.refs),
+            "token_estimate": self.token_estimate,
+            "cache_key": self.cache_key,
+            "metadata": to_jsonable(self.metadata),
+        }
 
     def to_dict(self) -> dict[str, Any]:
+        if self.is_graph_only:
+            return {**self._graph_checksum_projection(), "checksum": self.checksum}
         return {
             "snapshot_id": self.snapshot_id,
             "envelope_id": self.envelope_id,
@@ -468,6 +1176,12 @@ class ContextSnapshot:
     @classmethod
     def from_dict(cls, value: Mapping[str, Any]) -> "ContextSnapshot":
         payload = _context_payload(value, "ContextSnapshot")
+        if "schema_version" in payload:
+            return cls._from_graph_dict(payload)
+        return cls._from_legacy_dict(payload)
+
+    @classmethod
+    def _from_legacy_dict(cls, payload: dict[str, Any]) -> "ContextSnapshot":
         try:
             snapshot = cls(
                 snapshot_id=payload.pop("snapshot_id"),
@@ -498,6 +1212,53 @@ class ContextSnapshot:
             ) from exc
         _reject_context_fields(payload, "ContextSnapshot")
         return snapshot
+
+    @classmethod
+    def _from_graph_dict(cls, payload: dict[str, Any]) -> "ContextSnapshot":
+        _require_context_fields(
+            payload,
+            required=_GRAPH_CONTEXT_SNAPSHOT_FIELDS,
+            model="ContextSnapshot",
+        )
+        if payload.get("schema_version") != CONTEXT_SNAPSHOT_SCHEMA_V2:
+            raise HarnessValidationError(
+                "unsupported ContextSnapshot schema",
+                code="context_snapshot_schema_unsupported",
+                details={"schema_version": str(payload.get("schema_version"))},
+            )
+        identity = ContextGraphIdentity.from_dict(payload["graph_identity"])
+        raw_task_identity = payload["task_execution_identity"]
+        task_identity = (
+            ContextTaskExecutionIdentity.from_dict(raw_task_identity)
+            if raw_task_identity is not None
+            else None
+        )
+        try:
+            return cls(
+                snapshot_id=payload["snapshot_id"],
+                envelope_id=payload["envelope_id"],
+                refs=_context_text_sequence(payload["refs"], "ContextSnapshot.refs"),
+                token_estimate=payload["token_estimate"],
+                cache_key=payload["cache_key"],
+                checksum=payload["checksum"],
+                run_id=identity.run_id,
+                step_id=identity.stage_id,
+                phase=payload["phase"],
+                segment_refs=_context_text_sequence(
+                    payload["segment_refs"],
+                    "ContextSnapshot.segment_refs",
+                ),
+                assembled_prompt_ref=payload["assembled_prompt_ref"],
+                metadata=_context_mapping_value(payload["metadata"], "ContextSnapshot.metadata"),
+                schema_version=payload["schema_version"],
+                graph_identity=identity,
+                task_execution_identity=task_identity,
+                envelope_checksum=payload["envelope_checksum"],
+            )
+        except KeyError as exc:
+            raise HarnessValidationError(
+                f"ContextSnapshot field is required: {exc.args[0]}"
+            ) from exc
 
 
 @dataclass(frozen=True)
@@ -578,6 +1339,49 @@ def _context_payload(value: Mapping[str, Any], model: str) -> dict[str, Any]:
     return dict(value)
 
 
+def _context_required_text(value: Any, field_name: str) -> str:
+    if not isinstance(value, str) or value != value.strip() or not value:
+        raise HarnessValidationError(
+            f"{field_name} must be a non-blank trimmed string",
+            code="context_graph_identity_mismatch",
+            details={"field": field_name},
+        )
+    return value
+
+
+def _context_checksum(value: Any, field_name: str) -> str:
+    text = _context_required_text(value, field_name)
+    if _CONTEXT_CHECKSUM_PATTERN.fullmatch(text) is None:
+        raise HarnessValidationError(
+            f"{field_name} must be a canonical sha256 reference",
+            code="context_graph_identity_mismatch",
+            details={"field": field_name},
+        )
+    return text
+
+
+def _context_checksum_for(payload: Mapping[str, Any]) -> str:
+    digest = hashlib.sha256(stable_json_dumps(payload).encode()).hexdigest()
+    return f"sha256:{digest}"
+
+
+def _require_context_fields(
+    payload: Mapping[str, Any],
+    *,
+    required: frozenset[str],
+    model: str,
+) -> None:
+    actual = set(payload)
+    missing = sorted(required.difference(actual))
+    unexpected = sorted(str(name) for name in actual.difference(required))
+    if missing or unexpected:
+        raise HarnessValidationError(
+            f"{model} fields do not match its schema",
+            code="context_schema_fields_invalid",
+            details={"missing": missing, "unexpected": unexpected},
+        )
+
+
 def _reject_context_fields(payload: Mapping[str, Any], model: str) -> None:
     if payload:
         raise HarnessValidationError(
@@ -601,6 +1405,9 @@ def _context_text_sequence(value: Any, field_name: str) -> tuple[str, ...]:
 
 
 __all__ = [
+    "CONTEXT_ENVELOPE_SCHEMA_V2",
+    "CONTEXT_GRAPH_TASK_PLAN_STAGE_IDENTITY_SCHEMA_V2",
+    "CONTEXT_SNAPSHOT_SCHEMA_V2",
     "CONTEXT_SEGMENT_ORDER",
     "CONTROL_PLANE_PRESERVED_FIELDS",
     "NON_COMPRESSIBLE_SEGMENT_TYPES",
@@ -611,7 +1418,9 @@ __all__ = [
     "ContextCompressionLevel",
     "ContextCompressionSummary",
     "ContextEnvelope",
+    "ContextGraphIdentity",
     "ContextSegment",
     "ContextSegmentType",
     "ContextSnapshot",
+    "ContextTaskExecutionIdentity",
 ]

@@ -19,6 +19,7 @@ from framework.harness import (
     SubAgentRuntime,
     TaskLifecycle,
     TaskPlanResultVerificationRequest,
+    task_plan_context_identities,
 )
 from framework.harness.control_plane.graph_application import (
     HarnessGraphControlPlaneRuntime,
@@ -35,7 +36,7 @@ from framework.harness.runtime import (
     verify_subagent_materialized_bundle,
 )
 from framework.harness.graph import HarnessWorkerType
-from framework.harness.subagents.transcript import SUBAGENT_RECEIPT_SCHEMA_V2
+from framework.harness.subagents.transcript import SUBAGENT_RECEIPT_SCHEMA_V3
 from framework.shared.json import stable_json_dumps
 from tests.framework.harness.runtime.test_materializer import (
     RecordingArtifactPort,
@@ -220,10 +221,15 @@ def test_graph_only_dynamic_child_materialization_uses_versioned_identity_and_ar
         resolved.task.worker_capability,
         policy,
     )
-    context_pack = replace(
-        task_plan["context_pack"],
-        workflow_id=None,
-        step_id=plan.stage_id,
+    graph_identity, task_identity = task_plan_context_identities(plan, instance)
+    context_pack = ContextEnvelope.for_graph(
+        envelope_id="research-graph-materialization-context",
+        graph_identity=graph_identity,
+        task_execution_identity=task_identity,
+        phase="EXECUTE",
+        worker_id="research-task-plan",
+        worker_type=HarnessWorkerType.TASK_PLAN.value,
+        dynamic_tail={"input_refs": ["document"]},
     )
     invocation = task_plan["adapter"].build_invocation(
         plan=plan,
@@ -291,7 +297,7 @@ def test_graph_only_dynamic_child_materialization_uses_versioned_identity_and_ar
     assert envelope.binding.graph_version == plan.graph_ref
     assert envelope.output_schema_ref == SUBAGENT_NODE_RESULT_SCHEMA_V2
     assert envelope.output_schema_digest == (
-        "sha256:4ceda242a6b595d794baba8433db600701b296f579d1f69721357769e8a890b3"
+        "sha256:8454e1ea8ddeeb04aab1708ebea5651016190d4d7168f002052dc2032b135238"
     )
     assert envelope.provenance.producer_revision == "harness-subagent-result-adapter@2"
     assert envelope.materialized_refs[0].ref in record.output_refs
@@ -303,7 +309,7 @@ def test_graph_only_dynamic_child_materialization_uses_versioned_identity_and_ar
     )
     assert bundle.bundle_schema == SUBAGENT_MATERIALIZED_BUNDLE_SCHEMA_V2
     assert bundle.identity == invocation.attempt_identity
-    assert bundle.receipt.schema_version == SUBAGENT_RECEIPT_SCHEMA_V2
+    assert bundle.receipt.schema_version == SUBAGENT_RECEIPT_SCHEMA_V3
     assert "workflow_id" not in stable_json_dumps(stored)
 
     mixed_schema = dict(stored)

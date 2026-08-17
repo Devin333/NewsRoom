@@ -5,12 +5,16 @@ from collections.abc import Iterable
 from dataclasses import dataclass, field
 from typing import Any
 
-from framework.harness.context.models import ContextEnvelope
+from framework.harness.context.models import (
+    ContextEnvelope,
+    ContextGraphIdentity,
+    ContextTaskExecutionIdentity,
+)
 from framework.harness.control_plane.errors import HarnessValidationError
 from framework.harness.control_plane.policy import HarnessBudgetSnapshot
 from framework.harness.subagents.context import SubAgentContextBuilder
 from framework.harness.subagents.models import (
-    SUBAGENT_INVOCATION_SCHEMA_V2,
+    SUBAGENT_INVOCATION_SCHEMA_V3,
     SubAgentInvocation,
     SubAgentResult,
     SubAgentSpec,
@@ -405,6 +409,11 @@ class ResolvedSubAgentTaskAdapter:
             raise TypeError("plan must be ValidatedTaskPlan")
         if not isinstance(instance, TaskInstance):
             raise TypeError("instance must be TaskInstance")
+        if not isinstance(context_pack, ContextEnvelope):
+            raise HarnessValidationError(
+                "dynamic task context must be a ContextEnvelope",
+                code="task_plan_result_identity_mismatch",
+            )
         accepted_task = next(
             (item for item in plan.tasks if item.task_id == instance.task_id),
             None,
@@ -420,19 +429,31 @@ class ResolvedSubAgentTaskAdapter:
                 code="stale_task_capability_binding",
                 details={"task_id": resolved_task.task_id},
             )
-        if context_pack.run_id not in {None, plan.run_id}:
-            raise HarnessValidationError(
-                "dynamic task context belongs to another run",
-                code="task_plan_result_identity_mismatch",
+        if plan.is_graph_only:
+            graph_identity, task_identity = task_plan_context_identities(
+                plan,
+                instance,
             )
-        if (
-            not plan.is_graph_only
-            and context_pack.workflow_id not in {None, plan.workflow_id}
-        ):
-            raise HarnessValidationError(
-                "dynamic task context belongs to another orchestration identity",
-                code="task_plan_result_identity_mismatch",
-            )
+            if (
+                context_pack.phase != "EXECUTE"
+                or not context_pack.matches_graph_identity(graph_identity)
+                or not context_pack.matches_task_execution_identity(task_identity)
+            ):
+                raise HarnessValidationError(
+                    "Graph dynamic task context does not match its accepted attempt",
+                    code="task_plan_result_identity_mismatch",
+                )
+        else:
+            if context_pack.run_id not in {None, plan.run_id}:
+                raise HarnessValidationError(
+                    "dynamic task context belongs to another run",
+                    code="task_plan_result_identity_mismatch",
+                )
+            if context_pack.workflow_id not in {None, plan.workflow_id}:
+                raise HarnessValidationError(
+                    "dynamic task context belongs to another orchestration identity",
+                    code="task_plan_result_identity_mismatch",
+                )
         source_spec = binding.subagent_spec
         if source_spec is None:
             raise HarnessValidationError(
@@ -475,6 +496,7 @@ class ResolvedSubAgentTaskAdapter:
             invocation_id=invocation_id,
             child_run_id=child_run_id,
             subagent_id=bounded_spec.subagent_id,
+            context_pack=context_pack,
         )
         metadata = {
             "input_refs": list(resolved_task.task.input_refs),
@@ -506,9 +528,58 @@ class ResolvedSubAgentTaskAdapter:
             budget_snapshot=budget_snapshot,
             metadata=metadata,
             attempt_identity=(attempt_identity if plan.is_graph_only else None),
-            schema_version=(SUBAGENT_INVOCATION_SCHEMA_V2 if plan.is_graph_only else None),
+            schema_version=(SUBAGENT_INVOCATION_SCHEMA_V3 if plan.is_graph_only else None),
         )
         return invocation
+
+
+def task_plan_context_identities(
+    plan: ValidatedTaskPlan,
+    instance: TaskInstance,
+) -> tuple[ContextGraphIdentity, ContextTaskExecutionIdentity]:
+    """Project accepted Graph TaskPlan identity into the neutral context owner."""
+
+    if not isinstance(plan, ValidatedTaskPlan):
+        raise TypeError("plan must be ValidatedTaskPlan")
+    if not isinstance(instance, TaskInstance):
+        raise TypeError("instance must be TaskInstance")
+    task = next((item for item in plan.tasks if item.task_id == instance.task_id), None)
+    if (
+        not plan.is_graph_only
+        or not instance.is_graph_only
+        or not instance.matches_plan_identity(plan)
+        or task is None
+        or task.task_definition_checksum != instance.task_definition_checksum
+    ):
+        raise HarnessValidationError(
+            "Graph context identity requires an exact accepted TaskPlan attempt",
+            code="task_plan_result_identity_mismatch",
+        )
+    return (
+        ContextGraphIdentity(
+            run_id=plan.run_id,
+            graph_id=plan.graph_id,
+            graph_version=plan.graph_version,
+            graph_ref=plan.graph_ref,
+            graph_schema_version=plan.graph_schema_version,
+            compiler_version=plan.compiler_version,
+            condition_policy_version=plan.condition_policy_version,
+            graph_checksum=plan.graph_checksum,
+            stage_id=plan.stage_id,
+            stage_binding_checksum=plan.stage_binding_checksum,
+            stage_identity_schema=plan.stage_identity_schema,
+            stage_identity_checksum=plan.stage_identity_checksum,
+        ),
+        ContextTaskExecutionIdentity(
+            plan_id=plan.plan_id,
+            plan_version=plan.version,
+            plan_checksum=plan.plan_checksum,
+            task_id=instance.task_id,
+            task_definition_checksum=instance.task_definition_checksum,
+            task_instance_id=instance.task_instance_id,
+            attempt=instance.attempt,
+        ),
+    )
 
 
 __all__ = [
@@ -516,4 +587,5 @@ __all__ = [
     "ResolvedSubAgentTaskAdapter",
     "TaskCapabilityRegistration",
     "TaskCapabilityRegistry",
+    "task_plan_context_identities",
 ]

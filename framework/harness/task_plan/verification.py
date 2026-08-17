@@ -13,9 +13,11 @@ from threading import RLock
 from typing import Any, Protocol, runtime_checkable
 
 from framework.harness.artifacts import ArtifactReferenceVerifierPort
+from framework.harness.context.models import ContextEnvelope
 from framework.harness.control_plane.errors import HarnessValidationError
 from framework.harness.subagents.transcript import (
     SUBAGENT_ATTEMPT_IDENTITY_SCHEMA_V2,
+    SUBAGENT_ATTEMPT_IDENTITY_SCHEMA_V3,
     SubAgentAttemptIdentity,
     SubAgentOutputDocument,
     SubAgentTranscriptReceipt,
@@ -492,6 +494,7 @@ def task_plan_subagent_attempt_identity(
     invocation_id: str,
     child_run_id: str,
     subagent_id: str,
+    context_pack: ContextEnvelope | None = None,
 ) -> SubAgentAttemptIdentity:
     """Derive one SubAgent attempt identity from accepted TaskPlan authority."""
 
@@ -526,9 +529,41 @@ def task_plan_subagent_attempt_identity(
         "subagent_id": subagent_id,
     }
     if plan.is_graph_only:
+        expected_context_fields = {
+            "parent_run_id": plan.run_id,
+            "graph_id": plan.graph_id,
+            "graph_version": plan.graph_version,
+            "graph_ref": plan.graph_ref,
+            "graph_schema_version": plan.graph_schema_version,
+            "compiler_version": plan.compiler_version,
+            "condition_policy_version": plan.condition_policy_version,
+            "graph_checksum": plan.graph_checksum,
+            "stage_id": plan.stage_id,
+            "stage_binding_checksum": plan.stage_binding_checksum,
+            "stage_identity_schema": plan.stage_identity_schema,
+            "stage_identity_checksum": plan.stage_identity_checksum,
+            "plan_id": plan.plan_id,
+            "plan_version": plan.version,
+            "plan_checksum": plan.plan_checksum,
+            "task_id": instance.task_id,
+            "task_definition_checksum": definition.task_definition_checksum,
+            "task_instance_id": instance.task_instance_id,
+            "attempt": instance.attempt,
+        }
+        if (
+            not isinstance(context_pack, ContextEnvelope)
+            or not context_pack.is_graph_only
+            or context_pack.phase != "EXECUTE"
+            or not context_pack.matches_graph_fields(expected_context_fields)
+            or context_pack.checksum is None
+        ):
+            raise HarnessValidationError(
+                "Graph-only SubAgent attempt requires its exact execution context",
+                code="task_plan_result_identity_mismatch",
+            )
         common.update(
             {
-                "schema_version": SUBAGENT_ATTEMPT_IDENTITY_SCHEMA_V2,
+                "schema_version": SUBAGENT_ATTEMPT_IDENTITY_SCHEMA_V3,
                 "graph_id": plan.graph_id,
                 "graph_version": plan.graph_version,
                 "graph_ref": plan.graph_ref,
@@ -539,6 +574,12 @@ def task_plan_subagent_attempt_identity(
                 "stage_binding_checksum": plan.stage_binding_checksum,
                 "stage_identity_schema": plan.stage_identity_schema,
                 "stage_identity_checksum": plan.stage_identity_checksum,
+                "plan_id": plan.plan_id,
+                "plan_version": plan.version,
+                "plan_checksum": plan.plan_checksum,
+                "task_definition_checksum": definition.task_definition_checksum,
+                "context_envelope_id": context_pack.envelope_id,
+                "context_envelope_checksum": context_pack.checksum,
             }
         )
     return SubAgentAttemptIdentity(**common)
@@ -574,9 +615,20 @@ def _subagent_identity_matches_plan(
         "stage_identity_schema",
         "stage_identity_checksum",
     )
-    return identity.workflow_id is None and all(
+    if identity.workflow_id is not None or not all(
         getattr(identity, field_name) == getattr(plan, field_name)
         for field_name in graph_fields
+    ):
+        return False
+    if identity.schema_version == SUBAGENT_ATTEMPT_IDENTITY_SCHEMA_V2:
+        return True
+    if identity.schema_version != SUBAGENT_ATTEMPT_IDENTITY_SCHEMA_V3:
+        return False
+    return (
+        identity.plan_id == plan.plan_id
+        and identity.plan_version == plan.version
+        and identity.plan_checksum == plan.plan_checksum
+        and identity.task_definition_checksum == task.task_definition_checksum
     )
 
 

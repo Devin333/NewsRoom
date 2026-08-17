@@ -3,6 +3,7 @@ from framework.harness.task_plan.capability import (
     ResolvedSubAgentTaskAdapter,
     TaskCapabilityRegistration,
     TaskCapabilityRegistry,
+    task_plan_context_identities,
 )
 from framework.harness.task_plan.canonical import (
     canonical_json,
@@ -193,6 +194,7 @@ __all__ = [
     "TaskBudget",
     "TaskCapabilityRegistration",
     "TaskCapabilityRegistry",
+    "task_plan_context_identities",
     "TaskInstance",
     "TaskLifecycle",
     "TaskOutputContract",
