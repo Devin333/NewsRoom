@@ -30,6 +30,8 @@ from framework.harness.task_plan import (
     DurableTaskPlanStore,
     TASK_PLAN_EVENT_SCHEMA_V1,
     TASK_PLAN_EVENT_SCHEMA_V2,
+    TASK_PLAN_RESULT_SCHEMA_V1,
+    TASK_PLAN_RESULT_SCHEMA_V2,
     PlanBuildBudget,
     PlanCandidate,
     PlanPatch,
@@ -529,6 +531,55 @@ def test_legacy_task_plan_event_v1_wire_and_checksum_remain_stable():
     assert TaskPlanEvent.from_dict(event.to_dict()) == event
 
 
+def test_legacy_task_result_v1_and_v2_wire_checksums_remain_stable():
+    common = {
+        "run_id": "run-1",
+        "workflow_id": "workflow-1",
+        "stage_id": "stage-1",
+        "plan_id": "plan-1",
+        "plan_version": 1,
+        "task_id": "task-1",
+        "task_instance_id": "task-1-attempt-1",
+        "attempt": 1,
+        "worker_ref": "worker@1",
+        "task_checksum": "sha256:" + "1" * 64,
+        "binding_checksum": "sha256:" + "2" * 64,
+        "status": TaskLifecycle.SUCCEEDED,
+        "result_ref": "result://task-1",
+        "output_refs": ("artifact://task-1",),
+        "output_roles": ("analysis.structure",),
+        "output_schema_ref": "schema://analysis.structure@1",
+        "usage": {"turns": 1},
+        "verified_gate_refs": ("SummaryGate@1",),
+        "gate_evidence_refs": ("evidence://summary",),
+    }
+    legacy = TaskResultRecord(
+        **common,
+        schema_version=TASK_PLAN_RESULT_SCHEMA_V1,
+    )
+    current = TaskResultRecord(
+        **common,
+        transcript_ref="transcript://task-1",
+        transcript_checksum="sha256:" + "3" * 64,
+        subagent_output_ref="result://task-1",
+        subagent_output_checksum="sha256:" + "4" * 64,
+        schema_version=TASK_PLAN_RESULT_SCHEMA_V2,
+    )
+
+    assert legacy.result_checksum == (
+        "sha256:22f425ce8940654b1851d244802444427e884b698321d5341c8e328855fc89bc"
+    )
+    assert current.result_checksum == (
+        "sha256:14cd4a750e5f9cc97a40fc4116c1611630721c4632b0e028fb192668aaa3978f"
+    )
+    assert "schema_version" not in legacy.to_dict()
+    assert "transcript_ref" not in legacy.to_dict()
+    assert current.to_dict()["schema_version"] == TASK_PLAN_RESULT_SCHEMA_V2
+    assert current.to_dict()["transcript_ref"] == "transcript://task-1"
+    assert TaskResultRecord.from_dict(legacy.to_dict()) == legacy
+    assert TaskResultRecord.from_dict(current.to_dict()) == current
+
+
 def test_graph_only_candidate_and_plan_round_trip_through_durable_event_store():
     artifacts = _ArtifactStore()
     event_store = _EventStore()
@@ -576,6 +627,41 @@ def test_graph_only_candidate_and_plan_round_trip_through_durable_event_store():
     with pytest.raises(HarnessValidationError) as mismatch:
         reopened.read_events(plan.run_id, plan.stage_id)
     assert mismatch.value.code == "task_plan_event_identity_mismatch"
+
+
+def test_durable_store_rejects_graph_only_result_without_side_effects():
+    artifacts = _ArtifactStore()
+    event_store = _EventStore()
+    store = _store(event_store, artifacts)
+    candidate, plan = _graph_only_candidate_and_plan()
+    store.append_candidate(candidate)
+    store.accept_plan(plan)
+    definition = plan.tasks[0]
+    result = TaskResultRecord.for_plan(
+        plan,
+        task_id=definition.task_id,
+        task_instance_id=f"{definition.task_id}-attempt-1",
+        attempt=1,
+        status=TaskLifecycle.SUCCEEDED,
+        result_ref=f"result://{definition.task_id}",
+        output_roles=(definition.output_role,),
+        output_schema_ref=definition.task.output_contract.schema_ref,
+    )
+    before_events = tuple(event_store._events)
+    before_artifacts = dict(artifacts._content)
+
+    with pytest.raises(HarnessValidationError) as error:
+        store.append_result(result)
+
+    assert error.value.code == "graph_task_plan_result_runtime_unavailable"
+    assert tuple(event_store._events) == before_events
+    assert artifacts._content == before_artifacts
+    assert store.results_for(
+        plan.run_id,
+        plan.stage_id,
+        plan.plan_id,
+        plan.version,
+    ) == ()
 
 
 def test_rejected_candidate_batch_is_atomic_when_second_event_fails():

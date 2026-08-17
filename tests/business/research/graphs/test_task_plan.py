@@ -39,6 +39,7 @@ from framework.harness.task_plan import (
     TaskPlanProjection,
     TaskPlanStageRequest,
     TASK_PLAN_EVENT_SCHEMA_V2,
+    TASK_PLAN_RESULT_SCHEMA_V3,
     TaskPlanEvent,
     TaskResultRecord,
     TaskPlanStageBinding,
@@ -302,6 +303,120 @@ def test_graph_only_candidate_validates_to_graph_only_plan() -> None:
     )
     assert all("workflow_id" not in event.to_dict() for event in events)
     assert all(TaskPlanEvent.from_dict(event.to_dict()) == event for event in events)
+
+
+def test_graph_only_task_result_contract_is_strict_and_runtime_fail_closed() -> None:
+    policy = build_research_analysis_task_plan_policy()
+    request = _plan_build_request(policy)
+    candidate = ResearchAnalysisPlanCandidateBuilder(
+        _OutlineWorker(_valid_outline())
+    ).build_candidate(request)
+    context = TaskPlanValidationContext(
+        run_id=request.run_id,
+        stage_binding=request.stage_binding,
+        available_input_refs=tuple(request.context_refs.values()),
+        registered_gate_refs=policy.allowed_gate_refs,
+    )
+    plan = TaskPlanValidator().accept(
+        candidate,
+        policy,
+        build_research_analysis_capability_registry(_worker_bindings()),
+        context=context,
+        accepted_at="2026-08-17T00:00:00Z",
+    )
+    definition = plan.tasks[0]
+    result_ref = f"result://{definition.task_id}"
+    result = TaskResultRecord.for_plan(
+        plan,
+        task_id=definition.task_id,
+        task_instance_id=f"{definition.task_id}-attempt-1",
+        attempt=1,
+        status=TaskLifecycle.SUCCEEDED,
+        result_ref=result_ref,
+        output_refs=(f"artifact://{definition.task_id}",),
+        output_roles=(definition.output_role,),
+        output_schema_ref=definition.task.output_contract.schema_ref,
+        usage={"turns": 1},
+        transcript_ref=f"transcript://{definition.task_id}",
+        transcript_checksum="sha256:" + "1" * 64,
+        subagent_output_ref=result_ref,
+        subagent_output_checksum="sha256:" + "2" * 64,
+    )
+    payload = result.to_dict()
+
+    assert result.schema_version == TASK_PLAN_RESULT_SCHEMA_V3
+    assert result.matches_plan_identity(plan)
+    assert result.worker_ref == definition.worker_ref
+    assert result.task_checksum == definition.task_definition_checksum
+    assert result.binding_checksum == definition.binding_checksum
+    assert result.graph_checksum == plan.graph_checksum
+    assert not {"workflow_id", "workflow_ref"}.intersection(payload)
+    assert TaskResultRecord.from_dict(payload) == result
+
+    with pytest.raises(HarnessValidationError) as alias_error:
+        TaskResultRecord.from_dict(
+            {**payload, "workflow_id": request.stage_identity.graph_id}
+        )
+    assert alias_error.value.code == "invalid_task_plan_payload_fields"
+
+    with pytest.raises(HarnessValidationError) as identity_error:
+        TaskResultRecord.from_dict(
+            {
+                **payload,
+                "stage_identity_checksum": "sha256:" + "0" * 64,
+            }
+        )
+    assert identity_error.value.code == "task_plan_stage_identity_checksum_invalid"
+
+    with pytest.raises(HarnessValidationError) as checksum_error:
+        TaskResultRecord.from_dict(
+            {**payload, "result_checksum": "sha256:" + "0" * 64}
+        )
+    assert checksum_error.value.code == "task_plan_checksum_mismatch"
+
+    with pytest.raises(HarnessValidationError) as unknown_task_error:
+        TaskResultRecord.for_plan(
+            plan,
+            task_id="outside-plan",
+            task_instance_id="outside-plan-attempt-1",
+            attempt=1,
+            status=TaskLifecycle.FAILED,
+            error_code="worker_failed",
+        )
+    assert unknown_task_error.value.code == "task_plan_unknown_task"
+
+    other_request = _plan_build_request(policy, graph_version="2")
+    other_candidate = ResearchAnalysisPlanCandidateBuilder(
+        _OutlineWorker(_valid_outline())
+    ).build_candidate(other_request)
+    other_plan = TaskPlanValidator().accept(
+        other_candidate,
+        policy,
+        build_research_analysis_capability_registry(_worker_bindings()),
+        context=TaskPlanValidationContext(
+            run_id=other_request.run_id,
+            stage_binding=other_request.stage_binding,
+            available_input_refs=tuple(other_request.context_refs.values()),
+            registered_gate_refs=policy.allowed_gate_refs,
+        ),
+        accepted_at="2026-08-17T00:00:00Z",
+    )
+    assert not result.matches_plan_identity(other_plan)
+
+    store = InMemoryTaskPlanStore()
+    store.append_candidate(candidate)
+    store.accept_plan(plan)
+    before_events = store.read_events(plan.run_id, plan.stage_id)
+    with pytest.raises(HarnessValidationError) as runtime_error:
+        store.append_result(result)
+    assert runtime_error.value.code == "graph_task_plan_result_runtime_unavailable"
+    assert store.read_events(plan.run_id, plan.stage_id) == before_events
+    assert store.results_for(
+        plan.run_id,
+        plan.stage_id,
+        plan.plan_id,
+        plan.version,
+    ) == ()
 
 
 def test_graph_only_candidate_and_plan_readers_fail_closed() -> None:

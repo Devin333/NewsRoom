@@ -545,6 +545,11 @@ class DurableTaskPlanStore:
     def append_result(self, result: TaskResultRecord) -> str:
         if not isinstance(result, TaskResultRecord):
             raise TypeError("result must be TaskResultRecord")
+        if result.is_graph_only:
+            raise HarnessValidationError(
+                "Graph-only TaskPlan result runtime is not available",
+                code="graph_task_plan_result_runtime_unavailable",
+            )
         events = self.read_events(result.run_id, result.stage_id)
         existing_events = [
             event
