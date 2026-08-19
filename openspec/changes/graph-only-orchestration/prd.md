@@ -2074,3 +2074,73 @@ commit `16e0542ebecff5e437ee16843bad8ac891c2a409`（tree `49de2a30c5af64129fffb8
 4. 最后删除 compatibility handler、legacy public surface、Workflow runtime/package、旧 schema writer/reader、active migrator 和 only-legacy tests，运行 zero-reference scan。
 
 任何一项仍以 `step_id` 作为 durable authority、仍使用 `__terminal__` synthetic identity、或仍能从 active composition 到达 legacy writer/reader 时，本 change 都不能声明 Graph-only 完成。完成前必须通过 `python -m scripts.dev compile`、`python -m scripts.dev smoke`、`openspec validate graph-only-orchestration --strict`、`openspec validate --all --strict`，并保留同一 node definition 多实例的并行/重试/恢复证据。
+
+## 51. Framework 目录级替换矩阵（2026-08-20）
+
+本节把“全部替换 Graph”落实到 `framework/` 的目录和 live contract。它是实现范围，不是建议清单。每个目录必须选择一个明确 owner；任何未列入 `history-only` 的旧 identity 都不能继续成为生产 writer、reader、store key、恢复槽位或决策输入。
+
+### 51.1 统一运行事实身份
+
+所有 Graph-bound 的运行记录（包括 side effect、approval、message、artifact、worker task/result、attempt、budget、event、trace、tool、LLM、memory、skill、SubAgent、TaskPlan 和 scoring trace）必须能由同一组字段闭合校验：
+
+```text
+graph_id
+graph_version
+graph_ref
+graph_checksum
+run_id
+node_id
+node_instance_id
+activity_id
+attempt
+```
+
+其中 `node_id`、`activity_id` 是定义/绑定与活动标识，`node_instance_id` 和 `attempt` 是运行事实；`stage_id`、`step_id` 只能作为 Graph definition、TaskPlan binding 或诊断标签。Terminal-level record 不需要伪造 node；它必须使用 `run_id + graph_ref/checksum + terminal_action`。完全独立于 Graph 的 conversation、RAG 或工具调用必须显式声明 `standalone_scope`，不得以 nullable `step_id` 隐式兼容 Graph。
+
+### 51.2 Framework live surface 矩阵
+
+| 目录/owner | 当前残留或风险 | 本次直接替换 | 明确保留/禁止 |
+|---|---|---|---|
+| `framework/harness/graph/**` | Graph definition、compiler、versioning、binding 和 preflight 已分散完成，但 live admission 仍需统一到 v2 | 作为唯一 Graph declaration/compiler/version owner；strict reader、unknown-version、checksum 和 exact binding fail closed | 保留 Graph DSL 的 `step_id` 定义标签；禁止 Workflow alias、metadata inference 和第二个 identity owner |
+| `framework/harness/control_plane/**` | side-effect 仍按 step；durable event 有 compatibility projection；replay command 有 step fallback；部分 execution contract 反向导入 runtime | 只保留 Graph decision/state/evaluator/scheduler/VERIFY、durable event append 和 application-facing projection；slot、target、recovery 全部按 node instance | 保留 Harness control authority；禁止 flat compatibility state、`__terminal__`、caller route/state patch 和 runtime-owned contract import |
+| `framework/harness/runtime/**` | physical executor、result/output contract 与 control plane 边界尚未完全闭合；flat checkpoint/durable state/replay 已无 live caller但仍需删除证明 | 将 input/task-context/node-output/result/cancellation/reconciliation contract 放到 Graph/shared owner；runtime 只执行 worker、lease 和结果提交 | 保留 Graph physical executor、result materializer、node-output resource；删除无 caller 的 flat checkpoint/replay facade |
+| `framework/harness/side_effects/**`、`framework/tool/governance/**` | approval、intent、decision、outcome 和 Tool approval 仍携带 `step_id`；terminal 使用 synthetic step | 发布 v2 major side-effect contract，统一 Graph/node/activity/attempt identity；active store 只接受 v2，旧 v1 仅 history/quarantine | 保留 Harness authorization、attempt fencing、Artifact terminal handler；禁止 caller 自报 approval、step-only idempotency 和双写 |
+| `framework/harness/task_plan/**` | v2 stage/candidate/result 已分批存在，queue/checkpoint/recovery/projection/transcript 仍可能落回旧身份 | PLAN/EXECUTE/VERIFY 全链路绑定同一 frozen Graph stage checksum；event/result/queue/checkpoint/replay 同 schema major，缺 schema 直接拒绝 | 保留 Graph 内 bounded dynamic stage；禁止 TaskPlan 修改 outer Graph、从 registry/default 推断 worker 或用 `stage_id` 充当实例键 |
+| `framework/harness/subagents/**` | invocation/transcript 仍保存 definition-level step，attempt identity 缺 parent node instance | SubAgent context、attempt、transcript、receipt、replay 全部带 parent Graph node instance 与 child activity/attempt | 保留 candidate-only worker；禁止 SubAgent 决定 route、gate、memory、approval 或 publication |
+| `framework/harness/agent_loop/**`、`framework/agent/loop/**`、`framework/agent/messages/**` | cursor/checkpoint 已 v2，但 `AgentMessageRecord` 仍写 nullable `step_id`；runner 仍把 step 传给 message/event | AgentLoop activity 输入和 message record 使用 Graph identity；standalone conversation 走显式独立 scope；删除 active step column/query/index | 保留 AgentLoop inner loop、judge、diagnostics 和 LLM artifact；禁止 AgentLoop 自行 resume、REGISTER_WAIT 或发布 manifest |
+| `framework/harness/artifacts/**`、`framework/agent/artifacts/**` | generic filesystem path 仍可回退 `steps/{step_id}`；部分 generic `ArtifactRef` 允许空 Graph lineage | Graph artifact write 强制 graph/node/activity/attempt lineage；路径、dedupe、read/delete/GC 使用 node instance；`list_by_step` 降为诊断或删除 | Artifact manifest/body store/catalog/integrity/governance/GC/inspection/publication 是唯一保留 owner；禁止删除 Artifact subsystem 或把 publication 交给 worker |
+| `framework/events/**` | envelope 已有 Graph projection，但 `TraceContext` 字段可空，security allowlist 仍有 Workflow/step ingress，durable event compatibility list 仍在 | active event/trace/carrier/catalog/reader 统一 Graph major；删除 current Workflow registration 和 active compatibility projection；旧输入只生成 quarantine | 保留 bounded diagnostic fallback、history replay reader 和 legacy export，但不可从 production composition 到达或产生 side effect |
+| `framework/tool/**` | tool spill/approval 只有 run/step identity；batch executor 可不带 node/activity；metrics 缺 node/attempt | Tool request、approval、spill artifact、batch item、ToolEvent 全部注入 exact Graph activity identity，统一走 Harness materialization/authorization | 保留 deterministic tool policy/allowlist；禁止 Tool 自授权、直接写 Artifact、或以 `run_id` 作为唯一执行键 |
+| `framework/workers/**`、`framework/shared/attempts.py` | task/result 的 Graph identity 可空；adapter 会从 step 猜 worker；queue lease 保留 legacy 双协议；attempt event 无 Graph 字段 | Graph admission/queue 强制 non-null identity；worker ref 从 frozen binding 解析；删除 `_legacy_lease_args` live 协议；attempt/event checksum 绑定 Graph/node/activity | 保留普通 worker port、lease/fencing 和 history decoder；旧 decode 只能 history/quarantine，不能 dispatch |
+| `framework/governance/**`、`framework/llm/budget/**` | Budget scope 只有 run/scope；global tracker 有 `legacy-global-budget` 和旧 snapshot restore | reservation/settlement 绑定 Graph/node/stage identity；Graph live 禁止 legacy budget facade/snapshot restore | 保留 deterministic budget policy/ledger；历史快照仅离线诊断，不可恢复 live budget authority |
+| `framework/memory/**`、`framework/skills/**` | agent memory adapter 以 agent/run 过滤；skill runner 有 UUID context fallback；旧 refs 仍可输出 | live memory 使用 `GraphMemoryAdapter` exact identity；Skill 必须由 `SkillRunContext.for_graph()` 注入；缺 Graph context fail closed | 保留 recall/candidate 和 Harness terminal promotion；禁止 business/LLM 直接写 active memory、skill package 或 promotion |
+| `framework/rag/**`、`framework/harness/rag/**`、`framework/harness/context/**` | session/artifact metadata 仍可能用 step/rag_step；planner 缺 candidate 时存在隐式 fallback | RAG session、context pack、cache/materializer、retrieval evidence 绑定 run/node/checkpoint；planner 只产 candidate，由 Harness 显式 replan | 保留独立 RAG capability 和 provider capability fallback；禁止 orchestration fallback、worker routing 或跨 actor 复用 context |
+| `framework/llm/structured_output/**` | validation/repair observability 只有 nullable run/attempt；provider 降级容易被误认为 orchestration fallback | structured-output request/event/repair metric 绑定 Graph activity/attempt；quality/acceptance 仍由 Harness deterministic gate 决定 | 保留 provider JSON/conservative output fallback 作为能力层行为；禁止其改变 Graph route/gate/publication |
+| `framework/scoring/**` | scoring trace 以 `step_id` 生成，recipe step 是定义级但 execution trace 无 Graph instance | recipe 保留 definition step；execution trace 增加 Graph/node/activity/attempt，并由 Harness gate 驱动 | 保留 scoring domain capability；禁止 scoring 自己决定 Graph completion、retry 或 publication |
+| `framework/specs/**`、`framework/workflow/**`、`framework/harness/workflow/**` | Python source 已删除，但 ignored bytecode、历史 fixture、freeze allowlist 和旧文档仍可造成误恢复 | 完成 tracked source、import、export、registry、reflection、schema、test 和 docs zero-reference proof；history tooling 独立于 production import | 仅保留明确标记的 history fixture、quarantine report、Git/OpenSpec provenance；禁止恢复 package、shim 或 compatibility alias |
+
+### 51.3 框架层禁止的“伪替换”
+
+以下做法即使测试暂时通过，也不满足本 PRD：
+
+1. 只把 `step_id` 字段改名为 `node_id`，但仍以 definition key 作为 store key、slot、approval match 或 latest-result map key；
+2. 在 Graph writer/reader 外包一层 `Workflow` facade，或同时保留 v1/v2 live reader、dual writer、feature flag、alternate executor；
+3. 把 `Artifact`、Tool spill、memory write、SubAgent transcript 或 AgentLoop message 迁到普通 worker，使 worker 获得 publication/approval/memory authority；
+4. 把 provider capability fallback、context compaction 或 history diagnostic fallback 当作 orchestration fallback，或反过来用它们掩盖 Graph admission 缺失；
+5. 只迁移内存模型而不迁移 local JSON、PostgreSQL schema、index、path、redaction、read-back 和 replay reader；
+6. 让 history-only reader 生成可被 live resume/replay/worker/memory/publication 接受的 Graph record。
+
+### 51.4 框架层验收与扫描
+
+本节对应的最小验收集合如下：
+
+| 检查 | 必须证明 |
+|---|---|
+| `rg`/AST production scan | active `framework`、`business`、`infrastructure`、`interfaces`、`scripts` 中没有 Workflow import、旧 writer/reader、step-only authority 或隐式 fallback；命中的 `step_id` 必须属于 DSL/diagnostic/history allowlist |
+| identity adversarial tests | 同一 definition 的 loop/retry/parallel node instances 不覆盖；跨 Graph/ref/checksum、activity、attempt、tenant/scope 篡改均 fail closed |
+| storage round-trip tests | local JSON、PostgreSQL、Artifact path/index、conversation redaction、event projection、TaskPlan queue/checkpoint/replay 只按 Graph identity 读写 |
+| boundary tests | interface -> application service -> Harness；control plane 不反向拥有 physical executor；worker/Tool/AgentLoop/SubAgent 不直接触发 route/gate/memory/publication |
+| zero-side-effect tests | history/quarantine/replay 不调用 LLM、Tool、worker、retrieval、memory write 或 Artifact publication |
+| required commands | `python -m scripts.dev compile`、`python -m scripts.dev smoke`、`openspec validate graph-only-orchestration --strict`、`openspec validate --all --strict` 全部通过 |
+
+在上述矩阵的 P0/P1 项仍未闭合前，不能勾选最终 production writer/reader、public major cutover 或 legacy deletion；但这不是外部环境 blocker，而是本仓库必须直接完成的实现工作。
