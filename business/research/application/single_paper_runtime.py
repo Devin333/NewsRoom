@@ -8,12 +8,19 @@ from typing import Any, Callable
 
 from framework.agent.artifacts.paths import validate_artifact_path_segment
 from framework.events.canonical import checksum_for
+from framework.events.application import (
+    GraphEventProjectionApplicationPort,
+    GraphEventProjectionApplicationRequest,
+    GraphEventProjectionApplicationStatus,
+)
+from framework.shared.graph_identity import GraphExecutionIdentity, GraphRunIdentity
 from framework.harness import (
     ArtifactPort,
     ArtifactWriteRequest,
     ContextAssembler,
     ContextBudget,
     ContextEnvelope,
+    ContextGraphIdentity,
     ContextSnapshot,
     HarnessBudget,
     HarnessControlPlane,
@@ -22,7 +29,6 @@ from framework.harness import (
     HarnessGraphPreflight,
     HarnessGraphPreflightPolicy,
     HarnessGraphResultCommitterPort,
-    HarnessGraphResultObserverPort,
     HarnessTransitionPort,
     HarnessRunSpec,
     HarnessRunStatus,
@@ -47,6 +53,19 @@ from framework.harness import (
     SkillExperienceOutcome,
     transcript_entry_from_event,
 )
+from framework.harness.graph import GraphExecutionVersionManifest, HarnessGraphCompiler
+from framework.harness.control_plane.node_output import (
+    HarnessNodeOutputResourcePort,
+)
+from framework.harness.control_plane.activity_execution import (
+    HARNESS_GRAPH_ACTIVITY_TASK_CONTEXT_KEY,
+    HarnessGraphActivityTaskContext,
+)
+from framework.harness.runtime.activity_executor import HarnessGraphPhysicalActivityExecutor
+from framework.harness.runtime.graph_dispatcher import (
+    HarnessGraphPhysicalActivityDispatcher,
+)
+from framework.shared.attempts import AttemptSupervisor
 from framework.harness.artifacts import (
     GraphTerminalManifestCommitRequest,
     GraphTerminalManifestContext,
@@ -87,10 +106,12 @@ from business.research.services import (
     ResearchRAGPolicyBuilder,
 )
 from business.research.taxonomy import TaxonomyAssignment, TaxonomyAssignmentBuilder, TaxonomyCandidate, TaxonomyRegistry
-from business.research.graphs import build_paper_analysis_gate_registry
-from business.research.workflows.paper_analysis_workflow import (
-    build_dynamic_paper_analysis_workflow_spec,
-    build_paper_analysis_workflow_spec,
+from business.research.graphs import (
+    build_dynamic_paper_analysis_graph_definition,
+    build_paper_analysis_context_graph_identity,
+    build_paper_analysis_gate_registry,
+    build_paper_analysis_graph_definition,
+    build_paper_analysis_runtime_binding_authority,
 )
 from business.research.ports.artifact_publication import (
     RESEARCH_ARTIFACT_EFFECT_KIND,
@@ -138,10 +159,10 @@ def build_research_harness_run_spec(
     identity_scope_ref = research_identity_scope_ref(actor_metadata)
     return HarnessRunSpec(
         run_id=request.run_id,
-        workflow=(
-            build_dynamic_paper_analysis_workflow_spec()
+        graph=(
+            build_dynamic_paper_analysis_graph_definition()
             if _dynamic_task_plan_requested(request.options)
-            else build_paper_analysis_workflow_spec()
+            else build_paper_analysis_graph_definition()
         ),
         inputs={
             "paper_id": request.paper_id,
@@ -162,9 +183,74 @@ def build_research_harness_run_spec(
     )
 
 
+def _research_graph_identity_for_request(
+    request: AnalyzePaperRequest,
+) -> tuple[str, str]:
+    """Resolve the immutable Research Graph identity for result projection."""
+
+    definition = (
+        build_dynamic_paper_analysis_graph_definition()
+        if _dynamic_task_plan_requested(request.options)
+        else build_paper_analysis_graph_definition()
+    )
+    return definition.graph_id, definition.graph_version
+
+
+def _context_graph_identity_for_request(
+    request: AnalyzePaperRequest,
+    *,
+    stage_id: str,
+) -> ContextGraphIdentity:
+    """Build the exact Graph identity required by the context owner."""
+
+    return build_paper_analysis_context_graph_identity(
+        run_id=request.run_id,
+        stage_id=stage_id,
+        dynamic_task_plan=_dynamic_task_plan_requested(request.options),
+    )
+
+
+def _context_graph_identity_for_activity(
+    task: Mapping[str, Any],
+    request: AnalyzePaperRequest,
+    *,
+    stage_id: str,
+) -> ContextGraphIdentity:
+    """Derive RAG context identity from the Harness-owned activity envelope."""
+
+    raw_context = task.get(HARNESS_GRAPH_ACTIVITY_TASK_CONTEXT_KEY)
+    if not isinstance(raw_context, Mapping):
+        raise HarnessValidationError(
+            "Graph-bound Research RAG requires Harness activity context",
+            code="research_rag_activity_context_missing",
+        )
+    activity_context = HarnessGraphActivityTaskContext.from_dict(raw_context)
+    activity = activity_context.activity
+    expected = _context_graph_identity_for_request(request, stage_id=stage_id)
+    if (
+        activity.run_id != request.run_id
+        or activity.graph_ref.graph_id != expected.graph_id
+        or activity.graph_ref.identity_version != expected.graph_version
+        or activity.graph_ref.checksum != expected.graph_checksum
+        or activity.node_id != stage_id
+    ):
+        raise HarnessValidationError(
+            "Research RAG activity identity conflicts with the admitted Graph",
+            code="research_rag_activity_identity_mismatch",
+        )
+    return expected.with_physical_activity(
+        node_id=activity.node_id,
+        node_instance_id=activity.node_instance_id,
+        activity_id=activity.activity_id,
+        activity_attempt=activity.attempt,
+    )
+
+
 @dataclass(frozen=True)
 class ResearchAnalysisResult:
     run_id: str
+    graph_id: str
+    graph_version: str
     status: str
     analysis: ResearchAnalysis | None
     quality: ResearchQualityResult
@@ -197,6 +283,8 @@ class ResearchAnalysisResult:
     def to_dict(self) -> dict[str, Any]:
         return {
             "run_id": self.run_id,
+            "graph_id": self.graph_id,
+            "graph_version": self.graph_version,
             "status": self.status,
             "analysis": self.analysis.to_dict() if self.analysis else None,
             "quality": self.quality.to_dict(),
@@ -263,8 +351,11 @@ class ResearchAnalysisResult:
                 )
             ],
         )
+        graph_id, graph_version = _research_graph_identity_for_request(request)
         return cls(
             run_id=request.run_id,
+            graph_id=graph_id,
+            graph_version=graph_version,
             status=HarnessRunStatus.FAILED.value,
             analysis=None,
             quality=quality,
@@ -308,6 +399,10 @@ class ResearchAnalysisResult:
                 payload.pop("run_id"),
                 field="run_id",
             )
+            graph_id = str(payload.pop("graph_id"))
+            graph_version = str(payload.pop("graph_version"))
+            if not graph_id.strip() or not graph_version.strip():
+                raise ValueError("ResearchAnalysisResult Graph identity is required")
             status = HarnessRunStatus(payload.pop("status")).value
             quality_payload = _result_mapping(
                 payload.pop("quality"),
@@ -440,6 +535,8 @@ class ResearchAnalysisResult:
         )
         result = cls(
             run_id=run_id,
+            graph_id=graph_id,
+            graph_version=graph_version,
             status=status,
             analysis=analysis,
             quality=ResearchQualityResult.model_validate(quality_payload),
@@ -711,6 +808,22 @@ def _bind_research_workspace_worker(
     return invoke
 
 
+def _generate_research_candidate(
+    worker: Any,
+    *,
+    task: str,
+    payload: dict[str, Any],
+    execution_identity: GraphExecutionIdentity | None,
+) -> dict[str, Any]:
+    if execution_identity is None:
+        return worker.generate_candidate(task=task, payload=payload)
+    return worker.generate_candidate(
+        task=task,
+        payload=payload,
+        execution_identity=execution_identity,
+    )
+
+
 class ResearchSinglePaperRuntime:
     def __init__(
         self,
@@ -737,7 +850,9 @@ class ResearchSinglePaperRuntime:
         artifact_handler_factory: Callable[..., Any] | None = None,
         dynamic_task_plan_runner_factory: Callable[..., Any] | None = None,
         graph_result_committer_factory: Callable[..., Any] | None = None,
-        graph_result_observer_factory: Callable[..., Any] | None = None,
+        graph_event_projection: GraphEventProjectionApplicationPort | None = None,
+        node_output_resource_factory: Callable[[str], HarnessNodeOutputResourcePort]
+        | None = None,
     ) -> None:
         self.source_provider = source_provider
         self.document_compiler = document_compiler
@@ -745,6 +860,20 @@ class ResearchSinglePaperRuntime:
         self.github_repository = github_repository
         self.rag_runtime = rag_runtime
         self.artifact_port = artifact_port
+        if graph_event_projection is not None and not isinstance(
+            graph_event_projection,
+            GraphEventProjectionApplicationPort,
+        ):
+            raise TypeError(
+                "graph_event_projection must implement "
+                "GraphEventProjectionApplicationPort"
+            )
+        self.graph_event_projection = graph_event_projection
+        if node_output_resource_factory is not None and not callable(
+            node_output_resource_factory
+        ):
+            raise TypeError("node_output_resource_factory must be callable")
+        self.node_output_resource_factory = node_output_resource_factory
         if not callable(event_port_factory):
             raise TypeError("event_port_factory must be callable")
         if scoped_event_port_factory is not None and not callable(
@@ -785,12 +914,7 @@ class ResearchSinglePaperRuntime:
             graph_result_committer_factory
         ):
             raise TypeError("graph_result_committer_factory must be callable")
-        if graph_result_observer_factory is not None and not callable(
-            graph_result_observer_factory
-        ):
-            raise TypeError("graph_result_observer_factory must be callable")
         self.graph_result_committer_factory = graph_result_committer_factory
-        self.graph_result_observer_factory = graph_result_observer_factory
         self.ask_use_case = AskPaperUseCase()
         self.quality_gate = quality_gate or ResearchQualityGate()
         self.evidence_builder = ResearchEvidenceBuilder()
@@ -873,22 +997,6 @@ class ResearchSinglePaperRuntime:
                 "graph_result_committer_factory must return "
                 "HarnessGraphResultCommitterPort or None"
             )
-        graph_result_observer = (
-            None
-            if self.graph_result_observer_factory is None
-            else self.graph_result_observer_factory(
-                event_port=event_port,
-                request=request,
-            )
-        )
-        if graph_result_observer is not None and not isinstance(
-            graph_result_observer,
-            HarnessGraphResultObserverPort,
-        ):
-            raise TypeError(
-                "graph_result_observer_factory must return "
-                "HarnessGraphResultObserverPort or None"
-            )
         terminal_payload_factory = lambda cutoff: self._terminal_artifact_payloads(
             event_port,
             workspace,
@@ -906,6 +1014,7 @@ class ResearchSinglePaperRuntime:
                 side_effect_store=self.side_effect_store,
                 terminal_payload_factory=terminal_payload_factory,
                 candidate_payload_factory=candidate_payload_factory,
+                graph_event_projection=self.graph_event_projection,
             )
         else:
             artifact_handler = self.artifact_handler_factory(
@@ -913,6 +1022,7 @@ class ResearchSinglePaperRuntime:
                 side_effect_store=self.side_effect_store,
                 terminal_payload_factory=terminal_payload_factory,
                 candidate_payload_factory=candidate_payload_factory,
+                graph_event_projection=self.graph_event_projection,
             )
         side_effect_registry = HarnessSideEffectRegistry(
             (
@@ -927,9 +1037,15 @@ class ResearchSinglePaperRuntime:
                 ),
             )
         )
+        runtime_binding_authority = build_paper_analysis_runtime_binding_authority(
+            definition=run_spec.graph,
+            worker_implementations=self._worker_registry(workspace),
+            gate_registry=self.gate_registry,
+            side_effect_registry=side_effect_registry,
+        )
         control_plane = HarnessControlPlane(
             event_port=event_port,
-            worker_registry=self._worker_registry(workspace),
+            runtime_binding_authority=runtime_binding_authority,
             gate_registry=self.gate_registry,
             graph_preflight=HarnessGraphPreflight(
                 policy=HarnessGraphPreflightPolicy(
@@ -940,12 +1056,52 @@ class ResearchSinglePaperRuntime:
             side_effect_registry=side_effect_registry,
             side_effect_store=self.side_effect_store,
             graph_result_committer=graph_result_committer,
-            graph_result_observer=graph_result_observer,
         )
+        if self.node_output_resource_factory is None:
+            raise HarnessValidationError(
+                "Research production Graph execution requires durable node-output storage",
+                code="graph_node_output_resource_missing",
+            )
+        node_output_resource = self.node_output_resource_factory(run_id)
+        if not isinstance(node_output_resource, HarnessNodeOutputResourcePort):
+            raise TypeError(
+                "node_output_resource_factory must return HarnessNodeOutputResourcePort"
+            )
+        physical_executor = HarnessGraphPhysicalActivityExecutor(
+            binding_authority=runtime_binding_authority,
+            input_resolver=control_plane,
+            node_output_resource=node_output_resource,
+            result_committer=None,
+            supervisor=AttemptSupervisor(),
+        )
+        dispatcher = HarnessGraphPhysicalActivityDispatcher(
+            executor=physical_executor,
+            graph_resolver=control_plane.graph_for_activity,
+            input_resolver=control_plane,
+            accept=control_plane.accept_graph_activity_for_execution,
+            record_call_marker=control_plane.record_graph_activity_call_marker,
+            record_result=control_plane.record_graph_activity_result_event,
+            apply_result=control_plane.commit_physical_graph_result,
+            capabilities_resolver=lambda activity_ref: runtime_binding_authority.resolve_activity(
+                activity_ref,
+                required_usage="parallel",
+            ).capabilities,
+        )
+        # The installed physical dispatcher owns both execution and the
+        # cooperative cancellation events referenced by durable Graph decisions.
+        control_plane.install_graph_activity_dispatcher(dispatcher)
         # The control plane persists quarantine before this lifecycle hook
         # removes owned hidden candidates. Preserve a primary worker or
         # handler failure if cleanup itself encounters a secondary I/O error.
         cleanup_candidates = getattr(artifact_handler, "cleanup_candidates", None)
+        failed_run_statuses = frozenset(
+            {
+                HarnessRunStatus.BLOCKED,
+                HarnessRunStatus.CANCELLED,
+                HarnessRunStatus.FAILED,
+                HarnessRunStatus.HALTED,
+            }
+        )
         try:
             harness_result = control_plane.run(run_spec)
         except Exception as primary_error:
@@ -968,17 +1124,32 @@ class ResearchSinglePaperRuntime:
             raise
         else:
             if callable(cleanup_candidates):
-                cleanup_candidates(run_id)
-        terminal_outcome = harness_result.side_effect_outcomes.get("__terminal__")
+                try:
+                    cleanup_candidates(run_id)
+                except Exception as cleanup_error:
+                    if harness_result.status not in failed_run_statuses:
+                        raise
+                    LOGGER.error(
+                        "Research candidate cleanup failed after a terminal Graph failure",
+                        exc_info=(
+                            type(cleanup_error),
+                            cleanup_error,
+                            cleanup_error.__traceback__,
+                        ),
+                    )
+        terminal_outcomes = [
+            outcome
+            for slot, outcome in harness_result.side_effect_outcomes.items()
+            if isinstance(slot, str) and slot.startswith("terminal:")
+        ]
+        if len(terminal_outcomes) > 1:
+            raise HarnessValidationError(
+                "Graph run produced multiple terminal side-effect outcomes"
+            )
+        terminal_outcome = terminal_outcomes[0] if terminal_outcomes else None
         if (
             terminal_outcome is None
-            and harness_result.state.status
-            in {
-                HarnessRunStatus.BLOCKED,
-                HarnessRunStatus.CANCELLED,
-                HarnessRunStatus.FAILED,
-                HarnessRunStatus.HALTED,
-            }
+            and harness_result.status in failed_run_statuses
             and self.artifact_handler_factory is not None
         ):
             if not isinstance(
@@ -989,6 +1160,10 @@ class ResearchSinglePaperRuntime:
                     "production artifact_port must implement "
                     "GraphTerminalManifestRecorderPort"
                 )
+            self._stage_unpublished_graph_event_projection(
+                run_spec=run_spec,
+                harness_result=harness_result,
+            )
             self.artifact_port.commit_unpublished_terminal_manifest(
                 _unpublished_terminal_manifest_request(
                     run_spec=run_spec,
@@ -997,7 +1172,7 @@ class ResearchSinglePaperRuntime:
             )
         if (
             workspace.analysis is None
-            and harness_result.state.status is HarnessRunStatus.SUCCEEDED
+            and harness_result.status is HarnessRunStatus.SUCCEEDED
             and terminal_outcome is not None
             and terminal_outcome.disposition is HarnessSideEffectDisposition.ACCEPTED
         ):
@@ -1019,10 +1194,15 @@ class ResearchSinglePaperRuntime:
             metadata=actor_metadata,
             research_rag_context=workspace.research_rag_context,
             rag_context_pack=workspace.rag_context_pack,
+            expected_graph_identity=workspace.rag_graph_identity
+            or _context_graph_identity_for_request(
+                request,
+                stage_id="run_research_rag",
+            ),
         )
         artifacts = dict(workspace.artifact_refs)
         if (
-            harness_result.state.status == HarnessRunStatus.SUCCEEDED
+            harness_result.status == HarnessRunStatus.SUCCEEDED
             and terminal_outcome is not None
             and terminal_outcome.disposition is HarnessSideEffectDisposition.ACCEPTED
         ):
@@ -1044,10 +1224,32 @@ class ResearchSinglePaperRuntime:
             score=0.0,
             gate_results=[GateResult.fail("ResearchBudgetGate", "run halted before quality result was produced")],
         )
+        worker_results = {}
+        nodes_by_instance = {
+            node.instance_id: node for node in harness_result.state.node_instances
+        }
+        for node_instance_id, worker_result in harness_result.worker_results.items():
+            node = nodes_by_instance.get(node_instance_id)
+            if node is None:
+                raise HarnessValidationError(
+                    "Graph worker result has no matching node instance",
+                    code="graph_worker_result_node_missing",
+                    details={"node_instance_id": node_instance_id},
+                )
+            result_payload = worker_result.to_dict()
+            result_payload.update(
+                {
+                    "node_id": node.identity.node_id,
+                    "step_id": node.step_id,
+                    "node_instance_id": node.instance_id,
+                    "attempt": node.attempt,
+                }
+            )
+            worker_results[node_instance_id] = result_payload
         diagnostics = {
-            "harness_status": harness_result.state.status.value,
-            "terminal_reason": harness_result.state.metadata.get("terminal_reason"),
-            "worker_results": {key: value.to_dict() for key, value in harness_result.worker_results.items()},
+            "harness_status": harness_result.status.value,
+            "terminal_reason": harness_result.state.terminal_reason_code,
+            "worker_results": worker_results,
             "gate_failures": _gate_failures(harness_result.events),
             "research_diagnostics": list(workspace.diagnostics),
         }
@@ -1066,7 +1268,9 @@ class ResearchSinglePaperRuntime:
             )
         return ResearchAnalysisResult(
             run_id=run_id,
-            status=harness_result.state.status.value,
+            graph_id=run_spec.graph.graph_id,
+            graph_version=run_spec.graph.graph_version,
+            status=harness_result.status.value,
             analysis=workspace.analysis,
             quality=quality,
             paper_card=workspace.paper_card,
@@ -1164,6 +1368,8 @@ class ResearchSinglePaperRuntime:
         result = ResearchAnalysisResult.from_dict(
             {
                 "run_id": request.run_id,
+                "graph_id": _research_graph_identity_for_request(request)[0],
+                "graph_version": _research_graph_identity_for_request(request)[1],
                 "status": HarnessRunStatus.SUCCEEDED.value,
                 "analysis": analysis,
                 "quality": quality,
@@ -1239,6 +1445,11 @@ class ResearchSinglePaperRuntime:
             metadata=actor_metadata,
             research_rag_context=workspace.research_rag_context,
             rag_context_pack=workspace.rag_context_pack,
+            expected_graph_identity=workspace.rag_graph_identity
+            or _context_graph_identity_for_request(
+                workspace.request,
+                stage_id="run_research_rag",
+            ),
         )
         metadata = {"run_id": run_id, **dict(actor_metadata)}
         return (
@@ -1270,6 +1481,55 @@ class ResearchSinglePaperRuntime:
             )
         return requests
 
+    def _stage_unpublished_graph_event_projection(
+        self,
+        *,
+        run_spec: HarnessRunSpec,
+        harness_result: Any,
+    ) -> None:
+        """Stage the Graph projection before a failed terminal manifest commit."""
+
+        if self.graph_event_projection is None:
+            return
+        graph_state = harness_result.state
+        tenant_id = run_spec.metadata.get("graph_terminal_tenant_id")
+        if graph_state is None or not isinstance(tenant_id, str) or not tenant_id.strip():
+            raise HarnessValidationError(
+                "unpublished terminal Graph projection context is incomplete",
+                code="research_graph_event_projection_context_missing",
+            )
+        identity = GraphRunIdentity(
+            run_id=run_spec.run_id,
+            graph_id=graph_state.graph_ref.graph_id,
+            graph_version=graph_state.graph_ref.identity_version,
+            graph_ref=(
+                f"{graph_state.graph_ref.graph_id}@"
+                f"{graph_state.graph_ref.identity_version}"
+            ),
+            graph_checksum=graph_state.graph_ref.checksum,
+        )
+        result = self.graph_event_projection.project_graph_history(
+            GraphEventProjectionApplicationRequest(
+                graph_identity=identity,
+                target=self.artifact_port.manager.run_dir(run_spec.run_id)
+                / "events.jsonl",
+                tenant_id=tenant_id,
+            )
+        )
+        if (
+            result.status is not GraphEventProjectionApplicationStatus.PROJECTED
+            or result.projection is None
+        ):
+            raise HarnessValidationError(
+                "unpublished terminal Graph event projection is not projectable",
+                code="research_graph_event_projection_not_projectable",
+            )
+        self.artifact_port.stage_graph_event_projection(
+            result.projection,
+            graph_identity=identity,
+            tenant_id=tenant_id,
+        )
+
     def _worker_registry(self, workspace: "_ResearchRunWorkspace") -> dict[str, Any]:
         dependencies = _ResearchWorkerDependencies(
             source_provider=self.source_provider,
@@ -1300,6 +1560,13 @@ class ResearchSinglePaperRuntime:
             "build_reader_payload": worker_type._build_reader_payload,
             "build_paper_card": worker_type._build_paper_card,
         }
+        if _dynamic_task_plan_requested(workspace.request.options):
+            for activity_id in (
+                "analyze_structure",
+                "analyze_contribution",
+                "analyze_experiments",
+            ):
+                registry.pop(activity_id)
         bound_registry = {
             worker_name: _bind_research_worker(
                 worker,
@@ -1366,15 +1633,13 @@ class ResearchSinglePaperRuntime:
             constraints={"paper_only": True},
             metadata=_request_actor_metadata(workspace.request),
         )
+        rag_graph_identity = _context_graph_identity_for_activity(
+            task,
+            workspace.request,
+            stage_id="run_research_rag",
+        )
         session_spec = self.rag_policy_builder.build_session_spec(
-            run_id=workspace.request.run_id,
-            # RAG is a stable child-session contract shared by both the
-            # static and dynamic outer Research workflow variants.  The
-            # dynamic workflow identity belongs to the outer graph; changing
-            # it here would invalidate the existing transcript projection
-            # boundary and replay identity.
-            workflow_id="research.paper_analysis",
-            step_id="run_research_rag",
+            graph_identity=rag_graph_identity,
             session_id=stable_research_id("research_rag", workspace.request.run_id, workspace.paper.paper_id),
             goal=goal,
             budget=_rag_budget_from_options(workspace.request.options),
@@ -1388,8 +1653,13 @@ class ResearchSinglePaperRuntime:
             },
         )
         rag_context = self.rag_runtime.run(session_spec=session_spec, document=workspace.document)
-        workspace.rag_context_pack = getattr(self.rag_runtime, "last_context_pack", None)
+        context_pack_for_run = getattr(self.rag_runtime, "context_pack_for_run", None)
+        if callable(context_pack_for_run):
+            workspace.rag_context_pack = context_pack_for_run(workspace.request.run_id)
+        else:
+            workspace.rag_context_pack = getattr(self.rag_runtime, "last_context_pack", None)
         workspace.research_rag_context = rag_context
+        workspace.rag_graph_identity = rag_graph_identity
         output = {
             "research_rag_context": rag_context.to_dict(),
             "source_refs": rag_context.source_refs,
@@ -1426,13 +1696,21 @@ class ResearchSinglePaperRuntime:
         workspace.evidence_pack = pack
         return _ok({"evidence_pack": pack.to_dict(), "source_refs": pack.lineage.source_refs})
 
-    def _analyze_structure(self, task: dict[str, Any], workspace: "_ResearchRunWorkspace") -> HarnessWorkerResult:
-        candidate = self.llm_worker.generate_candidate(
+    def _analyze_structure(
+        self,
+        task: dict[str, Any],
+        workspace: "_ResearchRunWorkspace",
+        *,
+        execution_identity: GraphExecutionIdentity | None = None,
+    ) -> HarnessWorkerResult:
+        candidate = _generate_research_candidate(
+            self.llm_worker,
             task="candidate_three_minute_read",
             payload={
                 "paper": workspace.paper.to_dict() if workspace.paper else {},
                 "evidence_pack": workspace.evidence_pack.to_dict() if workspace.evidence_pack else {},
             },
+            execution_identity=execution_identity,
         )
         workspace.llm_candidate_warnings.extend(_forbidden_candidate_keys(candidate))
         summary_payload = dict(candidate.get("three_minute_read", {}))
@@ -1481,7 +1759,11 @@ class ResearchSinglePaperRuntime:
         )
 
     def _analyze_contribution(
-        self, task: dict[str, Any], workspace: "_ResearchRunWorkspace"
+        self,
+        task: dict[str, Any],
+        workspace: "_ResearchRunWorkspace",
+        *,
+        execution_identity: GraphExecutionIdentity | None = None,
     ) -> HarnessWorkerResult:
         workspace.taxonomy_candidates = [
             TaxonomyCandidate(
@@ -1497,7 +1779,8 @@ class ResearchSinglePaperRuntime:
                 evidence_refs=item["evidence_refs"],
                 confidence=float(item.get("confidence", 0.0)),
             )
-            for item in self.llm_worker.generate_candidate(
+            for item in _generate_research_candidate(
+                self.llm_worker,
                 task="candidate_taxonomy",
                 payload={
                     "paper": workspace.paper.to_dict() if workspace.paper else {},
@@ -1507,6 +1790,7 @@ class ResearchSinglePaperRuntime:
                         else {}
                     ),
                 },
+                execution_identity=execution_identity,
             ).get("taxonomy_candidates", [])
         ]
         assignment = TaxonomyAssignmentBuilder(self.taxonomy_registry).build(
@@ -1531,15 +1815,21 @@ class ResearchSinglePaperRuntime:
         )
 
     def _analyze_experiments(
-        self, task: dict[str, Any], workspace: "_ResearchRunWorkspace"
+        self,
+        task: dict[str, Any],
+        workspace: "_ResearchRunWorkspace",
+        *,
+        execution_identity: GraphExecutionIdentity | None = None,
     ) -> HarnessWorkerResult:
-        candidate = self.llm_worker.generate_candidate(
+        candidate = _generate_research_candidate(
+            self.llm_worker,
             task="candidate_experiment_claims",
             payload={
                 "evidence_pack": workspace.evidence_pack.to_dict()
                 if workspace.evidence_pack
                 else {}
             },
+            execution_identity=execution_identity,
         )
         claims: list[ResearchClaim] = []
         scores: list[ResearchScore] = []
@@ -1856,16 +2146,15 @@ class ResearchSinglePaperRuntime:
             }
             for request in requests
         ]
-        activity = task.get("harness_activity")
-        if not isinstance(activity, Mapping):
+        raw_activity_context = task.get("harness_graph_activity")
+        if not isinstance(raw_activity_context, Mapping):
             raise HarnessValidationError(
-                "publish_artifacts requires a Harness activity identity"
+                "publish_artifacts requires a Graph activity identity"
             )
-        attempt = activity.get("attempt")
-        if isinstance(attempt, bool) or not isinstance(attempt, int) or attempt < 1:
-            raise HarnessValidationError(
-                "publish_artifacts Harness activity attempt is invalid"
-            )
+        activity_context = HarnessGraphActivityTaskContext.from_dict(
+            raw_activity_context
+        )
+        attempt = activity_context.activity.attempt
         effect_digest = checksum_for(
             {
                 "run_id": workspace.request.run_id,
@@ -1878,11 +2167,18 @@ class ResearchSinglePaperRuntime:
             effect_id=f"research-artifact-effect:{effect_digest}",
             kind=RESEARCH_ARTIFACT_EFFECT_KIND,
             run_id=workspace.request.run_id,
+            graph_id=activity_context.activity.graph_ref.graph_id,
+            graph_version=activity_context.activity.graph_ref.identity_version,
+            graph_ref=activity_context.activity.graph_ref.identity_ref.exact_ref,
+            graph_checksum=activity_context.activity.graph_ref.checksum,
             origin=HarnessSideEffectOrigin.WORKER,
             atomic_group=f"research-artifacts:{effect_digest}",
             identity_scope_ref=research_identity_scope_ref(actor_metadata),
             subject_scope_ref=research_subject_scope_ref(workspace.request.paper_id),
             attempt=attempt,
+            node_id=activity_context.activity.node_id,
+            node_instance_id=activity_context.activity.node_instance_id,
+            activity_id=activity_context.activity.activity_id,
             step_id="publish_artifacts",
             worker_result_ref=(
                 f"worker-result://{workspace.request.run_id}/publish_artifacts/{attempt}"
@@ -1915,19 +2211,13 @@ class ResearchSinglePaperRuntime:
         return workspace.context_assembler.assemble(
             {
                 "run_id": workspace.request.run_id,
-                "workflow_id": (
-                    "research.paper_analysis.dynamic"
-                    if _dynamic_task_plan_requested(workspace.request.options)
-                    else "research.paper_analysis"
-                ),
                 "step_id": "publish_artifacts",
                 "phase": "verify",
                 "worker_id": "research-analysis-worker",
                 "worker_type": "subagent",
-                "workflow_ref": (
-                    "workflow://research.paper_analysis.dynamic"
-                    if _dynamic_task_plan_requested(workspace.request.options)
-                    else "workflow://research.paper_analysis"
+                "graph_identity": _context_graph_identity_for_request(
+                    workspace.request,
+                    stage_id="publish_artifacts",
                 ),
                 "worker_contract_ref": "schema://research.analysis.output",
                 "run_state_ref": f"run-state://{workspace.request.run_id}",
@@ -2004,6 +2294,7 @@ class _ResearchRunWorkspace:
     evidence_pack: ResearchEvidencePack | None = None
     rag_context_pack: RAGContextPack | None = None
     research_rag_context: ResearchRAGContext | None = None
+    rag_graph_identity: ContextGraphIdentity | None = None
     summary: ThreeMinuteRead | None = None
     contributions: list[str] = field(default_factory=list)
     claims: list[ResearchClaim] = field(default_factory=list)
@@ -2060,11 +2351,13 @@ class _CompatibilityResearchArtifactBundleHandler:
         candidate_payload_factory: Callable[
             [HarnessSideEffectIntent], tuple[ArtifactWriteRequest, ...]
         ],
+        graph_event_projection: GraphEventProjectionApplicationPort | None = None,
     ) -> None:
         self._artifact_port = artifact_port
         self._side_effect_store = side_effect_store
         self._terminal_payload_factory = terminal_payload_factory
         self._candidate_payload_factory = candidate_payload_factory
+        self._graph_event_projection = graph_event_projection
         self._prepared: dict[str, tuple[tuple[ArtifactWriteRequest, ...], HarnessSideEffectOutcome]] = {}
 
     def prepare(
@@ -2093,6 +2386,11 @@ class _CompatibilityResearchArtifactBundleHandler:
             effect_id=intent.effect_id,
             decision_ref=authorization.checksum,
             run_id=intent.run_id,
+            graph_id=intent.graph_id,
+            graph_version=intent.graph_version,
+            graph_ref=intent.graph_ref,
+            graph_checksum=intent.graph_checksum,
+            origin=intent.origin,
             kind=intent.kind,
             handler=authorization.handler,
             idempotency_key=intent.idempotency_key,
@@ -2100,6 +2398,12 @@ class _CompatibilityResearchArtifactBundleHandler:
             subject_scope_ref=intent.subject_scope_ref,
             atomic_group=intent.atomic_group,
             disposition=HarnessSideEffectDisposition.PREPARED,
+            node_id=intent.node_id,
+            node_instance_id=intent.node_instance_id,
+            activity_id=intent.activity_id,
+            step_id=intent.step_id,
+            terminal_action=intent.terminal_action,
+            attempt=intent.attempt,
             candidate_refs=candidate_refs,
             result_ref=checksum_for(
                 {"members": [request.to_dict() for request in requests]}
@@ -2152,6 +2456,11 @@ class _CompatibilityResearchArtifactBundleHandler:
             effect_id=intent.effect_id,
             decision_ref=authorization.checksum,
             run_id=intent.run_id,
+            graph_id=intent.graph_id,
+            graph_version=intent.graph_version,
+            graph_ref=intent.graph_ref,
+            graph_checksum=intent.graph_checksum,
+            origin=intent.origin,
             kind=intent.kind,
             handler=authorization.handler,
             idempotency_key=intent.idempotency_key,
@@ -2159,6 +2468,12 @@ class _CompatibilityResearchArtifactBundleHandler:
             subject_scope_ref=intent.subject_scope_ref,
             atomic_group=intent.atomic_group,
             disposition=HarnessSideEffectDisposition.ACCEPTED,
+            node_id=intent.node_id,
+            node_instance_id=intent.node_instance_id,
+            activity_id=intent.activity_id,
+            step_id=intent.step_id,
+            terminal_action=intent.terminal_action,
+            attempt=intent.attempt,
             candidate_refs=tuple(
                 ref
                 for _, outcome in prepared
@@ -2249,7 +2564,7 @@ def _unpublished_terminal_manifest_request(
     run_spec: HarnessRunSpec,
     harness_result,
 ) -> GraphTerminalManifestCommitRequest:
-    graph_state = harness_result.graph_state
+    graph_state = harness_result.state
     terminal_node_ids = tuple(harness_result.graph_terminal_node_ids)
     if graph_state is None or not terminal_node_ids:
         raise HarnessValidationError(
@@ -2267,19 +2582,29 @@ def _unpublished_terminal_manifest_request(
             "unpublished terminal record requires a tenant identity",
             code="research_graph_terminal_tenant_missing",
         )
+    try:
+        execution_versions = GraphExecutionVersionManifest.from_normalized_graph(
+            HarnessGraphCompiler().compile(run_spec.graph).graph
+        )
+    except (TypeError, ValueError, HarnessValidationError) as exc:
+        raise HarnessValidationError(
+            "unpublished terminal record requires a compilable Graph definition",
+            code="research_graph_terminal_execution_versions_missing",
+        ) from exc
     return GraphTerminalManifestCommitRequest(
         context=GraphTerminalManifestContext(
             tenant_id=tenant_id,
             graph_id=graph_state.graph_ref.graph_id,
-            graph_version=graph_state.graph_ref.workflow_ref.version,
+            graph_version=graph_state.graph_ref.identity_version,
             graph_schema_version=graph_state.graph_ref.schema_version,
             compiler_version=graph_state.graph_ref.compiler_version,
             normalized_graph_checksum=graph_state.graph_ref.checksum,
+            execution_versions=execution_versions,
             started_at=run_spec.created_at,
             terminal_node_ids=terminal_node_ids,
         ),
         run_id=run_spec.run_id,
-        status=GraphTerminalStatus(harness_result.state.status.value),
+        status=GraphTerminalStatus(harness_result.status.value),
         completed_at=max(
             (event.occurred_at for event in harness_result.events),
             default=run_spec.created_at,
@@ -2458,6 +2783,7 @@ def _transcript_from_events(
     metadata: dict[str, str] | None = None,
     research_rag_context: ResearchRAGContext | None = None,
     rag_context_pack: RAGContextPack | None = None,
+    expected_graph_identity: ContextGraphIdentity | None = None,
 ) -> HarnessTranscript:
     entries = []
     for index, event in enumerate(events):
@@ -2473,13 +2799,15 @@ def _transcript_from_events(
         run_id=run_id,
         research_rag_context=research_rag_context,
         rag_context_pack=rag_context_pack,
+        expected_graph_identity=expected_graph_identity,
     )
     if rag_projection is not None:
         matching_indexes = [
             index
             for index, entry in enumerate(entries)
-            if entry.step_id == "run_research_rag"
-            and entry.metadata.get("event_type") == "worker_result_recorded"
+            if entry.node_id == "run_research_rag"
+            and entry.metadata.get("event_type")
+            == HarnessEventType.GRAPH_WORKER_RESULT_RECORDED.value
         ]
         if len(matching_indexes) != 1:
             raise ValueError(
@@ -2500,10 +2828,13 @@ def _transcript_from_events(
             metadata={
                 **entry.metadata,
                 "parent_run_id": run_id,
-                "parent_workflow_id": rag_projection["workflow_id"],
-                "parent_step_id": rag_projection["step_id"],
-                "workflow_id": rag_projection["workflow_id"],
-                "step_id": rag_projection["step_id"],
+                "parent_graph_id": rag_projection["graph_id"],
+                "parent_graph_version": rag_projection["graph_version"],
+                "parent_graph_ref": rag_projection["graph_ref"],
+                "parent_graph_checksum": rag_projection["graph_checksum"],
+                "parent_stage_id": rag_projection["stage_id"],
+                **rag_projection["graph_identity"],
+                "graph_identity": rag_projection["graph_identity"],
                 "session_id": rag_projection["session_id"],
             },
         )
@@ -2519,7 +2850,8 @@ def _validated_rag_transcript_projection(
     run_id: str,
     research_rag_context: ResearchRAGContext | None,
     rag_context_pack: RAGContextPack | None,
-) -> dict[str, str] | None:
+    expected_graph_identity: ContextGraphIdentity | None,
+) -> dict[str, Any] | None:
     if research_rag_context is None and rag_context_pack is None:
         return None
     if research_rag_context is None or rag_context_pack is None:
@@ -2530,26 +2862,39 @@ def _validated_rag_transcript_projection(
         raise TypeError("research_rag_context must be ResearchRAGContext")
     if not isinstance(rag_context_pack, RAGContextPack):
         raise TypeError("rag_context_pack must be RAGContextPack")
+    if not isinstance(expected_graph_identity, ContextGraphIdentity):
+        raise ValueError(
+            "Research RAG transcript requires the expected Graph identity"
+        )
 
     context_metadata = research_rag_context.metadata
+    context_graph_identity = _required_rag_graph_identity(
+        context_metadata,
+        source="context",
+    )
+    pack_graph_identity = _required_rag_graph_identity(
+        rag_context_pack.metadata,
+        source="context_pack",
+    )
+    expected_identity = expected_graph_identity.to_dict()
+    if context_graph_identity != expected_identity:
+        raise ValueError("Research RAG transcript graph_identity identity mismatch")
+    if pack_graph_identity != expected_identity:
+        raise ValueError(
+            "Research RAG transcript context_pack graph_identity identity mismatch"
+        )
     identity = {
         field_name: _required_rag_identity(context_metadata, field_name)
         for field_name in (
-            "run_id",
-            "workflow_id",
-            "step_id",
             "session_id",
             "context_pack_id",
             "transcript_ref",
         )
     }
-    expected_identity = {
-        "run_id": run_id,
-        "workflow_id": "research.paper_analysis",
-        "step_id": "run_research_rag",
-    }
+    if expected_graph_identity.run_id != run_id:
+        raise ValueError("Research RAG transcript run_id identity mismatch")
     for field_name, expected_value in expected_identity.items():
-        if identity[field_name] != expected_value:
+        if _required_rag_identity(context_metadata, field_name) != expected_value:
             raise ValueError(
                 f"Research RAG transcript {field_name} identity mismatch"
             )
@@ -2573,8 +2918,8 @@ def _validated_rag_transcript_projection(
         raise ValueError("Research RAG transcript child transcript session mismatch")
 
     return {
-        "workflow_id": identity["workflow_id"],
-        "step_id": identity["step_id"],
+        **expected_identity,
+        "graph_identity": expected_identity,
         "session_id": session_id,
         "context_pack_id": context_pack_id,
         "transcript_ref": transcript_ref,
@@ -2582,16 +2927,44 @@ def _validated_rag_transcript_projection(
     }
 
 
+def _required_rag_graph_identity(
+    metadata: Mapping[str, Any],
+    *,
+    source: str,
+) -> dict[str, Any]:
+    value = metadata.get("graph_identity")
+    if not isinstance(value, Mapping):
+        raise ValueError(
+            f"Research RAG transcript {source} graph_identity is required"
+        )
+    try:
+        return ContextGraphIdentity.from_dict(value).to_dict()
+    except (TypeError, ValueError, HarnessValidationError) as exc:
+        raise ValueError(
+            f"Research RAG transcript {source} graph_identity is invalid"
+        ) from exc
+
+
 def _required_rag_identity(
     metadata: Mapping[str, Any],
     field_name: str,
-) -> str:
+) -> Any:
     value = metadata.get(field_name)
-    if not isinstance(value, str) or not value.strip():
+    if value is None or (isinstance(value, str) and not value.strip()):
         raise ValueError(
             f"Research RAG transcript {field_name} identity is required"
         )
-    return value.strip()
+    if isinstance(value, str):
+        return value.strip()
+    if field_name == "activity_attempt":
+        if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+            raise ValueError(
+                "Research RAG transcript activity_attempt identity is invalid"
+            )
+        return value
+    raise ValueError(
+        f"Research RAG transcript {field_name} identity must be text"
+    )
 
 
 def _rag_ref_matches_session(

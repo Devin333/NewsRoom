@@ -24,9 +24,11 @@ from business.research.application.single_paper_runtime import (
     ResearchSinglePaperRuntime,
     build_research_harness_run_spec,
 )
+from business.research.graphs import (
+    build_dynamic_paper_analysis_graph_definition,
+)
 from business.research.application.graph_result_committer import (
     ResearchGraphResultCommitter,
-    ResearchGraphResultShadowObserver,
     ResearchTaskPlanResultMaterializer,
 )
 from business.research.application.artifact_context import (
@@ -49,7 +51,6 @@ from business.research.document.latex_compiler import ArxivLatexDocumentCompiler
 from business.research.document.marker_pdf_parser import MarkerPdfDocumentParser
 from business.research.document.mineru_pdf_parser import MinerUPdfDocumentParser
 from business.research.ports.artifact_publication import (
-    RESEARCH_ARTIFACT_LEGACY_MANIFEST_VERSION,
     RESEARCH_ARTIFACT_MANIFEST_VERSION,
     ResearchArtifactDiagnosticClaim,
     ResearchArtifactReadClaim,
@@ -67,9 +68,11 @@ from framework.llm.clients.config import (
     load_openai_compatible_deployment,
 )
 from framework.events.canonical import checksum_for
+from framework.events.application import DurableGraphEventProjectionAdapter
 from framework.harness import (
     ContextAssembler,
     ContextEnvelope,
+    ContextGraphIdentity,
     HarnessEvent,
     HarnessEventType,
     HarnessSideEffectDisposition,
@@ -78,7 +81,6 @@ from framework.harness import (
     HarnessSideEffectStorePort,
     HarnessTrace,
     HarnessTranscript,
-    HarnessState,
     HarnessWorkerResult,
     HarnessBudgetSnapshot,
     HarnessBudget,
@@ -91,15 +93,19 @@ from framework.harness import (
     transcript_entry_from_event,
 )
 from framework.harness.graph import HarnessWorkerType
-from framework.harness.workflow.compiler import HarnessWorkflowGraphCompiler
+from framework.harness.graph.compiler import HarnessGraphCompiler
 from framework.harness.graph.bindings import HarnessWorkerBinding
 from framework.harness.graph.model import HarnessContractKind, HarnessContractReference
 from framework.harness.task_plan.stage_binding import TaskPlanStageBinding
+from framework.harness.task_plan.capability import task_plan_context_identities
 from framework.harness.control_plane.gates import GateContext
 from framework.harness.control_plane.graph_application import (
     HarnessGraphControlPlaneRuntime,
 )
-from framework.harness.artifacts import GraphTerminalManifest
+from framework.harness.control_plane.graph_runtime import initial_graph_state
+from framework.harness.control_plane.state import run_spec_checksum
+from framework.harness.graph.validation import HarnessGraphPreflightPolicy
+from framework.harness.artifacts import GraphTerminalManifestV2
 from framework.harness.runtime import (
     GraphArtifactRolloutMode,
     HarnessGraphResultRuntime,
@@ -107,6 +113,7 @@ from framework.harness.runtime import (
     ResultMaterializer,
 )
 from framework.shared.time import utc_now
+from framework.shared.graph_identity import GraphExecutionIdentity
 from framework.harness.ports import HarnessTransitionPort
 from infrastructure.external.sources.arxiv import (
     ArxivConnector,
@@ -138,6 +145,7 @@ from infrastructure.research.source_provider import ArxivResearchSourceProvider
 from infrastructure.storage.events.factory import durable_event_storage_from_env
 from infrastructure.storage.harness import (
     FilesystemSubAgentTranscriptStore,
+    SQLiteHarnessNodeOutputResource,
     SQLiteHarnessSideEffectStore,
 )
 from business.research.graphs import (
@@ -150,9 +158,6 @@ from business.research.graphs import (
     build_research_analysis_task_plan_policy,
     ResearchAnalysisTaskPlanStageWorker,
     ResearchAnalysisPlanCandidateBuilder,
-)
-from business.research.workflows.paper_analysis_workflow import (
-    build_dynamic_paper_analysis_workflow_spec,
 )
 from interfaces.composition.research_errors import (
     ResearchCapability,
@@ -192,11 +197,21 @@ class _ProductionResearchAnalysisWorker:
             "research.analysis.experiments": ResearchSinglePaperRuntime._analyze_experiments,
         }
 
-    def execute(self, task: Mapping[str, Any]) -> HarnessWorkerResult:
+    def execute(
+        self,
+        task: Mapping[str, Any],
+        *,
+        execution_identity: GraphExecutionIdentity | None = None,
+    ) -> HarnessWorkerResult:
         method = self._methods.get(self.worker_id)
         if method is None:
             raise RuntimeError("Research dynamic capability binding is unavailable")
-        return method(self._dependencies, task, self._workspace)
+        return method(
+            self._dependencies,
+            task,
+            self._workspace,
+            execution_identity=execution_identity,
+        )
 
 
 def _dynamic_research_gate_context(
@@ -207,19 +222,22 @@ def _dynamic_research_gate_context(
         workspace.request,
         created_at=utc_now(),
     )
-    base_state = HarnessState.initial(run_spec)
-    step_spec = next(
-        item for item in run_spec.workflow.steps
-        if item.step_id == "dynamic_analysis_stage"
+    compiled_graph = HarnessGraphCompiler().compile(run_spec.graph).graph
+    graph_state = initial_graph_state(
+        run_spec,
+        compiled_graph,
+        HarnessGraphPreflightPolicy(),
+        run_spec_checksum=run_spec_checksum(run_spec),
     )
-    step_state = next(
-        item for item in base_state.step_states
+    step_spec = next(
+        item for item in run_spec.graph.activities
         if item.step_id == "dynamic_analysis_stage"
     )
     return GateContext(
-        state=base_state,
+        run_spec=run_spec,
+        graph_state=graph_state,
         step_spec=step_spec,
-        step_state=step_state,
+        outputs={},
         worker_result=worker_result,
         budget=HarnessBudgetSnapshot.from_budget(HarnessBudget.safe_default()),
     )
@@ -1253,6 +1271,13 @@ def _build_configured_composition(
             ),
         )
         owned_resources.append(side_effect_store)
+        node_output_resource = _compose_component(
+            ResearchCapability.GRAPH_ARTIFACT_PERSISTENCE,
+            lambda: SQLiteHarnessNodeOutputResource(
+                settings.research_root / "harness-node-output.sqlite3"
+            ),
+        )
+        owned_resources.append(node_output_resource)
         run_store = _compose_component(
             ResearchCapability.RUN_STORE,
             lambda: FilesystemResearchRunStore(
@@ -1274,6 +1299,10 @@ def _build_configured_composition(
                 artifact_root=settings.artifact.root,
             ),
         )
+        graph_event_projection = DurableGraphEventProjectionAdapter(
+            reader=durable_events.event_store,
+            schema_catalog=durable_events.schema_catalog,
+        )
         dynamic_task_plan_store = DurableTaskPlanStore(
             durable_events.event_runtime,
             durable_events.event_store,
@@ -1290,11 +1319,11 @@ def _build_configured_composition(
         )
 
         def dynamic_task_plan_runner_factory(*, workspace: Any, dependencies: Any):
-            workflow_graph = HarnessWorkflowGraphCompiler().compile(
-                build_dynamic_paper_analysis_workflow_spec()
+            graph = HarnessGraphCompiler().compile(
+                build_dynamic_paper_analysis_graph_definition()
             ).graph
             stage_binding = TaskPlanStageBinding(
-                workflow_graph,
+                graph,
                 RESEARCH_DYNAMIC_STAGE_ID,
             )
             policy = build_research_analysis_task_plan_policy()
@@ -1332,37 +1361,30 @@ def _build_configured_composition(
                     workspace.request,
                     created_at=utc_now(),
                 )
-                base_state = HarnessState.initial(run_spec)
-                state = HarnessState(
-                    run_spec=base_state.run_spec,
-                    status=base_state.status,
-                    step_states=base_state.step_states,
-                    current_step_id="dynamic_analysis_stage",
-                    metadata={
-                        "outputs": {
-                            "evidence_pack": {
-                                "evidence_pack": (
-                                    workspace.evidence_pack.to_dict()
-                                    if workspace.evidence_pack is not None
-                                    else {}
-                                )
-                            }
-                        }
-                    },
-                    updated_at=base_state.updated_at,
+                compiled_graph = HarnessGraphCompiler().compile(run_spec.graph).graph
+                graph_state = initial_graph_state(
+                    run_spec,
+                    compiled_graph,
+                    HarnessGraphPreflightPolicy(),
+                    run_spec_checksum=run_spec_checksum(run_spec),
                 )
                 step_spec = next(
-                    item for item in run_spec.workflow.steps
-                    if item.step_id == "dynamic_analysis_stage"
-                )
-                step_state = next(
-                    item for item in base_state.step_states
+                    item for item in run_spec.graph.activities
                     if item.step_id == "dynamic_analysis_stage"
                 )
                 return GateContext(
-                    state=state,
+                    run_spec=run_spec,
+                    graph_state=graph_state,
                     step_spec=step_spec,
-                    step_state=step_state,
+                    outputs={
+                        "evidence_pack": {
+                            "evidence_pack": (
+                                workspace.evidence_pack.to_dict()
+                                if workspace.evidence_pack is not None
+                                else {}
+                            )
+                        }
+                    },
                     worker_result=request.worker_result,
                     budget=HarnessBudgetSnapshot.from_budget(HarnessBudget.safe_default()),
                 )
@@ -1375,24 +1397,37 @@ def _build_configured_composition(
                 transcript_store=subagent_transcript_store,
                 artifact_reference_verifier=artifact_port,
             )
-            context_pack = ContextEnvelope(
-                envelope_id=f"research-task-plan-context:{workspace.request.run_id}",
-                run_id=workspace.request.run_id,
-                workflow_id="research.paper_analysis.dynamic",
-                step_id="dynamic_analysis_stage",
-                phase="EXECUTE",
-                worker_id="research.task-plan",
-                worker_type=HarnessWorkerType.TASK_PLAN.value,
-                dynamic_tail={
-                    "input_refs": ["document", "evidence_pack"],
-                    "raw_parent_messages_included": False,
-                },
-            )
+            def task_context_pack(plan, instance, execution_identity):
+                if not isinstance(execution_identity, GraphExecutionIdentity):
+                    raise HarnessValidationError(
+                        "Research TaskPlan SubAgent requires physical Graph identity",
+                        code="task_plan_execution_identity_required",
+                    )
+                graph_identity, task_identity = task_plan_context_identities(
+                    plan,
+                    instance,
+                    execution_identity=execution_identity,
+                )
+                return ContextEnvelope.for_graph(
+                    envelope_id=(
+                        "research-task-plan-context:"
+                        f"{instance.task_instance_id}:{execution_identity.activity_id}"
+                    ),
+                    graph_identity=graph_identity,
+                    task_execution_identity=task_identity,
+                    phase="EXECUTE",
+                    worker_id="research.task-plan",
+                    worker_type=HarnessWorkerType.TASK_PLAN.value,
+                    dynamic_tail={
+                        "input_refs": ["document", "evidence_pack"],
+                        "raw_parent_messages_included": False,
+                    },
+                )
 
-            if settings.graph_artifact_persistence.mode in {
-                GraphArtifactRolloutMode.ENFORCE,
-                GraphArtifactRolloutMode.READ_ONLY,
-            }:
+            if (
+                settings.graph_artifact_persistence.mode
+                is GraphArtifactRolloutMode.ENFORCE
+            ):
                 transition_port = workspace.graph_transition_port
                 if not isinstance(transition_port, HarnessTransitionPort):
                     raise TypeError(
@@ -1417,7 +1452,7 @@ def _build_configured_composition(
                 }
                 result_tenant_id = research_event_tenant_id(actor_metadata)
 
-                def child_invocation(plan, resolved, instance):
+                def child_invocation(plan, resolved, instance, execution_identity):
                     binding = capability_registry.resolve(
                         resolved.task.worker_capability,
                         policy,
@@ -1427,10 +1462,15 @@ def _build_configured_composition(
                         resolved_task=resolved,
                         binding=binding,
                         instance=instance,
-                        context_pack=context_pack,
+                        context_pack=task_context_pack(
+                            plan,
+                            instance,
+                            execution_identity,
+                        ),
                         budget_snapshot=HarnessBudgetSnapshot.from_budget(
                             HarnessBudget.safe_default()
                         ),
+                        execution_identity=execution_identity,
                     )
 
                 result_verifier = ResearchTaskPlanResultMaterializer(
@@ -1440,14 +1480,9 @@ def _build_configured_composition(
                     tenant_id=result_tenant_id,
                     tenant_scope_ref=checksum_for(result_tenant_id),
                     invocation_factory=child_invocation,
-                    legacy_graph_id=workflow_graph.graph_id,
-                    legacy_graph_version=(
-                        f"{workflow_graph.graph_id}@"
-                        f"{workflow_graph.workflow_version}"
-                    ),
                 )
 
-            def execute(binding, instance):
+            def execute(binding, instance, execution_identity):
                 plan = dynamic_task_plan_store.plan(
                     instance.run_id,
                     instance.stage_id,
@@ -1461,8 +1496,13 @@ def _build_configured_composition(
                     resolved_task=resolved,
                     binding=binding,
                     instance=instance,
-                    context_pack=context_pack,
+                    context_pack=task_context_pack(
+                        plan,
+                        instance,
+                        execution_identity,
+                    ),
                     budget_snapshot=HarnessBudgetSnapshot.from_budget(HarnessBudget.safe_default()),
+                    execution_identity=execution_identity,
                 )
                 succeeded = child.status.value == "succeeded"
                 return HarnessWorkerResult(
@@ -1476,7 +1516,7 @@ def _build_configured_composition(
                     error=None if succeeded else "Research analysis subagent gate failed",
                 )
 
-            def recover(binding, instance):
+            def recover(binding, instance, execution_identity):
                 plan = dynamic_task_plan_store.plan(
                     instance.run_id,
                     instance.stage_id,
@@ -1490,8 +1530,13 @@ def _build_configured_composition(
                     resolved_task=resolved,
                     binding=binding,
                     instance=instance,
-                    context_pack=context_pack,
+                    context_pack=task_context_pack(
+                        plan,
+                        instance,
+                        execution_identity,
+                    ),
                     budget_snapshot=HarnessBudgetSnapshot.from_budget(HarnessBudget.safe_default()),
+                    execution_identity=execution_identity,
                 )
                 if child is None:
                     return None
@@ -1547,12 +1592,6 @@ def _build_configured_composition(
             request: AnalyzePaperRequest,
             workspace: Any | None = None,
         ):
-            mode = settings.graph_artifact_persistence.mode
-            if mode not in {
-                GraphArtifactRolloutMode.ENFORCE,
-                GraphArtifactRolloutMode.READ_ONLY,
-            }:
-                return None
             if not isinstance(graph_result_materializer, ResultMaterializer):
                 raise ResearchRuntimeUnavailableError(
                     (ResearchCapability.GRAPH_ARTIFACT_PERSISTENCE,),
@@ -1582,53 +1621,22 @@ def _build_configured_composition(
                 ),
             )
 
-        def graph_result_observer_factory(
-            *,
-            event_port: HarnessTransitionPort,
-            request: AnalyzePaperRequest,
-        ):
-            if (
-                settings.graph_artifact_persistence.mode
-                is not GraphArtifactRolloutMode.SHADOW
-            ):
-                return None
-            actor_metadata = {
-                "tenant_id": request.tenant_id,
-                "user_id": request.user_id,
-                "memory_namespace": request.memory_namespace,
-            }
-            result_tenant_id = research_event_tenant_id(actor_metadata)
-            return ResearchGraphResultShadowObserver(
-                graph_result_runtime=HarnessGraphResultRuntime(
-                    HarnessGraphControlPlaneRuntime(event_port)
-                ),
-                event_port=event_port,
-                config=settings.graph_artifact_persistence,
-                tenant_id=result_tenant_id,
-                tenant_scope_ref=checksum_for(result_tenant_id),
-            )
-
         def context_assembler_factory(
             _run_id: str,
             event_port: HarnessTransitionPort,
         ) -> ContextAssembler:
-            artifact_context_provider = None
-            if settings.graph_artifact_persistence.mode in {
-                GraphArtifactRolloutMode.ENFORCE,
-                GraphArtifactRolloutMode.READ_ONLY,
-            }:
-                if graph_result_catalog is None:
-                    raise ResearchRuntimeUnavailableError(
-                        (ResearchCapability.GRAPH_ARTIFACT_PERSISTENCE,),
-                        retryable=False,
-                    )
-                artifact_context_provider = ResearchGraphArtifactContextProvider(
-                    event_port=event_port,
-                    catalog=graph_result_catalog,
-                    reader=artifact_port,
-                    usage=graph_result_store,
-                    config=settings.graph_artifact_persistence,
+            if graph_result_catalog is None:
+                raise ResearchRuntimeUnavailableError(
+                    (ResearchCapability.GRAPH_ARTIFACT_PERSISTENCE,),
+                    retryable=False,
                 )
+            artifact_context_provider = ResearchGraphArtifactContextProvider(
+                event_port=event_port,
+                catalog=graph_result_catalog,
+                reader=artifact_port,
+                usage=graph_result_store,
+                config=settings.graph_artifact_persistence,
+            )
             return build_research_context_assembler(
                 artifact_port=artifact_port,
                 event_port=event_port,
@@ -1713,7 +1721,8 @@ def _build_configured_composition(
             artifact_handler_factory=ResearchArtifactBundleHandler,
             dynamic_task_plan_runner_factory=dynamic_task_plan_runner_factory,
             graph_result_committer_factory=graph_result_committer_factory,
-            graph_result_observer_factory=graph_result_observer_factory,
+            graph_event_projection=graph_event_projection,
+            node_output_resource_factory=lambda _run_id: node_output_resource,
         )
         ask_use_case = AskPaperUseCase()
         rag_ask_provider = _PaperRagUseCaseProvider(ask_use_case)
@@ -1771,23 +1780,13 @@ def _resolve_research_artifact_run(
     if record is None:
         return ResearchArtifactReadResolution(accepted=False)
     record_schema = getattr(record, "schema_version", None)
-    if record_schema not in {
-        RESEARCH_RUN_RECORD_SCHEMA_VERSION,
-        RESEARCH_RUN_RECORD_SCHEMA_VERSION_V2,
-    }:
+    if record_schema != RESEARCH_RUN_RECORD_SCHEMA_VERSION_V2:
         return ResearchArtifactReadResolution(accepted=False)
     try:
         classified = classify_research_run_record(
             record,
-            require_publication_authority=(
-                record_schema == RESEARCH_RUN_RECORD_SCHEMA_VERSION_V2
-            ),
+            require_publication_authority=True,
             schema_version=record_schema,
-            legacy_identity_scope_ref=(
-                getattr(record, "identity_scope_ref", None)
-                if record_schema == RESEARCH_RUN_RECORD_SCHEMA_VERSION
-                else None
-            ),
         )
     except (TypeError, ValueError):
         return ResearchArtifactReadResolution(accepted=False)
@@ -1823,34 +1822,14 @@ def _resolve_research_artifact_run(
     if not common_matches:
         return ResearchArtifactReadResolution(accepted=False)
 
-    if claim.schema_version == RESEARCH_ARTIFACT_MANIFEST_VERSION:
-        exact_v2_evidence = (
-            record_schema == RESEARCH_RUN_RECORD_SCHEMA_VERSION_V2
-            and record_identity_scope_ref == claim.identity_scope_ref
-            and record_subject_scope_ref == claim.subject_scope_ref
-            and record_authority_ref == claim.publication_authority_ref
-        )
-        if not exact_v2_evidence:
-            return ResearchArtifactReadResolution(accepted=False)
-    elif claim.schema_version == RESEARCH_ARTIFACT_LEGACY_MANIFEST_VERSION:
-        if record_schema != RESEARCH_RUN_RECORD_SCHEMA_VERSION:
-            return ResearchArtifactReadResolution(accepted=False)
-        if (
-            claim.identity_scope_ref is not None
-            and claim.identity_scope_ref != record_identity_scope_ref
-        ):
-            return ResearchArtifactReadResolution(accepted=False)
-        if (
-            claim.subject_scope_ref is not None
-            and claim.subject_scope_ref != record_subject_scope_ref
-        ):
-            return ResearchArtifactReadResolution(accepted=False)
-        if (
-            claim.publication_authority_ref is not None
-            and claim.publication_authority_ref != record_authority_ref
-        ):
-            return ResearchArtifactReadResolution(accepted=False)
-    else:
+    if claim.schema_version != RESEARCH_ARTIFACT_MANIFEST_VERSION:
+        return ResearchArtifactReadResolution(accepted=False)
+    exact_v2_evidence = (
+        record_identity_scope_ref == claim.identity_scope_ref
+        and record_subject_scope_ref == claim.subject_scope_ref
+        and record_authority_ref == claim.publication_authority_ref
+    )
+    if not exact_v2_evidence:
         return ResearchArtifactReadResolution(accepted=False)
     return ResearchArtifactReadResolution(
         accepted=True,
@@ -1881,9 +1860,7 @@ def _research_artifact_diagnostic_is_authorized(
     expected_ref = f"artifact://{claim.run_id}/{claim.artifact_type}"
     record_schema = getattr(record, "schema_version", None)
     expected_manifest_schema = (
-        RESEARCH_ARTIFACT_LEGACY_MANIFEST_VERSION
-        if record_schema == RESEARCH_RUN_RECORD_SCHEMA_VERSION
-        else RESEARCH_ARTIFACT_MANIFEST_VERSION
+        RESEARCH_ARTIFACT_MANIFEST_VERSION
         if record_schema == RESEARCH_RUN_RECORD_SCHEMA_VERSION_V2
         else None
     )
@@ -1970,9 +1947,9 @@ def _research_run_store_schema_version(version: str) -> str:
     )
 
 
-def _is_recoverable_research_manifest(manifest: GraphTerminalManifest) -> bool:
+def _is_recoverable_research_manifest(manifest: GraphTerminalManifestV2) -> bool:
     return (
-        isinstance(manifest, GraphTerminalManifest)
+        isinstance(manifest, GraphTerminalManifestV2)
         and manifest.graph_id.startswith("research.")
         and manifest.publication is not None
     )

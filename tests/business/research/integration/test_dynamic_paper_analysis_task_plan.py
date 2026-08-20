@@ -95,9 +95,16 @@ class _WorkspaceAnalysisSubAgent:
         self._dependencies = dependencies
         self._workspace = workspace
         self.calls: list[dict[str, Any]] = []
+        self.execution_identities: list[GraphExecutionIdentity | None] = []
 
-    def execute(self, task: dict[str, Any]) -> HarnessWorkerResult:
+    def execute(
+        self,
+        task: dict[str, Any],
+        *,
+        execution_identity: GraphExecutionIdentity | None = None,
+    ) -> HarnessWorkerResult:
         self.calls.append(task)
+        self.execution_identities.append(execution_identity)
         worker = {
             "research.analysis.structure": (
                 ResearchSinglePaperRuntime._analyze_structure
@@ -109,7 +116,12 @@ class _WorkspaceAnalysisSubAgent:
                 ResearchSinglePaperRuntime._analyze_experiments
             ),
         }[self.worker_id]
-        return worker(self._dependencies, task, self._workspace)
+        return worker(
+            self._dependencies,
+            task,
+            self._workspace,
+            execution_identity=execution_identity,
+        )
 
 
 class _PlanOutlineWorker:
@@ -380,6 +392,19 @@ def test_dynamic_task_plan_fake_llm_and_subagents_publish_through_fixed_path() -
     assert all(
         len(worker.calls) == 1 for worker in factory.subagent_workers[0].values()
     )
+    assert all(
+        len(worker.execution_identities) == 1
+        and worker.execution_identities[0] is not None
+        for worker in factory.subagent_workers[0].values()
+    )
+    assert len(
+        {
+            identity.activity_id
+            for worker in factory.subagent_workers[0].values()
+            for identity in worker.execution_identities
+            if identity is not None
+        }
+    ) == 1
     store_events = factory.stores[0].read_events(
         result.run_id,
         "dynamic_analysis_stage",

@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import inspect
 from typing import Any
 
+from framework.harness.context.models import ContextEnvelope
 from framework.harness.control_plane.errors import HarnessValidationError
 from framework.harness.subagents.gates import (
     FakeSubAgentGateSuite,
@@ -31,6 +33,7 @@ from framework.harness.subagents.transcript import (
     subagent_evidence_schemas,
 )
 from framework.harness.workers.result import HarnessWorkerResult
+from framework.shared.graph_identity import GraphExecutionIdentity
 
 
 class SubAgentRuntime:
@@ -93,7 +96,12 @@ class SubAgentRuntime:
             "budget": spec.budget,
         }
         try:
-            worker_result = _call_worker(worker, spec.subagent_id, task)
+            worker_result = _call_worker(
+                worker,
+                spec.subagent_id,
+                task,
+                execution_identity=_execution_identity_for_invocation(invocation),
+            )
         except Exception:
             return self._halted_result(
                 invocation,
@@ -303,20 +311,7 @@ def subagent_attempt_identity(
 ) -> SubAgentAttemptIdentity:
     if not isinstance(invocation, SubAgentInvocation):
         raise TypeError("invocation must be SubAgentInvocation")
-    if invocation.is_graph_only:
-        assert invocation.attempt_identity is not None
-        return invocation.attempt_identity
-    return SubAgentAttemptIdentity(
-        invocation_id=invocation.invocation_id,
-        parent_run_id=invocation.parent_run_id,
-        child_run_id=invocation.child_run_id,
-        workflow_id=invocation.workflow_id,
-        stage_id=invocation.step_id,
-        task_id=invocation.task_id,
-        task_instance_id=invocation.task_instance_id,
-        attempt=invocation.attempt,
-        subagent_id=invocation.subagent_spec.subagent_id,
-    )
+    return invocation.attempt_identity
 
 
 def _with_receipt(result: SubAgentResult, receipt) -> SubAgentResult:
@@ -378,21 +373,65 @@ def _sanitize_memory_write_candidates(value: Any) -> tuple[dict[str, Any], ...]:
     return tuple(candidates)
 
 
-def _call_worker(worker: Any, subagent_id: str, task: dict[str, Any]) -> HarnessWorkerResult:
+def _call_worker(
+    worker: Any,
+    subagent_id: str,
+    task: dict[str, Any],
+    *,
+    execution_identity: GraphExecutionIdentity | None,
+) -> HarnessWorkerResult:
     execute = getattr(worker, "execute", None)
     if callable(execute):
-        value = execute(task)
+        value = _invoke_worker_callable(execute, (task,), execution_identity)
     else:
         run_subagent = getattr(worker, "run_subagent", None)
         if callable(run_subagent):
-            value = run_subagent(subagent_id, task, dict(task.get("budget", {})))
+            value = _invoke_worker_callable(
+                run_subagent,
+                (subagent_id, task, dict(task.get("budget", {}))),
+                execution_identity,
+            )
         elif callable(worker):
-            value = worker(task)
+            value = _invoke_worker_callable(worker, (task,), execution_identity)
         else:
             raise HarnessValidationError("subagent worker must be callable or implement SubAgentWorkerPort")
     if not isinstance(value, HarnessWorkerResult):
         raise HarnessValidationError("subagent worker must return HarnessWorkerResult")
     return value
+
+
+def _invoke_worker_callable(
+    worker: Any,
+    args: tuple[Any, ...],
+    execution_identity: GraphExecutionIdentity | None,
+) -> Any:
+    if execution_identity is None or not _accepts_execution_identity(worker):
+        return worker(*args)
+    return worker(*args, execution_identity=execution_identity)
+
+
+def _accepts_execution_identity(worker: Any) -> bool:
+    try:
+        parameters = inspect.signature(worker).parameters.values()
+    except (TypeError, ValueError):
+        return False
+    return any(
+        parameter.name == "execution_identity"
+        or parameter.kind is inspect.Parameter.VAR_KEYWORD
+        for parameter in parameters
+    )
+
+
+def _execution_identity_for_invocation(
+    invocation: SubAgentInvocation,
+) -> GraphExecutionIdentity | None:
+    context_pack = invocation.context_envelope.context_pack
+    if not isinstance(context_pack, ContextEnvelope):
+        return None
+    graph_identity = context_pack.graph_identity
+    if graph_identity is None or not graph_identity.has_physical_activity:
+        return None
+    return graph_identity.to_graph_execution_identity()
 
 
 __all__ = ["SubAgentRuntime", "subagent_attempt_identity"]
