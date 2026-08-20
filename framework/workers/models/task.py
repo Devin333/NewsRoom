@@ -360,11 +360,11 @@ def task_admission_error(task: Task) -> tuple[str, str] | None:
             "worker task must declare GRAPH or STANDALONE execution scope",
         )
     if task.execution_scope is WorkerExecutionScope.GRAPH and not isinstance(
-        task.graph_identity, GraphExecutionIdentity
+        task.graph_identity, (GraphIdentity, GraphExecutionIdentity)
     ):
         return (
             "GraphIdentityRequired",
-            "graph worker task requires an exact GraphExecutionIdentity",
+            "graph worker task requires a Graph identity",
         )
     if task.execution_scope is WorkerExecutionScope.STANDALONE and task.graph_identity is not None:
         return (

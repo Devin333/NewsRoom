@@ -151,6 +151,15 @@ class WorkerLoop:
                     retryable=False,
                 ),
             )
+        if not isinstance(task.graph_identity, GraphExecutionIdentity):
+            return self._reject_task(
+                task,
+                TaskError(
+                    "GraphIdentityRequired",
+                    "WorkerLoop requires an exact GraphExecutionIdentity",
+                    retryable=False,
+                ),
+            )
         task.status = TaskStatus.RUNNING
         self._record_event("task_started", task)
         handler = self.handler_registry.get(task.task_type)

@@ -47,6 +47,12 @@ class TaskDispatcher:
                 "WorkerExecutionScopeMismatch",
                 "TaskDispatcher only executes tasks in the graph scope",
             )
+        if not isinstance(task.graph_identity, GraphExecutionIdentity):
+            return _rejected_result(
+                task,
+                "GraphIdentityRequired",
+                "TaskDispatcher requires an exact GraphExecutionIdentity",
+            )
         extracted = self.trace_propagator.extract_span(task.trace_carrier)
         local_context = extracted.child().context
         attempt_bucket = _attempt_bucket(task.attempts)
