@@ -7,6 +7,7 @@ from typing import Any, Iterator
 from framework.llm.models.response import LLMResponse
 from framework.llm.models.stream import LLMStreamAccumulator, LLMStreamEvent
 from framework.llm.models.usage import TokenUsage
+from framework.shared.graph_identity import GraphExecutionIdentity
 
 
 _TOOL_EVENT_TYPES = frozenset(
@@ -19,9 +20,16 @@ _TOOL_EVENT_TYPES = frozenset(
 
 
 class LLMStreamProtocolError(ValueError):
-    def __init__(self, reason: str, message: str) -> None:
+    def __init__(
+        self,
+        reason: str,
+        message: str,
+        *,
+        actual_execution_identity: GraphExecutionIdentity | None = None,
+    ) -> None:
         super().__init__(message)
         self.reason = reason
+        self.actual_execution_identity = actual_execution_identity
 
 
 @dataclass(frozen=True)
@@ -35,8 +43,15 @@ class LLMStreamCaptureResult:
 class LLMStreamCacheCapture:
     """Normalize and validate one provider stream without retaining raw events."""
 
-    def __init__(self) -> None:
-        self._accumulator = LLMStreamAccumulator()
+    def __init__(
+        self,
+        *,
+        expected_execution_identity: GraphExecutionIdentity | None = None,
+    ) -> None:
+        self._accumulator = LLMStreamAccumulator(
+            expected_execution_identity=expected_execution_identity,
+            require_expected_identity=True,
+        )
         self._started = False
         self._completed = False
         self._tool_event_seen = False
@@ -80,9 +95,15 @@ class LLMStreamCacheCapture:
         try:
             self._accumulator.add_event(event)
         except ValueError as exc:
+            reason = (
+                "stream_identity_mismatch"
+                if "Graph identity" in str(exc)
+                else self._protocol_reason or "invalid_stream_protocol"
+            )
             raise LLMStreamProtocolError(
-                self._protocol_reason or "invalid_stream_protocol",
+                reason,
                 "provider stream protocol is invalid",
+                actual_execution_identity=event.execution_identity,
             ) from exc
         if event.event_type == "message_complete":
             self._completed = True
@@ -138,6 +159,7 @@ def iter_cached_response_events(
             "cache_hit": True,
             "provider_call": False,
         },
+        execution_identity=response.execution_identity,
     )
 
     content = response.content or ""
@@ -145,6 +167,7 @@ def iter_cached_response_events(
         yield LLMStreamEvent(
             event_type="text_delta",
             text_delta=content[offset : offset + chunk_size],
+            execution_identity=response.execution_identity,
         )
 
     if _has_source_usage(response.usage):
@@ -156,6 +179,7 @@ def iter_cached_response_events(
                 "cache_hit": True,
                 "provider_call": False,
             },
+            execution_identity=response.execution_identity,
         )
 
     yield LLMStreamEvent(
@@ -166,6 +190,7 @@ def iter_cached_response_events(
             else None
         ),
         metadata=completion_metadata,
+        execution_identity=response.execution_identity,
     )
 
 

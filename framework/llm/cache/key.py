@@ -13,8 +13,8 @@ from framework.llm.structured_output import StructuredOutputCacheIdentity
 
 
 DEFAULT_CACHE_NAMESPACE = "newsroom:llm-cache"
-DEFAULT_CACHE_KEY_VERSION = "v2"
-DEFAULT_CACHE_GENERATION = "v2"
+DEFAULT_CACHE_KEY_VERSION = "v3"
+DEFAULT_CACHE_GENERATION = "v3"
 _DOMAIN_PREFIX = b"newsroom-llm-cache\x00"
 _DIAGNOSTIC_METADATA_KEYS = {
     "call_id",
@@ -59,8 +59,8 @@ class LLMCacheKey:
         """Build a development-only compatibility key for `CachedLLMClient`."""
         factory = LLMCacheKeyFactory(
             secret=b"newsroom-development-cache-compatibility-only",
-            key_version="dev-v2",
-            cache_generation="dev-v2",
+            key_version="dev-v3",
+            cache_generation="dev-v3",
         )
         context = CacheContext(
             scope=CacheScope(
@@ -197,8 +197,9 @@ def _request_semantic_payload(
             "semantic metadata duplicates request metadata keys: " + ", ".join(conflicting)
         )
     semantic_metadata = {**request_metadata, **explicit_semantic}
+    execution_identity = request.execution_identity
     return {
-        "canonical_schema": "newsroom.llm-cache-request.v2",
+        "canonical_schema": "newsroom.llm-cache-request.v3",
         "cache_key_version": key_version,
         "deployment": deployment,
         "messages": request.messages,
@@ -218,6 +219,19 @@ def _request_semantic_payload(
         "semantic_metadata": semantic_metadata,
         "deterministic_seed": context.deterministic_seed,
         "prepared_identity": dict(prepared_identity or {}),
+        "graph_stage_identity": (
+            {
+                "run_id": execution_identity.run_id,
+                "graph_id": execution_identity.graph_id,
+                "graph_version": execution_identity.graph_version,
+                "graph_ref": execution_identity.graph_ref,
+                "graph_checksum": execution_identity.graph_checksum,
+                "node_id": execution_identity.node_id,
+                "node_instance_id": execution_identity.node_instance_id,
+            }
+            if execution_identity is not None
+            else None
+        ),
     }
 
 

@@ -569,7 +569,7 @@ class StructuredResearchCandidateWorker:
             output_schema=deepcopy(_SCHEMAS[task]),
             output_schema_name=f"research_{task}",
             structured_output_policy=ProviderStructuredOutputPolicy(
-                workflow_scope="research.candidate"
+                graph_scope="research.candidate"
             ),
         )
 
@@ -761,7 +761,7 @@ _READER_REPAIR_PROMPT_OMITTED_FIELDS = frozenset(
         "authorization",
         "credential",
         "credentials",
-        "halt_workflow",
+        "halt_graph",
         "identity_scope_ref",
         "metadata",
         "next_step",
@@ -777,7 +777,7 @@ _READER_REPAIR_PROMPT_OMITTED_FIELDS = frozenset(
         "tenant_id",
         "token",
         "verdict",
-        "workflow_id",
+        "graph_id",
         "write_memory",
     }
 )
@@ -1169,7 +1169,7 @@ def _project_task_plan_request(
         )
     projected = {
         "stage": {
-            "workflow_id": _identity(stage.get("workflow_id"), maximum=256),
+            "graph_id": _identity(stage.get("graph_id"), maximum=256),
             "stage_id": _identity(stage.get("stage_id"), maximum=256),
             "policy_ref": _safe_reference(stage.get("policy_ref")),
             "context_refs": sorted(allowed_refs),

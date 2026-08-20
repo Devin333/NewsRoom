@@ -7,6 +7,7 @@ from typing import Any
 from framework.llm.models.tool_call import LLMToolCall
 from framework.llm.models.usage import TokenUsage
 from framework.llm.redaction.redactor import redact_sensitive_values
+from framework.shared.graph_identity import GraphExecutionIdentity
 
 
 @dataclass(frozen=True)
@@ -14,6 +15,7 @@ class LLMResponse:
     content: str | None = ""
     usage: TokenUsage = field(default_factory=TokenUsage)
     metadata: dict[str, Any] = field(default_factory=dict)
+    execution_identity: GraphExecutionIdentity | None = None
     structured_output: dict[str, Any] | None = None
     tool_calls: list[LLMToolCall] = field(default_factory=list)
     model: str | None = None
@@ -26,6 +28,14 @@ class LLMResponse:
             [LLMToolCall.from_dict(tool_call) for tool_call in self.tool_calls],
         )
         object.__setattr__(self, "usage", TokenUsage.from_any(self.usage))
+        if self.execution_identity is not None and not isinstance(
+            self.execution_identity, GraphExecutionIdentity
+        ):
+            object.__setattr__(
+                self,
+                "execution_identity",
+                GraphExecutionIdentity.from_dict(self.execution_identity),
+            )
 
     def has_tool_calls(self) -> bool:
         return bool(self.tool_calls)
@@ -38,6 +48,8 @@ class LLMResponse:
             "structured_output": deepcopy(self.structured_output),
             "tool_calls": [tool_call.to_dict(redact=False) for tool_call in self.tool_calls],
         }
+        if self.execution_identity is not None:
+            payload["execution_identity"] = self.execution_identity.to_dict()
         if self.model is not None:
             payload["model"] = self.model
         if self.raw:
@@ -52,6 +64,11 @@ class LLMResponse:
             content=payload.get("content"),
             usage=TokenUsage.from_dict(payload.get("usage")),
             metadata=dict(payload.get("metadata") or {}),
+            execution_identity=(
+                GraphExecutionIdentity.from_dict(payload["execution_identity"])
+                if payload.get("execution_identity") is not None
+                else None
+            ),
             structured_output=deepcopy(payload.get("structured_output")),
             tool_calls=[
                 LLMToolCall.from_dict(tool_call) for tool_call in payload.get("tool_calls") or []
@@ -72,6 +89,7 @@ class LLMResponse:
             content=getattr(value, "content", ""),
             usage=TokenUsage.from_any(getattr(value, "usage", None)),
             metadata=dict(getattr(value, "metadata", {}) or {}),
+            execution_identity=getattr(value, "execution_identity", None),
             structured_output=(
                 dict(getattr(value, "structured_output"))
                 if isinstance(getattr(value, "structured_output", None), dict)

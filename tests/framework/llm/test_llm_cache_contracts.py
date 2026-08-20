@@ -10,6 +10,7 @@ from framework.llm.cache import (
     LLMCachePolicy,
 )
 from framework.llm.models import LLMRequest, LLMResponse
+from framework.shared.graph_identity import GraphExecutionIdentity
 
 
 def _request(*, tenant: str = "tenant-a", **metadata) -> LLMRequest:
@@ -42,6 +43,26 @@ def _policy() -> LLMCachePolicy:
     )
 
 
+def _identity(
+    *,
+    run_id: str = "run-cache",
+    node_instance_id: str = "node-instance",
+    activity_id: str = "activity-1",
+    attempt: int = 1,
+) -> GraphExecutionIdentity:
+    return GraphExecutionIdentity(
+        run_id=run_id,
+        graph_id="graph-cache",
+        graph_version="v1",
+        graph_ref="graph-cache@v1",
+        graph_checksum="sha256:" + "c" * 64,
+        node_id="classify",
+        node_instance_id=node_instance_id,
+        activity_id=activity_id,
+        attempt=attempt,
+    )
+
+
 def test_policy_and_key_are_scope_bound_and_redacted() -> None:
     request = _request()
     decision = _policy().evaluate(request)
@@ -58,7 +79,7 @@ def test_policy_and_key_are_scope_bound_and_redacted() -> None:
     )
     assert "private prompt" not in key.to_string()
     assert "tenant-a" not in key.to_string()
-    assert key.to_string().startswith("newsroom:llm-cache:v2:")
+    assert key.to_string().startswith("newsroom:llm-cache:v3:")
 
     other = _request(tenant="tenant-b")
     other_decision = _policy().evaluate(other)
@@ -104,6 +125,75 @@ def test_prepared_identity_revision_changes_cache_key() -> None:
 
     assert first.request_digest != revised.request_digest
     assert "profile-v1" not in first.to_string()
+
+
+def test_graph_cache_key_is_stage_bound_but_reusable_across_retry_attempts() -> None:
+    factory = LLMCacheKeyFactory(secret="0123456789abcdef")
+
+    def key_for(identity: GraphExecutionIdentity):
+        request = _request().clone(execution_identity=identity)
+        decision = _policy().evaluate(request)
+        assert decision.context is not None
+        return factory.build(
+            request=request,
+            context=decision.context,
+            deployment_id="primary-v1",
+            provider="test",
+            model="model-v1",
+        )
+
+    source = _identity()
+    retry = _identity(activity_id="activity-2", attempt=2)
+
+    assert key_for(source) == key_for(retry)
+    assert key_for(source) != key_for(_identity(run_id="run-other"))
+    assert key_for(source) != key_for(_identity(node_instance_id="node-other"))
+
+
+def test_cache_entry_preserves_source_identity_and_rejects_cross_stage_rebind() -> None:
+    source_identity = _identity()
+    source_request = _request().clone(execution_identity=source_identity)
+    decision = _policy().evaluate(source_request)
+    assert decision.context is not None
+    key = LLMCacheKeyFactory(secret="0123456789abcdef").build(
+        request=source_request,
+        context=decision.context,
+        deployment_id="primary-v1",
+        provider="test",
+        model="model-v1",
+    )
+    entry = CacheEntry.from_response(
+        key=key,
+        request=source_request,
+        response=LLMResponse(
+            content="answer",
+            execution_identity=source_identity,
+        ),
+    )
+    restored_entry = CacheEntry.from_json_bytes(entry.to_json_bytes())
+    retry_identity = _identity(activity_id="activity-2", attempt=2)
+
+    response = restored_entry.to_response(
+        request=source_request.clone(execution_identity=retry_identity),
+    )
+
+    assert restored_entry.source_execution_identity == source_identity
+    assert response.execution_identity == retry_identity
+    assert (
+        response.metadata["llm_cache_source_execution_identity"]
+        == source_identity.to_dict()
+    )
+    with pytest.raises(CacheResponseValidationError, match="Graph stage"):
+        restored_entry.to_response(
+            request=source_request.clone(
+                execution_identity=_identity(node_instance_id="node-other"),
+            )
+        )
+
+    legacy_payload = entry.to_dict()
+    legacy_payload["entry_schema_version"] = "v2"
+    with pytest.raises(CacheResponseValidationError, match="schema version"):
+        CacheEntry.from_dict(legacy_payload)
 
 
 def test_policy_returns_stable_bypass_reasons() -> None:

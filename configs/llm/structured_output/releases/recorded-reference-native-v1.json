@@ -1,5 +1,5 @@
 {
-  "schema_version": "provider-structured-output-release.v1",
+  "schema_version": "provider-structured-output-release.v2",
   "release_id": "recorded-reference-native-v1",
   "provider": "recorded",
   "deployment": "recorded-research-model",
@@ -7,7 +7,7 @@
   "approved_modes": ["native_strict"],
   "status": "approved",
   "rollout_state": "enabled",
-  "workflow_scopes": ["research.candidate", "structured-output-evaluation"],
+  "graph_scopes": ["research.candidate", "structured-output-evaluation"],
   "corpus_revision": "provider-schema-corpus-v1",
   "corpus_digest": "sha256:babfc4241f3b948edd7830f2ca11b4e5b20fff3664155f5492e3dc9090466d49",
   "observation_revision": "recorded-reference-native-observations-v1",
@@ -37,5 +37,5 @@
     ]
   },
   "reason": "Deterministic recorded-transport reference release; not evidence for any external provider.",
-  "record_digest": "sha256:7d3f0f0b7ef58f187f0df1905b6eca30278e4c30bb13ecf9cc2b684b7ce2bc5c"
+  "record_digest": "sha256:9be1d65eaf925a316f73280b93d410fc4fe611265b9ba625ab37bfa7e30412a1"
 }

@@ -38,7 +38,7 @@ _RELEASE_KEYS = frozenset(
         "approved_modes",
         "status",
         "rollout_state",
-        "workflow_scopes",
+        "graph_scopes",
         "corpus_revision",
         "corpus_digest",
         "observation_revision",
@@ -133,10 +133,10 @@ class ProviderStructuredOutputRelease:
     approved_modes: frozenset[str]
     status: ProviderReleaseStatus
     rollout_state: ProviderRolloutState
-    workflow_scopes: tuple[str, ...]
+    graph_scopes: tuple[str, ...]
     rollout_revision: str
     rollback: ProviderStructuredOutputRollback
-    schema_version: str = "provider-structured-output-release.v1"
+    schema_version: str = "provider-structured-output-release.v2"
     corpus_revision: str | None = None
     corpus_digest: str | None = None
     observation_revision: str | None = None
@@ -168,7 +168,7 @@ class ProviderStructuredOutputRelease:
                 field_name,
                 _required_text(getattr(self, field_name), field_name=field_name),
             )
-        if self.schema_version != "provider-structured-output-release.v1":
+        if self.schema_version != "provider-structured-output-release.v2":
             raise ProviderStructuredOutputReleaseError(
                 "unsupported provider structured-output release schema_version"
             )
@@ -185,7 +185,7 @@ class ProviderStructuredOutputRelease:
                 "approved_modes must contain native_strict or constrained"
             )
         scopes = _required_text_tuple(
-            self.workflow_scopes, field_name="workflow_scopes"
+            self.graph_scopes, field_name="graph_scopes"
         )
         if not isinstance(self.evaluation_passed, bool):
             raise ProviderStructuredOutputReleaseError(
@@ -249,7 +249,7 @@ class ProviderStructuredOutputRelease:
             )
 
         object.__setattr__(self, "approved_modes", modes)
-        object.__setattr__(self, "workflow_scopes", scopes)
+        object.__setattr__(self, "graph_scopes", scopes)
         object.__setattr__(self, "evidence_kind", evidence_kind)
         object.__setattr__(self, "evidence_refs", evidence_refs)
         object.__setattr__(self, "decided_by", decided_by)
@@ -286,7 +286,7 @@ class ProviderStructuredOutputRelease:
         deployment: str,
         capability_revision: str,
         mode: str,
-        workflow_scope: str,
+        graph_scope: str,
     ) -> tuple[str, ...]:
         issues: list[str] = []
         if self.provider != provider or self.deployment != deployment:
@@ -295,7 +295,7 @@ class ProviderStructuredOutputRelease:
             issues.append("provider_release_capability_revision_mismatch")
         if mode not in self.approved_modes:
             issues.append("provider_release_mode_unapproved")
-        if "*" not in self.workflow_scopes and workflow_scope not in self.workflow_scopes:
+        if "*" not in self.graph_scopes and graph_scope not in self.graph_scopes:
             issues.append("provider_release_scope_ineligible")
         if self.status != "approved":
             issues.append("provider_release_not_approved")
@@ -319,7 +319,7 @@ class ProviderStructuredOutputRelease:
             "approved_modes": sorted(self.approved_modes),
             "status": self.status,
             "rollout_state": self.rollout_state,
-            "workflow_scopes": list(self.workflow_scopes),
+            "graph_scopes": list(self.graph_scopes),
             "corpus_revision": self.corpus_revision,
             "corpus_digest": self.corpus_digest,
             "observation_revision": self.observation_revision,
@@ -368,8 +368,8 @@ class ProviderStructuredOutputRelease:
             rollout_state=_required_text(
                 payload.get("rollout_state"), field_name="rollout_state"
             ),  # type: ignore[arg-type]
-            workflow_scopes=_text_tuple(
-                payload.get("workflow_scopes"), field_name="workflow_scopes"
+            graph_scopes=_text_tuple(
+                payload.get("graph_scopes"), field_name="graph_scopes"
             ),
             corpus_revision=_optional_text(payload.get("corpus_revision")),
             corpus_digest=payload.get("corpus_digest"),

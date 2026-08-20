@@ -7,6 +7,7 @@ from typing import Any
 from framework.llm.models.tool_call import LLMToolCall
 from framework.llm.models.usage import TokenUsage
 from framework.llm.redaction.redactor import redact_sensitive_values
+from framework.shared.graph_identity import GraphExecutionIdentity
 
 
 STREAM_EVENT_TYPES = {
@@ -30,10 +31,20 @@ class LLMStreamEvent:
     usage_delta: TokenUsage | None = None
     structured_output: dict[str, Any] | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
+    execution_identity: GraphExecutionIdentity | None = None
 
     def __post_init__(self) -> None:
         if self.event_type not in STREAM_EVENT_TYPES:
             raise ValueError(f"unsupported LLM stream event type: {self.event_type}")
+        if self.execution_identity is not None and not isinstance(
+            self.execution_identity,
+            GraphExecutionIdentity,
+        ):
+            object.__setattr__(
+                self,
+                "execution_identity",
+                GraphExecutionIdentity.from_dict(self.execution_identity),
+            )
         if self.tool_call is not None:
             object.__setattr__(self, "tool_call", LLMToolCall.from_dict(self.tool_call))
         if self.usage_delta is not None:
@@ -64,6 +75,11 @@ class LLMStreamEvent:
                 else None
             ),
             "metadata": dict(self.metadata),
+            "execution_identity": (
+                self.execution_identity.to_dict()
+                if self.execution_identity is not None
+                else None
+            ),
         }
         if redact:
             return redact_sensitive_values(payload)
@@ -85,6 +101,7 @@ class LLMStreamEvent:
                 tool_call_delta=(
                     dict(value["tool_call_delta"])
                     if isinstance(value.get("tool_call_delta"), dict)
+                    and value.get("tool_call_delta")
                     else None
                 ),
                 usage_delta=(
@@ -98,6 +115,11 @@ class LLMStreamEvent:
                     else None
                 ),
                 metadata=dict(value.get("metadata") or {}),
+                execution_identity=(
+                    GraphExecutionIdentity.from_dict(value["execution_identity"])
+                    if value.get("execution_identity") is not None
+                    else None
+                ),
             )
         return cls(
             event_type=str(getattr(value, "event_type", "")),
@@ -123,17 +145,27 @@ class LLMStreamEvent:
                 else None
             ),
             metadata=dict(getattr(value, "metadata", {}) or {}),
+            execution_identity=getattr(value, "execution_identity", None),
         )
 
 
 class LLMStreamAccumulator:
-    def __init__(self, *, metadata: dict[str, Any] | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        metadata: dict[str, Any] | None = None,
+        expected_execution_identity: GraphExecutionIdentity | None = None,
+        require_expected_identity: bool = False,
+    ) -> None:
         self._text_parts: list[str] = []
         self._tool_calls: list[LLMToolCall] = []
         self._tool_call_deltas: dict[str, dict[str, Any]] = {}
         self._usage = TokenUsage()
         self._metadata = dict(metadata or {})
         self._structured_output: dict[str, Any] | None = None
+        self._expected_execution_identity = expected_execution_identity
+        self._require_expected_identity = bool(require_expected_identity)
+        self._execution_identity: GraphExecutionIdentity | None = None
         self._started = False
         self._completed = False
         self._errored = False
@@ -146,6 +178,7 @@ class LLMStreamAccumulator:
             raise ValueError("cannot add stream events after message_complete")
         if self._errored:
             raise ValueError("cannot add stream events after error")
+        self._validate_execution_identity(event)
         if event.event_type == "message_start":
             if self._started:
                 raise ValueError("message_start already received")
@@ -228,7 +261,19 @@ class LLMStreamAccumulator:
                 else None
             ),
             tool_calls=list(self._tool_calls),
+            execution_identity=self._execution_identity,
         )
+
+    def _validate_execution_identity(self, event: LLMStreamEvent) -> None:
+        actual = event.execution_identity
+        expected = self._expected_execution_identity
+        if self._require_expected_identity and actual != expected:
+            raise ValueError("LLM stream event Graph identity does not match request")
+        if actual is None:
+            return
+        if self._execution_identity is not None and actual != self._execution_identity:
+            raise ValueError("LLM stream events use inconsistent Graph identities")
+        self._execution_identity = actual
 
     def _require_started(self, event: LLMStreamEvent) -> None:
         if not self._started:

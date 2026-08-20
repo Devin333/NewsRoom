@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections import deque
+from dataclasses import replace
 from collections.abc import Iterable
 
 from framework.llm.models.request import LLMRequest
@@ -41,7 +42,7 @@ class FakeLLMClient:
 
         response = self._responses.popleft()
         if isinstance(response, LLMResponse):
-            return response
+            return _bind_response_identity(response, request)
         return LLMResponse(
             content=response,
             usage=TokenUsage(
@@ -49,6 +50,7 @@ class FakeLLMClient:
                 output_tokens=self._output_tokens_per_call,
             ),
             metadata={"provider": "fake", "model": "fake-llm"},
+            execution_identity=request.execution_identity,
         )
 
     def stream(self, request: LLMRequest) -> Iterable[LLMStreamEvent]:
@@ -61,27 +63,40 @@ class FakeLLMClient:
                 "model": response.model or "fake-llm",
                 "provisional": provisional,
             },
+            execution_identity=request.execution_identity,
         )
         if response.content:
             yield LLMStreamEvent(
                 event_type="text_delta",
                 text_delta=response.content,
                 metadata={"provisional": provisional},
+                execution_identity=request.execution_identity,
             )
         for tool_call in response.tool_calls:
             yield LLMStreamEvent(
                 event_type="tool_call_complete",
                 tool_call=tool_call,
                 metadata={"provisional": provisional},
+                execution_identity=request.execution_identity,
             )
         yield LLMStreamEvent(
             event_type="usage_delta",
             usage_delta=response.usage,
             metadata={"provisional": provisional},
+            execution_identity=request.execution_identity,
         )
         yield LLMStreamEvent(
             event_type="message_complete",
             structured_output=response.structured_output,
             metadata={**response.metadata, "provisional": False},
+            execution_identity=request.execution_identity,
         )
+
+
+def _bind_response_identity(response: LLMResponse, request: LLMRequest) -> LLMResponse:
+    if response.execution_identity is None:
+        return replace(response, execution_identity=request.execution_identity)
+    if request.execution_identity is not None and response.execution_identity != request.execution_identity:
+        raise ValueError("LLM response execution identity does not match request")
+    return response
 

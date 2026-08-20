@@ -11,6 +11,7 @@ from framework.llm.structured_output.projection import (
     ProviderSchemaProjection,
     ProviderStructuredOutputPolicy,
 )
+from framework.shared.graph_identity import GraphExecutionIdentity
 
 
 @dataclass(frozen=True)
@@ -21,6 +22,7 @@ class LLMRequest:
     max_tokens: int | None = None
     tools: list[dict[str, Any]] = field(default_factory=list)
     metadata: dict[str, Any] = field(default_factory=dict)
+    execution_identity: GraphExecutionIdentity | None = None
     response_format: str | dict[str, Any] | None = None
     output_schema: Any | None = None
     output_schema_name: str = "structured_output"
@@ -52,11 +54,20 @@ class LLMRequest:
             "messages",
             [_message_to_dict(message) for message in self.messages],
         )
-        object.__setattr__(
-            self,
-            "structured_output_policy",
-            ProviderStructuredOutputPolicy.from_any(self.structured_output_policy),
+        if self.execution_identity is not None and not isinstance(
+            self.execution_identity, GraphExecutionIdentity
+        ):
+            object.__setattr__(
+                self,
+                "execution_identity",
+                GraphExecutionIdentity.from_dict(self.execution_identity),
+            )
+        policy = ProviderStructuredOutputPolicy.from_any(
+            self.structured_output_policy
         )
+        if self.execution_identity is not None:
+            policy = policy.for_execution_identity(self.execution_identity)
+        object.__setattr__(self, "structured_output_policy", policy)
         schema = self.output_schema
         if schema is None:
             return
@@ -94,6 +105,10 @@ class LLMRequest:
             raise ValueError("structured-output execution requires output_schema")
         if projection.contract_digest != contract.schema_digest:
             raise ValueError("provider projection does not match structured-output contract")
+        if projection.graph_scope != self.structured_output_policy.graph_scope:
+            raise ValueError(
+                "provider projection Graph scope does not match request authorization"
+            )
         result = self.clone()
         object.__setattr__(result, "_structured_output_contract", contract)
         object.__setattr__(result, "_provider_schema_projection", projection)
@@ -107,6 +122,7 @@ class LLMRequest:
             "max_tokens": self.max_tokens,
             "tools": deepcopy(self.tools),
             "metadata": deepcopy(self.metadata),
+            "execution_identity": self.execution_identity,
             "response_format": deepcopy(self.response_format),
             "output_schema": self.structured_output_schema_source(),
             "output_schema_name": self.output_schema_name,
@@ -142,6 +158,8 @@ class LLMRequest:
             "tools": deepcopy(self.tools),
             "metadata": dict(self.metadata),
         }
+        if self.execution_identity is not None:
+            payload["execution_identity"] = self.execution_identity.to_dict()
         if self.model is not None:
             payload["model"] = self.model
         if self.temperature is not None:
@@ -171,6 +189,11 @@ class LLMRequest:
             max_tokens=int(payload["max_tokens"]) if payload.get("max_tokens") is not None else None,
             tools=list(payload.get("tools") or []),
             metadata=dict(payload.get("metadata") or {}),
+            execution_identity=(
+                GraphExecutionIdentity.from_dict(payload["execution_identity"])
+                if payload.get("execution_identity") is not None
+                else None
+            ),
             response_format=deepcopy(payload.get("response_format")),
             output_schema=deepcopy(payload.get("output_schema")),
             output_schema_name=str(payload.get("output_schema_name") or "structured_output"),

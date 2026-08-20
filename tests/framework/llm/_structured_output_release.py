@@ -24,7 +24,7 @@ def approved_structured_output_release(
         approved_modes=modes,
         status="approved",
         rollout_state="enabled",
-        workflow_scopes=("*",),
+        graph_scopes=("*",),
         corpus_revision="test-corpus-v1",
         corpus_digest=_TEST_DIGEST,
         observation_revision="test-observations-v1",

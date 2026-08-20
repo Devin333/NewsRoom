@@ -1,5 +1,5 @@
 {
-  "schema_version": "provider-structured-output-release.v1",
+  "schema_version": "provider-structured-output-release.v2",
   "release_id": "dashscope-deepseek-v4-flash-held-v1",
   "provider": "dashscope",
   "deployment": "dashscope-deepseek-v4-flash",
@@ -7,7 +7,7 @@
   "approved_modes": ["native_strict"],
   "status": "held",
   "rollout_state": "disabled",
-  "workflow_scopes": ["research.candidate"],
+  "graph_scopes": ["research.candidate"],
   "corpus_revision": null,
   "corpus_digest": null,
   "observation_revision": null,
@@ -32,5 +32,5 @@
     ]
   },
   "reason": "No reviewed live provider evaluation exists; native enforcement remains disabled.",
-  "record_digest": "sha256:18a53240909f3423ea832f32d36959d70160f47387ebbf78bacd746d1b92bf83"
+  "record_digest": "sha256:539a5d15312209d6d9865365a7e88259ef1e3d2c9a69a330987abf16e7b135d8"
 }

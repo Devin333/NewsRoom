@@ -60,6 +60,7 @@ from framework.llm.structured_output import (
     compile_structured_output_contract,
     project_structured_output_contract,
 )
+from framework.shared.graph_identity import GraphExecutionIdentity
 
 
 UTC = _tz.utc
@@ -118,8 +119,17 @@ class _CacheReplayDeadlineExceeded(RuntimeError):
     pass
 
 
+class _LLMResponseIdentityError(ValueError):
+    def __init__(self, *, expected: Any, actual: Any, response: LLMResponse) -> None:
+        super().__init__("LLM response Graph identity does not match request")
+        self.expected = expected
+        self.actual = actual
+        self.response = response
+
+
 @dataclass(frozen=True)
 class _RouterBudgetAttempt:
+    tracker: GlobalBudgetTracker | None = None
     logical_operation_id: str | None = None
     operation: LLMBudgetOperation | None = None
     preflight_check: GlobalBudgetCheck | None = None
@@ -127,6 +137,15 @@ class _RouterBudgetAttempt:
     @property
     def operation_id(self) -> str | None:
         return self.operation.operation_id if self.operation is not None else None
+
+
+class _RouterEventList(list[LLMRouterEvent]):
+    def __init__(
+        self,
+        execution_identity: GraphExecutionIdentity | None,
+    ) -> None:
+        super().__init__()
+        self.execution_identity = execution_identity
 
 
 class LLMRouter:
@@ -263,7 +282,10 @@ class LLMRouter:
         resolution_trace: Iterable[dict[str, Any]],
     ) -> LLMResponse:
         route = self._route(route_id)
-        route_events: list[LLMRouterEvent] = []
+        route_events: list[LLMRouterEvent] = _RouterEventList(
+            request.execution_identity,
+        )
+        budget_tracker = self._budget_tracker_for_request(request)
         try:
             contract = _compile_route_structured_output_contract(
                 request,
@@ -285,6 +307,7 @@ class LLMRouter:
             request,
             route_id=route.route_id,
             streaming=False,
+            tracker=budget_tracker,
         )
         self._record_structured_output_contract_compiled(
             route_events,
@@ -468,6 +491,7 @@ class LLMRouter:
                     deployment=deployment,
                     logical_operation_id=logical_budget_operation_id,
                     attempt_index=index + 1,
+                    tracker=budget_tracker,
                 )
             except GlobalBudgetExceededError as exc:
                 errors.append(
@@ -616,6 +640,7 @@ class LLMRouter:
                     deployment=deployment,
                     logical_operation_id=logical_budget_operation_id,
                     attempt_index=index + 1,
+                    tracker=budget_tracker,
                 )
             except GlobalBudgetExceededError as exc:
                 self._release_cache_attempt(
@@ -819,6 +844,61 @@ class LLMRouter:
                     f"LLM route {route.route_id} client failed at deployment {deployment_id}",
                     route_id=route.route_id,
                     error_type="client_error",
+                    retryable=False,
+                    request=request,
+                    attempted_deployments=attempted_deployments,
+                    errors=errors,
+                    events=route_events,
+                    resolution_trace=resolution_trace,
+                ) from None
+
+            try:
+                response = _bind_router_response_identity(
+                    response,
+                    request.execution_identity,
+                )
+            except _LLMResponseIdentityError as exc:
+                global_budget_check = self._settle_global_budget_failure(
+                    budget_attempt,
+                    deployment=deployment,
+                    reason="response_identity_mismatch",
+                    observed_usage=exc.response.usage,
+                )
+                errors.append(
+                    {
+                        "deployment_id": deployment_id,
+                        "error_type": "response_identity_mismatch",
+                        "retryable": False,
+                        "expected_identity": _identity_payload(exc.expected),
+                        "actual_identity": _identity_payload(exc.actual),
+                        "global_budget_check": (
+                            global_budget_check.to_dict()
+                            if global_budget_check is not None
+                            else None
+                        ),
+                    }
+                )
+                self._record_event(
+                    route_events,
+                    "llm_deployment_attempt_failed",
+                    route.route_id,
+                    deployment=deployment,
+                    metadata={
+                        "error_type": "response_identity_mismatch",
+                        "retryable": False,
+                        "provider_call": True,
+                    },
+                )
+                self._release_cache_attempt(
+                    cache_attempt,
+                    route=route,
+                    deployment=deployment,
+                    events=route_events,
+                )
+                raise self._build_route_error(
+                    f"LLM route {route.route_id} received a response with mismatched Graph identity",
+                    route_id=route.route_id,
+                    error_type="response_identity_mismatch",
                     retryable=False,
                     request=request,
                     attempted_deployments=attempted_deployments,
@@ -1069,7 +1149,10 @@ class LLMRouter:
         resolution_trace: Iterable[dict[str, Any]],
     ) -> Iterator[LLMStreamEvent]:
         route = self._route(route_id)
-        route_events: list[LLMRouterEvent] = []
+        route_events: list[LLMRouterEvent] = _RouterEventList(
+            request.execution_identity,
+        )
+        budget_tracker = self._budget_tracker_for_request(request)
         try:
             contract = _compile_route_structured_output_contract(
                 request,
@@ -1091,6 +1174,7 @@ class LLMRouter:
             request,
             route_id=route.route_id,
             streaming=True,
+            tracker=budget_tracker,
         )
         self._record_structured_output_contract_compiled(
             route_events,
@@ -1285,6 +1369,7 @@ class LLMRouter:
                     deployment=deployment,
                     logical_operation_id=logical_budget_operation_id,
                     attempt_index=index + 1,
+                    tracker=budget_tracker,
                 )
             except GlobalBudgetExceededError as exc:
                 errors.append(
@@ -1468,6 +1553,7 @@ class LLMRouter:
                     deployment=deployment,
                     logical_operation_id=logical_budget_operation_id,
                     attempt_index=index + 1,
+                    tracker=budget_tracker,
                 )
             except GlobalBudgetExceededError as exc:
                 self._release_cache_attempt(
@@ -1720,7 +1806,9 @@ class LLMRouter:
                     resolution_trace=resolution_trace,
                 ) from None
 
-            capture = LLMStreamCacheCapture()
+            capture = LLMStreamCacheCapture(
+                expected_execution_identity=request.execution_identity,
+            )
             terminal_event: LLMStreamEvent | None = None
             visible_output = False
             try:
@@ -1845,6 +1933,7 @@ class LLMRouter:
                 protocol_reason = (
                     exc.reason if isinstance(exc, LLMStreamProtocolError) else None
                 )
+                identity_mismatch = protocol_reason == "stream_identity_mismatch"
                 self._record_stream_cache_outcome(
                     cache_attempt,
                     route=route,
@@ -1864,11 +1953,26 @@ class LLMRouter:
                 )
                 error_payload = {
                     "deployment_id": deployment_id,
-                    "error_type": "client_error",
+                    "error_type": (
+                        "response_identity_mismatch"
+                        if identity_mismatch
+                        else "client_error"
+                    ),
                     "error_class": type(exc).__name__,
                     "retryable": False,
                     "visible_output": visible_output,
                 }
+                if identity_mismatch:
+                    error_payload.update(
+                        {
+                            "expected_identity": _identity_payload(
+                                request.execution_identity
+                            ),
+                            "actual_identity": _identity_payload(
+                                exc.actual_execution_identity
+                            ),
+                        }
+                    )
                 if global_failure_check is not None:
                     error_payload["global_budget_check"] = (
                         global_failure_check.to_dict()
@@ -1883,7 +1987,11 @@ class LLMRouter:
                 raise self._build_route_error(
                     f"LLM route {route.route_id} stream failed at deployment {deployment_id}",
                     route_id=route.route_id,
-                    error_type="client_error",
+                    error_type=(
+                        "response_identity_mismatch"
+                        if identity_mismatch
+                        else "client_error"
+                    ),
                     retryable=False,
                     request=request,
                     attempted_deployments=attempted_deployments,
@@ -1939,7 +2047,58 @@ class LLMRouter:
                 )
 
             capture_result = capture.finalize()
-            response = capture_result.response
+            try:
+                response = _bind_router_response_identity(
+                    capture_result.response,
+                    request.execution_identity,
+                )
+            except _LLMResponseIdentityError as exc:
+                global_budget_check = self._settle_global_budget_failure(
+                    budget_attempt,
+                    deployment=deployment,
+                    reason="response_identity_mismatch",
+                    observed_usage=exc.response.usage,
+                )
+                self._record_stream_cache_outcome(
+                    cache_attempt,
+                    route=route,
+                    deployment=deployment,
+                    events=route_events,
+                    event_type="llm_cache_stream_not_written",
+                    reason="response_identity_mismatch",
+                    provider_call=True,
+                )
+                self._release_cache_attempt(
+                    cache_attempt,
+                    route=route,
+                    deployment=deployment,
+                    events=route_events,
+                )
+                errors.append(
+                    {
+                        "deployment_id": deployment_id,
+                        "error_type": "response_identity_mismatch",
+                        "retryable": False,
+                        "expected_identity": _identity_payload(exc.expected),
+                        "actual_identity": _identity_payload(exc.actual),
+                        "global_budget_check": (
+                            global_budget_check.to_dict()
+                            if global_budget_check is not None
+                            else None
+                        ),
+                    }
+                )
+                raise self._build_route_error(
+                    f"LLM route {route.route_id} received a streamed response with mismatched Graph identity",
+                    route_id=route.route_id,
+                    error_type="response_identity_mismatch",
+                    retryable=False,
+                    request=request,
+                    attempted_deployments=attempted_deployments,
+                    errors=errors,
+                    events=route_events,
+                    resolution_trace=resolution_trace,
+                ) from None
             self._record_structured_output_accepted(
                 route_events,
                 route=route,
@@ -2976,11 +3135,47 @@ class LLMRouter:
     ) -> LLMResponse:
         if state.response is None:
             raise RuntimeError("cache hit response is required")
+        try:
+            cached_response = _bind_router_response_identity(
+                state.response,
+                request.execution_identity,
+            )
+        except _LLMResponseIdentityError as exc:
+            self._release_global_budget_attempt(
+                budget_attempt,
+                reason="cache_response_identity_mismatch",
+            )
+            self._release_cache_attempt(
+                state,
+                route=route,
+                deployment=deployment,
+                events=events,
+            )
+            errors.append(
+                {
+                    "deployment_id": deployment.deployment_id,
+                    "error_type": "response_identity_mismatch",
+                    "retryable": False,
+                    "expected_identity": _identity_payload(exc.expected),
+                    "actual_identity": _identity_payload(exc.actual),
+                }
+            )
+            raise self._build_route_error(
+                f"LLM route {route.route_id} received a cached response with mismatched Graph identity",
+                route_id=route.route_id,
+                error_type="response_identity_mismatch",
+                retryable=False,
+                request=request,
+                attempted_deployments=attempted_deployments,
+                errors=errors,
+                events=events,
+                resolution_trace=resolution_trace,
+            ) from None
         self._record_structured_output_accepted(
             events,
             route=route,
             deployment=deployment,
-            response=state.response,
+            response=cached_response,
         )
         self._record_event(
             events,
@@ -2991,7 +3186,7 @@ class LLMRouter:
                 "attempt_index": attempt_index,
                 "provider_call": False,
                 "cache_hit": True,
-                "source_usage": state.response.usage.to_dict(),
+                "source_usage": cached_response.usage.to_dict(),
             },
         )
         self._record_event(
@@ -3007,7 +3202,14 @@ class LLMRouter:
             },
         )
         cache_metadata = state.metadata(provider_call=False) or {}
-        cache_metadata["llm_cache_source_usage"] = state.response.usage.to_dict()
+        cache_metadata["llm_cache_source_usage"] = cached_response.usage.to_dict()
+        source_execution_identity = cached_response.metadata.get(
+            "llm_cache_source_execution_identity"
+        )
+        if isinstance(source_execution_identity, dict):
+            cache_metadata["llm_cache_source_execution_identity"] = dict(
+                source_execution_identity
+            )
         cache_metadata["llm_provider_usage"] = {
             "input_tokens": 0,
             "output_tokens": 0,
@@ -3017,10 +3219,10 @@ class LLMRouter:
         }
         global_budget_check = self._settle_global_budget_cache_hit(
             budget_attempt,
-            observed_usage=state.response.usage,
+            observed_usage=cached_response.usage,
         )
         return _with_routing_metadata(
-            state.response,
+            cached_response,
             request=request,
             route_id=route.route_id,
             deployment=deployment,
@@ -3236,6 +3438,7 @@ class LLMRouter:
                 }
             ),
             occurred_at=self._now_fn(),
+            execution_identity=getattr(events, "execution_identity", None),
         )
         events.append(event)
         if self._event_sink is not None:
@@ -3392,14 +3595,33 @@ class LLMRouter:
         *,
         route_id: str,
         streaming: bool,
+        tracker: GlobalBudgetTracker | None,
     ) -> str | None:
-        tracker = self._global_budget_tracker
         if tracker is None:
             return None
         supplied = request.metadata.get("llm_budget_operation_id")
         if isinstance(supplied, str) and supplied.strip():
+            execution_identity = tracker.execution_identity
+            scope_identity = (
+                execution_identity.to_dict()
+                if execution_identity is not None
+                else {
+                    "run_id": tracker.scope.run_id,
+                    "scope_id": tracker.scope.scope_id,
+                }
+            )
             digest = sha256(
-                f"{supplied.strip()}\0{route_id}\0{streaming}".encode("utf-8")
+                json.dumps(
+                    {
+                        "external_operation_id": supplied.strip(),
+                        "route_id": route_id,
+                        "streaming": streaming,
+                        "scope_identity": scope_identity,
+                    },
+                    ensure_ascii=True,
+                    separators=(",", ":"),
+                    sort_keys=True,
+                ).encode("utf-8")
             ).hexdigest()
             return f"router-logical:external:{digest}"
         prefix = "router-stream" if streaming else "router-complete"
@@ -3412,10 +3634,10 @@ class LLMRouter:
         deployment: ModelDeployment,
         logical_operation_id: str | None,
         attempt_index: int,
+        tracker: GlobalBudgetTracker | None,
     ) -> _RouterBudgetAttempt:
-        tracker = self._global_budget_tracker
         if tracker is None or logical_operation_id is None:
-            return _RouterBudgetAttempt()
+            return _RouterBudgetAttempt(tracker=tracker)
         operation_id = (
             f"{logical_operation_id}:attempt:{attempt_index}:"
             f"{deployment.deployment_id}"
@@ -3430,6 +3652,7 @@ class LLMRouter:
         if isinstance(operation, GlobalBudgetCheck):
             raise GlobalBudgetExceededError(operation)
         return _RouterBudgetAttempt(
+            tracker=tracker,
             logical_operation_id=logical_operation_id,
             operation=operation,
             preflight_check=tracker.check_for_operation(operation),
@@ -3441,8 +3664,8 @@ class LLMRouter:
         deployment: ModelDeployment,
         logical_operation_id: str | None,
         attempt_index: int,
+        tracker: GlobalBudgetTracker | None,
     ) -> _RouterBudgetAttempt:
-        tracker = self._global_budget_tracker
         cache_runtime = self._cache_runtime
         if (
             tracker is None
@@ -3450,7 +3673,7 @@ class LLMRouter:
             or cache_runtime is None
             or not cache_runtime.mode.reads
         ):
-            return _RouterBudgetAttempt()
+            return _RouterBudgetAttempt(tracker=tracker)
         operation_id = (
             f"{logical_operation_id}:logical:{attempt_index}:"
             f"{deployment.deployment_id}"
@@ -3466,6 +3689,7 @@ class LLMRouter:
         if isinstance(operation, GlobalBudgetCheck):
             raise GlobalBudgetExceededError(operation)
         return _RouterBudgetAttempt(
+            tracker=tracker,
             logical_operation_id=logical_operation_id,
             operation=operation,
             preflight_check=tracker.check_for_operation(operation),
@@ -3480,12 +3704,13 @@ class LLMRouter:
         budget_check,
         outcome: str = "succeeded",
     ):
-        if self._global_budget_tracker is None or attempt.operation is None:
+        tracker = attempt.tracker
+        if tracker is None or attempt.operation is None:
             return None
         estimated_cost_usd = (
             budget_check.estimated_cost_usd if budget_check is not None else None
         )
-        return self._global_budget_tracker.settle_operation(
+        return tracker.settle_operation(
             attempt.operation,
             response.usage,
             deployment.pricing,
@@ -3499,9 +3724,10 @@ class LLMRouter:
         *,
         observed_usage: TokenUsage,
     ) -> GlobalBudgetCheck | None:
-        if self._global_budget_tracker is None or attempt.operation is None:
+        tracker = attempt.tracker
+        if tracker is None or attempt.operation is None:
             return None
-        return self._global_budget_tracker.settle_cache_hit(
+        return tracker.settle_cache_hit(
             attempt.operation,
             observed_usage=observed_usage,
         )
@@ -3512,14 +3738,16 @@ class LLMRouter:
         *,
         deployment: ModelDeployment,
         reason: str,
+        observed_usage: TokenUsage | None = None,
     ) -> GlobalBudgetCheck | None:
-        if self._global_budget_tracker is None or attempt.operation is None:
+        tracker = attempt.tracker
+        if tracker is None or attempt.operation is None:
             return None
-        return self._global_budget_tracker.settle_operation(
+        return tracker.settle_operation(
             attempt.operation,
-            TokenUsage(),
+            observed_usage or TokenUsage(),
             deployment.pricing,
-            estimated_cost_usd=0,
+            estimated_cost_usd=(0 if observed_usage is None else None),
             request_dispatched=True,
             outcome="failed",
             reason_code=reason,
@@ -3531,9 +3759,10 @@ class LLMRouter:
         *,
         reason: str,
     ) -> GlobalBudgetCheck | None:
-        if self._global_budget_tracker is None or attempt.operation is None:
+        tracker = attempt.tracker
+        if tracker is None or attempt.operation is None:
             return None
-        return self._global_budget_tracker.release_operation(
+        return tracker.release_operation(
             attempt.operation,
             reason=reason,
         )
@@ -3544,12 +3773,26 @@ class LLMRouter:
         *,
         reason: str,
     ) -> GlobalBudgetCheck | None:
-        if self._global_budget_tracker is None or attempt.operation is None:
+        tracker = attempt.tracker
+        if tracker is None or attempt.operation is None:
             return None
-        return self._global_budget_tracker.mark_operation_indeterminate(
+        return tracker.mark_operation_indeterminate(
             attempt.operation,
             reason=reason,
         )
+
+    def _budget_tracker_for_request(
+        self,
+        request: LLMRequest,
+    ) -> GlobalBudgetTracker | None:
+        tracker = self._global_budget_tracker
+        if tracker is None or request.execution_identity is None:
+            return tracker
+        if tracker.scope.run_id != request.execution_identity.run_id:
+            raise ValueError(
+                "Graph request budget tracker run does not match execution identity"
+            )
+        return tracker.for_execution_identity(request.execution_identity)
 
 
 def _provider_error_payload(deployment_id: str, error: LLMProviderError) -> dict[str, Any]:
@@ -3723,6 +3966,38 @@ def _with_routing_metadata(
     return replace(response, metadata=metadata)
 
 
+def _bind_router_response_identity(
+    value: Any,
+    expected: Any,
+) -> LLMResponse:
+    try:
+        response = LLMResponse.from_any(value)
+    except Exception as exc:
+        raise _LLMResponseIdentityError(
+            expected=expected,
+            actual=None,
+            response=LLMResponse(),
+        ) from exc
+    actual = response.execution_identity
+    if actual != expected:
+        raise _LLMResponseIdentityError(
+            expected=expected,
+            actual=actual,
+            response=response,
+        )
+    return response
+
+
+def _identity_payload(value: Any) -> dict[str, Any] | None:
+    if value is None:
+        return None
+    to_dict = getattr(value, "to_dict", None)
+    if callable(to_dict):
+        payload = to_dict()
+        return dict(payload) if isinstance(payload, dict) else None
+    return None
+
+
 def _event_payloads(events: Iterable[LLMRouterEvent | dict[str, Any]]) -> list[dict[str, Any]]:
     payloads: list[dict[str, Any]] = []
     for event in events:
@@ -3756,6 +4031,8 @@ _SAFE_ROUTE_ERROR_FIELDS = frozenset(
         "provider_reported_limit_tokens",
         "provider_reported_usage_tokens",
         "response_fingerprint",
+        "expected_identity",
+        "actual_identity",
         "retryable",
         "status_code",
         "visible_output",
@@ -3841,7 +4118,12 @@ def _build_route_manifest(
     attempted_deployment_list = list(attempted_deployments)
     metrics = _route_metrics(event_payloads, attempted_deployment_list)
     manifest: dict[str, Any] = {
-        "schema_version": "newsroom.llm_route_manifest.v1",
+        "schema_version": "newsroom.llm_route_manifest.v2",
+        "execution_identity": (
+            request.execution_identity.to_dict()
+            if request.execution_identity is not None
+            else None
+        ),
         "status": status,
         "route_id": route_id,
         "selected_deployment_id": (

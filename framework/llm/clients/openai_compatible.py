@@ -322,6 +322,7 @@ class OpenAICompatibleClient:
                 "model": self.config.model,
                 "provisional": expects_structured_output,
             },
+            execution_identity=execution_request.execution_identity,
         )
         assembler = _OpenAIStreamToolCallAssembler(execution_request.tools)
         completed = False
@@ -349,12 +350,14 @@ class OpenAICompatibleClient:
                         event_type="usage_delta",
                         usage_delta=usage,
                         metadata={"provisional": expects_structured_output},
+                        execution_identity=execution_request.execution_identity,
                     )
                 for event in _events_from_stream_chunk(
                     chunk,
                     assembler=assembler,
                     provider=self.config.provider,
                     attempts=1,
+                    execution_identity=execution_request.execution_identity,
                 ):
                     if event.event_type == "message_complete":
                         last_finish_reason = event.metadata.get("finish_reason")
@@ -430,6 +433,7 @@ class OpenAICompatibleClient:
                 "provisional": False,
                 **validation_metadata,
             },
+            execution_identity=execution_request.execution_identity,
         )
 
     def _build_payload(
@@ -732,6 +736,7 @@ class OpenAICompatibleClient:
             tool_calls=tool_calls,
             model=self.config.model,
             raw=dict(payload),
+            execution_identity=request.execution_identity,
         )
 
     def _parse_structured_output(
@@ -1092,6 +1097,7 @@ def _events_from_stream_chunk(
     assembler: _OpenAIStreamToolCallAssembler,
     provider: str,
     attempts: int,
+    execution_identity: Any = None,
 ) -> list[LLMStreamEvent]:
     choices = chunk.get("choices") or []
     if not isinstance(choices, list):
@@ -1123,17 +1129,30 @@ def _events_from_stream_chunk(
             )
         content = delta.get("content")
         if isinstance(content, str) and content:
-            events.append(LLMStreamEvent(event_type="text_delta", text_delta=content))
+            events.append(
+                LLMStreamEvent(
+                    event_type="text_delta",
+                    text_delta=content,
+                    execution_identity=execution_identity,
+                )
+            )
         assembler.add_deltas(delta.get("tool_calls"))
         finish_reason = choice.get("finish_reason")
         if finish_reason == "tool_calls":
             for tool_call in assembler.complete():
-                events.append(LLMStreamEvent(event_type="tool_call_complete", tool_call=tool_call))
+                events.append(
+                    LLMStreamEvent(
+                        event_type="tool_call_complete",
+                        tool_call=tool_call,
+                        execution_identity=execution_identity,
+                    )
+                )
         if finish_reason:
             events.append(
                 LLMStreamEvent(
                     event_type="message_complete",
                     metadata={"finish_reason": str(finish_reason)},
+                    execution_identity=execution_identity,
                 )
             )
     return events

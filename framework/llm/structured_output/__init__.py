@@ -57,6 +57,7 @@ from framework.llm.structured_output.projection import (
     ProviderStructuredOutputPolicy,
     project_structured_output_contract,
     structured_output_enforcement_keywords,
+    structured_output_graph_scope,
 )
 from framework.llm.structured_output.release import (
     ProviderStructuredOutputRelease,
@@ -108,6 +109,7 @@ __all__ = [
     "managed_validation_metadata",
     "load_structured_output_evaluation_suite",
     "project_structured_output_contract",
+    "structured_output_graph_scope",
     "project_structured_output_metrics",
     "provider_release_records_from_payload",
     "require_managed_structured_output",

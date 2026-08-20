@@ -4,7 +4,7 @@ import json
 import math
 import time
 from copy import deepcopy
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, Mapping
 
 from framework.llm.cache.key import LLMCacheKey, canonical_json_bytes
@@ -17,9 +17,10 @@ from framework.llm.structured_output import (
     require_managed_structured_output,
     validate_compiled_structured_output,
 )
+from framework.shared.graph_identity import GraphExecutionIdentity
 
 
-CACHE_ENTRY_SCHEMA_VERSION = "v2"
+CACHE_ENTRY_SCHEMA_VERSION = "v3"
 _SAFE_RESPONSE_METADATA_KEYS = {
     "finish_reason",
     "response_format",
@@ -42,6 +43,7 @@ class CacheEntry:
     source_model: str
     response: dict[str, Any]
     structured_output_identity: StructuredOutputCacheIdentity | None = None
+    source_execution_identity: GraphExecutionIdentity | None = None
 
     @classmethod
     def from_response(
@@ -52,6 +54,11 @@ class CacheEntry:
         response: LLMResponse,
         created_at: float | None = None,
     ) -> CacheEntry:
+        _validate_cache_execution_identity(
+            source=response.execution_identity,
+            consumer=request.execution_identity,
+            require_exact=True,
+        )
         projected = CacheResponseValidator.project(request=request, response=response)
         timestamp = time.time() if created_at is None else float(created_at)
         if not math.isfinite(timestamp) or timestamp < 0:
@@ -65,12 +72,31 @@ class CacheEntry:
             source_model=key.model,
             response=projected,
             structured_output_identity=key.structured_output_identity,
+            source_execution_identity=response.execution_identity,
         )
 
     def to_response(self, *, request: LLMRequest | None = None) -> LLMResponse:
-        response = CacheResponseValidator.restore(self.response)
+        response = replace(
+            CacheResponseValidator.restore(self.response),
+            execution_identity=self.source_execution_identity,
+        )
         if request is not None:
             CacheResponseValidator.validate(request=request, response=response)
+            _validate_cache_execution_identity(
+                source=self.source_execution_identity,
+                consumer=request.execution_identity,
+                require_exact=False,
+            )
+            metadata = dict(response.metadata)
+            if self.source_execution_identity is not None:
+                metadata["llm_cache_source_execution_identity"] = (
+                    self.source_execution_identity.to_dict()
+                )
+            response = replace(
+                response,
+                metadata=metadata,
+                execution_identity=request.execution_identity,
+            )
         return response
 
     def to_dict(self) -> dict[str, Any]:
@@ -85,6 +111,11 @@ class CacheEntry:
             "structured_output_identity": (
                 self.structured_output_identity.to_dict()
                 if self.structured_output_identity is not None
+                else None
+            ),
+            "source_execution_identity": (
+                self.source_execution_identity.to_dict()
+                if self.source_execution_identity is not None
                 else None
             ),
         }
@@ -121,6 +152,24 @@ class CacheEntry:
             raise CacheResponseValidationError(
                 "structured-output cache identity is invalid"
             ) from exc
+        raw_execution_identity = payload.get("source_execution_identity")
+        if raw_execution_identity is not None and not isinstance(
+            raw_execution_identity,
+            Mapping,
+        ):
+            raise CacheResponseValidationError(
+                "cache source execution identity must be an object or null"
+            )
+        try:
+            source_execution_identity = (
+                GraphExecutionIdentity.from_dict(raw_execution_identity)
+                if isinstance(raw_execution_identity, Mapping)
+                else None
+            )
+        except (TypeError, ValueError) as exc:
+            raise CacheResponseValidationError(
+                "cache source execution identity is invalid"
+            ) from exc
         return cls(
             entry_schema_version=version,
             cache_key_version=key_version,
@@ -133,6 +182,7 @@ class CacheEntry:
             source_model=_required_text(payload.get("source_model"), "source_model"),
             response=response,
             structured_output_identity=structured_output_identity,
+            source_execution_identity=source_execution_identity,
         )
 
     @classmethod
@@ -291,3 +341,41 @@ def _finite_non_negative(value: Any, field: str) -> float:
     if not math.isfinite(parsed) or parsed < 0:
         raise CacheResponseValidationError(f"{field} must be finite and non-negative")
     return parsed
+
+
+def _validate_cache_execution_identity(
+    *,
+    source: GraphExecutionIdentity | None,
+    consumer: GraphExecutionIdentity | None,
+    require_exact: bool,
+) -> None:
+    if source is None or consumer is None:
+        if source != consumer:
+            raise CacheResponseValidationError(
+                "cache source and consumer execution scopes do not match"
+            )
+        return
+    if require_exact:
+        matches = source == consumer
+    else:
+        matches = (
+            source.run_id,
+            source.graph_id,
+            source.graph_version,
+            source.graph_ref,
+            source.graph_checksum,
+            source.node_id,
+            source.node_instance_id,
+        ) == (
+            consumer.run_id,
+            consumer.graph_id,
+            consumer.graph_version,
+            consumer.graph_ref,
+            consumer.graph_checksum,
+            consumer.node_id,
+            consumer.node_instance_id,
+        )
+    if not matches:
+        raise CacheResponseValidationError(
+            "cache source Graph stage identity does not match consumer"
+        )

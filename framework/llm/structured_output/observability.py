@@ -4,6 +4,8 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any, Callable, Iterable, Mapping
 
+from framework.shared.graph_identity import GraphExecutionIdentity
+
 
 STRUCTURED_OUTPUT_EVENT_TYPES = frozenset(
     {
@@ -26,6 +28,7 @@ STRUCTURED_OUTPUT_EVENT_TYPES = frozenset(
 class StructuredOutputEvent:
     event_type: str
     run_id: str | None = None
+    execution_identity: GraphExecutionIdentity | None = None
     attempt_ref: str | None = None
     schema_digest: str | None = None
     schema_revision: str | None = None
@@ -64,10 +67,23 @@ class StructuredOutputEvent:
             self.validation_duration_seconds < 0
         ):
             raise ValueError("validation duration must be non-negative")
+        identity = self.execution_identity
+        if identity is not None and not isinstance(identity, GraphExecutionIdentity):
+            identity = GraphExecutionIdentity.from_dict(identity)
+        if identity is not None:
+            if self.run_id is not None and self.run_id != identity.run_id:
+                raise ValueError("structured-output run_id must match execution identity")
+            object.__setattr__(self, "run_id", identity.run_id)
+        object.__setattr__(self, "execution_identity", identity)
 
     def to_payload(self) -> dict[str, Any]:
         return {
             "run_id": self.run_id,
+            "execution_identity": (
+                self.execution_identity.to_dict()
+                if self.execution_identity is not None
+                else None
+            ),
             "attempt_ref": self.attempt_ref,
             "schema_digest": self.schema_digest,
             "schema_revision": self.schema_revision,

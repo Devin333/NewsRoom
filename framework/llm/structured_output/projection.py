@@ -14,6 +14,7 @@ from framework.llm.structured_output.contracts import (
 from framework.llm.structured_output.release import (
     ProviderStructuredOutputRelease,
 )
+from framework.shared.graph_identity import GraphExecutionIdentity
 
 
 ProviderStructuredOutputMode = Literal[
@@ -75,7 +76,7 @@ _SCHEMA_MAP_KEYWORDS = frozenset(
 class ProviderStructuredOutputPolicy:
     require_native_enforcement: bool = False
     allow_json_object_local_gate: bool = False
-    workflow_scope: str = "default"
+    graph_scope: str = "default"
 
     def __post_init__(self) -> None:
         if not isinstance(self.require_native_enforcement, bool):
@@ -86,15 +87,31 @@ class ProviderStructuredOutputPolicy:
             raise ValueError(
                 "native enforcement cannot also allow JSON-object local-gate fallback"
             )
-        scope = _required_text(self.workflow_scope, field_name="workflow_scope")
-        object.__setattr__(self, "workflow_scope", scope)
+        scope = _required_text(self.graph_scope, field_name="graph_scope")
+        object.__setattr__(self, "graph_scope", scope)
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "require_native_enforcement": self.require_native_enforcement,
             "allow_json_object_local_gate": self.allow_json_object_local_gate,
-            "workflow_scope": self.workflow_scope,
+            "graph_scope": self.graph_scope,
         }
+
+    def for_execution_identity(
+        self,
+        identity: GraphExecutionIdentity,
+    ) -> ProviderStructuredOutputPolicy:
+        """Bind release authorization to an admitted Graph definition node."""
+        if not isinstance(identity, GraphExecutionIdentity):
+            raise TypeError("identity must be GraphExecutionIdentity")
+        graph_scope = structured_output_graph_scope(identity)
+        if self.graph_scope == graph_scope:
+            return self
+        return ProviderStructuredOutputPolicy(
+            require_native_enforcement=self.require_native_enforcement,
+            allow_json_object_local_gate=self.allow_json_object_local_gate,
+            graph_scope=graph_scope,
+        )
 
     @classmethod
     def from_any(cls, value: Any) -> ProviderStructuredOutputPolicy:
@@ -109,7 +126,7 @@ class ProviderStructuredOutputPolicy:
             - {
                 "require_native_enforcement",
                 "allow_json_object_local_gate",
-                "workflow_scope",
+                "graph_scope",
             }
         )
         if unknown:
@@ -124,7 +141,7 @@ class ProviderStructuredOutputPolicy:
             allow_json_object_local_gate=value.get(
                 "allow_json_object_local_gate", False
             ),
-            workflow_scope=value.get("workflow_scope", "default"),
+            graph_scope=value.get("graph_scope", "default"),
         )
 
 
@@ -247,6 +264,7 @@ class ProviderSchemaProjection:
     enforced_keywords: frozenset[str]
     omitted_keywords: frozenset[str]
     projection_digest: str
+    graph_scope: str = "default"
     provider_release_id: str | None = None
     provider_release_digest: str | None = None
     provider_rollout_state: str = "disabled"
@@ -265,6 +283,11 @@ class ProviderSchemaProjection:
             raise ValueError("unsupported provider schema projection mode")
         if not self.projection_digest.startswith("sha256:"):
             raise ValueError("projection_digest must be a sha256 digest")
+        object.__setattr__(
+            self,
+            "graph_scope",
+            _required_text(self.graph_scope, field_name="graph_scope"),
+        )
         object.__setattr__(self, "provider_schema", deepcopy(self.provider_schema))
         object.__setattr__(
             self, "enforced_keywords", frozenset(self.enforced_keywords)
@@ -283,6 +306,7 @@ class ProviderSchemaProjection:
             "enforced_keywords": sorted(self.enforced_keywords),
             "omitted_keywords": sorted(self.omitted_keywords),
             "projection_digest": self.projection_digest,
+            "graph_scope": self.graph_scope,
             "provider_release_id": self.provider_release_id,
             "provider_release_digest": self.provider_release_digest,
             "provider_rollout_state": self.provider_rollout_state,
@@ -312,7 +336,7 @@ def project_structured_output_contract(
         capability,
         used_keywords=used_keywords,
         streaming=streaming,
-        workflow_scope=resolved_policy.workflow_scope,
+        graph_scope=resolved_policy.graph_scope,
     )
     if not native_issues:
         return _build_projection(
@@ -322,6 +346,7 @@ def project_structured_output_contract(
             provider_schema=contract.canonical_schema,
             enforced_keywords=used_keywords,
             omitted_keywords=frozenset(),
+            graph_scope=resolved_policy.graph_scope,
         )
 
     if (
@@ -337,6 +362,7 @@ def project_structured_output_contract(
             provider_schema=None,
             enforced_keywords=frozenset(),
             omitted_keywords=used_keywords,
+            graph_scope=resolved_policy.graph_scope,
             shadow_candidate_mode=(
                 capability.mode
                 if capability.release_state == "shadow"
@@ -399,7 +425,7 @@ def _native_projection_issues(
     *,
     used_keywords: frozenset[str],
     streaming: bool,
-    workflow_scope: str,
+    graph_scope: str,
 ) -> list[tuple[str, str]]:
     issues: list[tuple[str, str]] = []
     if capability.mode not in _NATIVE_MODES:
@@ -424,7 +450,7 @@ def _native_projection_issues(
                 deployment=capability.deployment,
                 capability_revision=capability.revision,
                 mode=capability.mode,
-                workflow_scope=workflow_scope,
+                graph_scope=graph_scope,
             ):
                 issues.append(
                     (
@@ -496,6 +522,7 @@ def _build_projection(
     provider_schema: dict[str, Any] | None,
     enforced_keywords: frozenset[str],
     omitted_keywords: frozenset[str],
+    graph_scope: str,
     shadow_candidate_mode: str | None = None,
 ) -> ProviderSchemaProjection:
     release = capability.release
@@ -508,6 +535,7 @@ def _build_projection(
         "provider_schema": provider_schema,
         "enforced_keywords": sorted(enforced_keywords),
         "omitted_keywords": sorted(omitted_keywords),
+        "graph_scope": graph_scope,
         "provider_release_id": release.release_id if release is not None else None,
         "provider_release_digest": release.digest if release is not None else None,
         "provider_rollout_state": capability.release_state,
@@ -532,6 +560,7 @@ def _build_projection(
         enforced_keywords=enforced_keywords,
         omitted_keywords=omitted_keywords,
         projection_digest=projection_digest,
+        graph_scope=graph_scope,
         provider_release_id=(release.release_id if release is not None else None),
         provider_release_digest=(release.digest if release is not None else None),
         provider_rollout_state=capability.release_state,
@@ -543,6 +572,18 @@ def _build_projection(
         ),
         shadow_candidate_mode=shadow_candidate_mode,
     )
+
+
+def structured_output_graph_scope(identity: GraphExecutionIdentity) -> str:
+    """Return the release scope for one immutable Graph definition node.
+
+    Runtime-only values such as run, node instance, activity, and attempt do not
+    belong in a provider release allowlist. The exact graph checksum and node
+    definition still ensure the scope cannot drift or be selected by a caller.
+    """
+    if not isinstance(identity, GraphExecutionIdentity):
+        raise TypeError("identity must be GraphExecutionIdentity")
+    return f"{identity.graph_ref}:{identity.graph_checksum}:{identity.node_id}"
 
 
 def _schema_depth(value: Any) -> int:

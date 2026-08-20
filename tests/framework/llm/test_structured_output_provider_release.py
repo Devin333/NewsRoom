@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 from framework.llm import (
+    LLMRequest,
     LLMStructuredOutputProjectionError,
     LOCAL_STRUCTURED_OUTPUT_DIALECT,
     ProviderStructuredOutputCapability,
@@ -20,7 +21,9 @@ from framework.llm import (
     project_structured_output_contract,
     structured_output_content_digest,
     structured_output_enforcement_keywords,
+    structured_output_graph_scope,
 )
+from framework.shared.graph_identity import GraphExecutionIdentity
 from scripts.structured_output_eval import main as structured_output_eval_main
 
 
@@ -195,10 +198,138 @@ def test_evaluation_cli_replays_and_verifies_release(
         "issues": [],
         "passed": True,
         "record_digest": (
-            "sha256:7d3f0f0b7ef58f187f0df1905b6eca30278e4c30bb13ecf9cc2b684b7ce2bc5c"
+            "sha256:9be1d65eaf925a316f73280b93d410fc4fe611265b9ba625ab37bfa7e30412a1"
         ),
         "release_id": "recorded-reference-native-v1",
     }
+
+
+def test_graph_scope_release_rejects_legacy_schema_version() -> None:
+    payload = json.loads(_APPROVED_RELEASE.read_text(encoding="utf-8"))
+    payload["schema_version"] = "provider-structured-output-release.v1"
+
+    with pytest.raises(
+        ValueError,
+        match="unsupported provider structured-output release schema_version",
+    ):
+        ProviderStructuredOutputRelease.from_dict(payload)
+
+
+def test_graph_request_cannot_self_authorize_with_standalone_release_scope() -> None:
+    approved = ProviderStructuredOutputRelease.from_dict(
+        json.loads(_APPROVED_RELEASE.read_text(encoding="utf-8"))
+    )
+    capability = _native_capability(approved)
+    contract = compile_structured_output_contract(_SIMPLE_SCHEMA)
+    identity = GraphExecutionIdentity(
+        run_id="run-graph-scope",
+        graph_id="daily.writer",
+        graph_version="v1",
+        graph_ref="daily.writer@v1",
+        graph_checksum="sha256:" + "d" * 64,
+        node_id="compose",
+        node_instance_id="compose-instance",
+        activity_id="compose-activity",
+        attempt=1,
+    )
+    request = LLMRequest(
+        messages=[],
+        execution_identity=identity,
+        output_schema=_SIMPLE_SCHEMA,
+        structured_output_policy=ProviderStructuredOutputPolicy(
+            require_native_enforcement=True,
+            graph_scope="research.candidate",
+        ),
+    )
+
+    assert request.structured_output_policy.graph_scope == structured_output_graph_scope(
+        identity
+    )
+    with pytest.raises(LLMStructuredOutputProjectionError) as raised:
+        project_structured_output_contract(
+            contract,
+            capability,
+            policy=request.structured_output_policy,
+        )
+
+    assert "provider_release_scope_ineligible" in {
+        diagnostic.validator for diagnostic in raised.value.diagnostics
+    }
+
+
+def test_graph_request_rejects_precomputed_projection_for_another_scope() -> None:
+    approved = ProviderStructuredOutputRelease.from_dict(
+        json.loads(_APPROVED_RELEASE.read_text(encoding="utf-8"))
+    )
+    contract = compile_structured_output_contract(_SIMPLE_SCHEMA)
+    projection = project_structured_output_contract(
+        contract,
+        _native_capability(approved),
+        policy=ProviderStructuredOutputPolicy(graph_scope="research.candidate"),
+    )
+    identity = GraphExecutionIdentity(
+        run_id="run-projection-scope",
+        graph_id="daily.writer",
+        graph_version="v1",
+        graph_ref="daily.writer@v1",
+        graph_checksum="sha256:" + "e" * 64,
+        node_id="compose",
+        node_instance_id="compose-instance",
+        activity_id="compose-activity",
+        attempt=1,
+    )
+    request = LLMRequest(
+        messages=[],
+        execution_identity=identity,
+        output_schema=_SIMPLE_SCHEMA,
+    )
+
+    with pytest.raises(ValueError, match="Graph scope"):
+        request.with_structured_output_execution(
+            contract=contract,
+            projection=projection,
+        )
+
+
+def test_graph_request_uses_release_when_exact_definition_scope_is_approved() -> None:
+    approved = ProviderStructuredOutputRelease.from_dict(
+        json.loads(_APPROVED_RELEASE.read_text(encoding="utf-8"))
+    )
+    identity = GraphExecutionIdentity(
+        run_id="run-graph-approved",
+        graph_id="daily.writer",
+        graph_version="v1",
+        graph_ref="daily.writer@v1",
+        graph_checksum="sha256:" + "f" * 64,
+        node_id="compose",
+        node_instance_id="compose-instance",
+        activity_id="compose-activity",
+        attempt=1,
+    )
+    exact_release = replace(
+        approved,
+        graph_scopes=(structured_output_graph_scope(identity),),
+        record_digest=None,
+    )
+    contract = compile_structured_output_contract(_SIMPLE_SCHEMA)
+    request = LLMRequest(
+        messages=[],
+        execution_identity=identity,
+        output_schema=_SIMPLE_SCHEMA,
+        structured_output_policy=ProviderStructuredOutputPolicy(
+            require_native_enforcement=True,
+            graph_scope="research.candidate",
+        ),
+    )
+
+    projection = project_structured_output_contract(
+        contract,
+        _native_capability(exact_release),
+        policy=request.structured_output_policy,
+    )
+
+    assert projection.mode == "native_strict"
+    assert projection.graph_scope == structured_output_graph_scope(identity)
 
 
 def test_shadow_release_never_selects_native_provider_enforcement() -> None:
@@ -219,7 +350,7 @@ def test_shadow_release_never_selects_native_provider_enforcement() -> None:
         capability,
         policy=ProviderStructuredOutputPolicy(
             allow_json_object_local_gate=True,
-            workflow_scope="research.candidate",
+            graph_scope="research.candidate",
         ),
     )
 
@@ -253,7 +384,7 @@ def test_native_release_ineligibility_fails_closed_before_transport(
             capability,
             policy=ProviderStructuredOutputPolicy(
                 require_native_enforcement=True,
-                workflow_scope=scope,
+                graph_scope=scope,
             ),
         )
 
@@ -302,7 +433,7 @@ def _build_release(report):  # type: ignore[no-untyped-def]
     return build_provider_structured_output_release(
         report,
         release_id="recorded-reference-native-v1",
-        workflow_scopes=("research.candidate", "structured-output-evaluation"),
+        graph_scopes=("research.candidate", "structured-output-evaluation"),
         rollout_revision="recorded-reference-rollout-v1",
         rollback=ProviderStructuredOutputRollback(
             action="json_object_local_gate",

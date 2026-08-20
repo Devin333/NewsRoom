@@ -5,9 +5,13 @@ from framework.llm import (
     LLMMessageRole,
     LLMRequest,
     LLMResponse,
+    LLMStreamEvent,
     LLMToolCall,
+    ProviderStructuredOutputPolicy,
     TokenUsage,
+    structured_output_graph_scope,
 )
+from framework.shared.graph_identity import GraphExecutionIdentity
 
 
 def test_message_helpers_round_trip() -> None:
@@ -58,3 +62,71 @@ def test_response_tool_call_usage_round_trip() -> None:
     assert response.tool_calls[0].arguments_dict() == {"query": "agent"}
     assert restored.model == "demo"
     assert restored.raw == {"id": "resp_1"}
+
+
+def test_request_response_round_trip_exact_graph_execution_identity() -> None:
+    identity = GraphExecutionIdentity(
+        run_id="run-1",
+        graph_id="graph",
+        graph_version="v1",
+        graph_ref="graph@v1",
+        graph_checksum="sha256:" + "a" * 64,
+        node_id="node",
+        node_instance_id="node-instance",
+        activity_id="activity",
+        attempt=1,
+    )
+    request = LLMRequest(messages=[{"role": "user", "content": "hello"}], execution_identity=identity)
+    response = LLMResponse(content="ok", execution_identity=identity)
+
+    assert LLMRequest.from_dict(request.to_dict(redact=False)).execution_identity == identity
+    assert LLMResponse.from_dict(response.to_dict(redact=False)).execution_identity == identity
+
+
+def test_graph_request_rebinds_structured_output_scope_to_exact_definition() -> None:
+    identity = GraphExecutionIdentity(
+        run_id="run-structured",
+        graph_id="graph",
+        graph_version="v3",
+        graph_ref="graph@v3",
+        graph_checksum="sha256:" + "c" * 64,
+        node_id="writer",
+        node_instance_id="writer-instance",
+        activity_id="activity",
+        attempt=1,
+    )
+
+    request = LLMRequest(
+        messages=[],
+        execution_identity=identity,
+        structured_output_policy=ProviderStructuredOutputPolicy(
+            graph_scope="research.candidate"
+        ),
+    )
+
+    assert request.structured_output_policy.graph_scope == structured_output_graph_scope(
+        identity
+    )
+
+
+def test_stream_event_round_trip_exact_graph_execution_identity() -> None:
+    identity = GraphExecutionIdentity(
+        run_id="run-stream",
+        graph_id="graph",
+        graph_version="v1",
+        graph_ref="graph@v1",
+        graph_checksum="sha256:" + "b" * 64,
+        node_id="node",
+        node_instance_id="node-instance",
+        activity_id="activity",
+        attempt=2,
+    )
+    event = LLMStreamEvent(
+        event_type="text_delta",
+        text_delta="chunk",
+        execution_identity=identity,
+    )
+
+    restored = LLMStreamEvent.from_any(event.to_dict(redact=False))
+
+    assert restored == event
