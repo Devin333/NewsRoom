@@ -1,13 +1,23 @@
 from __future__ import annotations
 
 from framework.events import TraceContext
+from framework.shared import GraphExecutionIdentity
 from framework.memory.diagnostics.trace import MemoryTraceEvent, MemoryTraceRecorder
 
 
 def test_memory_trace_event_keeps_trace_context_fields() -> None:
     trace = TraceContext.root(
-        run_id="run-1",
-        workflow_id="wf-1",
+        execution_identity=GraphExecutionIdentity(
+            run_id="run-1",
+            graph_id="test.graph",
+            graph_version="1",
+            graph_ref="test.graph@1",
+            graph_checksum="sha256:" + "a" * 64,
+            node_id="stage-1",
+            node_instance_id="stage-1:1",
+            activity_id="activity-1",
+            attempt=1,
+        ),
         trace_id="trace-1",
         span_id="step:s1",
     ).child(span_id="memory:recall-1", memory_operation_id="recall-1")

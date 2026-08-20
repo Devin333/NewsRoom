@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pydantic import BaseModel, Field
+from framework.shared.graph_identity import GraphExecutionIdentity, GraphStageIdentity
 
 
 class SkillRunContext(BaseModel):
@@ -26,13 +27,24 @@ class SkillRunContext(BaseModel):
         return cls(run_id=run_id, skill_name=skill_name, caller_type="test")
 
     @classmethod
-    def for_workflow(cls, skill_name: str, workflow_run_id: str, step_id: str) -> "SkillRunContext":
+    def for_standalone(cls, skill_name: str, run_id: str) -> "SkillRunContext":
+        """Create an explicitly independent skill context without Graph authority."""
+        return cls(run_id=run_id, skill_name=skill_name, caller_type="standalone")
+
+    @classmethod
+    def for_graph(
+        cls,
+        skill_name: str,
+        graph_identity: GraphStageIdentity | GraphExecutionIdentity,
+    ) -> "SkillRunContext":
+        if not isinstance(graph_identity, (GraphStageIdentity, GraphExecutionIdentity)):
+            raise TypeError("graph_identity must be a GraphStageIdentity or GraphExecutionIdentity")
         return cls(
-            run_id=workflow_run_id,
+            run_id=graph_identity.run_id,
             skill_name=skill_name,
-            caller_type="workflow",
-            caller_id=step_id,
-            metadata={"workflow_run_id": workflow_run_id, "step_id": step_id},
+            caller_type="graph",
+            caller_id=graph_identity.node_instance_id,
+            metadata={"graph_identity": graph_identity.to_dict()},
         )
 
     @classmethod

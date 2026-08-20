@@ -7,6 +7,7 @@ from framework.memory.models import MemoryRecord, MemoryScope, MemoryWriteMode, 
 from framework.memory.models.reference import legacy_refs_from_references
 from framework.memory.policy import MemoryPolicy
 from framework.memory.stores import MemoryStore
+from framework.shared.graph_identity import GraphExecutionIdentity
 from framework.shared.time import utc_now
 
 
@@ -26,6 +27,7 @@ class MemoryWriter:
                 record,
                 actor=request.actor,
                 run_id=request.run_id,
+                execution_identity=request.execution_identity,
                 namespace=request.namespace,
                 tenant_id=request.tenant_id,
             )
@@ -77,11 +79,25 @@ def _record_with_request_defaults(
     *,
     actor: str | None,
     run_id: str | None,
+    execution_identity: GraphExecutionIdentity | None,
     namespace: str | None,
     tenant_id: str | None,
 ) -> MemoryRecord:
     refs = _record_refs(record)
-    if run_id:
+    if execution_identity is not None:
+        if run_id is not None and run_id != execution_identity.run_id:
+            raise ValueError("run_id must match execution_identity.run_id")
+        identity_refs = execution_identity.to_dict()
+        existing_identity_refs = {
+            key: refs[key] for key in identity_refs if key in refs
+        }
+        if existing_identity_refs and existing_identity_refs != {
+            key: identity_refs[key] for key in existing_identity_refs
+        }:
+            raise ValueError("memory record Graph lineage does not match execution_identity")
+        refs.update(identity_refs)
+        run_id = execution_identity.run_id
+    elif run_id:
         refs.setdefault("run_id", run_id)
     return replace(
         record,
@@ -185,7 +201,7 @@ def _promoted_scope(scope: MemoryScope) -> MemoryScope:
         MemoryScope.WORKING,
         MemoryScope.SESSION,
         MemoryScope.AGENT,
-        MemoryScope.WORKFLOW,
+        MemoryScope.GRAPH,
         MemoryScope.GLOBAL,
     ]
     try:

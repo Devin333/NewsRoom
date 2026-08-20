@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 
 from framework.events import TraceContext
+from framework.shared import GraphExecutionIdentity
 from framework.memory import InMemoryMemoryStore, MemoryRecord, MemoryRuntime
 from framework.memory.diagnostics.trace import MemoryTraceRecorder
 
@@ -21,8 +22,17 @@ def test_memory_operation_trace_redacts_secret_like_query_and_metadata() -> None
 def test_memory_runtime_records_operation_event_with_trace_context() -> None:
     recorder = MemoryTraceRecorder()
     trace = TraceContext.root(
-        run_id="run-1",
-        workflow_id="wf-1",
+        execution_identity=GraphExecutionIdentity(
+            run_id="run-1",
+            graph_id="test.graph",
+            graph_version="1",
+            graph_ref="test.graph@1",
+            graph_checksum="sha256:" + "a" * 64,
+            node_id="stage-1",
+            node_instance_id="stage-1:1",
+            activity_id="activity-1",
+            attempt=1,
+        ),
         trace_id="trace-1",
         span_id="step:memory",
     )

@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from uuid import uuid4
-
 from framework.skills.core.context import SkillRunContext
 from framework.skills.core.errors import SkillMetadataError, SkillNotFoundError, SkillPackageError
 from framework.skills.core.result import SkillCost, SkillFailureReason, SkillResult, SkillRunStatus
@@ -36,9 +34,12 @@ class SkillRunner:
         else:
             self.quality_runner = quality_runner
 
-    def run(self, skill_name: str, input_data: dict, context: SkillRunContext | None = None) -> SkillResult:
+    def run(self, skill_name: str, input_data: dict, context: SkillRunContext) -> SkillResult:
         """Resolve, validate, execute, gate, and return a structured result."""
-        context = context or SkillRunContext(run_id=str(uuid4()), skill_name=skill_name)
+        if not isinstance(context, SkillRunContext):
+            raise TypeError("SkillRunContext is required; use for_standalone() for independent runs")
+        if context.skill_name != skill_name:
+            raise ValueError("SkillRunContext skill_name does not match requested skill")
         trace = SkillTraceRecorder()
         trace.record("skill.run.started", skill_name, "skill run started", {"run_id": context.run_id})
         version = "unknown"

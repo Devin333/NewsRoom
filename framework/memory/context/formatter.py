@@ -55,6 +55,10 @@ _SAFE_REF_KEYS = {
     "reference_ids",
     "run_id",
     "source_memory_ids",
-    "step_id",
-    "workflow_id",
+    "graph_id",
+    "graph_version",
+    "graph_ref",
+    "graph_checksum",
+    "node_instance_id",
+    "stage_id",
 }
