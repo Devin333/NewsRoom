@@ -6,7 +6,14 @@ from framework.shared.attempts import (
     AttemptState,
     current_attempt_context,
 )
-from framework.workers import LeasedTask, Task, TaskResult, TaskStatus, WorkerStatus
+from framework.workers import (
+    LeasedTask,
+    Task,
+    TaskResult,
+    TaskStatus,
+    WorkerExecutionScope,
+    WorkerStatus,
+)
 from infrastructure.storage.workers import RedisQueueStatus
 from interfaces.services.worker_service import (
     DEFAULT_DEAD_LETTER_QUEUE,
@@ -75,7 +82,7 @@ def test_worker_service_default_redis_queue_uses_news_dead_letter_queue() -> Non
 
 
 def test_worker_service_run_once_acks_success() -> None:
-    task = Task(task_type="memory.reindex", payload={"run_id": "run-1"}, task_id="task-1")
+    task = _standalone_task(task_type="memory.reindex", payload={"run_id": "run-1"}, task_id="task-1")
     queue = _FakeQueue(leased=LeasedTask(DEFAULT_MEMORY_QUEUE, "1-0", task))
     handler = _FakeHandler(success=True)
     service = WorkerApplicationService(queue=queue, handlers={handler.task_type: handler})
@@ -84,13 +91,13 @@ def test_worker_service_run_once_acks_success() -> None:
 
     assert result.processed is True
     assert result.success is True
-    assert result.workflow_run_id == "workflow-1"
+    assert result.graph_identity is None
     assert queue.acked == [(DEFAULT_MEMORY_QUEUE, "1-0")]
     assert queue.dead_letters == []
 
 
 def test_worker_service_run_once_requeues_failed_task_before_max_attempts() -> None:
-    task = Task(
+    task = _standalone_task(
         task_type="memory.reindex",
         payload={"run_id": "run-1"},
         task_id="task-1",
@@ -110,7 +117,7 @@ def test_worker_service_run_once_requeues_failed_task_before_max_attempts() -> N
 
 
 def test_worker_failed_result_persists_failed_attempt_terminal() -> None:
-    task = Task(
+    task = _standalone_task(
         task_type="memory.reindex",
         payload={"run_id": "run-1"},
         task_id="task-failed-terminal",
@@ -151,7 +158,7 @@ def test_worker_failed_result_persists_failed_attempt_terminal() -> None:
 
 
 def test_worker_inconsistent_failure_status_is_normalized_before_terminal() -> None:
-    task = Task(
+    task = _standalone_task(
         task_type="memory.reindex",
         payload={"run_id": "run-1"},
         task_id="task-inconsistent-terminal",
@@ -169,6 +176,7 @@ def test_worker_inconsistent_failure_status_is_normalized_before_terminal() -> N
                 success=False,
                 retryable=True,
                 status=TaskStatus.CANCELLED,
+                execution_scope=leased_task.execution_scope,
                 error_type="CancelledButReturned",
                 error_message="handler returned a contradictory status",
             )
@@ -210,7 +218,7 @@ def test_worker_inconsistent_failure_status_is_normalized_before_terminal() -> N
 
 
 def test_worker_service_run_once_dead_letters_non_retryable_task() -> None:
-    task = Task(
+    task = _standalone_task(
         task_type="memory.reindex",
         payload={"run_id": "run-1"},
         task_id="task-1",
@@ -263,7 +271,7 @@ def test_worker_service_records_and_lists_worker_status() -> None:
 
 
 def test_worker_service_run_once_reclaims_stale_task_when_no_new_task() -> None:
-    task = Task(task_type="memory.reindex", payload={"run_id": "run-1"}, task_id="task-1")
+    task = _standalone_task(task_type="memory.reindex", payload={"run_id": "run-1"}, task_id="task-1")
     queue = _FakeQueue(reclaimed=LeasedTask(DEFAULT_MEMORY_QUEUE, "1-0", task))
     handler = _FakeHandler(success=True)
     service = WorkerApplicationService(queue=queue, handlers={handler.task_type: handler})
@@ -285,7 +293,7 @@ def test_worker_service_run_once_reclaims_stale_task_when_no_new_task() -> None:
 
 
 def test_worker_service_keeps_queue_fence_outside_attempt_identity() -> None:
-    task = Task(task_type="memory.reindex", payload={}, task_id="task-1", attempts=2)
+    task = _standalone_task(task_type="memory.reindex", payload={}, task_id="task-1", attempts=2)
     leased = LeasedTask(
         DEFAULT_MEMORY_QUEUE,
         "1-0",
@@ -317,7 +325,7 @@ def test_worker_service_keeps_queue_fence_outside_attempt_identity() -> None:
 
 
 def test_worker_service_exposes_attempt_lifecycle_sink_without_queue_fence() -> None:
-    task = Task(task_type="memory.reindex", payload={}, task_id="task-events")
+    task = _standalone_task(task_type="memory.reindex", payload={}, task_id="task-events")
     leased = LeasedTask(
         DEFAULT_MEMORY_QUEUE,
         "1-0",
@@ -404,7 +412,7 @@ def test_worker_attempt_telemetry_sink_failure_is_isolated() -> None:
 
 
 def test_worker_service_lease_renewal_loss_cancels_context_and_rejects_terminal_write() -> None:
-    task = Task(task_type="memory.reindex", payload={}, task_id="task-1", attempts=1)
+    task = _standalone_task(task_type="memory.reindex", payload={}, task_id="task-1", attempts=1)
     leased = LeasedTask(
         DEFAULT_MEMORY_QUEUE,
         "1-0",
@@ -455,7 +463,7 @@ def test_worker_service_lease_renewal_loss_cancels_context_and_rejects_terminal_
 
 def test_worker_service_raw_handler_exception_is_safe_and_keeps_correlation_id() -> None:
     secret = "postgresql://alice:hunter2@database.internal/news"
-    task = Task(task_type="memory.reindex", payload={}, task_id="task-1", attempts=1)
+    task = _standalone_task(task_type="memory.reindex", payload={}, task_id="task-1", attempts=1)
     leased = LeasedTask(
         DEFAULT_MEMORY_QUEUE,
         "1-0",
@@ -498,7 +506,7 @@ def test_worker_service_queue_status_uses_default_queues() -> None:
 
 def test_source_health_check_task_handler_calls_source_service() -> None:
     handler = SourceHealthCheckTaskHandler(_FakeSourceService())
-    task = Task(
+    task = _standalone_task(
         task_type="source_health_check",
         payload={"source_id": "source-1", "limit": 1, "force": True},
         task_id="task-1",
@@ -514,8 +522,8 @@ def test_source_health_check_task_handler_calls_source_service() -> None:
 
 def test_worker_service_run_loop_stops_after_max_tasks() -> None:
     tasks = [
-        LeasedTask(DEFAULT_MEMORY_QUEUE, "1-0", Task(task_type="memory.reindex", payload={})),
-        LeasedTask(DEFAULT_MEMORY_QUEUE, "2-0", Task(task_type="memory.reindex", payload={})),
+        LeasedTask(DEFAULT_MEMORY_QUEUE, "1-0", _standalone_task(task_type="memory.reindex", payload={})),
+        LeasedTask(DEFAULT_MEMORY_QUEUE, "2-0", _standalone_task(task_type="memory.reindex", payload={})),
     ]
     queue = _FakeQueue(leased=tasks)
     handler = _FakeHandler(success=True)
@@ -637,7 +645,7 @@ class _ContextCapturingHandler:
 
     def handle(self, task):
         self.context = current_attempt_context()
-        return TaskResult.success(task.task_id)
+        return TaskResult.success(task.task_id, execution_scope=task.execution_scope)
 
 
 class _CooperativeLongHandler:
@@ -700,7 +708,7 @@ class _FakeHandler:
             success=self.success,
             retryable=self.retryable,
             status=TaskStatus.SUCCEEDED if self.success else TaskStatus.FAILED,
-            workflow_run_id="workflow-1" if self.success else None,
+            execution_scope=task.execution_scope,
             error_type=None if self.success else "FakeFailure",
             error_message=None if self.success else "failed",
         )
@@ -733,3 +741,8 @@ def _dt(value: str):
     from datetime import UTC, datetime
 
     return datetime.fromisoformat(value.replace("Z", "+00:00")).astimezone(UTC)
+
+
+def _standalone_task(**kwargs):
+    kwargs.setdefault("execution_scope", WorkerExecutionScope.STANDALONE)
+    return Task(**kwargs)

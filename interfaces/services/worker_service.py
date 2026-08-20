@@ -42,6 +42,7 @@ from framework.workers import (
     TaskError,
     TaskResult,
     TaskStatus,
+    WorkerExecutionScope,
     WorkerHeartbeat,
     WorkerHeartbeatStatus,
     WorkerExecutionPolicy,
@@ -165,7 +166,7 @@ class WorkerRunOnceResult:
     success: bool | None = None
     retryable: bool | None = None
     task_status: TaskStatus | None = None
-    workflow_run_id: str | None = None
+    graph_identity: Any | None = None
     error_type: str | None = None
     error_message: str | None = None
     error_id: str | None = None
@@ -182,7 +183,11 @@ class WorkerRunOnceResult:
             "success": self.success,
             "retryable": self.retryable,
             "task_status": self.task_status.value if self.task_status else None,
-            "workflow_run_id": self.workflow_run_id,
+            "graph_identity": (
+                self.graph_identity.to_dict()
+                if hasattr(self.graph_identity, "to_dict")
+                else self.graph_identity
+            ),
             "error_type": self.error_type,
             "error_message": self.error_message,
             "error_id": self.error_id,
@@ -327,6 +332,7 @@ class WorkerApplicationService:
             task_type=MemoryReindexTaskHandler.task_type,
             queue_name=queue_name,
             payload=payload,
+            execution_scope=WorkerExecutionScope.STANDALONE,
         )
         message_id = self.queue.enqueue(task)
         return EnqueuedTaskResult(task=task, message_id=str(message_id))
@@ -355,6 +361,7 @@ class WorkerApplicationService:
             task_type=SourceHealthCheckTaskHandler.task_type,
             queue_name=queue_name,
             payload=payload,
+            execution_scope=WorkerExecutionScope.STANDALONE,
         )
         message_id = self.queue.enqueue(task)
         return EnqueuedTaskResult(task=task, message_id=str(message_id))
@@ -425,7 +432,7 @@ class WorkerApplicationService:
             success=result.success,
             retryable=result.retryable,
             task_status=result.status,
-            workflow_run_id=result.workflow_run_id,
+            graph_identity=result.graph_identity,
             error_type=result.error_type,
             error_message=result.error_message,
             error_id=result.error_id,
@@ -564,6 +571,24 @@ class WorkerApplicationService:
                 actual_sleep(idle_sleep_seconds)
 
     def _handle_leased_task(self, leased: LeasedTask) -> tuple[TaskResult, BaseException | None]:
+        if (
+            leased.task.execution_scope is not WorkerExecutionScope.STANDALONE
+            or leased.task.graph_identity is not None
+        ):
+            return _sanitize_task_result(
+                TaskResult(
+                    task_id=leased.task.task_id,
+                    success=False,
+                    retryable=False,
+                    status=TaskStatus.FAILED,
+                    execution_scope=leased.task.execution_scope,
+                    graph_identity=leased.task.graph_identity,
+                    error_type="WorkerExecutionScopeMismatch",
+                    error_message=(
+                        "WorkerApplicationService only executes explicitly standalone tasks"
+                    ),
+                )
+            ), None
         handler = self.handlers.get(leased.task.task_type)
         if handler is None:
             return _sanitize_task_result(
@@ -572,6 +597,8 @@ class WorkerApplicationService:
                     success=False,
                     retryable=False,
                     status=TaskStatus.FAILED,
+                    execution_scope=leased.task.execution_scope,
+                    graph_identity=leased.task.graph_identity,
                     error_type="UnknownTaskType",
                     error_message=f"no handler for {leased.task.task_type}",
                 )
@@ -599,6 +626,8 @@ class WorkerApplicationService:
                     success=False,
                     retryable=False,
                     status=TaskStatus.FAILED,
+                    execution_scope=leased.task.execution_scope,
+                    graph_identity=leased.task.graph_identity,
                     error_type="InvalidWorkerExecutionPolicy",
                     error_message=str(exc),
                 )
@@ -711,6 +740,30 @@ class WorkerApplicationService:
                     reason_code=type(error).__name__,
                 )
             if result.success and result.status is TaskStatus.SUCCEEDED:
+                if (
+                    result.execution_scope is not leased.task.execution_scope
+                    or result.graph_identity != leased.task.graph_identity
+                ):
+                    error = ValueError(
+                        "worker handler result identity does not match the leased task"
+                    )
+                    normalized = TaskResult(
+                        task_id=leased.task.task_id,
+                        success=False,
+                        retryable=False,
+                        status=TaskStatus.FAILED,
+                        execution_scope=leased.task.execution_scope,
+                        graph_identity=leased.task.graph_identity,
+                        error_type="WorkerTaskIdentityMismatch",
+                        error_message=str(error),
+                    )
+                    return replace(
+                        outcome,
+                        state=AttemptState.FAILED,
+                        value=normalized,
+                        error=error,
+                        reason_code="worker_task_identity_mismatch",
+                    )
                 return outcome
             if result.success or result.status is not TaskStatus.FAILED:
                 error = ValueError(
@@ -721,6 +774,8 @@ class WorkerApplicationService:
                     success=False,
                     retryable=False,
                     status=TaskStatus.FAILED,
+                    execution_scope=leased.task.execution_scope,
+                    graph_identity=leased.task.graph_identity,
                     error_type="WorkerTaskResultInconsistent",
                     error_message=(
                         "worker handler result must use success=true/status=succeeded "
@@ -987,6 +1042,8 @@ def _task_result_from_exception(
         success=False,
         retryable=retryable,
         status=TaskStatus.FAILED,
+        execution_scope=task.execution_scope,
+        graph_identity=task.graph_identity,
         error_type=projection.error_type,
         error_message=projection.error_message,
         error_id=projection.error_id,
@@ -1007,7 +1064,8 @@ def _sanitize_task_result(result: TaskResult) -> TaskResult:
         success=False,
         retryable=result.retryable,
         status=result.status,
-        workflow_run_id=result.workflow_run_id,
+        execution_scope=result.execution_scope,
+        graph_identity=result.graph_identity,
         task_status=result.task_status,
         run_status=result.run_status,
         report_status=result.report_status,

@@ -2,7 +2,7 @@ from business.workers import (
     MemoryReindexTaskHandler,
     SourceHealthCheckTaskHandler,
 )
-from framework.workers import Task
+from framework.workers import Task, WorkerExecutionScope
 
 
 def test_memory_reindex_handler_reindexes_run() -> None:
@@ -10,6 +10,7 @@ def test_memory_reindex_handler_reindexes_run() -> None:
         task_type="memory.reindex",
         payload={"run_id": "run-1", "topic": "AI policy"},
         task_id="task-1",
+        execution_scope=WorkerExecutionScope.STANDALONE,
     )
     memory_service = _FakeMemoryService()
     handler = MemoryReindexTaskHandler(memory_service=memory_service)
@@ -18,7 +19,7 @@ def test_memory_reindex_handler_reindexes_run() -> None:
 
     assert memory_service.calls == [{"run_id": "run-1", "topic": "AI policy"}]
     assert result.success is True
-    assert result.workflow_run_id == "run-1"
+    assert result.graph_identity is None
     assert result.run_status == "succeeded"
     assert result.output["run_id"] == "run-1"
     assert result.output["artifact_dir"] is None
@@ -31,6 +32,7 @@ def test_memory_reindex_handler_allows_same_run_id_replay_with_stable_output() -
         task_type="memory.reindex",
         payload={"run_id": "run-1", "topic": "AI policy"},
         task_id="task-1",
+        execution_scope=WorkerExecutionScope.STANDALONE,
     )
     memory_service = _FakeMemoryService()
     handler = MemoryReindexTaskHandler(memory_service=memory_service)
@@ -47,6 +49,7 @@ def test_source_health_handler_checks_sources_without_daily_workflow() -> None:
         task_type="source_health_check",
         payload={"source_id": "source-1", "limit": 5, "run_id": "health-run"},
         task_id="task-1",
+        execution_scope=WorkerExecutionScope.STANDALONE,
     )
     source_service = _FakeSourceService()
     handler = SourceHealthCheckTaskHandler(source_service=source_service)

@@ -6,6 +6,8 @@ UTC = _tz.utc
 from typing import Any
 
 from framework.shared.time import format_datetime
+from framework.shared.graph_identity import GraphIdentity, coerce_graph_identity
+from framework.workers.models.execution_scope import WorkerExecutionScope
 from framework.workers.models.status import TaskStatus
 
 
@@ -44,7 +46,8 @@ class TaskResult:
     success: bool
     status: TaskStatus
     retryable: bool = True
-    workflow_run_id: str | None = None
+    graph_identity: GraphIdentity | None = None
+    execution_scope: WorkerExecutionScope | str | None = None
     task_status: TaskStatus | None = None
     run_status: str | None = None
     report_status: str | None = None
@@ -56,6 +59,20 @@ class TaskResult:
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "status", TaskStatus(self.status))
+        if self.graph_identity is not None:
+            object.__setattr__(
+                self,
+                "graph_identity",
+                coerce_graph_identity(self.graph_identity),
+            )
+        scope = self.execution_scope
+        if scope is None and self.graph_identity is not None:
+            scope = WorkerExecutionScope.GRAPH
+        elif scope is not None:
+            scope = WorkerExecutionScope(scope)
+        object.__setattr__(self, "execution_scope", scope)
+        if self.execution_scope is WorkerExecutionScope.STANDALONE and self.graph_identity is not None:
+            raise ValueError("standalone worker results cannot carry Graph identity")
         task_status = self.task_status if self.task_status is not None else self.status
         object.__setattr__(self, "task_status", TaskStatus(task_status))
 
@@ -69,7 +86,12 @@ class TaskResult:
             "task_status": task_status.value,
             "run_status": self.run_status,
             "report_status": self.report_status,
-            "workflow_run_id": self.workflow_run_id,
+            "graph_identity": (
+                self.graph_identity.to_dict() if self.graph_identity is not None else None
+            ),
+            "execution_scope": (
+                self.execution_scope.value if self.execution_scope is not None else None
+            ),
             "output": dict(self.output),
             "error_type": self.error_type,
             "error_message": self.error_message,
@@ -78,16 +100,32 @@ class TaskResult:
         }
 
 
-def _task_result_success(cls, task_id: str, output: dict[str, Any] | None = None) -> TaskResult:
+def _task_result_success(
+    cls,
+    task_id: str,
+    output: dict[str, Any] | None = None,
+    *,
+    graph_identity: GraphIdentity | None = None,
+    execution_scope: WorkerExecutionScope | str | None = None,
+) -> TaskResult:
     return cls(
         task_id=task_id,
         success=True,
         status=TaskStatus.SUCCEEDED,
+        graph_identity=graph_identity,
+        execution_scope=execution_scope,
         output=dict(output or {}),
     )
 
 
-def _task_result_failure(cls, task_id: str, error: str | Exception) -> TaskResult:
+def _task_result_failure(
+    cls,
+    task_id: str,
+    error: str | Exception,
+    *,
+    graph_identity: GraphIdentity | None = None,
+    execution_scope: WorkerExecutionScope | str | None = None,
+) -> TaskResult:
     if isinstance(error, Exception):
         error_type = type(error).__name__
         error_message = str(error)
@@ -98,6 +136,8 @@ def _task_result_failure(cls, task_id: str, error: str | Exception) -> TaskResul
         task_id=task_id,
         success=False,
         status=TaskStatus.FAILED,
+        graph_identity=graph_identity,
+        execution_scope=execution_scope,
         error_type=error_type,
         error_message=error_message,
     )

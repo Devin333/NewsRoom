@@ -6,7 +6,7 @@ UTC = _tz.utc
 from typing import Any, Protocol
 
 from framework.shared.time import ensure_utc
-from framework.workers.models.task import Task
+from framework.workers.models import Task, WorkerExecutionScope
 from framework.workers.scheduler.misfire import MisfirePolicy
 from framework.workers.scheduler.schedule import (
     EnqueuedScheduleTask,
@@ -287,6 +287,7 @@ class Scheduler:
             payload=dict(schedule.payload_template),
             queue_name=schedule.queue_name,
             scheduled_for=due_at,
+            execution_scope=WorkerExecutionScope.STANDALONE,
             metadata={
                 **schedule.metadata,
                 "schedule_id": schedule.schedule_id,

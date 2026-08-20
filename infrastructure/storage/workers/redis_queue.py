@@ -21,6 +21,7 @@ from framework.workers.models import (
     TaskRetryPolicy,
     TaskStatus,
     StaleTaskLeaseError,
+    task_admission_error,
 )
 from framework.workers.runtime.heartbeat import WorkerHeartbeat, WorkerHeartbeatStatus
 
@@ -248,7 +249,16 @@ class RedisStreamTaskQueue:
         self.lease_ttl_ms = int(lease_ttl_ms)
         self.lease_key_prefix = lease_key_prefix.rstrip(":")
 
-    def enqueue(self, task: Task) -> str:
+    def enqueue(self, task: Task) -> str | TaskEnqueueResult:
+        admission_error = task_admission_error(task)
+        if admission_error is not None:
+            return TaskEnqueueResult(
+                task_id=task.task_id,
+                queue_name=task.queue_name,
+                accepted=False,
+                status=task.status,
+                reason=admission_error[0],
+            )
         from framework.events import current_trace_context, inject_current_trace
 
         if current_trace_context() is not None:
@@ -898,6 +908,12 @@ def _dead_letter_payload(
         "timeout_seconds": task.timeout_seconds,
         "dedup_key": None,
         "trace_id": None,
+        "execution_scope": (
+            task.execution_scope.value if task.execution_scope is not None else None
+        ),
+        "graph_identity": (
+            task.graph_identity.to_dict() if task.graph_identity is not None else None
+        ),
         "leased_by": None,
         "lease_expires_at": None,
         "run_at": None,

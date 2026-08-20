@@ -15,7 +15,13 @@ from framework.workers import (
 
 def test_task_prd_aliases_round_trip() -> None:
     run_at = datetime(2026, 1, 1, tzinfo=UTC)
-    task = Task(task_type="demo", payload={"x": 1}, queue_name="q", scheduled_for=run_at)
+    task = Task(
+        task_type="demo",
+        payload={"x": 1},
+        queue_name="q",
+        scheduled_for=run_at,
+        execution_scope="standalone",
+    )
 
     assert task.queue == "q"
     assert task.run_at == run_at
@@ -27,7 +33,7 @@ def test_task_prd_aliases_round_trip() -> None:
 
 
 def test_status_result_retry_metrics_and_dead_letter_helpers() -> None:
-    task = Task(task_type="demo", payload={})
+    task = Task(task_type="demo", payload={}, execution_scope="standalone")
     assert TaskStatus.SUCCEEDED.is_terminal()
     assert WorkerStatus.IDLE.value == "idle"
     assert TaskRetryPolicy(max_attempts=2).should_retry(1, "temporary")

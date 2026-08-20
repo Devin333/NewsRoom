@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+from framework.shared.graph_identity import GraphExecutionIdentity
 from framework.workers import (
     InMemoryTaskQueue,
     Task,
@@ -19,13 +20,17 @@ class _Handler:
     task_type: str = "demo"
 
     def handle(self, task: Task) -> TaskResult:
-        return TaskResult.success(task.task_id, {"seen": task.payload["value"]})
+        return TaskResult.success(
+            task.task_id,
+            {"seen": task.payload["value"]},
+            graph_identity=task.graph_identity,
+        )
 
 
 def test_in_memory_queue_supports_legacy_and_prd_lease_shapes() -> None:
     queue = InMemoryTaskQueue()
-    first = Task(task_type="demo", payload={}, queue_name="q")
-    second = Task(task_type="demo", payload={}, queue_name="q")
+    first = Task(task_type="demo", payload={}, queue_name="q", execution_scope="standalone")
+    second = Task(task_type="demo", payload={}, queue_name="q", execution_scope="standalone")
     queue.enqueue(first)
     queue.enqueue(second)
 
@@ -40,7 +45,12 @@ def test_in_memory_queue_supports_legacy_and_prd_lease_shapes() -> None:
 
 def test_worker_loop_accepts_handler_registry() -> None:
     queue = InMemoryTaskQueue()
-    task = Task(task_type="demo", payload={"value": 3}, queue_name="q")
+    task = Task(
+        task_type="demo",
+        payload={"value": 3},
+        queue_name="q",
+        graph_identity=_identity(),
+    )
     queue.enqueue(task)
     registry = TaskHandlerRegistry()
     registry.register(_Handler())
@@ -61,7 +71,12 @@ def test_worker_loop_accepts_handler_registry() -> None:
 
 
 def test_worker_loop_accepts_task_queue_protocol() -> None:
-    task = Task(task_type="demo", payload={"value": 7}, queue_name="q")
+    task = Task(
+        task_type="demo",
+        payload={"value": 7},
+        queue_name="q",
+        graph_identity=_identity(),
+    )
     queue = _FakeTaskQueue(task)
 
     loop = WorkerLoop(
@@ -78,6 +93,44 @@ def test_worker_loop_accepts_task_queue_protocol() -> None:
     assert result.success
     assert queue.acked == [("task", "worker-1")]
     assert queue.failed == []
+
+
+def test_in_memory_queue_rejects_graph_task_without_execution_identity() -> None:
+    queue = InMemoryTaskQueue()
+    task = Task(
+        task_type="demo",
+        payload={"value": 9},
+        queue_name="q",
+        execution_scope="graph",
+    )
+    result = queue.enqueue(task)
+
+    assert result is not None
+    assert result.accepted is False
+    assert result.reason == "GraphIdentityRequired"
+
+
+def test_in_memory_queue_rejects_task_without_execution_scope() -> None:
+    queue = InMemoryTaskQueue()
+    result = queue.enqueue(Task(task_type="demo", payload={}, queue_name="q"))
+
+    assert result is not None
+    assert result.accepted is False
+    assert result.reason == "WorkerExecutionScopeRequired"
+
+
+def _identity() -> GraphExecutionIdentity:
+    return GraphExecutionIdentity(
+        run_id="run-worker",
+        graph_id="worker.graph",
+        graph_version="v1",
+        graph_ref="worker.graph@v1",
+        graph_checksum="sha256:" + "c" * 64,
+        node_id="worker.node",
+        node_instance_id="worker.instance",
+        activity_id="worker.activity",
+        attempt=1,
+    )
 
 
 class _FakeTaskQueue:

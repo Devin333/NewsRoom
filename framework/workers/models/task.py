@@ -7,7 +7,13 @@ from typing import Any
 from uuid import uuid4
 
 from framework.events.propagation import normalize_trace_carrier
+from framework.shared.graph_identity import (
+    GraphExecutionIdentity,
+    GraphIdentity,
+    coerce_graph_identity,
+)
 from framework.shared.time import ensure_utc, format_datetime, parse_datetime
+from framework.workers.models.execution_scope import WorkerExecutionScope
 from framework.workers.models.status import TaskStatus
 
 
@@ -28,6 +34,8 @@ class Task:
     dedup_key: str | None = None
     trace_id: str | None = None
     trace_carrier: dict[str, str] = field(default_factory=dict)
+    execution_scope: WorkerExecutionScope | str | None = None
+    graph_identity: GraphIdentity | None = None
     leased_by: str | None = None
     lease_expires_at: datetime | None = None
     scheduled_for: datetime | None = None
@@ -37,6 +45,14 @@ class Task:
 
     def __post_init__(self) -> None:
         self.trace_carrier = _bounded_trace_carrier(self.trace_carrier)
+        if self.execution_scope is None and self.graph_identity is not None:
+            self.execution_scope = WorkerExecutionScope.GRAPH
+        elif self.execution_scope is not None:
+            self.execution_scope = WorkerExecutionScope(self.execution_scope)
+        if self.execution_scope is WorkerExecutionScope.STANDALONE and self.graph_identity is not None:
+            raise ValueError("standalone worker tasks cannot carry Graph identity")
+        if self.graph_identity is not None:
+            self.graph_identity = coerce_graph_identity(self.graph_identity)
 
     @property
     def queue(self) -> str:
@@ -83,6 +99,12 @@ class Task:
             "dedup_key": self.dedup_key,
             "trace_id": self.trace_id,
             "trace_carrier": dict(self.trace_carrier),
+            "execution_scope": (
+                self.execution_scope.value if self.execution_scope is not None else None
+            ),
+            "graph_identity": (
+                self.graph_identity.to_dict() if self.graph_identity is not None else None
+            ),
             "leased_by": self.leased_by,
             "lease_expires_at": format_datetime(self.lease_expires_at),
             "run_at": format_datetime(self.scheduled_for),
@@ -107,6 +129,12 @@ class Task:
             dedup_key=data.get("dedup_key"),
             trace_id=data.get("trace_id"),
             trace_carrier=dict(data.get("trace_carrier") or {}),
+            execution_scope=data.get("execution_scope"),
+            graph_identity=(
+                coerce_graph_identity(data["graph_identity"])
+                if data.get("graph_identity") is not None
+                else None
+            ),
             leased_by=data.get("leased_by"),
             lease_expires_at=parse_datetime(data.get("lease_expires_at")),
             scheduled_for=parse_datetime(data.get("scheduled_for") or data.get("run_at")),
@@ -175,7 +203,8 @@ class TaskRecord:
     attempts: int = 0
     max_attempts: int = 3
     worker_id: str | None = None
-    workflow_run_id: str | None = None
+    execution_scope: WorkerExecutionScope | str | None = None
+    graph_identity: GraphIdentity | None = None
     error: dict[str, Any] | None = None
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     updated_at: datetime = field(default_factory=lambda: datetime.now(UTC))
@@ -183,11 +212,25 @@ class TaskRecord:
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "status", TaskStatus(self.status))
+        scope = self.execution_scope
+        if scope is None and self.graph_identity is not None:
+            scope = WorkerExecutionScope.GRAPH
+        elif scope is not None:
+            scope = WorkerExecutionScope(scope)
+        object.__setattr__(self, "execution_scope", scope)
+        if self.execution_scope is WorkerExecutionScope.STANDALONE and self.graph_identity is not None:
+            raise ValueError("standalone worker task records cannot carry Graph identity")
+        if self.graph_identity is not None:
+            object.__setattr__(
+                self,
+                "graph_identity",
+                coerce_graph_identity(self.graph_identity),
+            )
         object.__setattr__(self, "created_at", ensure_utc(self.created_at))
         object.__setattr__(self, "updated_at", ensure_utc(self.updated_at))
 
     @classmethod
-    def from_task(cls, task: Task, *, workflow_run_id: str | None = None) -> "TaskRecord":
+    def from_task(cls, task: Task) -> "TaskRecord":
         return cls(
             task_id=task.task_id,
             task_type=task.task_type,
@@ -197,7 +240,8 @@ class TaskRecord:
             attempts=task.attempts,
             max_attempts=task.max_attempts,
             worker_id=task.leased_by,
-            workflow_run_id=workflow_run_id,
+            execution_scope=task.execution_scope,
+            graph_identity=task.graph_identity,
             created_at=task.created_at,
             updated_at=task.updated_at,
             metadata=dict(task.metadata),
@@ -235,7 +279,12 @@ class TaskRecord:
             "attempts": self.attempts,
             "max_attempts": self.max_attempts,
             "worker_id": self.worker_id,
-            "workflow_run_id": self.workflow_run_id,
+            "execution_scope": (
+                self.execution_scope.value if self.execution_scope is not None else None
+            ),
+            "graph_identity": (
+                self.graph_identity.to_dict() if self.graph_identity is not None else None
+            ),
             "error": dict(self.error) if self.error else None,
             "created_at": format_datetime(self.created_at),
             "updated_at": format_datetime(self.updated_at),
@@ -255,7 +304,12 @@ class TaskRecord:
             attempts=payload["attempts"],
             max_attempts=payload["max_attempts"],
             worker_id=payload.get("worker_id"),
-            workflow_run_id=payload.get("workflow_run_id"),
+            execution_scope=payload.get("execution_scope"),
+            graph_identity=(
+                coerce_graph_identity(payload["graph_identity"])
+                if payload.get("graph_identity") is not None
+                else None
+            ),
             error=payload.get("error"),
             created_at=parse_datetime(payload.get("created_at")) or datetime.now(UTC),
             updated_at=parse_datetime(payload.get("updated_at")) or datetime.now(UTC),
@@ -295,3 +349,26 @@ def _optional_int(value: Any) -> int | None:
 
 def _bounded_trace_carrier(value: Any) -> dict[str, str]:
     return dict(normalize_trace_carrier(value))
+
+
+def task_admission_error(task: Task) -> tuple[str, str] | None:
+    """Return a deterministic rejection for tasks without a valid execution scope."""
+
+    if task.execution_scope is None:
+        return (
+            "WorkerExecutionScopeRequired",
+            "worker task must declare GRAPH or STANDALONE execution scope",
+        )
+    if task.execution_scope is WorkerExecutionScope.GRAPH and not isinstance(
+        task.graph_identity, GraphExecutionIdentity
+    ):
+        return (
+            "GraphIdentityRequired",
+            "graph worker task requires an exact GraphExecutionIdentity",
+        )
+    if task.execution_scope is WorkerExecutionScope.STANDALONE and task.graph_identity is not None:
+        return (
+            "WorkerExecutionScopeMismatch",
+            "standalone worker task cannot carry GraphExecutionIdentity",
+        )
+    return None

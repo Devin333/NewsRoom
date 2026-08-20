@@ -4,9 +4,11 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass
 
+from framework.shared.graph_identity import GraphExecutionIdentity
+from framework.workers.models.execution_scope import WorkerExecutionScope
 from framework.workers.models.result import TaskResult
 from framework.workers.models.status import TaskStatus
-from framework.workers.models.task import Task, TaskError, TaskEvent
+from framework.workers.models.task import Task, TaskError, TaskEvent, task_admission_error
 from framework.workers.queue.base import TaskQueue
 from framework.workers.registry.handler import TaskHandler
 from framework.workers.registry.registry import TaskHandlerRegistry, registry_from_handlers
@@ -130,6 +132,25 @@ class WorkerLoop:
         return self.handle_task(task)
 
     def handle_task(self, task: Task) -> TaskResult:
+        admission_error = task_admission_error(task)
+        if admission_error is not None:
+            return self._reject_task(
+                task,
+                TaskError(
+                    admission_error[0],
+                    admission_error[1],
+                    retryable=False,
+                ),
+            )
+        if task.execution_scope is not WorkerExecutionScope.GRAPH:
+            return self._reject_task(
+                task,
+                TaskError(
+                    "WorkerExecutionScopeMismatch",
+                    "WorkerLoop only executes tasks in the graph scope",
+                    retryable=False,
+                ),
+            )
         task.status = TaskStatus.RUNNING
         self._record_event("task_started", task)
         handler = self.handler_registry.get(task.task_type)
@@ -145,6 +166,8 @@ class WorkerLoop:
                 task_id=task.task_id,
                 success=False,
                 status=TaskStatus.FAILED,
+                execution_scope=task.execution_scope,
+                graph_identity=task.graph_identity,
                 error_type=error.error_type,
                 error_message=error.error_message,
             )
@@ -158,6 +181,46 @@ class WorkerLoop:
                 task_id=task.task_id,
                 success=False,
                 status=TaskStatus.FAILED,
+                execution_scope=task.execution_scope,
+                graph_identity=task.graph_identity,
+                error_type=error.error_type,
+                error_message=error.error_message,
+            )
+        if not isinstance(result, TaskResult):
+            error = TaskError(
+                "InvalidTaskResult",
+                "task handler must return TaskResult",
+                retryable=False,
+            )
+            self.queue.fail(task.task_id, self.worker_id, error)
+            self._record_event("task_failed", task, payload=error.to_dict())
+            return TaskResult(
+                task_id=task.task_id,
+                success=False,
+                status=TaskStatus.FAILED,
+                execution_scope=task.execution_scope,
+                graph_identity=task.graph_identity,
+                error_type=error.error_type,
+                error_message=error.error_message,
+            )
+        if (
+            result.execution_scope is not task.execution_scope
+            or not isinstance(result.graph_identity, GraphExecutionIdentity)
+            or result.graph_identity != task.graph_identity
+        ):
+            error = TaskError(
+                "GraphIdentityMismatch",
+                "task result must carry the exact execution scope and GraphExecutionIdentity of the leased task",
+                retryable=False,
+            )
+            self.queue.fail(task.task_id, self.worker_id, error)
+            self._record_event("task_failed", task, payload=error.to_dict())
+            return TaskResult(
+                task_id=task.task_id,
+                success=False,
+                status=TaskStatus.FAILED,
+                execution_scope=task.execution_scope,
+                graph_identity=task.graph_identity,
                 error_type=error.error_type,
                 error_message=error.error_message,
             )
@@ -186,6 +249,22 @@ class WorkerLoop:
                 payload={"error_type": result.error_type, "error_message": result.error_message},
             )
         return result
+
+    def _reject_task(self, task: Task, error: TaskError) -> TaskResult:
+        """Fail a leased task before any handler or side effect is invoked."""
+
+        task.status = TaskStatus.FAILED
+        self.queue.fail(task.task_id, self.worker_id, error)
+        self._record_event("task_failed", task, payload=error.to_dict())
+        return TaskResult(
+            task_id=task.task_id,
+            success=False,
+            status=TaskStatus.FAILED,
+            execution_scope=task.execution_scope,
+            graph_identity=task.graph_identity,
+            error_type=error.error_type,
+            error_message=error.error_message,
+        )
 
     def run_once_result(self) -> WorkerLoopRunResult:
         result = self.run_once()

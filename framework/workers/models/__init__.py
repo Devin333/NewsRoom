@@ -1,4 +1,5 @@
 from framework.workers.models.dead_letter import DeadLetterRecord
+from framework.workers.models.execution_scope import WorkerExecutionScope
 from framework.workers.models.execution_policy import WorkerExecutionPolicy
 from framework.workers.models.metrics import WorkerMetrics
 from framework.workers.models.result import TaskEnqueueResult, TaskResult
@@ -11,6 +12,7 @@ from framework.workers.models.task import (
     TaskEvent,
     TaskRecord,
     WorkerRecord,
+    task_admission_error,
 )
 from framework.workers.queue.base import LeasedTask, QueueStatus, StaleTaskLeaseError
 from framework.workers.runtime.backpressure import BackpressurePolicy
@@ -27,11 +29,13 @@ __all__ = [
     "TaskError",
     "TaskEvent",
     "TaskRecord",
+    "task_admission_error",
     "TaskResult",
     "TaskRetryPolicy",
     "TaskStatus",
     "WorkerMetrics",
     "WorkerExecutionPolicy",
+    "WorkerExecutionScope",
     "WorkerRecord",
     "WorkerStatus",
 ]

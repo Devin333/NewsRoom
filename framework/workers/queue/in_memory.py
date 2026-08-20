@@ -13,7 +13,13 @@ from framework.workers.models.metrics import WorkerMetrics
 from framework.workers.models.result import TaskEnqueueResult
 from framework.workers.models.retry import TaskRetryPolicy
 from framework.workers.models.status import TaskStatus
-from framework.workers.models.task import DEFAULT_TASK_QUEUE, Task, TaskError, TaskEvent
+from framework.workers.models.task import (
+    DEFAULT_TASK_QUEUE,
+    Task,
+    TaskError,
+    TaskEvent,
+    task_admission_error,
+)
 from framework.workers.queue.base import LeasedTask, QueueStatus
 from framework.workers.runtime.backpressure import BackpressurePolicy
 
@@ -35,6 +41,15 @@ class InMemoryTaskQueue:
         self.now_fn = now_fn or (lambda: datetime.now(UTC))
 
     def enqueue(self, task: Task) -> TaskEnqueueResult | None:
+        admission_error = task_admission_error(task)
+        if admission_error is not None:
+            return TaskEnqueueResult(
+                task_id=task.task_id,
+                queue_name=task.queue_name,
+                accepted=False,
+                status=task.status,
+                reason=admission_error[0],
+            )
         if current_trace_context() is not None:
             task.trace_carrier = inject_current_trace(task.trace_carrier)
         if task.dedup_key and self._has_unfinished_dedup_key(task.dedup_key):

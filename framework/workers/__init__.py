@@ -30,8 +30,10 @@ from framework.workers.models import (
     TaskStatus,
     WorkerMetrics,
     WorkerExecutionPolicy,
+    WorkerExecutionScope,
     WorkerRecord,
     WorkerStatus,
+    task_admission_error,
 )
 from framework.workers.queue import InMemoryTaskQueue, TaskQueue
 from framework.workers.registry import TaskHandler, TaskHandlerRegistry
@@ -98,6 +100,7 @@ __all__ = [
     "TaskHandlerRegistry",
     "TaskQueue",
     "TaskRecord",
+    "task_admission_error",
     "TaskResult",
     "TaskRetryPolicy",
     "TaskStatus",
@@ -109,6 +112,7 @@ __all__ = [
     "WorkerLoopRunResult",
     "WorkerMetrics",
     "WorkerExecutionPolicy",
+    "WorkerExecutionScope",
     "WorkerRecord",
     "WorkerRunner",
     "WorkerStatus",

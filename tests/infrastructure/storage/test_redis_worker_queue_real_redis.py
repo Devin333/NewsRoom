@@ -5,7 +5,7 @@ from uuid import uuid4
 
 import pytest
 
-from framework.workers import StaleTaskLeaseError, Task
+from framework.workers import StaleTaskLeaseError, Task, WorkerExecutionScope
 from framework.harness.control_plane.errors import HarnessValidationError
 from framework.harness.graph.versioning import (
     GRAPH_ONLY_NORMALIZED_HARNESS_GRAPH_SCHEMA,
@@ -46,7 +46,7 @@ def test_real_redis_active_renewal_reclaim_and_late_completion() -> None:
         lease_key_prefix=f"news:test:worker-leases:{suffix}",
     )
     try:
-        queue.enqueue(Task(task_type="test", payload={}, queue_name=queue_name, task_id=suffix))
+        queue.enqueue(Task(task_type="test", payload={}, queue_name=queue_name, task_id=suffix, execution_scope=WorkerExecutionScope.STANDALONE))
         first = queue.lease_one("worker-a", [queue_name], block_ms=1)
         assert first is not None
         queue.renew(first)

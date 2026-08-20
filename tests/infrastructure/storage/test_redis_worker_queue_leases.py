@@ -4,7 +4,7 @@ import json
 
 import pytest
 
-from framework.workers import StaleTaskLeaseError, Task, TaskError
+from framework.workers import StaleTaskLeaseError, Task, TaskError, WorkerExecutionScope
 from infrastructure.storage.workers.redis_queue import RedisStreamTaskQueue
 
 
@@ -14,7 +14,7 @@ QUEUE = "news:queue:test"
 def test_active_lease_cannot_be_reclaimed_and_renewal_extends_server_expiry() -> None:
     redis = _LeaseScriptFakeRedis()
     queue = RedisStreamTaskQueue(redis, lease_ttl_ms=1_000)
-    queue.enqueue(Task(task_type="test", payload={}, queue_name=QUEUE, task_id="task-1"))
+    queue.enqueue(Task(task_type="test", payload={}, queue_name=QUEUE, task_id="task-1", execution_scope=WorkerExecutionScope.STANDALONE))
 
     original = queue.lease_one("worker-a", [QUEUE], block_ms=0)
     assert original is not None
@@ -40,7 +40,7 @@ def test_renewal_interval_is_strictly_below_one_third_even_for_small_ttl() -> No
 def test_expired_reclaim_has_monotonic_attempt_and_fencing_generation() -> None:
     redis = _LeaseScriptFakeRedis()
     queue = RedisStreamTaskQueue(redis, lease_ttl_ms=1_000)
-    queue.enqueue(Task(task_type="test", payload={}, queue_name=QUEUE, task_id="task-1"))
+    queue.enqueue(Task(task_type="test", payload={}, queue_name=QUEUE, task_id="task-1", execution_scope=WorkerExecutionScope.STANDALONE))
 
     first = queue.lease_one("worker-a", [QUEUE], block_ms=0)
     assert first is not None
@@ -60,8 +60,8 @@ def test_expired_reclaim_has_monotonic_attempt_and_fencing_generation() -> None:
 def test_reclaim_skips_renewed_first_candidate_and_claims_later_expired_entry() -> None:
     redis = _LeaseScriptFakeRedis()
     queue = RedisStreamTaskQueue(redis, lease_ttl_ms=1_000)
-    queue.enqueue(Task(task_type="test", payload={}, queue_name=QUEUE, task_id="task-active"))
-    queue.enqueue(Task(task_type="test", payload={}, queue_name=QUEUE, task_id="task-expired"))
+    queue.enqueue(Task(task_type="test", payload={}, queue_name=QUEUE, task_id="task-active", execution_scope=WorkerExecutionScope.STANDALONE))
+    queue.enqueue(Task(task_type="test", payload={}, queue_name=QUEUE, task_id="task-expired", execution_scope=WorkerExecutionScope.STANDALONE))
 
     active = queue.lease_one("worker-a", [QUEUE], block_ms=0)
     expired = queue.lease_one("worker-a", [QUEUE], block_ms=0)
@@ -85,7 +85,7 @@ def test_reclaim_skips_renewed_first_candidate_and_claims_later_expired_entry() 
 def test_stale_owner_cannot_complete_after_reclaim_and_current_completion_is_idempotent() -> None:
     redis = _LeaseScriptFakeRedis()
     queue = RedisStreamTaskQueue(redis, lease_ttl_ms=1_000)
-    queue.enqueue(Task(task_type="test", payload={}, queue_name=QUEUE, task_id="task-1"))
+    queue.enqueue(Task(task_type="test", payload={}, queue_name=QUEUE, task_id="task-1", execution_scope=WorkerExecutionScope.STANDALONE))
 
     stale = queue.lease_one("worker-a", [QUEUE], block_ms=0)
     assert stale is not None
@@ -111,6 +111,7 @@ def test_guarded_retry_transition_is_atomic_and_idempotent() -> None:
             payload={"document_id": "doc-1"},
             queue_name=QUEUE,
             task_id="task-1",
+            execution_scope=WorkerExecutionScope.STANDALONE,
         )
     )
     leased = queue.lease_one("worker-a", [QUEUE], block_ms=0)
@@ -139,6 +140,7 @@ def test_guarded_dlq_transition_strips_entire_business_record_and_is_idempotent(
         queue_name=QUEUE,
         task_id="task-1",
         max_attempts=1,
+        execution_scope=WorkerExecutionScope.STANDALONE,
     )
     queue.enqueue(task)
     leased = queue.lease_one("worker-a", [QUEUE], block_ms=0)

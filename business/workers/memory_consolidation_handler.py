@@ -19,7 +19,8 @@ class MemoryConsolidationTaskHandler:
             task_id=task.task_id,
             success=True,
             status=TaskStatus.SUCCEEDED,
-            workflow_run_id=str(task.payload.get("run_id") or ""),
+            execution_scope=task.execution_scope,
+            graph_identity=task.graph_identity,
             run_status="succeeded",
             output=result,
         )

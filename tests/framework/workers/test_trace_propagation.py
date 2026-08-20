@@ -6,6 +6,7 @@ from typing import Any
 
 import pytest
 
+from framework.shared.graph_identity import GraphExecutionIdentity
 from framework.events import (
     EventTelemetry,
     TelemetryInstrumentationScope,
@@ -28,7 +29,12 @@ def test_worker_task_round_trip_queue_injection_and_consumer_link() -> None:
     producer = W3CSpanContext.root()
     outer = W3CSpanContext.root()
     queue = InMemoryTaskQueue()
-    task = Task(task_type="demo", payload={"value": 7}, queue_name="q")
+    task = Task(
+        task_type="demo",
+        payload={"value": 7},
+        queue_name="q",
+        graph_identity=_identity(),
+    )
 
     with trace_context_scope(producer):
         queue.enqueue(task)
@@ -94,7 +100,25 @@ class _Handler:
         self.contexts.append(
             context if isinstance(context, W3CSpanContext) else None
         )
-        return TaskResult.success(task.task_id, {"seen": task.payload["value"]})
+        return TaskResult.success(
+            task.task_id,
+            {"seen": task.payload["value"]},
+            graph_identity=task.graph_identity,
+        )
+
+
+def _identity() -> GraphExecutionIdentity:
+    return GraphExecutionIdentity(
+        run_id="run-1",
+        graph_id="graph-1",
+        graph_version="v1",
+        graph_ref="graph-1@v1",
+        graph_checksum="sha256:" + "a" * 64,
+        node_id="node-1",
+        node_instance_id="node-1:1",
+        activity_id="activity-1",
+        attempt=1,
+    )
 
 
 class _Span:
