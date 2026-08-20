@@ -48,7 +48,7 @@ def test_concurrent_boundary_reservations_are_linearized_across_scopes(
         child = BudgetScopeRef(
             run_id=root.run_id,
             scope_id=f"child:{index}",
-            scope_type="workflow" if index % 2 == 0 else "subagent",
+            scope_type="agent_loop" if index % 2 == 0 else "subagent",
             parent_scope_id=root.scope_id,
             policy_revision=child_policy.policy_revision,
         )

@@ -18,6 +18,7 @@ from framework.governance.budget import (
     BudgetEvent,
     BudgetHistoryError,
 )
+from framework.shared.graph_identity import GraphExecutionIdentity, GraphRunIdentity
 
 
 BUDGET_EVENT_DATA_SCHEMA = "newsroom.budget-event/v1"
@@ -78,7 +79,7 @@ class CanonicalBudgetEventSink:
                 source=BUDGET_EVENT_SOURCE,
                 occurred_at=self._now_fn(),
                 stream_id=f"budget:{event.run_id}",
-                business_context=BusinessContext(run_id=event.run_id),
+                business_context=_budget_business_context(event),
                 producer=ProducerIdentity(
                     component=BUDGET_EVENT_SOURCE,
                     version="1",
@@ -118,6 +119,7 @@ class DurableBudgetFactResolver:
         run_id: str,
         operation_id: str,
         ledger_revision: int,
+        expected_identity: GraphRunIdentity | GraphExecutionIdentity | None = None,
     ) -> CanonicalBudgetFact | None:
         run_id = _required_text(run_id, "run_id")
         operation_id = _required_text(operation_id, "operation_id")
@@ -127,6 +129,16 @@ class DurableBudgetFactResolver:
             or ledger_revision < 1
         ):
             raise ValueError("ledger_revision must be a positive integer")
+        if expected_identity is not None:
+            if not isinstance(
+                expected_identity,
+                (GraphRunIdentity, GraphExecutionIdentity),
+            ):
+                raise TypeError("expected_identity must be a Graph identity")
+            if expected_identity.run_id != run_id:
+                raise BudgetHistoryError(
+                    "expected budget Graph identity crossed the run scope"
+                )
         stream_id = f"budget:{run_id}"
         high_watermark = self._reader.get_stream_high_watermark(
             stream_id,
@@ -163,6 +175,7 @@ class DurableBudgetFactResolver:
                     event.operation_id == operation_id
                     and event.ledger_revision == ledger_revision
                 ):
+                    _validate_expected_budget_identity(expected_identity, event)
                     candidate = CanonicalBudgetFact(
                         event=event,
                         fact_ref=stored.content_checksum,
@@ -212,7 +225,61 @@ def budget_event_from_stored_event(stored: StoredEvent) -> BudgetEvent:
         or stored.causation_id != event.reservation_id
     ):
         raise BudgetHistoryError("budget event envelope conflicts with its payload")
+    _validate_budget_business_context(stored.business_context, event)
     return event
+
+
+def _budget_business_context(event: BudgetEvent) -> BusinessContext:
+    identity = event.scope.execution_identity
+    if isinstance(identity, GraphExecutionIdentity):
+        return BusinessContext(
+            run_id=identity.run_id,
+            graph_id=identity.graph_id,
+            graph_version=identity.graph_version,
+            graph_ref=identity.graph_ref,
+            graph_checksum=identity.graph_checksum,
+            execution_identity=identity,
+            stage_id=identity.node_id,
+            node_instance_id=identity.node_instance_id,
+        )
+    if isinstance(identity, GraphRunIdentity):
+        return BusinessContext(
+            run_id=identity.run_id,
+            graph_id=identity.graph_id,
+            graph_version=identity.graph_version,
+            graph_ref=identity.graph_ref,
+            graph_checksum=identity.graph_checksum,
+        )
+    return BusinessContext(run_id=event.run_id)
+
+
+def _validate_budget_business_context(
+    context: BusinessContext,
+    event: BudgetEvent,
+) -> None:
+    identity = event.scope.execution_identity
+    if identity is None:
+        if context.graph_identity is not None or context.physical_identity is not None:
+            raise BudgetHistoryError("budget event has unexpected Graph business context")
+        return
+    if isinstance(identity, GraphExecutionIdentity):
+        if context.physical_identity != identity:
+            raise BudgetHistoryError("budget event Graph execution identity is inconsistent")
+        return
+    if context.graph_identity != identity or context.physical_identity is not None:
+        raise BudgetHistoryError("budget event Graph run identity is inconsistent")
+
+
+def _validate_expected_budget_identity(
+    expected_identity: GraphRunIdentity | GraphExecutionIdentity | None,
+    event: BudgetEvent,
+) -> None:
+    if expected_identity is None:
+        return
+    if event.scope.execution_identity != expected_identity:
+        raise BudgetHistoryError(
+            "budget event Graph identity does not match the expected execution"
+        )
 
 
 def budget_event_payload(event: BudgetEvent) -> dict[str, Any]:

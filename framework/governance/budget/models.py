@@ -8,6 +8,7 @@ from typing import Any, ClassVar, Mapping
 
 from framework.governance.budget.errors import BudgetContractError
 from framework.shared.json import stable_json_dumps
+from framework.shared.graph_identity import GraphExecutionIdentity, GraphRunIdentity
 
 
 BUDGET_SCHEMA_VERSION = "newsroom.budget/v1"
@@ -31,7 +32,7 @@ class BudgetDimension(str, Enum):
 
 class BudgetScopeType(str, Enum):
     RUN = "run"
-    WORKFLOW = "workflow"
+    GRAPH = "graph"
     AGENT_LOOP = "agent_loop"
     SUBAGENT = "subagent"
     OPERATION = "operation"
@@ -362,6 +363,7 @@ class BudgetScopeRef:
     scope_type: BudgetScopeType | str
     policy_revision: str
     parent_scope_id: str | None = None
+    execution_identity: GraphRunIdentity | GraphExecutionIdentity | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "run_id", _required_text(self.run_id, "run_id"))
@@ -377,26 +379,53 @@ class BudgetScopeRef:
             "parent_scope_id",
             _optional_text(self.parent_scope_id, "parent_scope_id"),
         )
+        identity = self.execution_identity
+        if identity is not None and not isinstance(
+            identity, (GraphRunIdentity, GraphExecutionIdentity)
+        ):
+            if not isinstance(identity, Mapping):
+                raise BudgetContractError("execution_identity must be an object")
+            if "activity_id" in identity:
+                identity = GraphExecutionIdentity.from_dict(identity)
+            else:
+                identity = GraphRunIdentity.from_dict(identity)
+        if identity is not None and identity.run_id != self.run_id:
+            raise BudgetContractError("budget scope execution identity run mismatch")
+        object.__setattr__(self, "execution_identity", identity)
+        if self.scope_type is BudgetScopeType.GRAPH and identity is None:
+            raise BudgetContractError(
+                "graph budget scope requires an exact execution identity"
+            )
         if self.scope_type is BudgetScopeType.RUN and self.parent_scope_id is not None:
             raise BudgetContractError("run scope cannot have a parent")
         if self.scope_type is not BudgetScopeType.RUN and self.parent_scope_id is None:
             raise BudgetContractError("non-run scope requires parent_scope_id")
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        payload = {
             "run_id": self.run_id,
             "scope_id": self.scope_id,
             "scope_type": self.scope_type.value,
             "parent_scope_id": self.parent_scope_id,
             "policy_revision": self.policy_revision,
         }
+        if self.execution_identity is not None:
+            payload["execution_identity"] = self.execution_identity.to_dict()
+        return payload
 
     @classmethod
     def from_dict(cls, value: Mapping[str, Any]) -> "BudgetScopeRef":
         value = _mapping(value, "scope")
         _reject_unknown(
             value,
-            {"run_id", "scope_id", "scope_type", "parent_scope_id", "policy_revision"},
+            {
+                "run_id",
+                "scope_id",
+                "scope_type",
+                "parent_scope_id",
+                "policy_revision",
+                "execution_identity",
+            },
             "scope",
         )
         return cls(**value)

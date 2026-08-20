@@ -19,6 +19,7 @@ from framework.governance.budget import (
     replay_budget_events,
     restore_legacy_budget_snapshot,
 )
+from framework.shared.graph_identity import GraphExecutionIdentity
 
 
 def _ledger() -> tuple[
@@ -39,6 +40,20 @@ def _ledger() -> tuple[
     )
     sink = InMemoryBudgetEventSink()
     return BudgetLedger(root, policy, event_sink=sink, clock_epoch_ms=lambda: 1_000), root, policy, sink
+
+
+def _execution_identity(*, activity_id: str = "activity-1") -> GraphExecutionIdentity:
+    return GraphExecutionIdentity(
+        run_id="run-1",
+        graph_id="research.graph",
+        graph_version="1",
+        graph_ref="research.graph@1",
+        graph_checksum="sha256:" + "a" * 64,
+        node_id="node",
+        node_instance_id="node:1",
+        activity_id=activity_id,
+        attempt=1,
+    )
 
 
 def test_snapshot_serialization_restore_is_exact() -> None:
@@ -161,6 +176,38 @@ def test_offline_replay_rebuilds_identical_snapshot() -> None:
     replayed = replay_budget_events(initial, sink.events())
 
     assert replayed.snapshot().to_dict() == ledger.snapshot().to_dict()
+
+
+def test_replay_requires_matching_expected_graph_identity() -> None:
+    identity = _execution_identity()
+    policy = BudgetPolicy(
+        policy_revision="policy-v1",
+        limits=BudgetLimits(llm_calls=2, input_tokens=20),
+    )
+    root = BudgetScopeRef(
+        run_id="run-1",
+        scope_id="root",
+        scope_type="run",
+        policy_revision=policy.policy_revision,
+        execution_identity=identity,
+    )
+    sink = InMemoryBudgetEventSink()
+    ledger = BudgetLedger(root, policy, event_sink=sink, clock_epoch_ms=lambda: 1_000)
+    initial = ledger.snapshot()
+    reservation = ledger.reserve(
+        root,
+        BudgetAmounts(llm_calls=1),
+        "operation-1",
+        "key-1",
+    )
+    assert isinstance(reservation, BudgetReservation)
+
+    with pytest.raises(BudgetHistoryError, match="expected replay identity"):
+        replay_budget_events(
+            initial,
+            sink.events(),
+            expected_identity=_execution_identity(activity_id="other"),
+        )
 
 
 def test_replay_rejects_revision_gap_and_duplicate_event() -> None:

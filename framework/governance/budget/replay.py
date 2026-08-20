@@ -10,11 +10,14 @@ from framework.governance.budget.models import (
     BudgetSettlementOutcome,
     BudgetSnapshot,
 )
+from framework.shared.graph_identity import GraphExecutionIdentity, GraphRunIdentity
 
 
 def replay_budget_events(
     snapshot: BudgetSnapshot,
     events: Iterable[BudgetEvent],
+    *,
+    expected_identity: GraphRunIdentity | GraphExecutionIdentity | None = None,
 ) -> BudgetLedger:
     ledger = BudgetLedger.restore(snapshot)
     seen: set[str] = set()
@@ -32,6 +35,13 @@ def replay_budget_events(
             )
         if event.run_id != ledger.root_scope.run_id:
             raise BudgetHistoryError("budget event crossed run scope")
+        if (
+            expected_identity is not None
+            and event.scope.execution_identity != expected_identity
+        ):
+            raise BudgetHistoryError(
+                "budget event Graph identity does not match the expected replay identity"
+            )
         try:
             if ledger.view(event.scope).policy.digest != event.policy_digest:
                 raise BudgetHistoryError("budget event policy digest mismatch")

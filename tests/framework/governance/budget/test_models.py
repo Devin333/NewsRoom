@@ -103,6 +103,16 @@ def test_scope_requires_explicit_parent_for_non_run_scope() -> None:
         )
 
 
+def test_graph_scope_requires_exact_execution_identity() -> None:
+    with pytest.raises(BudgetContractError, match="execution identity"):
+        BudgetScopeRef(
+            run_id="run-1",
+            scope_id="graph-1",
+            scope_type="graph",
+            policy_revision="policy-v1",
+        )
+
+
 def test_decision_and_event_reason_collections_are_bounded() -> None:
     scope = BudgetScopeRef(
         run_id="run-1",

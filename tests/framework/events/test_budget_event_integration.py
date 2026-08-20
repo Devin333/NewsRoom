@@ -25,6 +25,7 @@ from framework.governance.budget import (
     BudgetScopeRef,
     BudgetSettlement,
 )
+from framework.shared.graph_identity import GraphExecutionIdentity
 from infrastructure.storage.events.sqlite import SQLiteEventStore
 
 
@@ -65,7 +66,7 @@ class _TamperedRevisionReader:
         )
 
 
-def _durable_ledger(tmp_path):
+def _durable_ledger(tmp_path, *, execution_identity=None):
     store = SQLiteEventStore(tmp_path / "budget-events.sqlite3", clock=lambda: NOW)
     runtime = EventRuntime(
         store=store,
@@ -80,6 +81,7 @@ def _durable_ledger(tmp_path):
         scope_id="run-budget:root",
         scope_type="run",
         policy_revision=policy.policy_revision,
+        execution_identity=execution_identity,
     )
     ledger = BudgetLedger(
         scope,
@@ -92,6 +94,20 @@ def _durable_ledger(tmp_path):
         clock_epoch_ms=lambda: 1_000,
     )
     return ledger, scope, policy, store
+
+
+def _graph_execution_identity(*, activity_id: str = "activity-budget"):
+    return GraphExecutionIdentity(
+        run_id="run-budget",
+        graph_id="research.paper-analysis",
+        graph_version="4",
+        graph_ref="research.paper-analysis@4",
+        graph_checksum="sha256:" + "a" * 64,
+        node_id="analyze",
+        node_instance_id="analyze:1",
+        activity_id=activity_id,
+        attempt=1,
+    )
 
 
 def test_budget_lifecycle_round_trips_through_durable_stream(tmp_path) -> None:
@@ -172,6 +188,58 @@ def test_budget_resolver_is_tenant_scoped_and_rejects_revision_gaps(tmp_path) ->
             run_id="run-budget",
             operation_id="operation-1",
             ledger_revision=2,
+        )
+
+
+def test_budget_resolver_requires_matching_expected_graph_identity(tmp_path) -> None:
+    identity = _graph_execution_identity()
+    ledger, scope, _, store = _durable_ledger(
+        tmp_path,
+        execution_identity=identity,
+    )
+    reservation = ledger.reserve(
+        scope,
+        BudgetAmounts(llm_calls=1),
+        "operation-1",
+        "idempotency-1",
+    )
+    assert isinstance(reservation, BudgetReservation)
+
+    resolver = DurableBudgetFactResolver(store, tenant_id="tenant-budget")
+    fact = resolver.resolve(
+        run_id="run-budget",
+        operation_id="operation-1",
+        ledger_revision=1,
+        expected_identity=identity,
+    )
+    assert fact is not None
+    assert fact.event.scope.execution_identity == identity
+
+    with pytest.raises(BudgetHistoryError, match="expected execution"):
+        resolver.resolve(
+            run_id="run-budget",
+            operation_id="operation-1",
+            ledger_revision=1,
+            expected_identity=_graph_execution_identity(activity_id="other-activity"),
+        )
+
+
+def test_budget_resolver_expected_graph_identity_fails_closed_for_legacy_scope(tmp_path) -> None:
+    ledger, scope, _, store = _durable_ledger(tmp_path)
+    reservation = ledger.reserve(
+        scope,
+        BudgetAmounts(llm_calls=1),
+        "operation-1",
+        "idempotency-1",
+    )
+    assert isinstance(reservation, BudgetReservation)
+
+    with pytest.raises(BudgetHistoryError, match="expected execution"):
+        DurableBudgetFactResolver(store, tenant_id="tenant-budget").resolve(
+            run_id="run-budget",
+            operation_id="operation-1",
+            ledger_revision=1,
+            expected_identity=_graph_execution_identity(),
         )
 
 
