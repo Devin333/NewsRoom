@@ -61,6 +61,7 @@ from framework.harness.graph.model import (
 )
 from framework.harness.graph.validation import HarnessGraphPreflightPolicy
 from framework.harness.task_plan import task_plan_context_identities
+from framework.shared.graph_identity import GraphExecutionIdentity
 from infrastructure.storage.harness import FilesystemSubAgentTranscriptStore
 from interfaces.services.research_service import (
     InMemoryResearchRunStore,
@@ -121,10 +122,20 @@ class _PlanOutlineWorker:
         self._transform = transform
         self.calls = 0
 
-    def generate_candidate(self, *, task: str, payload: dict[str, Any]):
+    def generate_candidate(
+        self,
+        *,
+        task: str,
+        payload: dict[str, Any],
+        execution_identity: GraphExecutionIdentity | None = None,
+    ):
         assert task == "candidate_task_plan"
         self.calls += 1
-        outline = self._source.generate_candidate(task=task, payload=payload)
+        outline = self._source.generate_candidate(
+            task=task,
+            payload=payload,
+            execution_identity=execution_identity,
+        )
         return outline if self._transform is None else self._transform(outline)
 
 

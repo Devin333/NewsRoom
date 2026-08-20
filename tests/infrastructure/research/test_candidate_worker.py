@@ -7,6 +7,7 @@ import pytest
 
 import infrastructure.research as research_adapters
 from business.research.ports.llm_worker import ResearchCandidateWorkerPort
+from business.research.graphs import build_paper_analysis_context_graph_identity
 from business.research.ports.reader_repair_candidate import (
     READER_REPAIR_APPLICATION_OBSERVATION_TASK,
     READER_REPAIR_PATCH_CANDIDATE_TASK,
@@ -20,6 +21,8 @@ from framework.llm import (
     compile_structured_output_contract,
     structured_output_enforcement_keywords,
 )
+from framework.llm.structured_output import structured_output_graph_scope
+from framework.shared.graph_identity import GraphExecutionIdentity
 from tests.framework.llm._structured_output_release import (
     approved_structured_output_release,
 )
@@ -70,6 +73,46 @@ def test_candidate_worker_is_exported_by_research_adapter_package() -> None:
     assert (
         research_adapters.StructuredResearchCandidateWorker
         is StructuredResearchCandidateWorker
+    )
+
+
+def test_graph_candidate_request_binds_exact_execution_identity_and_release_scope(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    worker, _ = _recorded_worker(
+        monkeypatch,
+        _valid_output("candidate_task_plan"),
+    )
+    identity = GraphExecutionIdentity(
+        run_id="research-run",
+        graph_id="research.paper_analysis",
+        graph_version="2",
+        graph_ref="research.paper_analysis@2",
+        graph_checksum="sha256:" + ("a" * 64),
+        node_id="dynamic-analysis-stage",
+        node_instance_id="dynamic-analysis-stage:1",
+        activity_id="activity-1",
+        attempt=1,
+    )
+    captured: list[Any] = []
+    original_complete = worker._client.complete
+
+    def capture(request: Any) -> Any:
+        captured.append(request)
+        return original_complete(request)
+
+    monkeypatch.setattr(worker._client, "complete", capture)
+
+    worker.generate_candidate(
+        task="candidate_task_plan",
+        payload=_valid_payload("candidate_task_plan"),
+        execution_identity=identity,
+    )
+
+    request = captured[0]
+    assert request.execution_identity == identity
+    assert request.structured_output_policy.graph_scope == structured_output_graph_scope(
+        identity
     )
 
 
@@ -523,7 +566,7 @@ def test_rag_candidate_control_fields_remain_harness_owned(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     output = _valid_output("rag_plan_candidate")
-    output["candidate"]["metadata"]["halt_workflow"] = True
+    output["candidate"]["metadata"]["halt_graph"] = True
     worker, _ = _recorded_worker(monkeypatch, output)
 
     with pytest.raises(ResearchCandidateOutputError):
@@ -580,9 +623,10 @@ def test_rag_candidate_is_accepted_by_the_real_worker_planner_consumer(
     planner = WorkerRAGPlanner(ResearchRAGPlanWorker(worker))
     spec = RAGSessionSpec(
         session_id="rag-session-1",
-        run_id="run-1",
-        workflow_id="research.paper_analysis",
-        step_id="run_research_rag",
+        graph_identity=build_paper_analysis_context_graph_identity(
+            run_id="run-1",
+            stage_id="run_research_rag",
+        ),
         goal=RetrievalGoal(
             goal_id="goal-1",
             question="What evidence supports the method?",
@@ -793,7 +837,7 @@ def _valid_payload(task: str) -> dict[str, Any]:
             "round_index": 1,
             "gap_report": {"missing_evidence_types": ["method"]},
             "executed_queries": ["previous query"],
-            "forbidden_fields": ["quality_passed", "halt_workflow"],
+            "forbidden_fields": ["quality_passed", "halt_graph"],
         }
     if task == READER_REPAIR_PATCH_CANDIDATE_TASK:
         source_ref = "paper://2606.00001/sec-method"

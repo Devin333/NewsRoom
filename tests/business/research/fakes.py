@@ -4,6 +4,8 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from framework.harness import EvidencePack, RAGContextPack
+from framework.harness.control_plane.node_output import InMemoryHarnessNodeOutputResource
+from framework.shared.graph_identity import GraphExecutionIdentity
 
 from business.research.code_repository import CodeRepositoryObservation, CodeRepositoryProfile, compute_star_growth
 from business.research.domain import (
@@ -19,6 +21,14 @@ from business.research.rag import ResearchRAGContext, ResearchRAGGapReport
 
 
 FIXED_NOW = datetime(2026, 6, 5, 8, 0, tzinfo=UTC)
+
+
+def in_memory_node_output_resource_factory(
+    _run_id: str,
+) -> InMemoryHarnessNodeOutputResource:
+    """Explicit test-only Graph physical resource; production uses SQLite."""
+
+    return InMemoryHarnessNodeOutputResource()
 
 
 class FakeResearchSourceProvider:
@@ -131,7 +141,14 @@ class FakeResearchLLMWorker:
         self.duplicate_claim = duplicate_claim
         self.score_value = score_value
 
-    def generate_candidate(self, *, task: str, payload: dict[str, Any]) -> dict[str, Any]:
+    def generate_candidate(
+        self,
+        *,
+        task: str,
+        payload: dict[str, Any],
+        execution_identity: GraphExecutionIdentity | None = None,
+    ) -> dict[str, Any]:
+        del execution_identity
         if task == "candidate_task_plan":
             return {
                 "tasks": [
@@ -452,11 +469,11 @@ def _rag_actor_metadata(session_spec: Any) -> dict[str, Any]:
     return metadata
 
 
-def _rag_session_identity(session_spec: Any) -> dict[str, str]:
+def _rag_session_identity(session_spec: Any) -> dict[str, Any]:
+    graph_identity = session_spec.graph_identity.to_dict()
     return {
-        "run_id": session_spec.run_id,
-        "workflow_id": session_spec.workflow_id,
-        "step_id": session_spec.step_id,
+        **graph_identity,
+        "graph_identity": graph_identity,
         "session_id": session_spec.session_id,
     }
 

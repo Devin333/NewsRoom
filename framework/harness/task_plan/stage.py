@@ -178,6 +178,7 @@ class TaskPlanStageRunner(TaskPlanStageRunnerPort):
             policy=request.policy,
             budget=request.budget,
             metadata=request.metadata,
+            execution_identity=request.execution_identity,
         ))
         self.store.append_candidate(candidate)
         context = TaskPlanValidationContext(
@@ -264,7 +265,12 @@ class TaskPlanStageRunner(TaskPlanStageRunnerPort):
                     "TASK_STARTED",
                     projection,
                 )
-                result = self._invoke(task_request, plan, request.policy)
+                result = self._invoke(
+                    task_request,
+                    plan,
+                    request.policy,
+                    execution_identity=request.execution_identity,
+                )
                 self.store.append_result(result)
                 if result.status is TaskLifecycle.FAILED:
                     resolved = next(item for item in plan.tasks if item.task_id == result.task_id)
@@ -318,7 +324,15 @@ class TaskPlanStageRunner(TaskPlanStageRunnerPort):
                 definition.task.worker_capability,
                 request.policy,
             )
-            candidate = self.worker_result_recovery(binding, instance)
+            candidate = (
+                self.worker_result_recovery(binding, instance)
+                if request.execution_identity is None
+                else self.worker_result_recovery(
+                    binding,
+                    instance,
+                    request.execution_identity,
+                )
+            )
             if candidate is None:
                 raise HarnessValidationError(
                     "active subagent attempt has no committed outcome receipt",
@@ -338,6 +352,7 @@ class TaskPlanStageRunner(TaskPlanStageRunnerPort):
                     task=definition,
                     instance=instance,
                     worker_result=candidate,
+                    execution_identity=request.execution_identity,
                 ),
             )
             self.store.append_result(verified)
@@ -366,10 +381,21 @@ class TaskPlanStageRunner(TaskPlanStageRunnerPort):
             replace(projection, last_sequence=sequence),
         )
 
-    def _invoke(self, task_request: TaskInstance, plan: ValidatedTaskPlan, policy: Any) -> TaskResultRecord:
+    def _invoke(
+        self,
+        task_request: TaskInstance,
+        plan: ValidatedTaskPlan,
+        policy: Any,
+        *,
+        execution_identity: Any | None,
+    ) -> TaskResultRecord:
         resolved = next(item for item in plan.tasks if item.task_id == task_request.task_id)
         worker_binding = self.capability_registry.resolve(resolved.task.worker_capability, policy)
-        worker_result = self._call_binding(worker_binding, task_request)
+        worker_result = self._call_binding(
+            worker_binding,
+            task_request,
+            execution_identity=execution_identity,
+        )
         if not isinstance(worker_result, HarnessWorkerResult):
             raise HarnessValidationError("dynamic worker returned invalid result", code="task_plan_result_invalid")
         verified = self.result_verifier.verify(
@@ -380,13 +406,24 @@ class TaskPlanStageRunner(TaskPlanStageRunnerPort):
                 task=resolved,
                 instance=task_request,
                 worker_result=worker_result,
+                execution_identity=execution_identity,
             ),
         )
         return verified
 
-    def _call_binding(self, binding: Any, request: TaskInstance) -> HarnessWorkerResult:
+    def _call_binding(
+        self,
+        binding: Any,
+        request: TaskInstance,
+        *,
+        execution_identity: Any | None,
+    ) -> HarnessWorkerResult:
         if self.worker_executor is not None:
-            value = self.worker_executor(binding, request)
+            value = (
+                self.worker_executor(binding, request)
+                if execution_identity is None
+                else self.worker_executor(binding, request, execution_identity)
+            )
         else:
             if (
                 binding.registration.worker_binding.worker_type

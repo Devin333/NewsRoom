@@ -19,6 +19,7 @@ from framework.harness.task_plan.policy import TaskPlanPolicy
 from framework.harness.task_plan.stage_binding import TaskPlanStageBinding
 from framework.harness.task_plan.store import TaskResultRecord
 from framework.harness.workers.result import HarnessWorkerResult
+from framework.shared.graph_identity import GraphExecutionIdentity
 
 if TYPE_CHECKING:
     from framework.harness.task_plan.verification import (
@@ -34,6 +35,7 @@ class PlanBuildRequest:
     policy: TaskPlanPolicy
     budget: HarnessBudgetSnapshot | Mapping[str, Any] | None = None
     metadata: Mapping[str, Any] = field(default_factory=dict)
+    execution_identity: GraphExecutionIdentity | None = None
     stage_identity: TaskPlanStageIdentity = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
@@ -80,11 +82,40 @@ class PlanBuildRequest:
             )
         if isinstance(self.budget, Mapping):
             object.__setattr__(self, "budget", frozen_mapping(self.budget, "plan_build.budget"))
+        if self.execution_identity is not None:
+            if not isinstance(self.execution_identity, GraphExecutionIdentity):
+                raise TypeError("execution_identity must be GraphExecutionIdentity")
+            mismatches = tuple(
+                field_name
+                for field_name, expected, actual in (
+                    ("run_id", self.run_id, self.execution_identity.run_id),
+                    ("graph_id", self.graph_id, self.execution_identity.graph_id),
+                    (
+                        "graph_version",
+                        self.graph_version,
+                        self.execution_identity.graph_version,
+                    ),
+                    ("graph_ref", self.graph_ref, self.execution_identity.graph_ref),
+                    (
+                        "graph_checksum",
+                        self.graph_checksum,
+                        self.execution_identity.graph_checksum,
+                    ),
+                    (
+                        "node_id",
+                        self.stage_binding.node_id,
+                        self.execution_identity.node_id,
+                    ),
+                )
+                if expected != actual
+            )
+            if mismatches:
+                raise HarnessValidationError(
+                    "plan builder execution identity is outside the frozen Graph stage",
+                    code="task_plan_execution_identity_mismatch",
+                    details={"mismatches": list(mismatches)},
+                )
         object.__setattr__(self, "metadata", frozen_mapping(self.metadata, "plan_build.metadata"))
-
-    @property
-    def workflow_id(self) -> str:
-        return self.stage_identity.workflow_id
 
     @property
     def graph_id(self) -> str:
@@ -117,23 +148,20 @@ class PlanBuildRequest:
             "policy_ref": self.policy.exact_ref,
             "budget": budget,
         }
-        if self.stage_identity.is_graph_only:
-            payload.update(
-                {
-                    "stage_identity_schema": self.stage_identity.schema_version,
-                    "stage_identity_checksum": self.stage_identity.identity_checksum,
-                    "graph_schema_version": self.stage_identity.graph_schema_version,
-                    "compiler_version": self.stage_identity.compiler_version,
-                    "condition_policy_version": (
-                        self.stage_identity.condition_policy_version
-                    ),
-                    "graph_id": self.graph_id,
-                    "graph_version": self.graph_version,
-                    "graph_ref": self.graph_ref,
-                }
-            )
-        else:
-            payload["workflow_id"] = self.workflow_id
+        payload.update(
+            {
+                "stage_identity_schema": self.stage_identity.schema_version,
+                "stage_identity_checksum": self.stage_identity.identity_checksum,
+                "graph_schema_version": self.stage_identity.graph_schema_version,
+                "compiler_version": self.stage_identity.compiler_version,
+                "condition_policy_version": self.stage_identity.condition_policy_version,
+                "graph_id": self.graph_id,
+                "graph_version": self.graph_version,
+                "graph_ref": self.graph_ref,
+            }
+        )
+        if self.execution_identity is not None:
+            payload["execution_identity"] = self.execution_identity.to_dict()
         return payload
 
 
@@ -204,6 +232,7 @@ class TaskPlanStageRequest:
     accepted_at: str
     budget: HarnessBudgetSnapshot | Mapping[str, Any] | None = None
     candidate: PlanCandidate | None = None
+    execution_identity: GraphExecutionIdentity | None = None
     metadata: Mapping[str, Any] = field(default_factory=dict)
     policy_ref: str | None = None
     stage_identity: TaskPlanStageIdentity = field(init=False, repr=False)
@@ -282,11 +311,40 @@ class TaskPlanStageRequest:
                 "TaskPlan candidate is outside the frozen Graph stage binding",
                 code="task_plan_candidate_scope_mismatch",
             )
+        if self.execution_identity is not None:
+            if not isinstance(self.execution_identity, GraphExecutionIdentity):
+                raise TypeError("execution_identity must be GraphExecutionIdentity")
+            mismatches = tuple(
+                field_name
+                for field_name, expected, actual in (
+                    ("run_id", self.run_id, self.execution_identity.run_id),
+                    ("graph_id", self.graph_id, self.execution_identity.graph_id),
+                    (
+                        "graph_version",
+                        self.graph_version,
+                        self.execution_identity.graph_version,
+                    ),
+                    ("graph_ref", self.graph_ref, self.execution_identity.graph_ref),
+                    (
+                        "graph_checksum",
+                        self.graph_checksum,
+                        self.execution_identity.graph_checksum,
+                    ),
+                    (
+                        "node_id",
+                        self.stage_binding.node_id,
+                        self.execution_identity.node_id,
+                    ),
+                )
+                if expected != actual
+            )
+            if mismatches:
+                raise HarnessValidationError(
+                    "TaskPlan execution identity is outside the frozen Graph stage",
+                    code="task_plan_execution_identity_mismatch",
+                    details={"mismatches": list(mismatches)},
+                )
         object.__setattr__(self, "metadata", frozen_mapping(self.metadata, "task_plan.metadata"))
-
-    @property
-    def workflow_id(self) -> str:
-        return self.stage_identity.workflow_id
 
     @property
     def graph_id(self) -> str:

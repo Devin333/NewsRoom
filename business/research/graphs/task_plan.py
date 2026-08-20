@@ -7,6 +7,10 @@ from typing import Any
 from framework.harness.control_plane.errors import HarnessValidationError
 from framework.harness.control_plane.gate_registry import DeterministicGateRegistry
 from framework.harness.control_plane.gates import GateContext
+from framework.harness.control_plane.activity_execution import (
+    HARNESS_GRAPH_ACTIVITY_TASK_CONTEXT_KEY,
+    HarnessGraphActivityTaskContext,
+)
 from framework.harness.subagents.models import SubAgentSpec
 from framework.harness.task_plan.aggregator import (
     TaskPlanAggregateResult,
@@ -46,6 +50,7 @@ from framework.harness.task_plan.verification import (
 )
 from framework.harness.graph.bindings import HarnessWorkerBinding
 from framework.harness.graph.activity import HarnessWorkerType
+from framework.shared.graph_identity import GraphExecutionIdentity
 
 from business.research.graphs.contracts import (
     RESEARCH_DYNAMIC_AGGREGATOR_REF,
@@ -60,7 +65,9 @@ from business.research.graphs.contracts import (
     RESEARCH_DYNAMIC_OUTPUT_ROLES,
     RESEARCH_DYNAMIC_OUTPUT_ROLES_BY_CAPABILITY,
     RESEARCH_DYNAMIC_OUTPUT_SCHEMA_REFS,
+    RESEARCH_DYNAMIC_PAPER_ANALYSIS_GRAPH_ID,
     RESEARCH_DYNAMIC_POLICY_REF,
+    RESEARCH_PAPER_ANALYSIS_GRAPH_VERSION,
     RESEARCH_DYNAMIC_RESULT_STORE_REF,
     RESEARCH_DYNAMIC_STAGE_ID,
     RESEARCH_DYNAMIC_SUBAGENT_IDS,
@@ -70,7 +77,10 @@ from business.research.graphs.contracts import (
 )
 
 
-RESEARCH_DYNAMIC_WORKFLOW_ID = "research.paper_analysis.dynamic"
+_RESEARCH_DYNAMIC_GRAPH_REF = (
+    f"{RESEARCH_DYNAMIC_PAPER_ANALYSIS_GRAPH_ID}@"
+    f"{RESEARCH_PAPER_ANALYSIS_GRAPH_VERSION}"
+)
 _RESEARCH_BRANCH_IDENTITIES = MappingProxyType(
     {
         "analysis.structure": ("analyze_structure", "structure_candidate"),
@@ -177,7 +187,7 @@ def build_research_analysis_task_plan_policy() -> TaskPlanPolicy:
                 for capability, gates in RESEARCH_DYNAMIC_GATES_BY_CAPABILITY.items()
             },
             "stage_aggregator_ref": RESEARCH_DYNAMIC_AGGREGATOR_REF,
-            "static_workflow_id": "research.paper_analysis",
+            "static_graph_id": "research.paper_analysis",
         },
     )
 
@@ -206,16 +216,19 @@ class ResearchAnalysisPlanCandidateBuilder(PlanCandidateBuilderPort):
                 "Research TaskPlan builder received an incompatible policy",
                 code="research_task_plan_policy_mismatch",
             )
-        payload = self._candidate_worker.generate_candidate(
-            task="candidate_task_plan",
-            payload={
+        candidate_request = {
+            "task": "candidate_task_plan",
+            "payload": {
                 "stage": request.to_dict(),
                 "required_output_roles": list(request.policy.required_output_roles),
                 "allowed_capabilities": list(
                     request.policy.allowed_worker_capabilities
                 ),
             },
-        )
+        }
+        if request.execution_identity is not None:
+            candidate_request["execution_identity"] = request.execution_identity
+        payload = self._candidate_worker.generate_candidate(**candidate_request)
         if not isinstance(payload, Mapping):
             raise HarnessValidationError(
                 "Research TaskPlan builder returned an invalid candidate outline",
@@ -349,7 +362,8 @@ class ResearchAnalysisTaskPlanStageWorker:
         if (
             actual_policy.exact_ref != RESEARCH_DYNAMIC_POLICY_REF
             or stage_binding.policy_ref != actual_policy.exact_ref
-            or stage_binding.workflow_id != RESEARCH_DYNAMIC_WORKFLOW_ID
+            or stage_binding.graph.identity_ref.exact_ref
+            != _RESEARCH_DYNAMIC_GRAPH_REF
             or stage_binding.stage_id != RESEARCH_DYNAMIC_STAGE_ID
             or stage_binding.required_output_roles
             != actual_policy.required_output_roles
@@ -395,6 +409,59 @@ class ResearchAnalysisTaskPlanStageWorker:
                 "Research dynamic stage run identity is missing",
                 code="research_task_plan_stage_input_invalid",
             )
+        raw_activity_context = task.get(HARNESS_GRAPH_ACTIVITY_TASK_CONTEXT_KEY)
+        if not isinstance(raw_activity_context, Mapping):
+            raise HarnessValidationError(
+                "Research dynamic stage requires physical Graph activity identity",
+                code="research_task_plan_execution_identity_missing",
+            )
+        activity_context = HarnessGraphActivityTaskContext.from_dict(
+            raw_activity_context
+        )
+        activity = activity_context.activity
+        graph_ref = activity.graph_ref
+        mismatches = tuple(
+            field_name
+            for field_name, expected, actual in (
+                ("run_id", run_id, activity.run_id),
+                ("node_id", self._stage_binding.node_id, activity.node_id),
+                (
+                    "graph_ref",
+                    self._stage_binding.graph.graph_ref.exact_ref,
+                    graph_ref.identity_ref.exact_ref,
+                ),
+                (
+                    "graph_checksum",
+                    self._stage_binding.graph_checksum,
+                    graph_ref.checksum,
+                ),
+                ("step_ref", self._stage_binding.step_ref, activity.step_ref.exact_ref),
+                ("worker_ref", self._stage_binding.worker_ref, activity.worker_ref.exact_ref),
+                (
+                    "activity_ref",
+                    self._stage_binding.activity_ref,
+                    activity.activity_ref.exact_ref,
+                ),
+            )
+            if expected != actual
+        )
+        if mismatches:
+            raise HarnessValidationError(
+                "Research dynamic stage activity is outside its frozen Graph binding",
+                code="research_task_plan_execution_identity_mismatch",
+                details={"mismatches": list(mismatches)},
+            )
+        execution_identity = GraphExecutionIdentity(
+            run_id=activity.run_id,
+            graph_id=graph_ref.graph_id,
+            graph_version=graph_ref.identity_version,
+            graph_ref=graph_ref.identity_ref.exact_ref,
+            graph_checksum=graph_ref.checksum,
+            node_id=activity.node_id,
+            node_instance_id=activity.node_instance_id,
+            activity_id=activity.activity_id,
+            attempt=activity.attempt,
+        )
         input_checksums = {
             name: canonical_payload_checksum({"name": name, "value": inputs[name]})
             for name in RESEARCH_DYNAMIC_INPUT_REFS
@@ -407,6 +474,7 @@ class ResearchAnalysisTaskPlanStageWorker:
                 policy=self._policy,
                 policy_ref=self._policy.exact_ref,
                 accepted_at=self._accepted_at,
+                execution_identity=execution_identity,
                 metadata={
                     "accepted_at": self._accepted_at,
                     "input_ref_checksums": input_checksums,
@@ -675,7 +743,6 @@ __all__ = [
     "RESEARCH_DYNAMIC_TOOL_IDS",
     "RESEARCH_DYNAMIC_WORKER_CONTRACT_REFS",
     "RESEARCH_DYNAMIC_WORKER_REFS",
-    "RESEARCH_DYNAMIC_WORKFLOW_ID",
     "ResearchAnalysisTaskPlanAggregator",
     "ResearchAnalysisPlanCandidateBuilder",
     "ResearchAnalysisTaskPlanStageWorker",

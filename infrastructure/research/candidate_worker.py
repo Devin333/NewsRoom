@@ -35,6 +35,7 @@ from framework.llm.structured_output import (
     compile_structured_output_contract,
     require_managed_structured_output_for_contract,
 )
+from framework.shared.graph_identity import GraphExecutionIdentity
 
 from infrastructure.research.errors import ResearchAdapterError
 
@@ -503,7 +504,13 @@ class StructuredResearchCandidateWorker:
         self.max_input_tokens = max_input_tokens
         self.max_output_tokens = max_output_tokens
 
-    def generate_candidate(self, *, task: str, payload: dict[str, Any]) -> dict[str, Any]:
+    def generate_candidate(
+        self,
+        *,
+        task: str,
+        payload: dict[str, Any],
+        execution_identity: GraphExecutionIdentity | None = None,
+    ) -> dict[str, Any]:
         """Generate one candidate and return only schema-approved fields."""
 
         if not isinstance(task, str) or task not in SUPPORTED_CANDIDATE_TASKS:
@@ -515,9 +522,20 @@ class StructuredResearchCandidateWorker:
                 "Research candidate payload must be an object",
                 task=task,
             )
+        if execution_identity is not None and not isinstance(
+            execution_identity, GraphExecutionIdentity
+        ):
+            raise ResearchCandidateContractError(
+                "Research candidate execution identity is invalid",
+                task=task,
+            )
 
         try:
-            messages, projection = self._build_prompt(task, payload)
+            messages, projection = self._build_prompt(
+                task,
+                payload,
+                execution_identity=execution_identity,
+            )
         except ResearchCandidateError:
             raise
         except Exception as exc:  # pragma: no cover - defensive boundary
@@ -529,6 +547,7 @@ class StructuredResearchCandidateWorker:
         request = self._request(
             task=task,
             messages=messages,
+            execution_identity=execution_identity,
         )
 
         try:
@@ -559,6 +578,7 @@ class StructuredResearchCandidateWorker:
         *,
         task: str,
         messages: list[dict[str, str]],
+        execution_identity: GraphExecutionIdentity | None,
     ) -> LLMRequest:
         return LLMRequest(
             messages=messages,
@@ -566,6 +586,7 @@ class StructuredResearchCandidateWorker:
             temperature=0,
             max_tokens=self.max_output_tokens,
             metadata={"component": "research_candidate_worker", "task": task},
+            execution_identity=execution_identity,
             output_schema=deepcopy(_SCHEMAS[task]),
             output_schema_name=f"research_{task}",
             structured_output_policy=ProviderStructuredOutputPolicy(
@@ -577,6 +598,8 @@ class StructuredResearchCandidateWorker:
         self,
         task: str,
         payload: dict[str, Any],
+        *,
+        execution_identity: GraphExecutionIdentity | None,
     ) -> tuple[list[dict[str, str]], _Projection]:
         max_prompt_chars = self.max_input_tokens * 4
         for limits in _PROJECTION_LIMITS:
@@ -599,7 +622,11 @@ class StructuredResearchCandidateWorker:
                 {"role": "user", "content": user_prompt},
             ]
             prompt_chars = sum(len(message["content"]) for message in messages) + 1
-            request = self._request(task=task, messages=messages)
+            request = self._request(
+                task=task,
+                messages=messages,
+                execution_identity=execution_identity,
+            )
             if (
                 prompt_chars <= max_prompt_chars
                 and estimate_request_tokens(request) <= self.max_input_tokens
