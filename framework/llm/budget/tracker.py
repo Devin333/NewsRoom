@@ -126,11 +126,15 @@ class GlobalBudgetTracker:
             execution_identity = GraphExecutionIdentity.from_dict(execution_identity)
         if execution_identity is not None:
             run_id = execution_identity.run_id
-        self._execution_identity = execution_identity
         self.estimator = estimator or CostEstimator()
         canonical_policy = _canonical_policy(policy)
         if scope is None and ledger is not None:
             scope = ledger.root_scope
+        if execution_identity is None and scope is not None:
+            scoped_identity = scope.execution_identity
+            if isinstance(scoped_identity, GraphExecutionIdentity):
+                execution_identity = scoped_identity
+                run_id = execution_identity.run_id
         if execution_identity is not None:
             if scope is None:
                 scope = BudgetScopeRef(
@@ -148,6 +152,7 @@ class GlobalBudgetTracker:
                 raise ValueError(
                     "budget tracker scope does not match execution identity"
                 )
+        self._execution_identity = execution_identity
         if ledger is None:
             scope = scope or BudgetScopeRef(
                 run_id=run_id,

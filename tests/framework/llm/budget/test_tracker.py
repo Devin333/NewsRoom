@@ -3,6 +3,9 @@ from __future__ import annotations
 import pytest
 
 from framework.governance.budget import (
+    BudgetLedger,
+    BudgetLimits,
+    BudgetPolicy,
     BudgetHistoryError,
     BudgetScopeRef,
     BudgetScopeType,
@@ -117,6 +120,71 @@ def test_execution_bound_tracker_rejects_scope_without_exact_identity() -> None:
             scope=scope,
             execution_identity=identity,
         )
+
+
+def test_scope_exact_identity_binds_tracker_execution_identity() -> None:
+    identity = GraphExecutionIdentity(
+        run_id="run-budget",
+        graph_id="research.graph",
+        graph_version="v1",
+        graph_ref="research.graph@v1",
+        graph_checksum="sha256:" + "a" * 64,
+        node_id="analyze",
+        node_instance_id="analyze-1",
+        activity_id="activity-a",
+        attempt=1,
+    )
+    scope = BudgetScopeRef(
+        run_id=identity.run_id,
+        scope_id="run:run-budget",
+        scope_type=BudgetScopeType.RUN,
+        policy_revision="legacy-global-budget/v1",
+        execution_identity=identity,
+    )
+
+    tracker = GlobalBudgetTracker(
+        GlobalBudgetPolicy(max_llm_calls=2),
+        scope=scope,
+    )
+
+    assert tracker.execution_identity == identity
+    assert tracker.scope.execution_identity == identity
+
+
+def test_ledger_root_identity_binds_tracker_without_explicit_scope() -> None:
+    identity = GraphExecutionIdentity(
+        run_id="run-budget",
+        graph_id="research.graph",
+        graph_version="v1",
+        graph_ref="research.graph@v1",
+        graph_checksum="sha256:" + "a" * 64,
+        node_id="analyze",
+        node_instance_id="analyze-1",
+        activity_id="activity-a",
+        attempt=1,
+    )
+    root_scope = BudgetScopeRef(
+        run_id=identity.run_id,
+        scope_id="run:run-budget",
+        scope_type=BudgetScopeType.RUN,
+        policy_revision="legacy-global-budget/v1",
+        execution_identity=identity,
+    )
+    ledger = BudgetLedger(
+        root_scope,
+        BudgetPolicy(
+            policy_revision="legacy-global-budget/v1",
+            limits=BudgetLimits(llm_calls=2),
+        ),
+    )
+
+    tracker = GlobalBudgetTracker(
+        GlobalBudgetPolicy(max_llm_calls=2),
+        ledger=ledger,
+    )
+
+    assert tracker.execution_identity == identity
+    assert tracker.scope == root_scope
 
 
 def test_execution_bound_tracker_rejects_scope_from_another_run() -> None:
