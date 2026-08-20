@@ -500,6 +500,7 @@ class AgentLoop:
                 feedback = self._handle_skill_action(
                     action=action,
                     agent_run_id=effective_run_id or agent.agent_id,
+                    execution_identity=execution_identity,
                     skill_observations=skill_observations,
                 )
                 trace.finish_iteration(iteration_trace)
@@ -868,6 +869,7 @@ class AgentLoop:
         *,
         action: SkillCall,
         agent_run_id: str,
+        execution_identity: GraphExecutionIdentity | None,
         skill_observations: list[SkillObservation],
     ) -> str:
         if self._skill_runtime is None:
@@ -881,6 +883,7 @@ class AgentLoop:
             observation = self._skill_runtime.execute_call(
                 action,
                 agent_run_id=agent_run_id,
+                execution_identity=execution_identity,
             )
         skill_observations.append(observation)
         if observation.errors:

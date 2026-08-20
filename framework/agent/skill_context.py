@@ -7,6 +7,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from framework.agent.skill_call import SkillCall
 from framework.agent.skill_observation import SkillObservation
 from framework.agent.skill_selection import SkillPromptFormatter, SkillSelectionPolicy
+from framework.shared.graph_identity import GraphExecutionIdentity
 
 
 class AgentSkillContext(BaseModel):
@@ -25,7 +26,7 @@ class SkillRunnerProtocol(Protocol):
         self,
         skill_name: str,
         input_data: dict[str, Any],
-        context: Any | None = None,
+        context: Any,
     ) -> Any:
         ...
 
@@ -52,8 +53,25 @@ class AgentSkillRuntime:
             self.list_visible_skills(task, context=context)
         )
 
-    def execute_call(self, call: SkillCall, agent_run_id: str) -> SkillObservation:
+    def execute_call(
+        self,
+        call: SkillCall,
+        agent_run_id: str,
+        *,
+        execution_identity: GraphExecutionIdentity | None = None,
+    ) -> SkillObservation:
         """Validate exposure, run SkillRunner, return SkillObservation."""
+        if execution_identity is not None and not isinstance(
+            execution_identity,
+            GraphExecutionIdentity,
+        ):
+            raise TypeError(
+                "Skill execution_identity must be GraphExecutionIdentity"
+            )
+        if execution_identity is not None and execution_identity.run_id != agent_run_id:
+            raise ValueError(
+                "Skill execution identity does not match agent_run_id"
+            )
         ensured_call = call.ensure_call_id()
         try:
             metadata = self._get_metadata(ensured_call.skill_name)
@@ -80,6 +98,7 @@ class AgentSkillRuntime:
                     agent_run_id=agent_run_id,
                     call_id=ensured_call.call_id or "",
                     reason=ensured_call.reason,
+                    execution_identity=execution_identity,
                 ),
             )
         except Exception as exc:
@@ -136,10 +155,31 @@ def _build_skill_run_context(
     agent_run_id: str,
     call_id: str,
     reason: str | None,
+    execution_identity: GraphExecutionIdentity | None = None,
 ) -> Any:
+    if execution_identity is not None and not isinstance(
+        execution_identity,
+        GraphExecutionIdentity,
+    ):
+        raise TypeError("Skill execution_identity must be GraphExecutionIdentity")
+    if execution_identity is not None and execution_identity.run_id != agent_run_id:
+        raise ValueError("Skill execution identity does not match agent_run_id")
     try:
         from framework.skills import SkillRunContext  # type: ignore
     except Exception:
+        if execution_identity is not None:
+            return {
+                "skill_name": skill_name,
+                "caller_type": "graph",
+                "caller_id": execution_identity.node_instance_id,
+                "run_id": execution_identity.run_id,
+                "metadata": {
+                    "graph_identity": execution_identity.to_dict(),
+                    "call_id": call_id,
+                    "agent_loop": True,
+                    "skill_call_reason": reason,
+                },
+            }
         return {
             "skill_name": skill_name,
             "caller_type": "agent",
@@ -151,15 +191,22 @@ def _build_skill_run_context(
                 "skill_call_reason": reason,
             },
         }
-    context = SkillRunContext.for_agent(
-        skill_name=skill_name,
-        agent_run_id=agent_run_id,
-        call_id=call_id,
-    )
+    if execution_identity is not None:
+        context = SkillRunContext.for_graph(
+            skill_name=skill_name,
+            graph_identity=execution_identity,
+        )
+    else:
+        context = SkillRunContext.for_agent(
+            skill_name=skill_name,
+            agent_run_id=agent_run_id,
+            call_id=call_id,
+        )
     metadata = getattr(context, "metadata", None)
     if isinstance(metadata, dict):
         metadata.update(
             {
+                "call_id": call_id,
                 "agent_loop": True,
                 "skill_call_reason": reason,
             }
