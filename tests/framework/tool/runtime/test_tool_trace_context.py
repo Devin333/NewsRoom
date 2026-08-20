@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from framework.events import TraceContext, is_valid_span_id, is_valid_trace_id
+from framework.shared import GraphExecutionIdentity
 from framework.tool import ToolCall, ToolDefinition, ToolExecutor, ToolPolicy, ToolRegistry, ToolStatus
 
 
@@ -11,8 +12,17 @@ def test_tool_executor_events_and_records_include_trace_context() -> None:
         lambda args: {"message": args["message"]},
     )
     trace = TraceContext.root(
-        run_id="run-1",
-        workflow_id="wf-1",
+        execution_identity=GraphExecutionIdentity(
+            run_id="run-1",
+            graph_id="research.paper-analysis",
+            graph_version="2",
+            graph_ref="research.paper-analysis@2",
+            graph_checksum="sha256:" + "a" * 64,
+            node_id="run_research_rag",
+            node_instance_id="run_research_rag:1",
+            activity_id="activity-1",
+            attempt=1,
+        ),
         trace_id="1" * 32,
         span_id="2" * 16,
     )

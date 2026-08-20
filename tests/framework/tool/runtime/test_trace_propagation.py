@@ -11,6 +11,7 @@ from framework.events import (
     is_valid_span_id,
     trace_context_scope,
 )
+from framework.shared import GraphExecutionIdentity
 from framework.tool import (
     MCPServerConfig,
     MCPToolAdapter,
@@ -27,7 +28,17 @@ from framework.tool import (
 
 def test_tool_mcp_outbound_overwrites_untrusted_carrier_with_child_context() -> None:
     trace = TraceContext.root(
-        run_id="run-1",
+        execution_identity=GraphExecutionIdentity(
+            run_id="run-1",
+            graph_id="test.graph",
+            graph_version="1",
+            graph_ref="test.graph@1",
+            graph_checksum="sha256:" + "a" * 64,
+            node_id="analyze",
+            node_instance_id="analyze:1",
+            activity_id="activity-1",
+            attempt=1,
+        ),
         trace_id="1" * 32,
         span_id="2" * 16,
     )

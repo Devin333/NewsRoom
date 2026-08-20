@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import pytest
 
+from framework.shared.graph_identity import GraphExecutionIdentity
 from framework.tool import (
     MappingSecretProvider,
     ToolDefinition,
@@ -31,7 +32,11 @@ def test_secret_provider_and_control_tool_success() -> None:
     assert MappingSecretProvider({"TOKEN": "secret"}).get_secret("TOKEN") == "secret"
 
     registry = ToolRegistry()
-    register_control_tools(registry, approval_store=_ApprovalStore())
+    register_control_tools(
+        registry,
+        approval_store=_ApprovalStore(),
+        execution_identity=_identity(),
+    )
     result = registry.get("control.request_human_review").executor(
         {
             "requested_action": "review",
@@ -45,7 +50,11 @@ def test_secret_provider_and_control_tool_success() -> None:
 
 def test_control_tool_rejects_sensitive_payload_keys() -> None:
     registry = ToolRegistry()
-    register_control_tools(registry, approval_store=_ApprovalStore())
+    register_control_tools(
+        registry,
+        approval_store=_ApprovalStore(),
+        execution_identity=_identity(),
+    )
 
     with pytest.raises(ValueError, match="payload key is not allowed"):
         registry.get("control.request_human_review").executor(
@@ -60,3 +69,17 @@ def test_control_tool_rejects_sensitive_payload_keys() -> None:
 class _ApprovalStore:
     def upsert_approval(self, request):
         return request
+
+
+def _identity() -> GraphExecutionIdentity:
+    return GraphExecutionIdentity(
+        run_id="approval-run",
+        graph_id="approval-graph",
+        graph_version="1",
+        graph_ref="approval-graph@1",
+        graph_checksum="sha256:" + "2" * 64,
+        node_id="approval",
+        node_instance_id="approval-instance",
+        activity_id="approval-activity",
+        attempt=1,
+    )

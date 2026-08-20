@@ -13,6 +13,7 @@ from framework.tool.models.call import ToolCall
 from framework.tool.models.observation import ToolObservation
 from framework.tool.models.result import ToolResult
 from framework.tool.models.status import ToolStatus
+from framework.shared.graph_identity import GraphExecutionIdentity
 
 
 @dataclass(frozen=True)
@@ -27,8 +28,41 @@ class ToolEvent:
     span_id: str | None = None
     parent_span_id: str | None = None
     run_id: str | None = None
-    workflow_id: str | None = None
-    step_id: str | None = None
+    graph_id: str | None = None
+    graph_version: str | None = None
+    graph_ref: str | None = None
+    graph_checksum: str | None = None
+    node_id: str | None = None
+    node_instance_id: str | None = None
+    activity_id: str | None = None
+    attempt: int | None = None
+
+    def __post_init__(self) -> None:
+        execution_fields = (
+            self.node_id,
+            self.node_instance_id,
+            self.activity_id,
+            self.attempt,
+        )
+        if any(value is not None for value in execution_fields):
+            if not all(value is not None for value in execution_fields):
+                raise ValueError(
+                    "ToolEvent requires complete Graph execution identity"
+                )
+            try:
+                GraphExecutionIdentity(
+                    run_id=self.run_id,
+                    graph_id=self.graph_id,
+                    graph_version=self.graph_version,
+                    graph_ref=self.graph_ref,
+                    graph_checksum=self.graph_checksum,
+                    node_id=self.node_id,
+                    node_instance_id=self.node_instance_id,
+                    activity_id=self.activity_id,
+                    attempt=self.attempt,
+                )
+            except (TypeError, ValueError) as exc:
+                raise ValueError("ToolEvent Graph execution identity is invalid") from exc
 
     @classmethod
     def from_trace(
@@ -39,8 +73,13 @@ class ToolEvent:
         tool_call_id: str,
         payload: dict[str, Any] | None = None,
         trace_context: TraceContext | W3CSpanContext | None = None,
+        graph_identity: GraphExecutionIdentity | None = None,
     ) -> "ToolEvent":
         if isinstance(trace_context, TraceContext):
+            trace_identity = trace_context.execution_identity
+            if graph_identity is not None and graph_identity != trace_identity:
+                raise ValueError("ToolEvent trace and Graph execution identities conflict")
+            graph_identity = trace_identity
             context = (
                 trace_context
                 if trace_context.tool_call_id == tool_call_id
@@ -63,9 +102,41 @@ class ToolEvent:
             trace_id=fields.get("trace_id"),
             span_id=fields.get("span_id"),
             parent_span_id=fields.get("parent_span_id"),
-            run_id=fields.get("run_id"),
-            workflow_id=fields.get("workflow_id"),
-            step_id=fields.get("step_id"),
+            run_id=(
+                graph_identity.run_id
+                if graph_identity is not None
+                else fields.get("run_id")
+            ),
+            graph_id=(
+                graph_identity.graph_id
+                if graph_identity is not None
+                else fields.get("graph_id")
+            ),
+            graph_version=(
+                graph_identity.graph_version
+                if graph_identity is not None
+                else fields.get("graph_version")
+            ),
+            graph_ref=(
+                graph_identity.graph_ref
+                if graph_identity is not None
+                else fields.get("graph_ref")
+            ),
+            graph_checksum=(
+                graph_identity.graph_checksum
+                if graph_identity is not None
+                else fields.get("graph_checksum")
+            ),
+            node_id=(graph_identity.node_id if graph_identity is not None else None),
+            node_instance_id=(
+                graph_identity.node_instance_id
+                if graph_identity is not None
+                else None
+            ),
+            activity_id=(
+                graph_identity.activity_id if graph_identity is not None else None
+            ),
+            attempt=(graph_identity.attempt if graph_identity is not None else None),
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -80,8 +151,14 @@ class ToolEvent:
             "trace_id": self.trace_id,
             "span_id": self.span_id,
             "parent_span_id": self.parent_span_id,
-            "workflow_id": self.workflow_id,
-            "step_id": self.step_id,
+            "graph_id": self.graph_id,
+            "graph_version": self.graph_version,
+            "graph_ref": self.graph_ref,
+            "graph_checksum": self.graph_checksum,
+            "node_id": self.node_id,
+            "node_instance_id": self.node_instance_id,
+            "activity_id": self.activity_id,
+            "attempt": self.attempt,
         }
 
 
@@ -207,6 +284,7 @@ class ToolExecutionRecord:
     error_envelope: dict[str, Any] | None = None
     retry_count: int = 0
     timeout: bool = False
+    graph_identity: GraphExecutionIdentity | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -231,4 +309,9 @@ class ToolExecutionRecord:
             ),
             "retry_count": self.retry_count,
             "timeout": self.timeout,
+            "graph_identity": (
+                self.graph_identity.to_dict()
+                if self.graph_identity is not None
+                else None
+            ),
         }

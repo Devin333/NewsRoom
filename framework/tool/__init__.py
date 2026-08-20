@@ -1,5 +1,11 @@
 from __future__ import annotations
 
+# Load the leaf policy module before builtin registration imports the Agent
+# package.  This keeps ``framework.tool`` importable without an eager
+# Agent -> Tool circular dependency.
+from framework.tool.models import *  # noqa: F401,F403
+from framework.tool.registry.registry import ToolRegistry
+
 from framework.tool.builtin import (
     DEFAULT_MEMORY_COLLECTION,
     DEFAULT_TASK_QUEUE,

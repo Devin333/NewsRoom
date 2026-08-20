@@ -6,6 +6,7 @@ from framework.tool.governance.redaction import reject_sensitive_mapping_keys
 from framework.tool.governance.approval import ApprovalRequest
 from framework.tool.models.definition import ToolDefinition
 from framework.tool.registry.registry import ToolRegistry
+from framework.shared.graph_identity import GraphExecutionIdentity
 from framework.workers.models.task import DEFAULT_TASK_QUEUE, Task
 
 
@@ -18,8 +19,21 @@ def register_control_tools(
     *,
     approval_store: Any | None = None,
     task_queue: TaskQueueWriter | None = None,
+    execution_identity: GraphExecutionIdentity | None = None,
     run_id: str | None = None,
 ) -> None:
+    if execution_identity is not None and not isinstance(
+        execution_identity, GraphExecutionIdentity
+    ):
+        execution_identity = GraphExecutionIdentity.from_dict(execution_identity)
+    if execution_identity is not None and run_id is not None:
+        if execution_identity.run_id != str(run_id).strip():
+            raise ValueError("run_id must match execution_identity.run_id")
+    if (approval_store is not None or task_queue is not None) and execution_identity is None:
+        raise ValueError(
+            "Graph control tools require an exact GraphExecutionIdentity; "
+            "a standalone run_id is not an execution authority"
+        )
     registry.register(
         ToolDefinition(
             name="control.set_output",
@@ -74,7 +88,11 @@ def register_control_tools(
                 concurrency_safe=False,
                 metadata={"writes_approval_request": True},
             ),
-            lambda args: _request_human_review(args, approval_store=approval_store, run_id=run_id),
+            lambda args: _request_human_review(
+                args,
+                approval_store=approval_store,
+                execution_identity=execution_identity,
+            ),
         )
         registry.register(
             ToolDefinition(
@@ -97,7 +115,11 @@ def register_control_tools(
                 concurrency_safe=False,
                 metadata={"writes_escalation_request": True},
             ),
-            lambda args: _escalate(args, approval_store=approval_store, run_id=run_id),
+            lambda args: _escalate(
+                args,
+                approval_store=approval_store,
+                execution_identity=execution_identity,
+            ),
         )
     if task_queue is not None:
         registry.register(
@@ -122,7 +144,11 @@ def register_control_tools(
                 concurrency_safe=False,
                 metadata={"writes_worker_task": True},
             ),
-            lambda args: _delegate_to_subagent(args, task_queue=task_queue, run_id=run_id),
+            lambda args: _delegate_to_subagent(
+                args,
+                task_queue=task_queue,
+                execution_identity=execution_identity,
+            ),
         )
 
 
@@ -155,7 +181,14 @@ def _report_progress(args: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _request_human_review(args: dict[str, Any], *, approval_store: Any, run_id: str | None) -> dict[str, Any]:
+def _request_human_review(
+    args: dict[str, Any],
+    *,
+    approval_store: Any,
+    execution_identity: GraphExecutionIdentity | None,
+) -> dict[str, Any]:
+    if execution_identity is None:
+        raise ValueError("human review requires an exact GraphExecutionIdentity")
     requested_action = str(args["requested_action"]).strip()
     if not requested_action:
         raise ValueError("requested_action is required")
@@ -176,7 +209,8 @@ def _request_human_review(args: dict[str, Any], *, approval_store: Any, run_id: 
         reason=reason,
         payload=dict(payload),
         task_id=args.get("task_id"),
-        run_id=run_id,
+        run_id=execution_identity.run_id,
+        graph_identity=execution_identity,
         requested_by=args.get("requested_by"),
         metadata={**dict(metadata), "control_tool": "control.request_human_review"},
     )
@@ -188,7 +222,14 @@ def _request_human_review(args: dict[str, Any], *, approval_store: Any, run_id: 
     }
 
 
-def _escalate(args: dict[str, Any], *, approval_store: Any, run_id: str | None) -> dict[str, Any]:
+def _escalate(
+    args: dict[str, Any],
+    *,
+    approval_store: Any,
+    execution_identity: GraphExecutionIdentity | None,
+) -> dict[str, Any]:
+    if execution_identity is None:
+        raise ValueError("escalation requires an exact GraphExecutionIdentity")
     escalation_type = str(args["escalation_type"]).strip()
     if not escalation_type:
         raise ValueError("escalation_type is required")
@@ -210,7 +251,8 @@ def _escalate(args: dict[str, Any], *, approval_store: Any, run_id: str | None) 
         reason=reason,
         payload=dict(payload),
         task_id=args.get("task_id"),
-        run_id=run_id,
+        run_id=execution_identity.run_id,
+        graph_identity=execution_identity,
         requested_by=args.get("requested_by"),
         metadata={**dict(metadata), "control_tool": "control.escalate", "escalation_type": escalation_type},
     )
@@ -223,7 +265,14 @@ def _escalate(args: dict[str, Any], *, approval_store: Any, run_id: str | None) 
     }
 
 
-def _delegate_to_subagent(args: dict[str, Any], *, task_queue: TaskQueueWriter, run_id: str | None) -> dict[str, Any]:
+def _delegate_to_subagent(
+    args: dict[str, Any],
+    *,
+    task_queue: TaskQueueWriter,
+    execution_identity: GraphExecutionIdentity | None,
+) -> dict[str, Any]:
+    if execution_identity is None:
+        raise ValueError("subagent delegation requires an exact GraphExecutionIdentity")
     task_type = str(args["task_type"]).strip()
     if not task_type:
         raise ValueError("task_type is required")
@@ -242,8 +291,6 @@ def _delegate_to_subagent(args: dict[str, Any], *, task_queue: TaskQueueWriter, 
     task_id = _optional_text(args.get("task_id"))
     subagent_id = _optional_text(args.get("subagent_id"))
     task_metadata = {**dict(metadata), "control_tool": "control.delegate_to_subagent"}
-    if run_id is not None:
-        task_metadata["run_id"] = run_id
     if subagent_id is not None:
         task_metadata["subagent_id"] = subagent_id
     task_kwargs: dict[str, Any] = {
@@ -252,6 +299,7 @@ def _delegate_to_subagent(args: dict[str, Any], *, task_queue: TaskQueueWriter, 
         "queue_name": queue_name,
         "max_attempts": max_attempts,
         "metadata": task_metadata,
+        "graph_identity": execution_identity,
     }
     if task_id is not None:
         task_kwargs["task_id"] = task_id

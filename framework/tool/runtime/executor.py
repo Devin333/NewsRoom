@@ -25,6 +25,7 @@ from framework.shared.attempts import (
     current_attempt_context,
     derive_idempotency_key,
 )
+from framework.shared.graph_identity import GraphExecutionIdentity
 from framework.shared.json import to_jsonable
 from framework.events.propagation import (
     W3CSpanContext,
@@ -174,10 +175,18 @@ class ToolExecutor:
         secret_provider: SecretProvider | None = None,
         trace_context: TraceContext | W3CSpanContext | None = None,
         defer_result_persistence: bool = False,
+        graph_identity: GraphExecutionIdentity | Mapping[str, Any] | None = None,
     ) -> None:
         self._registry = registry
         self._artifact_manager = artifact_manager
-        self._run_id = run_id
+        if graph_identity is not None and not isinstance(
+            graph_identity, GraphExecutionIdentity
+        ):
+            graph_identity = GraphExecutionIdentity.from_dict(graph_identity)
+        if graph_identity is not None and run_id is not None and run_id != graph_identity.run_id:
+            raise ValueError("run_id must match graph_identity.run_id")
+        self._graph_identity = graph_identity
+        self._run_id = graph_identity.run_id if graph_identity is not None else run_id
         self._approval_store = approval_store
         self._secret_provider = secret_provider
         self._trace_context = trace_context
@@ -203,6 +212,7 @@ class ToolExecutor:
         return self._defer_result_persistence
 
     def execute(self, call: ToolCall, policy: ToolPolicy | None = None) -> ToolObservation:
+        call = self._bind_graph_identity(call)
         parent_context = self._trace_context or current_trace_context()
         if isinstance(parent_context, TraceContext):
             execution_context: TraceContext | W3CSpanContext = (
@@ -216,6 +226,17 @@ class ToolExecutor:
             execution_context = W3CSpanContext.root()
         with trace_context_scope(execution_context):
             return self._execute_scoped(call, policy)
+
+    def _bind_graph_identity(self, call: ToolCall) -> ToolCall:
+        if not isinstance(call, ToolCall):
+            raise TypeError("call must be ToolCall")
+        if self._graph_identity is None:
+            return call
+        if call.graph_identity is None:
+            return replace(call, graph_identity=self._graph_identity)
+        if call.graph_identity != self._graph_identity:
+            raise ValueError("tool call Graph identity conflicts with executor identity")
+        return call
 
     def _execute_scoped(
         self,
@@ -247,6 +268,24 @@ class ToolExecutor:
             policy_trace.risk_level = _risk_level(registered.definition)
             policy_trace.requires_approval = _requires_approval(registered.definition, policy)
             policy_trace.add("tool.resolve", "compatibility", True, f"tool resolved: {call.tool_name}")
+
+            if registered.graph_identity is not None and call.graph_identity != registered.graph_identity:
+                policy_trace.add(
+                    "tool.graph_identity",
+                    "safety",
+                    False,
+                    "tool requires the exact Graph activity identity bound at registration",
+                )
+                raise ToolPermissionError(
+                    "tool call Graph identity does not match its registered Graph activity"
+                )
+            if registered.graph_identity is not None:
+                policy_trace.add(
+                    "tool.graph_identity",
+                    "safety",
+                    True,
+                    "tool call matches its registered Graph activity identity",
+                )
 
             if not policy.allows(call.tool_name):
                 policy_trace.add("tool.permission", "safety", False, f"tool is not allowed: {call.tool_name}")
@@ -569,11 +608,24 @@ class ToolExecutor:
                     media_type=media_type,
                 )
             artifact_spill = "spilled"
-            relative_path = f"tool_results/{call.call_id}.json"
+            if call.graph_identity is not None:
+                relative_path = (
+                    "node_instances/"
+                    f"{call.graph_identity.node_instance_id}/activities/"
+                    f"{call.graph_identity.activity_id}/attempt-"
+                    f"{call.graph_identity.attempt}/tool_results/{call.call_id}.json"
+                )
+            else:
+                relative_path = f"tool_results/{call.call_id}.json"
             artifact_payload = {
                 "call": call.to_dict(),
                 "output": safe_output,
                 "output_bytes": output_bytes,
+                "graph_identity": (
+                    call.graph_identity.to_dict()
+                    if call.graph_identity is not None
+                    else None
+                ),
             }
             path = _write_json_artifact(self._artifact_manager, self._run_id, relative_path, artifact_payload)
             artifact_bytes = path.read_bytes()
@@ -592,7 +644,14 @@ class ToolExecutor:
                 output_bytes=output_bytes,
                 call_id=call.call_id,
                 tool_name=call.tool_name,
-                metadata={"artifact_spill": artifact_spill},
+                metadata={
+                    "artifact_spill": artifact_spill,
+                    "graph_identity": (
+                        call.graph_identity.to_dict()
+                        if call.graph_identity is not None
+                        else None
+                    ),
+                },
                 media_type=media_type,
             )
         if self._defer_result_persistence:
@@ -603,7 +662,14 @@ class ToolExecutor:
             output_bytes=output_bytes,
             call_id=call.call_id,
             tool_name=call.tool_name,
-            metadata={"artifact_spill": artifact_spill},
+            metadata={
+                "artifact_spill": artifact_spill,
+                "graph_identity": (
+                    call.graph_identity.to_dict()
+                    if call.graph_identity is not None
+                    else None
+                ),
+            },
             media_type=media_type,
         )
 
@@ -661,6 +727,7 @@ class ToolExecutor:
                 if isinstance(scoped_context, (TraceContext, W3CSpanContext))
                 else None
             ),
+            graph_identity=call.graph_identity,
         )
         self._events.append(event)
         return event
@@ -682,6 +749,7 @@ class ToolExecutor:
                 reason=reason,
                 risk_level=_risk_level(definition),
                 run_id=self._run_id,
+                graph_identity=call.graph_identity,
                 agent_id=call.requested_by_agent_id or None,
             )
             stored = self._approval_store.upsert_approval(request.to_worker_approval_request())
@@ -748,7 +816,8 @@ def _execution_record(
         error_envelope=observation.result.error_envelope,
         retry_count=observation.result.retry_count,
         timeout=observation.result.timeout,
-)
+        graph_identity=observation.call.graph_identity,
+    )
 
 
 def _tool_policy_trace_to_dict(policy_trace: Any) -> dict[str, Any] | None:
@@ -806,12 +875,17 @@ def _with_duration(result: ToolResult, elapsed_ms: float) -> ToolResult:
 
 
 def _with_call(result: ToolResult, call: ToolCall) -> ToolResult:
-    if result.call_id == call.call_id and result.tool_name == call.tool_name:
+    if (
+        result.call_id == call.call_id
+        and result.tool_name == call.tool_name
+        and result.graph_identity == call.graph_identity
+    ):
         return result
     return _copy_tool_result(
         result,
         call_id=result.call_id or call.call_id,
         tool_name=result.tool_name or call.tool_name,
+        graph_identity=result.graph_identity or call.graph_identity,
     )
 
 
@@ -928,6 +1002,7 @@ def _copy_tool_result(result: ToolResult, **overrides: Any) -> ToolResult:
         "output_bytes": result.output_bytes,
         "duration_ms": result.duration_ms,
         "metadata": dict(result.metadata),
+        "graph_identity": result.graph_identity,
         "call_id": result.call_id,
         "tool_name": result.tool_name,
         "started_at": result.started_at,

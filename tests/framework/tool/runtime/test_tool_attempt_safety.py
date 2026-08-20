@@ -280,11 +280,11 @@ def test_mcp_operation_key_is_derived_from_parent_logical_scope() -> None:
     )
     first_parent = AttemptContext.create(
         attempt_id="parent-1",
-        idempotency_key="workflow:step:one:tool:call-1",
+        idempotency_key="graph:step:one:tool:call-1",
     )
     second_parent = AttemptContext.create(
         attempt_id="parent-2",
-        idempotency_key="workflow:step:one:tool:call-2",
+        idempotency_key="graph:step:one:tool:call-2",
     )
 
     with bind_attempt_context(first_parent):
@@ -320,7 +320,7 @@ def test_tool_deadline_rejection_never_emits_tool_started() -> None:
     executor = ToolExecutor(registry)
     parent = AttemptContext.create(
         attempt_id="deadline-parent",
-        idempotency_key="workflow:deadline-parent",
+        idempotency_key="graph:deadline-parent",
         deadline=time.monotonic() + 0.02,
     )
 

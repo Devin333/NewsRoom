@@ -8,6 +8,7 @@ from typing import Any, Protocol
 from uuid import uuid4
 
 from framework.shared.time import ensure_utc, format_datetime
+from framework.shared.graph_identity import GraphExecutionIdentity
 from framework.tool.models.call import ToolCall
 
 
@@ -35,6 +36,7 @@ class ToolApprovalRequest:
     run_id: str | None = None
     step_id: str | None = None
     agent_id: str | None = None
+    graph_identity: GraphExecutionIdentity | None = None
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     metadata: dict[str, Any] = field(default_factory=dict)
 
@@ -43,6 +45,12 @@ class ToolApprovalRequest:
             raise ValueError(f"invalid tool approval risk level: {self.risk_level}")
         object.__setattr__(self, "created_at", ensure_utc(self.created_at))
         object.__setattr__(self, "metadata", dict(self.metadata))
+        identity = self.graph_identity
+        if identity is not None and not isinstance(identity, GraphExecutionIdentity):
+            identity = GraphExecutionIdentity.from_dict(identity)
+        if identity is not None and self.run_id is not None and identity.run_id != self.run_id:
+            raise ValueError("approval run_id must match graph_identity.run_id")
+        object.__setattr__(self, "graph_identity", identity)
         if self.agent_id is None and self.tool_call.requested_by_agent_id:
             object.__setattr__(self, "agent_id", self.tool_call.requested_by_agent_id)
 
@@ -57,6 +65,11 @@ class ToolApprovalRequest:
             "run_id": self.run_id,
             "step_id": self.step_id,
             "agent_id": self.agent_id,
+            "graph_identity": (
+                self.graph_identity.to_dict()
+                if self.graph_identity is not None
+                else None
+            ),
             "created_at": format_datetime(self.created_at),
             "metadata": dict(self.metadata),
         }
@@ -70,6 +83,7 @@ class ToolApprovalRequest:
             payload={"tool_approval": self.to_dict()},
             task_id=self.tool_call.call_id,
             run_id=self.run_id,
+            graph_identity=self.graph_identity,
             requested_by=self.agent_id,
             created_at=self.created_at,
             metadata={
@@ -92,10 +106,23 @@ class ApprovalRequest:
     task_id: str | None = None
     run_id: str | None = None
     requested_by: str | None = None
+    graph_identity: GraphExecutionIdentity | None = None
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     expires_at: datetime | None = None
     decision: Any | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        identity = self.graph_identity
+        if identity is not None and not isinstance(identity, GraphExecutionIdentity):
+            identity = GraphExecutionIdentity.from_dict(identity)
+        if identity is not None:
+            if self.run_id is not None and str(self.run_id).strip() != identity.run_id:
+                raise ValueError("approval run_id must match graph_identity.run_id")
+            object.__setattr__(self, "run_id", identity.run_id)
+        object.__setattr__(self, "graph_identity", identity)
+        object.__setattr__(self, "payload", dict(self.payload))
+        object.__setattr__(self, "metadata", dict(self.metadata))
 
     @property
     def is_pending(self) -> bool:
@@ -118,6 +145,7 @@ class ApprovalRequest:
             status=status,
             task_id=self.task_id,
             run_id=self.run_id,
+            graph_identity=self.graph_identity,
             requested_by=self.requested_by,
             created_at=self.created_at,
             expires_at=self.expires_at,
@@ -143,6 +171,11 @@ class ApprovalRequest:
             "task_id": self.task_id,
             "run_id": self.run_id,
             "requested_by": self.requested_by,
+            "graph_identity": (
+                self.graph_identity.to_dict()
+                if self.graph_identity is not None
+                else None
+            ),
             "created_at": format_datetime(self.created_at),
             "expires_at": format_datetime(self.expires_at),
             "decision": decision,

@@ -6,6 +6,7 @@ from datetime import datetime
 from typing import Any
 
 from framework.shared.result import ErrorDetail
+from framework.shared.graph_identity import GraphExecutionIdentity
 from framework.shared.time import format_datetime
 from framework.governance import GateCheckResult
 from framework.tool.governance.redaction import contains_redacted_value, redact_sensitive_values
@@ -86,6 +87,7 @@ class ToolResult:
     output_bytes: int | None = None
     duration_ms: float | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
+    graph_identity: GraphExecutionIdentity | None = None
     call_id: str | None = None
     tool_name: str = ""
     artifacts: list[ArtifactRef] = field(default_factory=list)
@@ -122,6 +124,10 @@ class ToolResult:
         object.__setattr__(self, "artifact_refs", [ArtifactRef.from_any(ref) for ref in artifact_refs])
         object.__setattr__(self, "artifacts", [ArtifactRef.from_any(ref) for ref in artifacts])
         object.__setattr__(self, "metadata", dict(self.metadata or {}))
+        identity = self.graph_identity
+        if identity is not None and not isinstance(identity, GraphExecutionIdentity):
+            identity = GraphExecutionIdentity.from_dict(identity)
+        object.__setattr__(self, "graph_identity", identity)
         media_type = str(self.media_type).strip().casefold()
         if "/" not in media_type:
             raise ValueError("tool result media_type is invalid")
@@ -243,6 +249,11 @@ class ToolResult:
             "artifact_ref": self.artifact_ref.to_dict() if self.artifact_ref else None,
             "artifacts": [artifact_ref.to_dict() for artifact_ref in self.artifacts],
             "metadata": dict(self.metadata),
+            "graph_identity": (
+                self.graph_identity.to_dict()
+                if self.graph_identity is not None
+                else None
+            ),
             "redaction_report": self.redaction_report,
             "output_summary": self.output_summary,
             "artifact_refs": [artifact_ref.to_dict() for artifact_ref in self.artifact_refs],

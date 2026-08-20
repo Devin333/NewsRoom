@@ -5,6 +5,7 @@ import pytest
 from framework.agent.artifacts import ArtifactManager
 from framework.tool import ToolCall, ToolExecutor, ToolPolicy, ToolRegistry, ToolStatus
 from framework.tool.builtin.artifact import register_artifact_tools
+from framework.shared.graph_identity import GraphExecutionIdentity
 
 
 def test_artifact_tools_write_then_load_nested_json(tmp_path) -> None:
@@ -26,6 +27,15 @@ def test_artifact_tools_write_then_load_nested_json(tmp_path) -> None:
     assert written.status == ToolStatus.SUCCEEDED
     assert loaded.status == ToolStatus.SUCCEEDED
     assert loaded.output["content"] == {"ok": True}
+
+
+def test_artifact_tool_registration_requires_exact_graph_identity(tmp_path) -> None:
+    with pytest.raises(TypeError, match="execution_identity"):
+        register_artifact_tools(
+            ToolRegistry(),
+            artifact_manager=ArtifactManager(tmp_path),
+            execution_identity=None,
+        )
 
 
 @pytest.mark.parametrize(
@@ -59,8 +69,12 @@ def test_artifact_tools_reject_unsafe_paths_without_external_access(
 def test_artifact_tools_reject_unsafe_run_id_before_access(tmp_path, tool_name) -> None:
     manager = ArtifactManager(tmp_path)
     registry = ToolRegistry()
-    register_artifact_tools(registry, artifact_manager=manager, run_id="run:stream")
-    executor = ToolExecutor(registry)
+    register_artifact_tools(
+        registry,
+        artifact_manager=manager,
+        execution_identity=_identity("run:stream"),
+    )
+    executor = ToolExecutor(registry, graph_identity=_identity("run:stream"))
     arguments = {"path_prefix": ""} if tool_name == "artifact.search" else {"path": "out.json"}
     if tool_name == "artifact.write":
         arguments["content"] = {"ok": True}
@@ -112,8 +126,27 @@ def test_artifact_search_rejects_symlink_file_before_reading(tmp_path) -> None:
 
 def _executor(manager, run_id) -> ToolExecutor:
     registry = ToolRegistry()
-    register_artifact_tools(registry, artifact_manager=manager, run_id=run_id)
-    return ToolExecutor(registry)
+    identity = _identity(run_id)
+    register_artifact_tools(
+        registry,
+        artifact_manager=manager,
+        execution_identity=identity,
+    )
+    return ToolExecutor(registry, graph_identity=identity)
+
+
+def _identity(run_id: str) -> GraphExecutionIdentity:
+    return GraphExecutionIdentity(
+        run_id=run_id,
+        graph_id="graph.test",
+        graph_version="v1",
+        graph_ref="graph.test@v1",
+        graph_checksum="sha256:" + "0" * 64,
+        node_id="node.artifact",
+        node_instance_id="instance.artifact",
+        activity_id="activity.artifact",
+        attempt=1,
+    )
 
 
 def _execute(executor: ToolExecutor, tool_name: str, arguments: dict):

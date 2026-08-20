@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 from typing import Any
 from uuid import uuid4
 
+from framework.shared.graph_identity import GraphExecutionIdentity
 from framework.tool.governance.redaction import redact_sensitive_values
 
 
@@ -15,6 +16,7 @@ class ToolCall:
     call_id: str = field(default_factory=lambda: uuid4().hex)
     requested_by: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
+    graph_identity: GraphExecutionIdentity | None = None
 
     def __post_init__(self) -> None:
         requested_by = self.requested_by
@@ -25,6 +27,10 @@ class ToolCall:
         object.__setattr__(self, "requested_by_agent_id", requested_by_agent_id)
         object.__setattr__(self, "arguments", dict(self.arguments or {}))
         object.__setattr__(self, "metadata", dict(self.metadata or {}))
+        identity = self.graph_identity
+        if identity is not None and not isinstance(identity, GraphExecutionIdentity):
+            identity = GraphExecutionIdentity.from_dict(identity)
+        object.__setattr__(self, "graph_identity", identity)
 
     @classmethod
     def new(
@@ -34,12 +40,14 @@ class ToolCall:
         *,
         requested_by: str | None = None,
         metadata: dict[str, Any] | None = None,
+        graph_identity: GraphExecutionIdentity | dict[str, Any] | None = None,
     ) -> "ToolCall":
         return cls(
             tool_name=tool_name,
             arguments=dict(arguments),
             requested_by=requested_by,
             metadata=dict(metadata or {}),
+            graph_identity=graph_identity,
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -50,4 +58,9 @@ class ToolCall:
             "requested_by": self.requested_by,
             "requested_by_agent_id": self.requested_by_agent_id,
             "metadata": redact_sensitive_values(dict(self.metadata)),
+            "graph_identity": (
+                self.graph_identity.to_dict()
+                if self.graph_identity is not None
+                else None
+            ),
         }

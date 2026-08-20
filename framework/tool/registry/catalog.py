@@ -6,6 +6,7 @@ from typing import Any
 from framework.tool.builtin.artifact import register_artifact_tools
 from framework.tool.builtin.control import register_control_tools
 from framework.tool.builtin.memory import register_memory_tools
+from framework.shared.graph_identity import GraphExecutionIdentity
 from framework.tool.models import ToolDefinition, ToolPolicy
 from framework.tool.registry.registry import ToolRegistry
 
@@ -16,7 +17,6 @@ _DANGEROUS_TOOL_NAMES = {
     "control.delegate_to_subagent",
     "control.escalate",
     "control.request_human_review",
-    "memory.write",
 }
 _DANGEROUS_TOOL_PREFIXES = ("mcp.",)
 
@@ -92,6 +92,7 @@ def build_builtin_tool_registry(
     *,
     artifact_manager: Any | None = None,
     run_id: str | None = None,
+    execution_identity: GraphExecutionIdentity | None = None,
     memory_runtime: Any | None = None,
     vector_store: Any | None = None,
     approval_store: Any | None = None,
@@ -103,6 +104,7 @@ def build_builtin_tool_registry(
     registry = _build_unfiltered_builtin_tool_registry(
         artifact_manager=artifact_manager,
         run_id=run_id,
+        execution_identity=execution_identity,
         memory_runtime=memory_runtime,
         vector_store=vector_store,
         approval_store=approval_store,
@@ -163,6 +165,7 @@ def _build_unfiltered_builtin_tool_registry(
     *,
     artifact_manager: Any | None = None,
     run_id: str | None = None,
+    execution_identity: GraphExecutionIdentity | None = None,
     memory_runtime: Any | None = None,
     vector_store: Any | None = None,
     approval_store: Any | None = None,
@@ -171,11 +174,26 @@ def _build_unfiltered_builtin_tool_registry(
     **_: Any,
 ) -> ToolRegistry:
     registry = ToolRegistry()
-    register_control_tools(registry, approval_store=approval_store, task_queue=task_queue, run_id=run_id)
-    if artifact_manager is not None and run_id is not None:
-        register_artifact_tools(registry, artifact_manager=artifact_manager, run_id=run_id)
+    register_control_tools(
+        registry,
+        approval_store=approval_store,
+        task_queue=task_queue,
+        execution_identity=execution_identity,
+        run_id=run_id,
+    )
+    if artifact_manager is not None and execution_identity is not None:
+        register_artifact_tools(
+            registry,
+            artifact_manager=artifact_manager,
+            execution_identity=execution_identity,
+        )
     if vector_store is not None or memory_runtime is not None:
-        register_memory_tools(registry, vector_store=vector_store, memory_runtime=memory_runtime)
+        register_memory_tools(
+            registry,
+            vector_store=vector_store,
+            memory_runtime=memory_runtime,
+            execution_identity=execution_identity,
+        )
     return registry
 
 
@@ -185,7 +203,11 @@ def _filtered_builtin_registry(registry: ToolRegistry, *, dangerous_only: bool) 
         is_dangerous = _is_dangerous_builtin_tool(registered.definition)
         if dangerous_only != is_dangerous:
             continue
-        filtered.register(registered.definition, registered.executor)
+        filtered.register(
+            registered.definition,
+            registered.executor,
+            graph_identity=registered.graph_identity,
+        )
     return filtered
 
 

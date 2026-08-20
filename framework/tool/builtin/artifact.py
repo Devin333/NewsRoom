@@ -11,14 +11,18 @@ from framework.agent.artifacts.paths import (
 )
 from framework.tool.models.definition import ToolDefinition
 from framework.tool.registry.registry import ToolRegistry
+from framework.shared.graph_identity import GraphExecutionIdentity
 
 
 def register_artifact_tools(
     registry: ToolRegistry,
     *,
     artifact_manager: Any,
-    run_id: str,
+    execution_identity: GraphExecutionIdentity,
 ) -> None:
+    if not isinstance(execution_identity, GraphExecutionIdentity):
+        raise TypeError("execution_identity must be GraphExecutionIdentity")
+    run_id = execution_identity.run_id
     registry.register(
         ToolDefinition(
             name="artifact.write",
@@ -36,6 +40,7 @@ def register_artifact_tools(
             metadata={"no_effect_error_types": ["ArtifactPathError"]},
         ),
         lambda args: _write_artifact(artifact_manager, run_id, args),
+        graph_identity=execution_identity,
     )
     registry.register(
         ToolDefinition(
@@ -53,6 +58,7 @@ def register_artifact_tools(
             concurrency_safe=True,
         ),
         lambda args: _load_artifact(artifact_manager, run_id, args),
+        graph_identity=execution_identity,
     )
     registry.register(
         ToolDefinition(
@@ -71,6 +77,7 @@ def register_artifact_tools(
             concurrency_safe=True,
         ),
         lambda args: _search_artifacts(artifact_manager, run_id, args),
+        graph_identity=execution_identity,
     )
 
 

@@ -5,6 +5,7 @@ from typing import Any, Literal
 
 from framework.tool.models import ToolDefinition, ToolExecutorFn, ToolPolicy
 from framework.tool.runtime.errors import ToolDefinitionError
+from framework.shared.graph_identity import GraphExecutionIdentity
 
 
 DuplicateToolPolicy = Literal["error", "skip", "replace_explicit", "replace"]
@@ -15,6 +16,7 @@ _DUPLICATE_POLICIES = {"error", "skip", "replace_explicit", "replace"}
 class RegisteredTool:
     definition: ToolDefinition
     executor: ToolExecutorFn
+    graph_identity: GraphExecutionIdentity | None = None
 
 
 @dataclass(frozen=True)
@@ -45,6 +47,7 @@ class ToolRegistry:
         executor: ToolExecutorFn,
         *,
         duplicate_policy: DuplicateToolPolicy = "error",
+        graph_identity: GraphExecutionIdentity | None = None,
     ) -> RegisteredTool:
         if duplicate_policy not in _DUPLICATE_POLICIES:
             raise ToolDefinitionError(f"unsupported duplicate policy: {duplicate_policy}")
@@ -60,7 +63,15 @@ class ToolRegistry:
         if existing is not None and duplicate_policy == "skip":
             return existing
 
-        registered = RegisteredTool(definition=definition, executor=executor)
+        if graph_identity is not None and not isinstance(
+            graph_identity, GraphExecutionIdentity
+        ):
+            raise TypeError("graph_identity must be GraphExecutionIdentity")
+        registered = RegisteredTool(
+            definition=definition,
+            executor=executor,
+            graph_identity=graph_identity,
+        )
         self._tools[definition.name] = registered
         return registered
 

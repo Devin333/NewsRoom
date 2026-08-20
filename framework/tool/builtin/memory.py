@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
+from framework.shared.graph_identity import GraphExecutionIdentity
 from framework.tool.models.definition import ToolDefinition
 from framework.tool.registry.registry import ToolRegistry
 
@@ -16,7 +17,20 @@ def register_memory_tools(
     vector_store: Any | None = None,
     default_collection: str = DEFAULT_MEMORY_COLLECTION,
     memory_runtime: Any | None = None,
+    execution_identity: GraphExecutionIdentity | None = None,
+    standalone: bool = False,
 ) -> None:
+    if not isinstance(standalone, bool):
+        raise TypeError("standalone must be boolean")
+    if execution_identity is not None and not isinstance(
+        execution_identity, GraphExecutionIdentity
+    ):
+        raise TypeError("execution_identity must be GraphExecutionIdentity")
+    if execution_identity is None and not standalone:
+        raise ValueError(
+            "memory tools require an exact GraphExecutionIdentity; "
+            "use standalone=True for an explicitly isolated read-only registry"
+        )
     runtime = memory_runtime or _runtime_from_vector_store(
         vector_store,
         default_collection=default_collection,
@@ -46,55 +60,13 @@ def register_memory_tools(
             concurrency_safe=True,
             max_result_bytes=500_000,
         ),
-        lambda args: _recall_memory(args, runtime=runtime, default_collection=default_collection),
-    )
-    registry.register(
-        ToolDefinition(
-            name="memory.search",
-            description="Deprecated alias for memory.recall with legacy vector-search-shaped output.",
-            input_schema={
-                "required": ["query"],
-                "properties": {
-                    "query": {"type": "string"},
-                    "collection": {"type": "string"},
-                    "limit": {"type": "integer"},
-                    "filters": {"type": "object"},
-                    "score_threshold": {"type": "number"},
-                },
-                "additionalProperties": False,
-            },
-            side_effect="read_only",
-            concurrency_safe=True,
-            max_result_bytes=500_000,
-            metadata={"deprecated_alias_for": "memory.recall"},
-        ),
         lambda args: _recall_memory(
             args,
             runtime=runtime,
             default_collection=default_collection,
-            legacy_search_shape=True,
+            execution_identity=execution_identity,
         ),
-    )
-    registry.register(
-        ToolDefinition(
-            name="memory.write",
-            description="Write generic memory records through the framework memory runtime.",
-            input_schema={
-                "required": ["records"],
-                "properties": {
-                    "records": {"type": "array", "items": {"type": "object"}},
-                    "mode": {"type": "string"},
-                    "actor": {"type": "string"},
-                    "run_id": {"type": "string"},
-                },
-                "additionalProperties": False,
-            },
-            side_effect="writes_external_state",
-            concurrency_safe=False,
-            max_result_bytes=100_000,
-            metadata={"writes_memory_runtime": True},
-        ),
-        lambda args: _write_memory(args, runtime=runtime),
+        graph_identity=execution_identity,
     )
     registry.register(
         ToolDefinition(
@@ -106,50 +78,7 @@ def register_memory_tools(
             max_result_bytes=100_000,
         ),
         lambda args: _explain_memory_runtime(args, runtime=runtime),
-    )
-    registry.register(
-        ToolDefinition(
-            name="memory.consolidate",
-            description="Consolidate matching memory records through the framework memory runtime.",
-            input_schema={
-                "properties": {
-                    "memory_ids": {"type": "array", "items": {"type": "string"}},
-                    "query": {"type": "object"},
-                    "filters": {"type": "object"},
-                    "actor": {"type": "string"},
-                    "run_id": {"type": "string"},
-                    "reason": {"type": "string"},
-                },
-                "additionalProperties": False,
-            },
-            side_effect="writes_external_state",
-            concurrency_safe=False,
-            max_result_bytes=100_000,
-            metadata={"writes_memory_runtime": True},
-        ),
-        lambda args: _consolidate_memory(args, runtime=runtime),
-    )
-    registry.register(
-        ToolDefinition(
-            name="memory.forget",
-            description="Forget matching memory records through the framework memory runtime.",
-            input_schema={
-                "properties": {
-                    "memory_id": {"type": "string"},
-                    "memory_ids": {"type": "array", "items": {"type": "string"}},
-                    "filters": {"type": "object"},
-                    "actor": {"type": "string"},
-                    "run_id": {"type": "string"},
-                    "reason": {"type": "string"},
-                },
-                "additionalProperties": False,
-            },
-            side_effect="writes_external_state",
-            concurrency_safe=False,
-            max_result_bytes=100_000,
-            metadata={"writes_memory_runtime": True},
-        ),
-        lambda args: _forget_memory(args, runtime=runtime),
+        graph_identity=execution_identity,
     )
 
 
@@ -158,7 +87,7 @@ def _recall_memory(
     *,
     runtime: Any,
     default_collection: str,
-    legacy_search_shape: bool = False,
+    execution_identity: GraphExecutionIdentity | None,
 ) -> dict[str, Any]:
     query_text = str(args["query"]).strip()
     if not query_text:
@@ -171,6 +100,14 @@ def _recall_memory(
         raise ValueError("filters must be an object")
     recall_filters = dict(filters)
     recall_filters.setdefault("collection", collection)
+    if execution_identity is not None:
+        for key, value in execution_identity.to_dict().items():
+            supplied = recall_filters.get(key)
+            if supplied is not None and supplied != value:
+                raise ValueError(
+                    f"memory recall filter {key} conflicts with Graph identity"
+                )
+            recall_filters[key] = value
     limit = _limit(args.get("limit"))
     min_score = args.get("min_score", args.get("score_threshold"))
     recall = runtime.recall(
@@ -184,36 +121,9 @@ def _recall_memory(
             "max_context_tokens": _optional_int(args.get("max_context_tokens")),
         }
     )
-    if not legacy_search_shape:
-        payload = _to_dict(recall)
-        payload["collection"] = collection
-        return payload
-    results = getattr(recall, "results", [])
-    context_block = getattr(recall, "context_block", _MemoryContextBlock.empty())
-    return {
-        "collection": collection,
-        "query": query_text,
-        "filters": dict(filters),
-        "limit": limit,
-        "result_count": getattr(recall, "result_count", len(results)),
-        "results": [_legacy_search_result(_to_dict(result)) for result in results],
-        "context_block": _to_dict(context_block),
-    }
-
-
-def _write_memory(args: dict[str, Any], *, runtime: Any) -> dict[str, Any]:
-    records = args.get("records")
-    if not isinstance(records, list):
-        raise ValueError("records must be an array")
-    result = runtime.write(
-        {
-            "records": records,
-            "mode": args.get("mode") or "append",
-            "actor": _optional_string(args.get("actor")),
-            "run_id": _optional_string(args.get("run_id")),
-        }
-    )
-    return _to_dict(result)
+    payload = _to_dict(recall)
+    payload["collection"] = collection
+    return payload
 
 
 def _explain_memory_runtime(args: dict[str, Any], *, runtime: Any) -> dict[str, Any]:
@@ -225,33 +135,13 @@ def _explain_memory_runtime(args: dict[str, Any], *, runtime: Any) -> dict[str, 
         "policy_type": type(getattr(runtime, "policy", None)).__name__ if getattr(runtime, "policy", None) is not None else None,
         "operations": {
             "recall": callable(getattr(runtime, "recall", None)),
-            "write": callable(getattr(runtime, "write", None)),
             "get": callable(getattr(runtime, "get", None)),
-            "consolidate": callable(getattr(runtime, "consolidate", None)),
-            "forget": callable(getattr(runtime, "forget", None)),
         },
         "tools": {
             "memory.recall": "available",
-            "memory.write": "available",
-            "memory.search": "deprecated alias for memory.recall",
             "memory.explain": "available",
-            "memory.consolidate": "available",
-            "memory.forget": "available",
         },
     }
-
-
-def _consolidate_memory(args: dict[str, Any], *, runtime: Any) -> dict[str, Any]:
-    result = runtime.consolidate(dict(args))
-    return _to_dict(result)
-
-
-def _forget_memory(args: dict[str, Any], *, runtime: Any) -> dict[str, Any]:
-    result = runtime.forget(dict(args))
-    if result is None:
-        memory_ids = _memory_ids_from_forget_args(args)
-        return {"success": True, "forgotten_count": 0, "memory_ids": memory_ids}
-    return _to_dict(result)
 
 
 def _runtime_from_vector_store(vector_store: Any | None, *, default_collection: str) -> Any | None:
@@ -347,43 +237,6 @@ class _VectorMemoryRuntime:
             ),
         )
 
-    def write(self, request: dict[str, Any]) -> dict[str, Any]:
-        raise NotImplementedError("vector-store memory adapter does not support memory.write")
-
-    def consolidate(self, request: dict[str, Any]) -> dict[str, Any]:
-        raise NotImplementedError("vector-store memory adapter does not support memory.consolidate")
-
-    def forget(self, request: dict[str, Any]) -> dict[str, Any]:
-        raise NotImplementedError("vector-store memory adapter does not support memory.forget")
-
-
-def _legacy_search_result(result: dict[str, Any]) -> dict[str, Any]:
-    record = result.get("record")
-    record_payload = dict(record) if isinstance(record, dict) else {}
-    metadata = dict(result.get("metadata") or {})
-    payload = dict(metadata)
-    payload.update(record_payload.get("refs") or {})
-    payload.setdefault("document_id", result.get("document_id") or result.get("memory_id"))
-    payload.setdefault("text", result.get("text") or result.get("content"))
-    source_type = metadata.get("source_type") or result.get("source_type") or result.get("kind")
-    legacy = {
-        "document_id": result.get("document_id") or result.get("memory_id"),
-        "score": result.get("score"),
-        "text": result.get("text") or result.get("content"),
-        "source_type": source_type,
-        "payload": payload,
-        "refs": dict(result.get("refs") or {}),
-    }
-    for key, value in legacy["refs"].items():
-        if value is not None:
-            legacy.setdefault(str(key), value)
-    for key in ("run_id", "artifact_id", "record_id", "topic", "section_id"):
-        value = result.get(key) or payload.get(key)
-        if value is not None:
-            legacy[key] = value
-    return legacy
-
-
 def _limit(value: Any) -> int:
     if value is None:
         return 5
@@ -401,14 +254,6 @@ def _optional_string(value: Any) -> str | None:
         return None
     text = str(value).strip()
     return text or None
-
-
-def _memory_ids_from_forget_args(args: dict[str, Any]) -> list[str]:
-    memory_ids = [str(value) for value in args.get("memory_ids") or []]
-    memory_id = _optional_string(args.get("memory_id"))
-    if memory_id is not None:
-        memory_ids.insert(0, memory_id)
-    return memory_ids
 
 
 def _to_dict(value: Any) -> dict[str, Any]:
