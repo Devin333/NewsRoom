@@ -62,6 +62,7 @@ from framework.llm.models import (
     LLMStreamEvent,
     LLMStreamAccumulator,
 )
+from framework.shared.graph_identity import GraphExecutionIdentity
 from framework.llm.structured_output import (
     ManagedStructuredOutputError,
     compile_structured_output_contract,
@@ -1098,12 +1099,21 @@ class AgentLoop:
         events: AgentLoopEventRecorder,
     ) -> LLMResponse:
         if not agent.loop_policy.llm_streaming_enabled:
-            return LLMResponse.from_any(self._llm_client.complete(request))
+            return _bind_llm_response_identity(
+                LLMResponse.from_any(self._llm_client.complete(request)),
+                request.execution_identity,
+            )
         stream = getattr(self._llm_client, "stream", None)
         if not callable(stream):
-            return LLMResponse.from_any(self._llm_client.complete(request))
+            return _bind_llm_response_identity(
+                LLMResponse.from_any(self._llm_client.complete(request)),
+                request.execution_identity,
+            )
 
-        accumulator = LLMStreamAccumulator()
+        accumulator = LLMStreamAccumulator(
+            expected_execution_identity=request.execution_identity,
+            require_expected_identity=request.execution_identity is not None,
+        )
         stream_event_count = 0
         raw_stream = stream(request)
         stream_events = raw_stream if isinstance(raw_stream, Iterable) else []
@@ -1124,6 +1134,7 @@ class AgentLoop:
             content=response.content,
             usage=response.usage,
             metadata=metadata,
+            execution_identity=response.execution_identity,
             structured_output=response.structured_output,
             tool_calls=list(response.tool_calls),
         )
@@ -1747,6 +1758,17 @@ def _llm_call_artifact(
             "streamed": metadata.get("llm_streamed"),
         },
     )
+
+
+def _bind_llm_response_identity(
+    response: LLMResponse,
+    execution_identity: GraphExecutionIdentity | None,
+) -> LLMResponse:
+    if execution_identity is None:
+        return response
+    if response.execution_identity != execution_identity:
+        raise ValueError("LLM response Graph identity conflicts with its request")
+    return response
 
 
 def _tool_names(tools: list[dict[str, Any]]) -> list[str]:
