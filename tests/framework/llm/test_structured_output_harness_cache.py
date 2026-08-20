@@ -39,6 +39,7 @@ from tests.framework.llm._structured_output_release import (
 )
 from framework.llm.cache import CacheEntry
 from framework.llm.clients.openai_compatible import LLMProviderError
+from framework.shared.graph_identity import GraphExecutionIdentity
 from framework.tool import ToolExecutor, ToolRegistry
 
 
@@ -244,7 +245,7 @@ def test_agent_loop_halts_repeated_unchanged_structured_failure() -> None:
     result = AgentLoop(
         llm_client=client,
         tool_executor=ToolExecutor(ToolRegistry()),
-    ).run(agent, {}, [], run_id="run-structured-repair")
+    ).run(agent, {}, [], run_id="run-structured-repair", standalone=True)
 
     assert result.success is False
     assert result.status is AgentLoopStatus.RETRY_EXHAUSTED
@@ -270,7 +271,7 @@ def test_agent_loop_repairs_once_then_accepts_managed_terminal_output() -> None:
     result = AgentLoop(
         llm_client=client,
         tool_executor=ToolExecutor(ToolRegistry()),
-    ).run(agent, {}, [], run_id="run-repair-success")
+    ).run(agent, {}, [], run_id="run-repair-success", standalone=True)
 
     assert result.success is True
     assert client.call_count == 2
@@ -341,6 +342,28 @@ def test_structured_output_event_envelope_is_allowlisted_and_bounded() -> None:
             event_type="structured_output_local_validation_failed",
             issue_count=21,
         )
+
+
+def test_graph_structured_output_event_carries_exact_execution_identity() -> None:
+    identity = GraphExecutionIdentity(
+        run_id="structured-run",
+        graph_id="structured-graph",
+        graph_version="1",
+        graph_ref="structured-graph@1",
+        graph_checksum="sha256:" + "3" * 64,
+        node_id="agent",
+        node_instance_id="agent-instance",
+        activity_id="agent-activity",
+        attempt=2,
+    )
+    event = StructuredOutputEvent(
+        event_type="structured_output_validation_accepted",
+        execution_identity=identity,
+        attempt_ref="2",
+    )
+
+    assert event.to_payload()["execution_identity"] == identity.to_dict()
+    assert event.run_id == identity.run_id
 
 
 def test_production_has_no_unmanaged_structured_output_parser_or_validator() -> None:

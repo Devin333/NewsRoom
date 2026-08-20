@@ -5,6 +5,7 @@ import pytest
 from framework.governance.budget import BudgetHistoryError, BudgetScopeType
 from framework.llm.budget import GlobalBudgetPolicy, GlobalBudgetTracker
 from framework.llm.models import TokenUsage
+from framework.shared.graph_identity import GraphExecutionIdentity
 
 
 def test_facade_restore_preserves_canonical_identity_and_rejects_policy_drift() -> None:
@@ -62,3 +63,26 @@ def test_child_facade_cannot_export_or_restore_authoritative_snapshot() -> None:
         child.canonical_snapshot()
     with pytest.raises(ValueError, match="root tracker"):
         child.restore(root.canonical_snapshot())
+
+
+def test_execution_bound_tracker_rejects_cross_activity_rebinding() -> None:
+    def identity(activity_id: str) -> GraphExecutionIdentity:
+        return GraphExecutionIdentity(
+            run_id="run-budget",
+            graph_id="research.graph",
+            graph_version="v1",
+            graph_ref="research.graph@v1",
+            graph_checksum="sha256:" + "a" * 64,
+            node_id="analyze",
+            node_instance_id="analyze-1",
+            activity_id=activity_id,
+            attempt=1,
+        )
+
+    tracker = GlobalBudgetTracker(
+        GlobalBudgetPolicy(max_llm_calls=2),
+        execution_identity=identity("activity-a"),
+    )
+
+    with pytest.raises(ValueError, match="different Graph execution identity"):
+        tracker.for_execution_identity(identity("activity-b"))

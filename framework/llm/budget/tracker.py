@@ -25,6 +25,8 @@ from framework.llm.budget.estimator import CostEstimator
 from framework.llm.budget.policy import GlobalBudgetPolicy
 from framework.llm.budget.pricing import ModelPricing
 from framework.llm.models.usage import TokenUsage
+from framework.shared.graph_identity import GraphExecutionIdentity
+from framework.shared.json import stable_json_dumps
 
 
 GLOBAL_BUDGET_COMPATIBILITY_INTRODUCED_RELEASE = "0.1.0"
@@ -113,10 +115,18 @@ class GlobalBudgetTracker:
         estimator: CostEstimator | None = None,
         ledger: BudgetLedger | None = None,
         scope: BudgetScopeRef | None = None,
-        run_id: str = "legacy-global-budget",
+        run_id: str = "standalone-budget",
+        execution_identity: GraphExecutionIdentity | dict[str, Any] | None = None,
         event_sink: BudgetEventSink | None = None,
     ) -> None:
         self.policy = policy
+        if execution_identity is not None and not isinstance(
+            execution_identity, GraphExecutionIdentity
+        ):
+            execution_identity = GraphExecutionIdentity.from_dict(execution_identity)
+        if execution_identity is not None:
+            run_id = execution_identity.run_id
+        self._execution_identity = execution_identity
         self.estimator = estimator or CostEstimator()
         canonical_policy = _canonical_policy(policy)
         if ledger is None:
@@ -125,6 +135,7 @@ class GlobalBudgetTracker:
                 scope_id=f"run:{run_id}",
                 scope_type=BudgetScopeType.RUN,
                 policy_revision=canonical_policy.policy_revision,
+                execution_identity=execution_identity,
             )
             ledger = BudgetLedger(
                 scope,
@@ -147,6 +158,45 @@ class GlobalBudgetTracker:
     def scope(self) -> BudgetScopeRef:
         return self._scope
 
+    @property
+    def execution_identity(self) -> GraphExecutionIdentity | None:
+        return self._execution_identity
+
+    def for_execution_identity(
+        self,
+        identity: GraphExecutionIdentity,
+    ) -> "GlobalBudgetTracker":
+        """Return a ledger view scoped to one exact Graph activity."""
+
+        if not isinstance(identity, GraphExecutionIdentity):
+            raise TypeError("identity must be GraphExecutionIdentity")
+        if self._execution_identity is not None and self._execution_identity != identity:
+            raise ValueError(
+                "budget tracker is already bound to a different Graph execution identity"
+            )
+        if self._execution_identity == identity:
+            return self
+        digest = sha256(
+            stable_identity_text(identity).encode("utf-8")
+        ).hexdigest()
+        scope = BudgetScopeRef(
+            run_id=identity.run_id,
+            scope_id=f"{BudgetScopeType.AGENT_LOOP.value}:{digest}",
+            scope_type=BudgetScopeType.AGENT_LOOP,
+            parent_scope_id=self._scope.scope_id,
+            policy_revision=_canonical_policy(self.policy).policy_revision,
+            execution_identity=identity,
+        )
+        self._ledger.register_scope(scope, _canonical_policy(self.policy))
+        return GlobalBudgetTracker(
+            self.policy,
+            estimator=self.estimator,
+            ledger=self._ledger,
+            scope=scope,
+            event_sink=self._event_sink,
+            execution_identity=identity,
+        )
+
     def next_operation_identity(self, prefix: str = "llm-operation") -> str:
         return self._adapter.next_identity(prefix)
 
@@ -164,6 +214,7 @@ class GlobalBudgetTracker:
             scope_type=scope_type,
             parent_scope_id=self._scope.scope_id,
             policy_revision=canonical_policy.policy_revision,
+            execution_identity=self._execution_identity,
         )
         self._ledger.register_scope(child_scope, canonical_policy)
         return GlobalBudgetTracker(
@@ -172,6 +223,7 @@ class GlobalBudgetTracker:
             ledger=self._ledger,
             scope=child_scope,
             event_sink=self._event_sink,
+            execution_identity=self._execution_identity,
         )
 
     @property
@@ -562,6 +614,10 @@ def _canonical_policy(policy: GlobalBudgetPolicy) -> BudgetPolicy:
             estimated_cost_usd=policy.max_total_cost_usd,
         ),
     )
+
+
+def stable_identity_text(identity: GraphExecutionIdentity) -> str:
+    return stable_json_dumps(identity.to_dict())
 
 
 def _legacy_usage_from_amounts(amounts: BudgetAmounts) -> GlobalBudgetUsage:
