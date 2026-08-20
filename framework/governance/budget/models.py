@@ -392,7 +392,10 @@ class BudgetScopeRef:
         if identity is not None and identity.run_id != self.run_id:
             raise BudgetContractError("budget scope execution identity run mismatch")
         object.__setattr__(self, "execution_identity", identity)
-        if self.scope_type is BudgetScopeType.GRAPH and identity is None:
+        if self.scope_type is BudgetScopeType.GRAPH and not isinstance(
+            identity,
+            GraphExecutionIdentity,
+        ):
             raise BudgetContractError(
                 "graph budget scope requires an exact execution identity"
             )

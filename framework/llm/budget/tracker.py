@@ -129,6 +129,25 @@ class GlobalBudgetTracker:
         self._execution_identity = execution_identity
         self.estimator = estimator or CostEstimator()
         canonical_policy = _canonical_policy(policy)
+        if scope is None and ledger is not None:
+            scope = ledger.root_scope
+        if execution_identity is not None:
+            if scope is None:
+                scope = BudgetScopeRef(
+                    run_id=run_id,
+                    scope_id=f"run:{run_id}",
+                    scope_type=BudgetScopeType.RUN,
+                    policy_revision=canonical_policy.policy_revision,
+                    execution_identity=execution_identity,
+                )
+            elif scope.run_id != execution_identity.run_id:
+                raise ValueError(
+                    "budget tracker scope run does not match execution identity"
+                )
+            elif scope.execution_identity != execution_identity:
+                raise ValueError(
+                    "budget tracker scope does not match execution identity"
+                )
         if ledger is None:
             scope = scope or BudgetScopeRef(
                 run_id=run_id,
@@ -142,8 +161,6 @@ class GlobalBudgetTracker:
                 canonical_policy,
                 event_sink=event_sink,
             )
-        else:
-            scope = scope or ledger.root_scope
         self._event_sink = event_sink
         self._ledger = ledger
         self._scope = scope

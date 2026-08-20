@@ -2,7 +2,11 @@ from __future__ import annotations
 
 import pytest
 
-from framework.governance.budget import BudgetHistoryError, BudgetScopeType
+from framework.governance.budget import (
+    BudgetHistoryError,
+    BudgetScopeRef,
+    BudgetScopeType,
+)
 from framework.llm.budget import GlobalBudgetPolicy, GlobalBudgetTracker
 from framework.llm.models import TokenUsage
 from framework.shared.graph_identity import GraphExecutionIdentity
@@ -86,3 +90,57 @@ def test_execution_bound_tracker_rejects_cross_activity_rebinding() -> None:
 
     with pytest.raises(ValueError, match="different Graph execution identity"):
         tracker.for_execution_identity(identity("activity-b"))
+
+
+def test_execution_bound_tracker_rejects_scope_without_exact_identity() -> None:
+    identity = GraphExecutionIdentity(
+        run_id="run-budget",
+        graph_id="research.graph",
+        graph_version="v1",
+        graph_ref="research.graph@v1",
+        graph_checksum="sha256:" + "a" * 64,
+        node_id="analyze",
+        node_instance_id="analyze-1",
+        activity_id="activity-a",
+        attempt=1,
+    )
+    scope = BudgetScopeRef(
+        run_id=identity.run_id,
+        scope_id="run:run-budget",
+        scope_type=BudgetScopeType.RUN,
+        policy_revision="default",
+    )
+
+    with pytest.raises(ValueError, match="does not match execution identity"):
+        GlobalBudgetTracker(
+            GlobalBudgetPolicy(max_llm_calls=2),
+            scope=scope,
+            execution_identity=identity,
+        )
+
+
+def test_execution_bound_tracker_rejects_scope_from_another_run() -> None:
+    identity = GraphExecutionIdentity(
+        run_id="run-budget",
+        graph_id="research.graph",
+        graph_version="v1",
+        graph_ref="research.graph@v1",
+        graph_checksum="sha256:" + "a" * 64,
+        node_id="analyze",
+        node_instance_id="analyze-1",
+        activity_id="activity-a",
+        attempt=1,
+    )
+    scope = BudgetScopeRef(
+        run_id="run-other",
+        scope_id="run:run-other",
+        scope_type=BudgetScopeType.RUN,
+        policy_revision="default",
+    )
+
+    with pytest.raises(ValueError, match="scope run"):
+        GlobalBudgetTracker(
+            GlobalBudgetPolicy(max_llm_calls=2),
+            scope=scope,
+            execution_identity=identity,
+        )

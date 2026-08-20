@@ -18,6 +18,7 @@ from framework.governance.budget import (
     BudgetScopeSnapshot,
     BudgetOperationRecord,
 )
+from framework.shared.graph_identity import GraphExecutionIdentity, GraphRunIdentity
 
 
 @pytest.mark.parametrize(
@@ -111,6 +112,51 @@ def test_graph_scope_requires_exact_execution_identity() -> None:
             scope_type="graph",
             policy_revision="policy-v1",
         )
+
+
+def test_graph_scope_rejects_run_identity() -> None:
+    run_identity = GraphRunIdentity(
+        run_id="run-1",
+        graph_id="reader.graph",
+        graph_version="v1",
+        graph_ref="reader.graph@v1",
+        graph_checksum="sha256:" + "a" * 64,
+    )
+
+    with pytest.raises(BudgetContractError, match="execution identity"):
+        BudgetScopeRef(
+            run_id="run-1",
+            scope_id="graph-1",
+            scope_type="graph",
+            policy_revision="policy-v1",
+            parent_scope_id="root",
+            execution_identity=run_identity,
+        )
+
+
+def test_graph_scope_accepts_exact_execution_identity() -> None:
+    execution_identity = GraphExecutionIdentity(
+        run_id="run-1",
+        graph_id="reader.graph",
+        graph_version="v1",
+        graph_ref="reader.graph@v1",
+        graph_checksum="sha256:" + "a" * 64,
+        node_id="analyze",
+        node_instance_id="analyze-1",
+        activity_id="activity-1",
+        attempt=1,
+    )
+
+    scope = BudgetScopeRef(
+        run_id="run-1",
+        scope_id="graph-1",
+        scope_type="graph",
+        policy_revision="policy-v1",
+        parent_scope_id="root",
+        execution_identity=execution_identity,
+    )
+
+    assert scope.execution_identity == execution_identity
 
 
 def test_decision_and_event_reason_collections_are_bounded() -> None:
