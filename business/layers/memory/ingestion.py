@@ -400,6 +400,7 @@ class MemoryIngestionService:
                 mode=MemoryWriteMode.UPSERT,
                 actor="business.layers.memory.ingestion",
                 run_id=run_id,
+                standalone=True,
             )
             memories_written = int(getattr(write_result, "written_count", 0) or 0)
             memory_ids = [str(memory_id) for memory_id in getattr(write_result, "memory_ids", [])]
