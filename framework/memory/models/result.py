@@ -8,7 +8,9 @@ from framework.memory.models.context import MemoryContextBlock
 from framework.memory.models.query import MemoryQuery
 from framework.memory.models.record import MemoryRecord, coerce_memory_record
 from framework.memory.models.score import MemoryScore
+from framework.memory.models.scope import MemoryScope
 from framework.memory.models.write_mode import MemoryWriteMode
+from framework.shared.graph_identity import GraphExecutionIdentity
 
 
 @dataclass(frozen=True)
@@ -215,6 +217,8 @@ class MemoryWriteRequest:
     mode: MemoryWriteMode = MemoryWriteMode.APPEND
     actor: str | None = None
     run_id: str | None = None
+    execution_identity: GraphExecutionIdentity | None = None
+    standalone: bool = False
     namespace: str | None = None
     tenant_id: str | None = None
 
@@ -223,6 +227,31 @@ class MemoryWriteRequest:
         object.__setattr__(self, "mode", MemoryWriteMode.from_value(self.mode))
         if not self.records:
             raise ValueError("memory write records are required")
+        identity = self.execution_identity
+        if identity is not None and not isinstance(identity, GraphExecutionIdentity):
+            identity = GraphExecutionIdentity.from_dict(dict(identity))
+        standalone = _coerce_bool(self.standalone)
+        if identity is not None and standalone:
+            raise ValueError("standalone memory writes cannot carry a GraphExecutionIdentity")
+        run_id = _optional_str(self.run_id)
+        if identity is not None:
+            if run_id is not None and run_id != identity.run_id:
+                raise ValueError("run_id must match execution_identity.run_id")
+            run_id = identity.run_id
+        object.__setattr__(self, "execution_identity", identity)
+        object.__setattr__(self, "run_id", run_id)
+        object.__setattr__(self, "standalone", standalone)
+        if identity is None:
+            if _contains_graph_lineage(self.records):
+                raise ValueError(
+                    "Graph memory writes require an exact GraphExecutionIdentity"
+                )
+            if any(record.scope == MemoryScope.GRAPH for record in self.records):
+                raise ValueError(
+                    "Graph-scoped memory writes require an exact GraphExecutionIdentity"
+                )
+            if run_id is not None and not self.standalone:
+                raise ValueError("run_id-only memory writes require standalone=True")
 
     @classmethod
     def from_dict(cls, payload: dict[str, Any]) -> "MemoryWriteRequest":
@@ -231,6 +260,8 @@ class MemoryWriteRequest:
             mode=payload.get("mode") or MemoryWriteMode.APPEND,
             actor=_optional_str(payload.get("actor")),
             run_id=_optional_str(payload.get("run_id")),
+            execution_identity=_execution_identity_from_payload(payload.get("execution_identity")),
+            standalone=_coerce_bool(payload.get("standalone", False)),
             namespace=_optional_str(payload.get("namespace")),
             tenant_id=_optional_str(payload.get("tenant_id")),
         )
@@ -241,6 +272,12 @@ class MemoryWriteRequest:
             "mode": self.mode.value,
             "actor": self.actor,
             "run_id": self.run_id,
+            "execution_identity": (
+                self.execution_identity.to_dict()
+                if self.execution_identity is not None
+                else None
+            ),
+            "standalone": self.standalone,
             "namespace": self.namespace,
             "tenant_id": self.tenant_id,
         }
@@ -429,8 +466,12 @@ _GENERIC_REF_KEYS = (
     "reference_ids",
     "run_id",
     "source_memory_ids",
-    "step_id",
-    "workflow_id",
+    "graph_id",
+    "graph_version",
+    "graph_ref",
+    "graph_checksum",
+    "node_instance_id",
+    "stage_id",
 )
 
 
@@ -443,6 +484,48 @@ def _optional_str(value: Any) -> str | None:
         return None
     text = str(value).strip()
     return text or None
+
+
+_GRAPH_LINEAGE_KEYS = frozenset(
+    {
+        "graph_id",
+        "graph_version",
+        "graph_ref",
+        "graph_checksum",
+        "node_id",
+        "node_instance_id",
+        "graph_checkpoint_ref",
+        "activity_id",
+        "attempt",
+    }
+)
+
+
+def _contains_graph_lineage(records: list[MemoryRecord]) -> bool:
+    return any(
+        bool(_GRAPH_LINEAGE_KEYS.intersection(dict(record.refs)))
+        for record in records
+    )
+
+
+def _execution_identity_from_payload(value: Any) -> GraphExecutionIdentity | None:
+    if value is None:
+        return None
+    if isinstance(value, GraphExecutionIdentity):
+        return value
+    return GraphExecutionIdentity.from_dict(dict(value))
+
+
+def _coerce_bool(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        normalized = value.strip().casefold()
+        if normalized in {"true", "1", "yes", "on"}:
+            return True
+        if normalized in {"false", "0", "no", "off", ""}:
+            return False
+    return bool(value)
 
 
 def _optional_float(value: Any) -> float | None:

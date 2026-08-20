@@ -25,7 +25,7 @@ from framework.memory.models import (
     MemoryWriteResult,
 )
 from framework.memory.models.record import coerce_memory_record
-from framework.memory.policy import DEFAULT_WORKFLOW_MEMORY_POLICY, MemoryPolicy
+from framework.memory.policy import DEFAULT_GRAPH_MEMORY_POLICY, MemoryPolicy
 from framework.memory.runtime.context_assembler import MemoryContextAssembler
 from framework.memory.runtime.consolidation import MemoryConsolidator
 from framework.memory.runtime.forgetting import MemoryForgettingEngine
@@ -35,6 +35,7 @@ from framework.memory.runtime.promotion import MemoryPromotionEngine
 from framework.memory.runtime.recall import MemoryRecallStrategy, SimpleMemoryRecallStrategy
 from framework.memory.runtime.writer import MemoryWriter
 from framework.memory.stores import MemoryStore
+from framework.shared.graph_identity import GraphExecutionIdentity
 
 
 class MemoryRuntime:
@@ -55,7 +56,7 @@ class MemoryRuntime:
         trace_recorder: MemoryTraceRecorder | None = None,
     ) -> None:
         self.store = store
-        self.policy = policy or DEFAULT_WORKFLOW_MEMORY_POLICY
+        self.policy = policy or DEFAULT_GRAPH_MEMORY_POLICY
         self.recall_strategy = recall_strategy or SimpleMemoryRecallStrategy()
         self.assembler = assembler or MemoryContextAssembler()
         self.writer = writer or MemoryWriter()
@@ -134,6 +135,8 @@ class MemoryRuntime:
         mode: MemoryWriteMode | str = MemoryWriteMode.APPEND,
         actor: str | None = None,
         run_id: str | None = None,
+        execution_identity: GraphExecutionIdentity | dict[str, Any] | None = None,
+        standalone: bool = False,
         namespace: str | None = None,
         tenant_id: str | None = None,
         policy: MemoryPolicy | None = None,
@@ -145,6 +148,8 @@ class MemoryRuntime:
             mode=mode,
             actor=actor,
             run_id=run_id,
+            execution_identity=execution_identity,
+            standalone=standalone,
             namespace=namespace,
             tenant_id=tenant_id,
         )
@@ -155,6 +160,12 @@ class MemoryRuntime:
                 "accepted_count": len(write_request.records),
                 "mode": write_request.mode.value,
                 "memory_ids": [record.memory_id for record in write_request.records],
+                "standalone": write_request.standalone,
+                "execution_identity": (
+                    write_request.execution_identity.to_dict()
+                    if write_request.execution_identity is not None
+                    else None
+                ),
             },
         )
         decision = memory_policy_decision(
@@ -434,6 +445,8 @@ def _coerce_write_request(
     mode: MemoryWriteMode | str,
     actor: str | None,
     run_id: str | None,
+    execution_identity: GraphExecutionIdentity | dict[str, Any] | None,
+    standalone: bool,
     namespace: str | None,
     tenant_id: str | None,
 ) -> MemoryWriteRequest:
@@ -446,6 +459,8 @@ def _coerce_write_request(
         mode=MemoryWriteMode.from_value(mode),
         actor=actor,
         run_id=run_id,
+        execution_identity=execution_identity,
+        standalone=standalone,
         namespace=namespace,
         tenant_id=tenant_id,
     )

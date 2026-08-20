@@ -113,6 +113,7 @@ class AgentLoop:
         self._output_normalizer = output_normalizer or identity_output_normalizer
         self._global_budget_tracker = global_budget_tracker
         self._active_budget_operation: LLMBudgetOperation | None = None
+        self._active_budget_tracker: GlobalBudgetTracker | None = None
         self._subagent_executor = subagent_executor
         self._memory_runtime = memory_runtime
         self._memory_policy = memory_policy or DEFAULT_AGENT_MEMORY_POLICY
@@ -135,14 +136,38 @@ class AgentLoop:
         tools: list[dict[str, Any]],
         *,
         run_id: str | None = None,
+        execution_identity: GraphExecutionIdentity | None = None,
+        standalone: bool = False,
     ) -> AgentLoopResult:
+        if not isinstance(standalone, bool):
+            raise TypeError("standalone must be boolean")
+        if execution_identity is not None and not isinstance(
+            execution_identity,
+            GraphExecutionIdentity,
+        ):
+            raise TypeError(
+                "AgentLoop execution_identity must be GraphExecutionIdentity"
+            )
+        if execution_identity is None and not standalone:
+            raise ValueError(
+                "AgentLoop requires an exact GraphExecutionIdentity; "
+                "use standalone=True for an explicitly isolated run"
+            )
         effective_run_id = run_id or _run_id_from_inputs(inputs)
+        if execution_identity is not None and execution_identity.run_id != effective_run_id:
+            raise ValueError("AgentLoop execution identity does not match run_id")
         metrics = AgentLoopMetrics()
+        self._active_budget_operation = None
+        self._active_budget_tracker = None
         events = AgentLoopEventRecorder(
             agent_id=agent.agent_id,
             run_id=effective_run_id,
+            execution_identity=execution_identity,
         )
-        trace = AgentLoopTrace(agent_id=agent.agent_id)
+        trace = AgentLoopTrace(
+            agent_id=agent.agent_id,
+            execution_identity=execution_identity,
+        )
         diagnostics = AgentLoopDiagnosticsBuilder(agent_id=agent.agent_id, trace=trace)
         stall_detector = AgentLoopStallDetector(agent.loop_policy)
 
@@ -174,7 +199,7 @@ class AgentLoop:
             memory_context = self._memory_context_for_llm(
                 agent=agent,
                 inputs=inputs,
-                run_id=effective_run_id,
+                execution_identity=execution_identity,
             )
             prompt_inputs = dict(inputs)
             skill_prompt_section = self._skill_prompt_section(agent=agent, inputs=inputs)
@@ -192,6 +217,8 @@ class AgentLoop:
                 memory_context=memory_context,
                 skill_prompt_section=skill_prompt_section,
             )
+            if execution_identity is not None:
+                request = request.clone(execution_identity=execution_identity)
             trace.record_prompt(iteration_trace, request)
             try:
                 self._reserve_global_budget_before_llm_call(
@@ -657,10 +684,10 @@ class AgentLoop:
         else:
             observation = self._execute_tool(tool_call, _execution_tool_policy(tool_policy))
         observation = _prompt_safe_observation(observation, tool_policy)
-        self._write_tool_observation_memory(
+        self._record_tool_observation_memory_candidate(
             agent=agent,
-            run_id=run_id,
             observation=observation,
+            trace=trace,
         )
 
         tool_observations.append(observation)
@@ -1134,7 +1161,7 @@ class AgentLoop:
             content=response.content,
             usage=response.usage,
             metadata=metadata,
-            execution_identity=response.execution_identity,
+            execution_identity=request.execution_identity,
             structured_output=response.structured_output,
             tool_calls=list(response.tool_calls),
         )
@@ -1151,10 +1178,14 @@ class AgentLoop:
             return
         if _client_manages_global_budget(self._llm_client):
             return
-        operation_id = self._global_budget_tracker.next_operation_identity(
+        tracker = self._global_budget_tracker
+        if request.execution_identity is not None:
+            tracker = tracker.for_execution_identity(request.execution_identity)
+        self._active_budget_tracker = tracker
+        operation_id = tracker.next_operation_identity(
             f"agent:{agent.agent_id}:iteration:{iteration}"
         )
-        operation = self._global_budget_tracker.reserve_direct_operation(
+        operation = tracker.reserve_direct_operation(
             operation_id=operation_id,
             idempotency_key=f"{operation_id}:reservation",
             input_tokens=estimate_request_tokens(request),
@@ -1167,7 +1198,7 @@ class AgentLoop:
         if isinstance(operation, GlobalBudgetCheck):
             raise GlobalBudgetExceededError(operation)
         self._active_budget_operation = operation
-        check = self._global_budget_tracker.check_for_operation(operation)
+        check = tracker.check_for_operation(operation)
         metrics.global_budget_check = check.to_dict()
         metrics.global_budget_usage = check.usage.to_dict()
 
@@ -1181,18 +1212,20 @@ class AgentLoop:
         router_budget_usage = metadata.get("llm_global_budget_usage")
         if isinstance(router_budget_check, dict):
             self._active_budget_operation = None
+            self._active_budget_tracker = None
             metrics.global_budget_check = dict(router_budget_check)
             metrics.global_budget_usage = (
                 dict(router_budget_usage) if isinstance(router_budget_usage, dict) else None
             )
             return
-        if self._global_budget_tracker is None:
+        tracker = self._active_budget_tracker
+        if tracker is None:
             return
         operation = self._active_budget_operation
         self._active_budget_operation = None
         if operation is None:
             return
-        check = self._global_budget_tracker.settle_operation(
+        check = tracker.settle_operation(
             operation,
             response.usage,
             estimated_cost_usd=_optional_float(metadata.get("llm_estimated_cost_usd")),
@@ -1208,9 +1241,10 @@ class AgentLoop:
     ) -> None:
         operation = self._active_budget_operation
         self._active_budget_operation = None
-        if self._global_budget_tracker is None or operation is None:
+        tracker = self._active_budget_tracker
+        if tracker is None or operation is None:
             return
-        check = self._global_budget_tracker.mark_operation_indeterminate(
+        check = tracker.mark_operation_indeterminate(
             operation,
             reason=reason,
         )
@@ -1222,16 +1256,16 @@ class AgentLoop:
         *,
         agent: AgentSpec,
         inputs: dict[str, Any],
-        run_id: str | None,
+        execution_identity: GraphExecutionIdentity | None,
     ) -> str | None:
         if self._memory_runtime is None:
             return None
         try:
             recall = self._memory_adapter.before_llm_call(
                 agent_id=agent.agent_id,
-                run_id=run_id or _run_id_from_inputs(inputs) or "",
                 input_text=str(inputs),
                 runtime=self._memory_runtime,
+                execution_identity=execution_identity,
                 policy=self._memory_policy,
             )
         except Exception:
@@ -1275,46 +1309,48 @@ class AgentLoop:
             return None
         return output_budget_judge_verdict(check)
 
-    def _write_tool_observation_memory(
+    def _record_tool_observation_memory_candidate(
         self,
         *,
         agent: AgentSpec,
-        run_id: str | None,
         observation: ToolObservation,
+        trace: AgentLoopTrace,
     ) -> None:
-        if self._memory_runtime is None:
+        if not agent.loop_policy.memory_write_enabled:
             return
         if observation.status != ToolStatus.SUCCEEDED:
             return
         try:
-            self._memory_adapter.after_tool_observation(
+            candidate = self._memory_adapter.propose_tool_observation(
                 agent_id=agent.agent_id,
-                run_id=run_id or "",
                 tool_name=observation.tool_name,
                 observation=observation.to_dict(),
-                runtime=self._memory_runtime,
+                execution_identity=trace.execution_identity,
             )
         except Exception:
             return
+        if candidate is not None:
+            trace.record_memory_candidate(candidate.to_dict())
 
-    def _write_final_output_memory(
+    def _record_final_output_memory_candidate(
         self,
         *,
         agent: AgentSpec,
-        run_id: str | None,
         output: dict[str, Any],
+        trace: AgentLoopTrace,
     ) -> None:
-        if self._memory_runtime is None:
+        if not agent.loop_policy.memory_write_enabled:
             return
         try:
-            self._memory_adapter.after_final_output(
+            candidate = self._memory_adapter.propose_final_output(
                 agent_id=agent.agent_id,
-                run_id=run_id or "",
                 output=output,
-                runtime=self._memory_runtime,
+                execution_identity=trace.execution_identity,
             )
         except Exception:
             return
+        if candidate is not None:
+            trace.record_memory_candidate(candidate.to_dict())
 
     def _accepted_result(
         self,
@@ -1332,10 +1368,10 @@ class AgentLoop:
         via_tool: str | None,
         llm_call_artifacts: list[LLMCallArtifact],
     ) -> AgentLoopResult:
-        self._write_final_output_memory(
+        self._record_final_output_memory_candidate(
             agent=agent,
-            run_id=run_id,
             output=output,
+            trace=trace,
         )
         events.final_output(iteration=iterations, output_keys=sorted(output.keys()), via_tool=via_tool)
         result_diagnostics = diagnostics.accepted(
@@ -1643,6 +1679,9 @@ def _agent_loop_result(
         trajectory=trajectory,
         tool_calls=[item.to_dict() for item in loop_trace.tool_calls],
         memory_ops=[],
+        memory_candidates=[
+            dict(item) for item in loop_trace.memory_candidates
+        ],
         termination_reason=stop_reason.value,
         max_steps_reached=stop_reason
         in {
@@ -1766,7 +1805,9 @@ def _bind_llm_response_identity(
 ) -> LLMResponse:
     if execution_identity is None:
         return response
-    if response.execution_identity != execution_identity:
+    if (
+        response.execution_identity != execution_identity
+    ):
         raise ValueError("LLM response Graph identity conflicts with its request")
     return response
 

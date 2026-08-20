@@ -47,6 +47,13 @@ from framework.shared.attempt_history import (
     decode_attempt_history_many,
 )
 from framework.shared.hashing import hash_bytes, hash_text, short_hash, stable_hash
+from framework.shared.graph_identity import (
+    GraphExecutionIdentity,
+    GraphIdentity,
+    GraphRunIdentity,
+    GraphStageIdentity,
+    coerce_graph_identity,
+)
 from framework.shared.ids import RunId, StepId, TaskId, generate_id, normalize_id, stable_id
 from framework.shared.json import json_loads, stable_json_dumps, to_jsonable
 from framework.shared.pagination import PageRequest, PageResult
@@ -99,6 +106,11 @@ __all__ = [
     "DependencyError",
     "ErrorDetail",
     "FrameworkError",
+    "GraphRunIdentity",
+    "GraphStageIdentity",
+    "GraphExecutionIdentity",
+    "GraphIdentity",
+    "coerce_graph_identity",
     "JsonDataclassSerializer",
     "JsonDict",
     "JsonValue",

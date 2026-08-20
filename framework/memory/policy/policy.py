@@ -103,7 +103,7 @@ DEFAULT_AGENT_MEMORY_POLICY = MemoryPolicy(
     allowed_scopes=[
         MemoryScope.SESSION,
         MemoryScope.AGENT,
-        MemoryScope.WORKFLOW,
+        MemoryScope.GRAPH,
     ],
     allowed_kinds=[
         MemoryKind.CORE,
@@ -123,7 +123,7 @@ DEFAULT_AGENT_MEMORY_WRITE_POLICY = MemoryPolicy(
     allowed_scopes=[
         MemoryScope.SESSION,
         MemoryScope.AGENT,
-        MemoryScope.WORKFLOW,
+        MemoryScope.GRAPH,
     ],
     allowed_kinds=[
         MemoryKind.EPISODIC,
@@ -137,9 +137,9 @@ DEFAULT_AGENT_MEMORY_WRITE_POLICY = MemoryPolicy(
     allow_global_write=False,
 )
 
-DEFAULT_WORKFLOW_MEMORY_POLICY = MemoryPolicy(
+DEFAULT_GRAPH_MEMORY_POLICY = MemoryPolicy(
     allowed_scopes=[
-        MemoryScope.WORKFLOW,
+        MemoryScope.GRAPH,
         MemoryScope.SESSION,
         MemoryScope.GLOBAL,
     ],

@@ -9,6 +9,7 @@ from typing import Any
 from framework.agent.models import JudgeVerdict
 from framework.events.trace import new_span_id, new_trace_id
 from framework.llm.models import LLMRequest, LLMResponse, TokenUsage
+from framework.shared.graph_identity import GraphExecutionIdentity
 from framework.shared.json import to_jsonable as to_json_safe
 from framework.tool import ToolObservation
 from framework.agent.runtime.redaction import redact_sensitive_values
@@ -492,6 +493,7 @@ class IterationTrace:
 @dataclass
 class AgentLoopTrace:
     agent_id: str
+    execution_identity: GraphExecutionIdentity | None = None
     trace_id: str | None = None
     root_span_id: str | None = None
     iterations: list[IterationTrace] = field(default_factory=list)
@@ -501,6 +503,7 @@ class AgentLoopTrace:
     actions: list[ParsedActionTrace] = field(default_factory=list)
     tool_calls: list[ToolCallTrace] = field(default_factory=list)
     judges: list[JudgeTrace] = field(default_factory=list)
+    memory_candidates: list[dict[str, Any]] = field(default_factory=list)
 
     def start_iteration(
         self,
@@ -627,6 +630,11 @@ class AgentLoopTrace:
         self.judges.append(trace)
         return trace
 
+    def record_memory_candidate(self, candidate: dict[str, Any]) -> None:
+        if not isinstance(candidate, dict):
+            raise TypeError("memory candidate must be an object")
+        self.memory_candidates.append(dict(candidate))
+
     def mark_stop_candidate(self, iteration: IterationTrace, reason: str) -> None:
         iteration.stop_candidate = reason
 
@@ -686,6 +694,11 @@ class AgentLoopTrace:
         ]
         return {
             "agent_id": self.agent_id,
+            "execution_identity": (
+                None
+                if self.execution_identity is None
+                else self.execution_identity.to_dict()
+            ),
             "trace_id": self.trace_id,
             "root_span_id": self.root_span_id,
             "iteration_count": len(self.iterations),
@@ -709,10 +722,16 @@ class AgentLoopTrace:
     def to_dict(self) -> dict[str, Any]:
         return {
             "agent_id": self.agent_id,
+            "execution_identity": (
+                None
+                if self.execution_identity is None
+                else self.execution_identity.to_dict()
+            ),
             "trace_id": self.trace_id,
             "root_span_id": self.root_span_id,
             "iterations": [iteration.to_dict() for iteration in self.iterations],
             "trajectory": [item.to_dict() for item in self.trajectory()],
+            "memory_candidates": [dict(item) for item in self.memory_candidates],
             "summary": self.summary(),
         }
 
@@ -722,11 +741,31 @@ class AgentLoopTrace:
 
     @classmethod
     def from_dict(cls, payload: dict[str, Any]) -> AgentLoopTrace:
+        raw_identity = payload.get("execution_identity")
+        if raw_identity is None:
+            summary = payload.get("summary")
+            if isinstance(summary, dict):
+                raw_identity = summary.get("execution_identity")
+        execution_identity = None
+        if raw_identity is not None:
+            try:
+                execution_identity = GraphExecutionIdentity.from_dict(raw_identity)
+            except (TypeError, ValueError) as exc:
+                raise ValueError(
+                    "AgentLoopTrace execution_identity is invalid"
+                ) from exc
         trace = cls(
             agent_id=str(payload.get("agent_id") or ""),
+            execution_identity=execution_identity,
             trace_id=_optional_text(payload.get("trace_id")),
             root_span_id=_optional_text(payload.get("root_span_id")),
         )
+        raw_candidates = payload.get("memory_candidates", [])
+        if not isinstance(raw_candidates, list) or any(
+            not isinstance(candidate, dict) for candidate in raw_candidates
+        ):
+            raise ValueError("AgentLoopTrace memory_candidates must be an array of objects")
+        trace.memory_candidates = [dict(candidate) for candidate in raw_candidates]
         trace.iterations = [
             IterationTrace.from_dict(item)
             for item in payload.get("iterations", [])

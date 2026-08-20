@@ -4,12 +4,22 @@ from framework.agent.loop.events import AgentLoopEventRecorder
 from framework.agent.models import AgentLoopEventType
 from framework.agent.models.trace import AgentLoopTrace
 from framework.events import TraceContext, is_valid_span_id, is_valid_trace_id
+from framework.shared import GraphExecutionIdentity
 
 
 def test_agent_loop_event_recorder_outputs_trace_fields() -> None:
     trace = TraceContext.root(
-        run_id="run-1",
-        workflow_id="wf-1",
+        execution_identity=GraphExecutionIdentity(
+            run_id="run-1",
+            graph_id="research.graph",
+            graph_version="1",
+            graph_ref="research.graph@1",
+            graph_checksum="sha256:" + "a" * 64,
+            node_id="analyze",
+            node_instance_id="analyze:1",
+            activity_id="activity-1",
+            attempt=1,
+        ),
         trace_id="1" * 32,
         span_id="2" * 16,
     )
@@ -47,3 +57,34 @@ def test_agent_loop_trace_default_iteration_ids_are_w3c_compatible() -> None:
     assert is_valid_span_id(first.span_id)
     assert is_valid_span_id(second.span_id)
     assert first.span_id != second.span_id
+
+
+def test_agent_loop_trace_round_trip_preserves_execution_identity() -> None:
+    identity = GraphExecutionIdentity(
+        run_id="run-trace-round-trip",
+        graph_id="research.graph",
+        graph_version="1",
+        graph_ref="research.graph@1",
+        graph_checksum="sha256:" + "b" * 64,
+        node_id="analyze",
+        node_instance_id="analyze:1",
+        activity_id="activity-1",
+        attempt=1,
+    )
+    trace = AgentLoopTrace(
+        agent_id="agent-1",
+        execution_identity=identity,
+    )
+    trace.record_memory_candidate(
+        {
+            "memory_id": "candidate-1",
+            "metadata": {"candidate_only": True},
+        }
+    )
+
+    payload = trace.to_dict()
+    restored = AgentLoopTrace.from_dict(payload)
+
+    assert payload["execution_identity"] == identity.to_dict()
+    assert restored.execution_identity == identity
+    assert restored.memory_candidates == trace.memory_candidates

@@ -13,7 +13,11 @@ from framework.llm import (
     LLMStreamEvent,
     TokenUsage,
 )
-from framework.shared.graph_identity import GraphExecutionIdentity
+from framework.shared.graph_identity import (
+    GraphExecutionIdentity,
+    GraphRunIdentity,
+    GraphStageIdentity,
+)
 from framework.tool import ToolExecutor, ToolRegistry
 
 
@@ -89,6 +93,38 @@ def _events() -> AgentLoopEventRecorder:
         agent_id="agent-identity",
         run_id=IDENTITY.run_id,
     )
+
+
+@pytest.mark.parametrize(
+    "weak_identity",
+    (
+        GraphRunIdentity(
+            run_id=IDENTITY.run_id,
+            graph_id=IDENTITY.graph_id,
+            graph_version=IDENTITY.graph_version,
+            graph_ref=IDENTITY.graph_ref,
+            graph_checksum=IDENTITY.graph_checksum,
+        ),
+        GraphStageIdentity(
+            run_id=IDENTITY.run_id,
+            graph_id=IDENTITY.graph_id,
+            graph_version=IDENTITY.graph_version,
+            graph_ref=IDENTITY.graph_ref,
+            graph_checksum=IDENTITY.graph_checksum,
+            node_id=IDENTITY.node_id,
+            node_instance_id=IDENTITY.node_instance_id,
+        ),
+    ),
+)
+def test_agent_loop_rejects_non_execution_identity(weak_identity) -> None:
+    with pytest.raises(TypeError, match="GraphExecutionIdentity"):
+        _loop(_DirectClient(IDENTITY)).run(
+            _agent(streaming=False),
+            {},
+            [],
+            run_id=IDENTITY.run_id,
+            execution_identity=weak_identity,
+        )
 
 
 def test_graph_direct_complete_rejects_missing_response_identity() -> None:

@@ -8,7 +8,7 @@ class MemoryScope(str, Enum):
     WORKING = "working"
     SESSION = "session"
     AGENT = "agent"
-    WORKFLOW = "workflow"
+    GRAPH = "graph"
     USER = "user"
     GLOBAL = "global"
     ORGANIZATION = "organization"
