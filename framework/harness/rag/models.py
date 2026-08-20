@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any
 
+from framework.harness.context.models import ContextGraphIdentity
 from framework.harness.control_plane.errors import HarnessValidationError
 from framework.harness.retrieval.evidence_pack import EvidencePack
 from framework.shared.json import stable_json_dumps, to_jsonable
@@ -11,7 +12,7 @@ from framework.shared.time import format_datetime, utc_now
 
 
 FORBIDDEN_RAG_PLAN_KEYS = frozenset(
-    {"next_step", "quality_passed", "write_memory", "publish_artifact", "halt_workflow", "promote_skill"}
+    {"next_step", "quality_passed", "write_memory", "publish_artifact", "halt_graph", "promote_skill"}
 )
 
 
@@ -128,9 +129,7 @@ class RetrievalGoal:
 @dataclass(frozen=True)
 class RAGSessionSpec:
     session_id: str
-    run_id: str
-    workflow_id: str
-    step_id: str
+    graph_identity: ContextGraphIdentity
     goal: RetrievalGoal
     allowed_corpora: tuple[str, ...]
     allowed_memory_namespaces: tuple[str, ...]
@@ -142,9 +141,13 @@ class RAGSessionSpec:
     metadata: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        for field_name in ("session_id", "run_id", "workflow_id", "step_id"):
-            if not str(getattr(self, field_name)).strip():
-                raise HarnessValidationError(f"{field_name} is required")
+        if not str(self.session_id).strip():
+            raise HarnessValidationError("session_id is required")
+        if not isinstance(self.graph_identity, ContextGraphIdentity):
+            raise HarnessValidationError(
+                "RAGSessionSpec requires an exact Graph identity",
+                code="rag_graph_identity_required",
+            )
         if not isinstance(self.goal, RetrievalGoal):
             raise HarnessValidationError("goal must be RetrievalGoal")
         if not self.allowed_corpora:
@@ -170,9 +173,7 @@ class RAGSessionSpec:
     def to_dict(self) -> dict[str, Any]:
         return {
             "session_id": self.session_id,
-            "run_id": self.run_id,
-            "workflow_id": self.workflow_id,
-            "step_id": self.step_id,
+            "graph_identity": self.graph_identity.to_dict(),
             "goal": self.goal.to_dict(),
             "allowed_corpora": list(self.allowed_corpora),
             "allowed_memory_namespaces": list(self.allowed_memory_namespaces),
@@ -183,6 +184,14 @@ class RAGSessionSpec:
             "generation_policy": to_jsonable(self.generation_policy),
             "metadata": to_jsonable(self.metadata),
         }
+
+    @property
+    def run_id(self) -> str:
+        return self.graph_identity.run_id
+
+    @property
+    def stage_id(self) -> str:
+        return self.graph_identity.stage_id
 
 
 @dataclass(frozen=True)
@@ -422,6 +431,7 @@ class EvidenceCandidate:
 class RetrievalStepResult:
     step_id: str
     operation: RetrievalOperation | str
+    graph_identity: ContextGraphIdentity | None = None
     items: tuple[EvidenceCandidate | dict[str, Any], ...] = ()
     source_refs: tuple[str, ...] = ()
     memory_refs: tuple[str, ...] = ()
@@ -436,6 +446,8 @@ class RetrievalStepResult:
         if self.latency_ms < 0:
             raise HarnessValidationError("latency_ms must not be negative")
         object.__setattr__(self, "operation", RetrievalOperation(self.operation))
+        if self.graph_identity is not None and not isinstance(self.graph_identity, ContextGraphIdentity):
+            object.__setattr__(self, "graph_identity", ContextGraphIdentity.from_dict(self.graph_identity))
         object.__setattr__(self, "items", tuple(self.items))
         object.__setattr__(self, "source_refs", tuple(str(ref) for ref in self.source_refs))
         object.__setattr__(self, "memory_refs", tuple(str(ref) for ref in self.memory_refs))
@@ -447,6 +459,7 @@ class RetrievalStepResult:
         return {
             "step_id": self.step_id,
             "operation": self.operation.value,
+            "graph_identity": self.graph_identity.to_dict() if self.graph_identity else None,
             "items": to_jsonable(list(self.items)),
             "source_refs": list(self.source_refs),
             "memory_refs": list(self.memory_refs),
@@ -578,30 +591,6 @@ class RAGContextPack:
 
 
 @dataclass(frozen=True)
-class RAGSessionRequest:
-    query: str
-    context_refs: tuple[str, ...] = ()
-    max_rounds: int = 1
-    metadata: dict[str, Any] = field(default_factory=dict)
-
-    def __post_init__(self) -> None:
-        if not str(self.query).strip():
-            raise HarnessValidationError("query is required")
-        if self.max_rounds <= 0:
-            raise HarnessValidationError("max_rounds must be greater than zero")
-        object.__setattr__(self, "context_refs", tuple(str(ref) for ref in self.context_refs))
-        object.__setattr__(self, "metadata", dict(self.metadata))
-
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "query": self.query,
-            "context_refs": list(self.context_refs),
-            "max_rounds": self.max_rounds,
-            "metadata": to_jsonable(self.metadata),
-        }
-
-
-@dataclass(frozen=True)
 class RAGTranscript:
     transcript_id: str
     session_id: str
@@ -715,7 +704,6 @@ __all__ = [
     "RAGBudget",
     "RAGBudgetSnapshot",
     "RAGContextPack",
-    "RAGSessionRequest",
     "RAGSessionSpec",
     "RAGSessionStatus",
     "RAGTranscript",

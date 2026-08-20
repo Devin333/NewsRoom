@@ -11,6 +11,7 @@ from framework.llm.clients.openai_compatible import (
 )
 from framework.llm.models.request import LLMRequest
 from framework.shared.env import load_root_env
+from framework.shared.graph_identity import GraphExecutionIdentity
 
 # unity2.ai sits behind Cloudflare, which 403s the default Python-urllib UA.
 _BROWSER_UA = (
@@ -44,11 +45,16 @@ def build_unity_llm_call(*, max_tokens: int = 1024, temperature: float | None = 
         retry_policy=LLMRetryPolicy(max_attempts=3, retry_delay_seconds=(1.5, 3.0)),
     )
 
-    async def llm_call(prompt: str) -> str:
+    async def llm_call(
+        prompt: str,
+        *,
+        execution_identity: GraphExecutionIdentity | None = None,
+    ) -> str:
         request = LLMRequest(
             messages=[{"role": "user", "content": prompt}],
             max_tokens=max_tokens,
             temperature=temperature,
+            execution_identity=execution_identity,
         )
         response = await asyncio.to_thread(client.complete, request)
         return response.content or ""

@@ -294,7 +294,29 @@ def test_worker_rag_planner_passes_gap_and_executed_queries_to_worker() -> None:
     assert worker.requests[0]["task_type"] == "rag_plan_candidate"
     assert worker.requests[0]["gap_report"] == {"missing_evidence_types": ["experiment"]}
     assert worker.requests[0]["executed_queries"] == ["old query"]
-    assert "halt_workflow" in worker.requests[0]["forbidden_fields"]
+    assert "halt_graph" in worker.requests[0]["forbidden_fields"]
+
+
+def test_worker_rag_planner_derives_physical_execution_identity() -> None:
+    worker = _Worker({"candidate": _candidate_payload("worker-plan", "new query")})
+    base_spec = fake_rag_session_spec()
+    spec = replace(
+        base_spec,
+        graph_identity=base_spec.graph_identity.with_physical_activity(
+            node_id=base_spec.graph_identity.stage_id,
+            node_instance_id="build-evidence-context:1",
+            activity_id="activity-1",
+            activity_attempt=3,
+        ),
+    )
+
+    WorkerRAGPlanner(worker, min_round_index=1).plan(
+        spec,
+        round_index=1,
+        gap_report={"missing_evidence_types": ["experiment"]},
+    )
+
+    assert worker.execution_identities == [spec.graph_identity.to_graph_execution_identity()]
 
 
 def test_worker_rag_planner_falls_back_when_worker_fails() -> None:
@@ -335,7 +357,9 @@ class _Worker:
         self.output = output
         self.status = status
         self.requests = []
+        self.execution_identities = []
 
-    def generate(self, request: dict) -> HarnessWorkerResult:
+    def generate(self, request: dict, *, execution_identity=None) -> HarnessWorkerResult:
         self.requests.append(request)
+        self.execution_identities.append(execution_identity)
         return HarnessWorkerResult(status=self.status, output=self.output)

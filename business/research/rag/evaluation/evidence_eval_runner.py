@@ -12,6 +12,7 @@ from typing import Any, Sequence
 from uuid import uuid4
 
 from business.research.document.models import PaperChunk
+from business.research.graphs import build_paper_analysis_context_graph_identity
 from business.research.ports.field_embedding_index import FieldEmbeddingHit
 from business.research.ports.visual_chunk_index import VisualChunkHit
 from business.research.rag.adapters.paper_field_text import FIELD_NAMES, extract_field_texts
@@ -350,11 +351,13 @@ def _build_in_memory_live_answer_ask(
             question=pair.question,
             goal_id=f"paper-rag-answer-eval-{run_suffix}",
         )
+        run_id = f"paper-rag-answer-eval-run-{run_suffix}"
         result = session.run(
             goal,
-            run_id=f"paper-rag-answer-eval-run-{run_suffix}",
-            workflow_id="research.paper_rag_answer_eval",
-            step_id="live_answer_eval",
+            graph_identity=build_paper_analysis_context_graph_identity(
+                run_id=run_id,
+                stage_id="run_research_rag",
+            ),
             session_id=f"paper-rag-answer-eval-session-{run_suffix}",
             current_section_index=0,
         )

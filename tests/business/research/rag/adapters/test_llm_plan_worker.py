@@ -3,6 +3,7 @@ from __future__ import annotations
 from business.research.ports.llm_worker import ResearchCandidateWorkerPort
 from business.research.rag.adapters.llm_plan_worker import LLMResearchRAGPlanCandidateWorker
 from business.research.rag.adapters.plan_worker import ResearchRAGPlanWorker
+from framework.harness.rag.fake import fake_rag_session_spec
 from framework.harness.workers.result import HarnessWorkerStatus
 
 
@@ -73,3 +74,32 @@ def test_llm_research_rag_plan_worker_requires_candidate_object() -> None:
 
     assert result.status == HarnessWorkerStatus.FAILED
     assert "candidate object" in str(result.error)
+
+
+def test_llm_research_rag_plan_worker_forwards_execution_identity_to_llm() -> None:
+    identities = []
+
+    def llm(prompt: str, *, execution_identity=None) -> str:
+        identities.append(execution_identity)
+        return '{"candidate":{"candidate_id":"plan-1","queries":[]}}'
+
+    identity = (
+        fake_rag_session_spec()
+        .graph_identity.with_physical_activity(
+            node_id="build_evidence_context",
+            node_instance_id="build-evidence-context:1",
+            activity_id="activity-1",
+            activity_attempt=1,
+        )
+        .to_graph_execution_identity()
+    )
+    worker = LLMResearchRAGPlanCandidateWorker(llm)
+
+    output = worker.generate_candidate(
+        task="rag_plan_candidate",
+        payload={"round_index": 1},
+        execution_identity=identity,
+    )
+
+    assert output["candidate"]["candidate_id"] == "plan-1"
+    assert identities == [identity]

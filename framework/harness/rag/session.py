@@ -14,14 +14,11 @@ from framework.harness.rag.gates import RAGGateSuite, RAGGateResult, failed_gate
 from framework.harness.rag.models import (
     EvidenceCandidate,
     GroundedAnswerCandidate,
-    RAGBudget,
     RAGBudgetSnapshot,
     RAGContextPack,
-    RAGSessionRequest,
     RAGSessionSpec,
     RAGSessionStatus,
     RAGTranscript,
-    RetrievalGoal,
     RetrievalOperation,
     RetrievalPlanCandidate,
     RetrievalStepResult,
@@ -40,7 +37,7 @@ from framework.shared.json import to_jsonable
 
 @runtime_checkable
 class RAGSessionController(Protocol):
-    def build_context_pack(self, request: RAGSessionRequest) -> RAGContextPack:
+    def run(self, spec: RAGSessionSpec) -> "RAGSessionResult":
         ...
 
 
@@ -114,10 +111,6 @@ class BoundedRAGSessionController(RAGSessionController):
         self.answer_gate = answer_gate or RAGAnswerGate()
         self.gates = gates or RAGGateSuite()
         self.telemetry = telemetry or RAGTelemetry()
-
-    def build_context_pack(self, request: RAGSessionRequest) -> RAGContextPack:
-        spec = _spec_from_legacy_request(request)
-        return self.run(spec).context_pack or _empty_context_pack(spec)
 
     def run(self, spec: RAGSessionSpec) -> RAGSessionResult:
         policy = RAGExecutionPolicy.from_session_spec(spec)
@@ -326,8 +319,23 @@ class BoundedRAGSessionController(RAGSessionController):
             return None, decision, RAGSessionStatus.SUCCEEDED, pack
         current_pack = pack
         max_attempts = policy.max_generation_attempts
+        execution_identity = (
+            spec.graph_identity.to_graph_execution_identity()
+            if spec.graph_identity.has_physical_activity
+            else None
+        )
         for attempt_index in range(max_attempts):
-            candidate = self.answer_worker.generate_answer(question=spec.goal.question, pack=current_pack)
+            if execution_identity is None:
+                candidate = self.answer_worker.generate_answer(
+                    question=spec.goal.question,
+                    pack=current_pack,
+                )
+            else:
+                candidate = self.answer_worker.generate_answer(
+                    question=spec.goal.question,
+                    pack=current_pack,
+                    execution_identity=execution_identity,
+                )
             self._event(
                 state,
                 "rag_answer_candidate_created",
@@ -602,6 +610,7 @@ class BoundedRAGSessionController(RAGSessionController):
                     result = RetrievalStepResult(
                         step_id=step.step_id,
                         operation=step.operation,
+                        graph_identity=state.spec.graph_identity,
                         errors=(f"operation {step.operation.value} is verified but not directly executed",),
                     )
                 budget_result = self.gates.budget.evaluate(state.budget_snapshot, policy)
@@ -652,6 +661,7 @@ class BoundedRAGSessionController(RAGSessionController):
         return RetrievalStepResult(
             step_id=step.step_id,
             operation=step.operation,
+            graph_identity=state.spec.graph_identity,
             items=candidates,
             source_refs=tuple(ref for item in candidates for ref in (item.source_ref, *item.span_refs)),
             artifact_refs=artifact_refs,
@@ -671,6 +681,7 @@ class BoundedRAGSessionController(RAGSessionController):
             return RetrievalStepResult(
                 step_id=step.step_id,
                 operation=step.operation,
+                graph_identity=state.spec.graph_identity,
                 source_refs=step.source_refs,
                 artifact_refs=tuple(result.artifacts),
                 errors=errors,
@@ -679,6 +690,7 @@ class BoundedRAGSessionController(RAGSessionController):
         return RetrievalStepResult(
             step_id=step.step_id,
             operation=step.operation,
+            graph_identity=state.spec.graph_identity,
             source_refs=step.source_refs,
             metadata={"read_mode": "source_refs_only"},
         )
@@ -688,6 +700,7 @@ class BoundedRAGSessionController(RAGSessionController):
             return RetrievalStepResult(
                 step_id=step.step_id,
                 operation=step.operation,
+                graph_identity=state.spec.graph_identity,
                 errors=("memory port is not configured",),
             )
         hits = self.memory.recall(
@@ -709,6 +722,7 @@ class BoundedRAGSessionController(RAGSessionController):
         return RetrievalStepResult(
             step_id=step.step_id,
             operation=step.operation,
+            graph_identity=state.spec.graph_identity,
             items=tuple(accepted_hits),
             memory_refs=tuple(memory_refs),
             metadata={"namespace": step.memory_namespace, "returned": len(hits), "accepted": len(accepted_hits)},
@@ -754,37 +768,6 @@ class BoundedRAGSessionController(RAGSessionController):
         state.events.append({"event_type": event_type, "payload": json_payload})
         if state.telemetry is not None:
             state.telemetry.add_event(event_type, json_payload)
-
-
-def _spec_from_legacy_request(request: RAGSessionRequest) -> RAGSessionSpec:
-    budget = RAGBudget.safe_default()
-    budget = RAGBudget(
-        max_rounds=request.max_rounds,
-        max_replans=max(request.max_rounds - 1, 0),
-        max_queries=budget.max_queries,
-        max_source_reads=budget.max_source_reads,
-        max_memory_hits=budget.max_memory_hits,
-        max_context_items=budget.max_context_items,
-        max_context_tokens=budget.max_context_tokens,
-        max_worker_calls=budget.max_worker_calls,
-    )
-    return RAGSessionSpec(
-        session_id=str(request.metadata.get("session_id", "legacy-rag-session")),
-        run_id=str(request.metadata.get("run_id", "legacy-run")),
-        workflow_id=str(request.metadata.get("workflow_id", "legacy-workflow")),
-        step_id=str(request.metadata.get("step_id", "legacy-step")),
-        goal=RetrievalGoal(
-            goal_id=str(request.metadata.get("goal_id", "legacy-goal")),
-            question=request.query,
-            required_evidence_types=tuple(request.metadata.get("required_evidence_types", ("research_evidence",))),
-            known_context_refs=request.context_refs,
-        ),
-        allowed_corpora=tuple(request.metadata.get("allowed_corpora", ("research-corpus",))),
-        allowed_memory_namespaces=tuple(request.metadata.get("allowed_memory_namespaces", ("research.public",))),
-        allowed_tools=tuple(request.metadata.get("allowed_tools", ("retrieval.read_source",))),
-        budget=budget,
-        metadata={"legacy_request": request.to_dict()},
-    )
 
 
 def _add_snapshots(current: RAGBudgetSnapshot, projected: RAGBudgetSnapshot) -> RAGBudgetSnapshot:

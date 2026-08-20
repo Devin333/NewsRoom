@@ -10,7 +10,7 @@ from framework.memory import MemoryKind, MemoryQuery, MemoryScope, MemoryRuntime
 DEFAULT_RAG_MEMORY_KINDS: tuple[MemoryKind, ...] = (MemoryKind.EPISODIC,)
 DEFAULT_RAG_MEMORY_SCOPES: tuple[MemoryScope, ...] = (
     MemoryScope.SESSION,
-    MemoryScope.WORKFLOW,
+    MemoryScope.GRAPH,
     MemoryScope.GLOBAL,
 )
 

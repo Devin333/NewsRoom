@@ -14,6 +14,7 @@ from framework.rag.generation import (
     GeneratedRAGAnswer,
     build_numbered_context_prompt,
 )
+from framework.shared.graph_identity import GraphExecutionIdentity
 
 
 @dataclass
@@ -191,7 +192,7 @@ class AnswerGenerator:
 
     def __init__(
         self,
-        llm_call: Callable[[str], Awaitable[str]],
+        llm_call: Callable[..., Awaitable[str]],
         *,
         max_context_chunks: int = 8,
         max_chars_per_chunk: int = 1000,
@@ -206,6 +207,7 @@ class AnswerGenerator:
         retrieval: RetrievalResult,
         *,
         required_context_ids: list[str] | tuple[str, ...] = (),
+        execution_identity: GraphExecutionIdentity | None = None,
     ) -> GeneratedAnswer:
         import logging
         import time
@@ -222,7 +224,15 @@ class AnswerGenerator:
         prompt = self._build_prompt(question, contexts)
         repair_reasons: list[str] = []
         try:
-            answer = (await self._llm(prompt)).strip()
+            if execution_identity is None:
+                answer = (await self._llm(prompt)).strip()
+            else:
+                answer = (
+                    await self._llm(
+                        prompt,
+                        execution_identity=execution_identity,
+                    )
+                ).strip()
         except Exception as exc:
             logging.getLogger(__name__).warning("generation failed, using empty answer: %s", exc)
             answer = ""

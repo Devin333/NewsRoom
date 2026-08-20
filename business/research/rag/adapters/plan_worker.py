@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from framework.harness.workers.result import HarnessWorkerResult, HarnessWorkerStatus
+from framework.shared.graph_identity import GraphExecutionIdentity
 
 from business.research.ports.llm_worker import ResearchCandidateWorkerPort
 
@@ -13,12 +14,24 @@ class ResearchRAGPlanWorker:
     def __init__(self, worker: ResearchCandidateWorkerPort) -> None:
         self._worker = worker
 
-    def generate(self, request: dict[str, Any]) -> HarnessWorkerResult:
+    def generate(
+        self,
+        request: dict[str, Any],
+        *,
+        execution_identity: GraphExecutionIdentity | None = None,
+    ) -> HarnessWorkerResult:
         try:
-            output = self._worker.generate_candidate(
-                task="rag_plan_candidate",
-                payload=request,
-            )
+            if execution_identity is None:
+                output = self._worker.generate_candidate(
+                    task="rag_plan_candidate",
+                    payload=request,
+                )
+            else:
+                output = self._worker.generate_candidate(
+                    task="rag_plan_candidate",
+                    payload=request,
+                    execution_identity=execution_identity,
+                )
         except Exception as exc:  # pragma: no cover - defensive adapter boundary
             return HarnessWorkerResult(
                 status=HarnessWorkerStatus.FAILED,

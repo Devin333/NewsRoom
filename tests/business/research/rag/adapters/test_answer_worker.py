@@ -3,6 +3,7 @@ from __future__ import annotations
 from business.research.document.models import PaperChunk
 from business.research.rag.adapters.answer_worker import PaperAnswerWorker
 from business.research.rag.retrieval.paper_answer_generator import AnswerGenerator
+from framework.harness.rag.fake import fake_rag_session_spec
 from framework.harness.rag.models import EvidenceCandidate, RAGContextPack
 
 
@@ -38,6 +39,40 @@ def test_paper_answer_worker_maps_generated_chunk_ids_to_evidence_ids() -> None:
     assert candidate.metadata["chunk_to_evidence_id"] == {"chunk-method": "ev-method"}
     assert candidate.metadata["evidence_id_to_span_refs"] == {"ev-method": ["chunk-method"]}
     assert candidate.metadata["claims_degraded"] is True
+
+
+def test_paper_answer_worker_forwards_physical_execution_identity_to_llm() -> None:
+    identities = []
+
+    async def fake_llm(prompt: str, *, execution_identity=None) -> str:
+        identities.append(execution_identity)
+        return "The paper uses a retrieval method supported by context [1]."
+
+    worker = PaperAnswerWorker(AnswerGenerator(fake_llm, max_context_chunks=1))
+    pack = RAGContextPack(
+        pack_id="pack-1",
+        query="What method does the paper use?",
+        accepted_evidence=(_evidence("ev-method", _chunk("chunk-method", "Method evidence.")),),
+    )
+    base_spec = fake_rag_session_spec()
+    identity = (
+        base_spec.graph_identity.with_physical_activity(
+            node_id=base_spec.graph_identity.stage_id,
+            node_instance_id="build-evidence-context:1",
+            activity_id="activity-1",
+            activity_attempt=1,
+        )
+        .to_graph_execution_identity()
+    )
+
+    candidate = worker.generate_answer(
+        question="What method does the paper use?",
+        pack=pack,
+        execution_identity=identity,
+    )
+
+    assert candidate.abstained is False
+    assert identities == [identity]
 
 
 def test_paper_answer_worker_can_rebuild_chunk_from_flat_evidence_metadata() -> None:

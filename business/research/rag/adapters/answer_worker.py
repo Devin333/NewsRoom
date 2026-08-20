@@ -12,6 +12,7 @@ from business.research.rag.retrieval.contracts import RetrievalResult
 from business.research.rag.retrieval.paper_answer_generator import AnswerGenerator, GeneratedAnswer
 from business.research.rag.retrieval.paper_policy import classify_query_intent
 from framework.harness.rag.models import AnswerClaim, GroundedAnswerCandidate, RAGContextPack
+from framework.shared.graph_identity import GraphExecutionIdentity
 
 
 @dataclass(frozen=True)
@@ -27,7 +28,13 @@ class PaperAnswerWorker:
     def __init__(self, generator: AnswerGenerator) -> None:
         self._generator = generator
 
-    def generate_answer(self, *, question: str, pack: RAGContextPack) -> GroundedAnswerCandidate:
+    def generate_answer(
+        self,
+        *,
+        question: str,
+        pack: RAGContextPack,
+        execution_identity: GraphExecutionIdentity | None = None,
+    ) -> GroundedAnswerCandidate:
         projected = _project_context_pack(pack, question=question)
         if projected is None:
             return _abstention(
@@ -36,7 +43,16 @@ class PaperAnswerWorker:
                 context_pack_id=pack.pack_id,
             )
 
-        generated = _run_async(self._generator.generate(question, projected.retrieval))
+        if execution_identity is None:
+            generated = _run_async(self._generator.generate(question, projected.retrieval))
+        else:
+            generated = _run_async(
+                self._generator.generate(
+                    question,
+                    projected.retrieval,
+                    execution_identity=execution_identity,
+                )
+            )
         cited_evidence_ids = _map_chunk_ids(generated.context_chunk_ids, projected.chunk_to_evidence_id)
         if not generated.answer.strip():
             return _abstention(

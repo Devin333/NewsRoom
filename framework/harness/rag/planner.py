@@ -10,6 +10,7 @@ from framework.harness.rag.models import (
     RAGSessionSpec,
 )
 from framework.harness.workers.result import HarnessWorkerResult, HarnessWorkerStatus
+from framework.shared.graph_identity import GraphExecutionIdentity
 
 
 @runtime_checkable
@@ -108,12 +109,17 @@ class WorkerRAGPlanner:
                 "quality_passed",
                 "write_memory",
                 "publish_artifact",
-                "halt_workflow",
+                "halt_graph",
                 "promote_skill",
             ],
         }
         self.requests.append(request)
-        result = self._call_worker(request)
+        execution_identity = (
+            spec.graph_identity.to_graph_execution_identity()
+            if spec.graph_identity.has_physical_activity
+            else None
+        )
+        result = self._call_worker(request, execution_identity=execution_identity)
         if result.status != HarnessWorkerStatus.SUCCEEDED:
             return self.fallback.plan(
                 spec,
@@ -135,13 +141,22 @@ class WorkerRAGPlanner:
             raise HarnessValidationError("RAG planner worker returned unsupported candidate payload")
         return RetrievalPlanCandidate.from_dict(candidate_payload)
 
-    def _call_worker(self, request: dict[str, Any]) -> HarnessWorkerResult:
+    def _call_worker(
+        self,
+        request: dict[str, Any],
+        *,
+        execution_identity: GraphExecutionIdentity | None,
+    ) -> HarnessWorkerResult:
         generate = getattr(self.worker, "generate", None)
         if callable(generate):
-            return generate(request)
+            if execution_identity is None:
+                return generate(request)
+            return generate(request, execution_identity=execution_identity)
         execute = getattr(self.worker, "execute", None)
         if callable(execute):
-            return execute(request)
+            if execution_identity is None:
+                return execute(request)
+            return execute(request, execution_identity=execution_identity)
         raise HarnessValidationError("RAG planner worker must expose generate or execute")
 
 

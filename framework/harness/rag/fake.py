@@ -2,14 +2,22 @@ from __future__ import annotations
 
 from typing import Any
 
+from framework.events.canonical import checksum_for
 from framework.harness.context.fake import FakeContextAssembler
+from framework.harness.context.models import (
+    CONTEXT_GRAPH_TASK_PLAN_STAGE_IDENTITY_SCHEMA_V2,
+    ContextGraphIdentity,
+)
+from framework.harness.graph.versioning import (
+    GRAPH_ONLY_NORMALIZED_HARNESS_GRAPH_SCHEMA,
+    HARNESS_CONDITION_POLICY_VERSION,
+    HARNESS_GRAPH_ONLY_COMPILER_VERSION,
+)
 from framework.harness.memory.fake import FakeMemoryPort
 from framework.harness.rag.context_pack_assembler import FakeRAGContextPackAssembler
 from framework.harness.rag.gates import RAGGateSuite
 from framework.harness.rag.models import (
     RAGBudget,
-    RAGContextPack,
-    RAGSessionRequest,
     RAGSessionSpec,
     RetrievalGoal,
     RetrievalOperation,
@@ -118,10 +126,6 @@ class FakeRAGSessionController(BoundedRAGSessionController):
     def run_fake_session(self, spec: RAGSessionSpec | None = None) -> RAGSessionResult:
         return self.run(spec or fake_rag_session_spec())
 
-    def build_context_pack(self, request: RAGSessionRequest) -> RAGContextPack:
-        return super().build_context_pack(request)
-
-
 def fake_rag_session_spec(
     *,
     session_id: str = "rag-session:sparse-mixture-reader",
@@ -130,9 +134,7 @@ def fake_rag_session_spec(
 ) -> RAGSessionSpec:
     return RAGSessionSpec(
         session_id=session_id,
-        run_id="run:research-runtime-fixture",
-        workflow_id="workflow:bounded-rag-fixture",
-        step_id="step:build-evidence-context",
+        graph_identity=_fake_rag_graph_identity(),
         goal=RetrievalGoal(
             goal_id="goal:verify-reader-method",
             question="How does the sparse mixture reader repair missing method sections?",
@@ -149,6 +151,36 @@ def fake_rag_session_spec(
         budget=budget or RAGBudget.safe_default(),
         context_policy={"max_output_tokens": 1024, "reserved_output_tokens": 256},
         metadata={"fixture": "bounded_agentic_rag"},
+    )
+
+
+def _fake_rag_graph_identity() -> ContextGraphIdentity:
+    projection = {
+        "schema_version": CONTEXT_GRAPH_TASK_PLAN_STAGE_IDENTITY_SCHEMA_V2,
+        "run_id": "run:research-runtime-fixture",
+        "graph_schema_version": GRAPH_ONLY_NORMALIZED_HARNESS_GRAPH_SCHEMA,
+        "compiler_version": HARNESS_GRAPH_ONLY_COMPILER_VERSION,
+        "condition_policy_version": HARNESS_CONDITION_POLICY_VERSION,
+        "graph_id": "research.bounded_rag.graph",
+        "graph_version": "1",
+        "graph_checksum": "sha256:" + "1" * 64,
+        "stage_id": "build_evidence_context",
+        "stage_binding_checksum": "sha256:" + "2" * 64,
+        "graph_ref": "research.bounded_rag.graph@1",
+    }
+    return ContextGraphIdentity(
+        run_id=projection["run_id"],
+        graph_id=projection["graph_id"],
+        graph_version=projection["graph_version"],
+        graph_ref=projection["graph_ref"],
+        graph_schema_version=projection["graph_schema_version"],
+        compiler_version=projection["compiler_version"],
+        condition_policy_version=projection["condition_policy_version"],
+        graph_checksum=projection["graph_checksum"],
+        stage_id=projection["stage_id"],
+        stage_binding_checksum=projection["stage_binding_checksum"],
+        stage_identity_schema=projection["schema_version"],
+        stage_identity_checksum=checksum_for(projection),
     )
 
 

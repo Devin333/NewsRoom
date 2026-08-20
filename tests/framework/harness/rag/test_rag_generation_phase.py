@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from dataclasses import replace
+
 from framework.harness import FakeMemoryPort, RAGBudget, RAGDecisionType, RAGSessionStatus, fake_rag_session_spec
 from framework.harness.rag.fake import FakeRAGPlanner, fake_reader_repair_memory, fake_research_evidence_packs
 from framework.harness.rag.models import AnswerClaim, GroundedAnswerCandidate, RAGContextPack
@@ -42,6 +44,25 @@ def test_generation_phase_returns_answered_when_answer_gate_passes() -> None:
     assert result.metrics.answer_present is True
     assert result.metrics.gate_failures_count == 0
     assert result.to_dict()["metrics"]["status"] == "answered"
+
+
+def test_generation_phase_forwards_physical_execution_identity() -> None:
+    worker = _AnswerWorker(_grounded_answer())
+    base_spec = _generation_spec()
+    spec = replace(
+        base_spec,
+        graph_identity=base_spec.graph_identity.with_physical_activity(
+            node_id=base_spec.graph_identity.stage_id,
+            node_instance_id="build-evidence-context:1",
+            activity_id="activity-1",
+            activity_attempt=2,
+        ),
+    )
+
+    result = _controller(worker).run(spec)
+
+    assert result.status == RAGSessionStatus.ANSWERED
+    assert worker.execution_identities == [spec.graph_identity.to_graph_execution_identity()]
 
 
 def test_generation_phase_abstains_when_answer_gate_fails() -> None:
@@ -248,9 +269,7 @@ def _generation_spec(
     spec = fake_rag_session_spec()
     return type(spec)(
         session_id=spec.session_id,
-        run_id=spec.run_id,
-        workflow_id=spec.workflow_id,
-        step_id=spec.step_id,
+        graph_identity=spec.graph_identity,
         goal=spec.goal,
         allowed_corpora=spec.allowed_corpora,
         allowed_memory_namespaces=spec.allowed_memory_namespaces,
@@ -306,9 +325,11 @@ class _AnswerWorker:
     def __init__(self, *candidates: GroundedAnswerCandidate) -> None:
         self.candidates = list(candidates)
         self.calls: list[tuple[str, str]] = []
+        self.execution_identities = []
 
-    def generate_answer(self, *, question: str, pack: RAGContextPack) -> GroundedAnswerCandidate:
+    def generate_answer(self, *, question: str, pack: RAGContextPack, execution_identity=None) -> GroundedAnswerCandidate:
         self.calls.append((question, pack.pack_id))
+        self.execution_identities.append(execution_identity)
         index = min(len(self.calls) - 1, len(self.candidates) - 1)
         return self.candidates[index]
 

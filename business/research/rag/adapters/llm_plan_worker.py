@@ -8,6 +8,7 @@ from threading import Thread
 from typing import Any
 
 from framework.shared.json import stable_json_dumps, to_jsonable
+from framework.shared.graph_identity import GraphExecutionIdentity
 
 
 class LLMResearchRAGPlanCandidateWorker:
@@ -16,10 +17,22 @@ class LLMResearchRAGPlanCandidateWorker:
     def __init__(self, llm_call: Callable[[str], Any]) -> None:
         self._llm_call = llm_call
 
-    def generate_candidate(self, *, task: str, payload: dict[str, Any]) -> dict[str, Any]:
+    def generate_candidate(
+        self,
+        *,
+        task: str,
+        payload: dict[str, Any],
+        execution_identity: GraphExecutionIdentity | None = None,
+    ) -> dict[str, Any]:
         if task != "rag_plan_candidate":
             raise ValueError(f"unsupported RAG planner task: {task}")
-        response = _run_maybe_async(self._llm_call(_planner_prompt(payload)))
+        prompt = _planner_prompt(payload)
+        if execution_identity is None:
+            response = _run_maybe_async(self._llm_call(prompt))
+        else:
+            response = _run_maybe_async(
+                self._llm_call(prompt, execution_identity=execution_identity)
+            )
         parsed = _extract_json_object(str(response or ""))
         candidate = parsed.get("candidate") or parsed.get("retrieval_plan_candidate")
         if not isinstance(candidate, dict):

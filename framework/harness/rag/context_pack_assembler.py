@@ -131,14 +131,11 @@ class RAGContextPackAssembler:
         return self.context_assembler.assemble(
             {
                 "envelope_id": f"context://rag/{spec.session_id}",
-                "run_id": spec.run_id,
-                "workflow_id": spec.workflow_id,
-                "step_id": spec.step_id,
+                "graph_identity": spec.graph_identity,
                 "phase": "VERIFY",
                 "worker_id": "rag-context-pack-assembler",
                 "worker_type": "context",
                 "budget": budget,
-                "workflow_ref": f"workflow://{spec.workflow_id}",
                 "worker_contract_ref": "worker://rag-context-pack",
                 "allowed_tools": spec.allowed_tools,
                 "allowed_memory_namespaces": spec.allowed_memory_namespaces,

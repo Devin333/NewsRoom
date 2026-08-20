@@ -4,6 +4,7 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING
 
 from framework.harness.context.assembler import ContextAssembler
+from framework.harness.context.models import ContextGraphIdentity
 from framework.harness.memory.ports import MemoryPort
 from framework.harness.rag.context_pack_assembler import RAGContextPackAssembler
 from framework.harness.rag.session import BoundedRAGSessionController, RAGSessionResult
@@ -34,7 +35,7 @@ class PaperRAGSession:
 
     Usage:
         session = PaperRAGSession(chunk_store, reranker=reranker)
-        result  = session.run(goal, run_id=..., workflow_id=..., step_id=..., session_id=...)
+        result  = session.run(goal, graph_identity=..., session_id=...)
         pack    = result.context_pack   # EvidenceCandidate list for the LLM
     """
 
@@ -82,17 +83,13 @@ class PaperRAGSession:
         self,
         goal: ResearchRetrievalGoal,
         *,
-        run_id: str,
-        workflow_id: str,
-        step_id: str,
+        graph_identity: ContextGraphIdentity,
         session_id: str,
         current_section_index: int = 0,
     ) -> RAGSessionResult:
         spec = self._policy_builder.build_session_spec(
             goal=goal,
-            run_id=run_id,
-            workflow_id=workflow_id,
-            step_id=step_id,
+            graph_identity=graph_identity,
             session_id=session_id,
             budget=self._budget,
             generation_policy=self._generation_policy,
