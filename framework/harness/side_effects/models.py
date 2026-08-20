@@ -11,12 +11,20 @@ from typing import Any
 from framework.events.canonical import checksum_for
 from framework.harness.control_plane.errors import HarnessValidationError
 from framework.shared.json import stable_json_dumps, to_jsonable
+from framework.shared.graph_identity import GraphExecutionIdentity, GraphRunIdentity
 from framework.shared.time import ensure_utc, format_datetime, parse_datetime, utc_now
 
 
 _IDENTIFIER_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/+-]*$")
 _VERSION_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._+-]*$")
 _AMBIGUOUS_VERSIONS = frozenset({"current", "default", "latest", "stable"})
+
+SIDE_EFFECT_INTENT_SCHEMA_VERSION = "newsroom.harness-side-effect-intent/v2"
+SIDE_EFFECT_DECISION_SCHEMA_VERSION = "newsroom.harness-side-effect-decision/v2"
+SIDE_EFFECT_OUTCOME_SCHEMA_VERSION = "newsroom.harness-side-effect-outcome/v3"
+
+
+HarnessSideEffectGraphIdentity = GraphRunIdentity | GraphExecutionIdentity
 
 
 class HarnessSideEffectOrigin(StrEnum):
@@ -98,11 +106,18 @@ class HarnessSideEffectIntent:
     effect_id: str
     kind: str
     run_id: str
+    graph_id: str
+    graph_version: str
+    graph_ref: str
+    graph_checksum: str
     origin: HarnessSideEffectOrigin | str
     atomic_group: str
     identity_scope_ref: str
     subject_scope_ref: str
     attempt: int = 1
+    node_id: str | None = None
+    node_instance_id: str | None = None
+    activity_id: str | None = None
     step_id: str | None = None
     terminal_action: str | None = None
     worker_result_ref: str | None = None
@@ -115,13 +130,19 @@ class HarnessSideEffectIntent:
     candidate_refs: tuple[str, ...] = ()
     idempotency_key: str | None = None
     retention_until: datetime | None = None
-    schema_version: str = "newsroom.harness-side-effect-intent/v1"
+    schema_version: str = SIDE_EFFECT_INTENT_SCHEMA_VERSION
     checksum: str | None = None
 
     def __post_init__(self) -> None:
         effect_id = _identifier(self.effect_id, "effect_id")
         kind = _identifier(self.kind, "kind")
         run_id = _required_text(self.run_id, "run_id")
+        graph_id = _identifier(self.graph_id, "graph_id")
+        graph_version = _version(self.graph_version)
+        graph_ref = _required_text(self.graph_ref, "graph_ref")
+        if graph_ref != f"{graph_id}@{graph_version}":
+            raise HarnessValidationError("graph_ref must match graph_id and graph_version")
+        graph_checksum = _checksum(self.graph_checksum, "graph_checksum")
         origin = _enum(HarnessSideEffectOrigin, self.origin, "origin")
         atomic_group = _identifier(self.atomic_group, "atomic_group")
         identity_scope_ref = _checksum(self.identity_scope_ref, "identity_scope_ref")
@@ -137,6 +158,9 @@ class HarnessSideEffectIntent:
         retention_until = _optional_datetime(self.retention_until, "retention_until")
 
         step_id = _optional_text(self.step_id, "step_id")
+        node_id = _optional_text(self.node_id, "node_id")
+        node_instance_id = _optional_text(self.node_instance_id, "node_instance_id")
+        activity_id = _optional_text(self.activity_id, "activity_id")
         terminal_action = _optional_text(self.terminal_action, "terminal_action")
         worker_result_ref = _optional_text(self.worker_result_ref, "worker_result_ref")
         source_intent_ref = _optional_checksum(
@@ -152,13 +176,15 @@ class HarnessSideEffectIntent:
         )
         if origin is HarnessSideEffectOrigin.WORKER:
             if (
-                step_id is None
+                node_id is None
+                or node_instance_id is None
+                or activity_id is None
                 or worker_result_ref is None
                 or candidate_checksum is None
             ):
                 raise _validation_error(
                     "invalid_worker_side_effect_identity",
-                    "worker side-effect intent requires step, worker-result, and candidate identities",
+                    "worker side-effect intent requires Graph node/activity, worker-result, and candidate identities",
                     effect_id=effect_id,
                 )
             if (
@@ -183,7 +209,10 @@ class HarnessSideEffectIntent:
                     effect_id=effect_id,
                 )
             if (
-                step_id is not None
+                node_id is not None
+                or node_instance_id is not None
+                or activity_id is not None
+                or step_id is not None
                 or worker_result_ref is not None
                 or candidate_checksum is not None
             ):
@@ -196,15 +225,28 @@ class HarnessSideEffectIntent:
         idempotency_key = self.idempotency_key or f"harness-effect:{effect_id}"
         idempotency_key = _required_text(idempotency_key, "idempotency_key")
         schema_version = _required_text(self.schema_version, "schema_version")
+        if schema_version != SIDE_EFFECT_INTENT_SCHEMA_VERSION:
+            raise _validation_error(
+                "unsupported_side_effect_intent_schema",
+                "active side-effect intent schema must use Graph v2",
+                schema_version=schema_version,
+            )
 
         object.__setattr__(self, "effect_id", effect_id)
         object.__setattr__(self, "kind", kind)
         object.__setattr__(self, "run_id", run_id)
+        object.__setattr__(self, "graph_id", graph_id)
+        object.__setattr__(self, "graph_version", graph_version)
+        object.__setattr__(self, "graph_ref", graph_ref)
+        object.__setattr__(self, "graph_checksum", graph_checksum)
         object.__setattr__(self, "origin", origin)
         object.__setattr__(self, "atomic_group", atomic_group)
         object.__setattr__(self, "identity_scope_ref", identity_scope_ref)
         object.__setattr__(self, "subject_scope_ref", subject_scope_ref)
         object.__setattr__(self, "attempt", attempt)
+        object.__setattr__(self, "node_id", node_id)
+        object.__setattr__(self, "node_instance_id", node_instance_id)
+        object.__setattr__(self, "activity_id", activity_id)
         object.__setattr__(self, "step_id", step_id)
         object.__setattr__(self, "terminal_action", terminal_action)
         object.__setattr__(self, "worker_result_ref", worker_result_ref)
@@ -235,11 +277,18 @@ class HarnessSideEffectIntent:
             effect_id=value.get("effect_id"),
             kind=value.get("kind"),
             run_id=value.get("run_id"),
+            graph_id=value.get("graph_id"),
+            graph_version=value.get("graph_version"),
+            graph_ref=value.get("graph_ref"),
+            graph_checksum=value.get("graph_checksum"),
             origin=value.get("origin"),
             atomic_group=value.get("atomic_group"),
             identity_scope_ref=value.get("identity_scope_ref"),
             subject_scope_ref=value.get("subject_scope_ref"),
             attempt=value.get("attempt", 1),
+            node_id=value.get("node_id"),
+            node_instance_id=value.get("node_instance_id"),
+            activity_id=value.get("activity_id"),
             step_id=value.get("step_id"),
             terminal_action=value.get("terminal_action"),
             worker_result_ref=value.get("worker_result_ref"),
@@ -253,7 +302,7 @@ class HarnessSideEffectIntent:
             idempotency_key=value.get("idempotency_key"),
             retention_until=parse_datetime(value.get("retention_until")),
             schema_version=value.get(
-                "schema_version", "newsroom.harness-side-effect-intent/v1"
+                "schema_version", SIDE_EFFECT_INTENT_SCHEMA_VERSION
             ),
             checksum=value.get("checksum"),
         )
@@ -265,7 +314,13 @@ class HarnessSideEffectIntent:
             "kind": self.kind,
             "origin": self.origin.value,
             "run_id": self.run_id,
-            "step_id": self.step_id,
+            "graph_id": self.graph_id,
+            "graph_version": self.graph_version,
+            "graph_ref": self.graph_ref,
+            "graph_checksum": self.graph_checksum,
+            "node_id": self.node_id,
+            "node_instance_id": self.node_instance_id,
+            "activity_id": self.activity_id,
             "terminal_action": self.terminal_action,
             "attempt": self.attempt,
             "worker_result_ref": self.worker_result_ref,
@@ -284,7 +339,7 @@ class HarnessSideEffectIntent:
         }
 
     def to_dict(self) -> dict[str, Any]:
-        return {**self._checksum_payload(), "checksum": self.checksum}
+        return {**self._checksum_payload(), "step_id": self.step_id, "checksum": self.checksum}
 
 
 @dataclass(frozen=True, slots=True)
@@ -295,6 +350,10 @@ class HarnessSideEffectDecision:
     kind: str
     origin: HarnessSideEffectOrigin | str
     run_id: str
+    graph_id: str
+    graph_version: str
+    graph_ref: str
+    graph_checksum: str
     handler: HarnessSideEffectHandlerReference | str | Mapping[str, Any]
     identity_scope_ref: str
     subject_scope_ref: str
@@ -306,6 +365,9 @@ class HarnessSideEffectDecision:
     status: HarnessSideEffectDecisionStatus | str = (
         HarnessSideEffectDecisionStatus.AUTHORIZED
     )
+    node_id: str | None = None
+    node_instance_id: str | None = None
+    activity_id: str | None = None
     step_id: str | None = None
     terminal_action: str | None = None
     attempt: int = 1
@@ -320,6 +382,7 @@ class HarnessSideEffectDecision:
     effect_attempt_limit: int = 1
     reason_code: str = "authorized"
     decision_version: str = "1"
+    schema_version: str = SIDE_EFFECT_DECISION_SCHEMA_VERSION
     decided_at: datetime = field(default_factory=utc_now)
     checksum: str | None = None
 
@@ -340,6 +403,16 @@ class HarnessSideEffectDecision:
             object.__setattr__(
                 self, field_name, _required_text(getattr(self, field_name), field_name)
             )
+        graph_id = _identifier(self.graph_id, "graph_id")
+        graph_version = _version(self.graph_version)
+        graph_ref = _required_text(self.graph_ref, "graph_ref")
+        if graph_ref != f"{graph_id}@{graph_version}":
+            raise HarnessValidationError("graph_ref must match graph_id and graph_version")
+        graph_checksum = _checksum(self.graph_checksum, "graph_checksum")
+        object.__setattr__(self, "graph_id", graph_id)
+        object.__setattr__(self, "graph_version", graph_version)
+        object.__setattr__(self, "graph_ref", graph_ref)
+        object.__setattr__(self, "graph_checksum", graph_checksum)
         object.__setattr__(self, "intent_ref", _checksum(self.intent_ref, "intent_ref"))
         if (
             isinstance(self.command_ordinal, bool)
@@ -388,6 +461,9 @@ class HarnessSideEffectDecision:
             raise HarnessValidationError(
                 "effect_attempt must not exceed effect_attempt_limit"
             )
+        object.__setattr__(self, "node_id", _optional_text(self.node_id, "node_id"))
+        object.__setattr__(self, "node_instance_id", _optional_text(self.node_instance_id, "node_instance_id"))
+        object.__setattr__(self, "activity_id", _optional_text(self.activity_id, "activity_id"))
         object.__setattr__(self, "step_id", _optional_text(self.step_id, "step_id"))
         object.__setattr__(
             self,
@@ -422,7 +498,9 @@ class HarnessSideEffectDecision:
             )
         if self.origin is HarnessSideEffectOrigin.WORKER:
             if (
-                self.step_id is None
+                self.node_id is None
+                or self.node_instance_id is None
+                or self.activity_id is None
                 or self.worker_result_ref is None
                 or self.terminal_action is not None
             ):
@@ -432,6 +510,9 @@ class HarnessSideEffectDecision:
         elif (
             self.terminal_action is None
             or self.terminal_state_ref is None
+            or self.node_id is not None
+            or self.node_instance_id is not None
+            or self.activity_id is not None
             or self.step_id is not None
         ):
             raise HarnessValidationError(
@@ -444,6 +525,14 @@ class HarnessSideEffectDecision:
             raise HarnessValidationError(
                 "authorized side-effect decision requires approval policy evidence"
             )
+        schema_version = _required_text(self.schema_version, "schema_version")
+        if schema_version != SIDE_EFFECT_DECISION_SCHEMA_VERSION:
+            raise _validation_error(
+                "unsupported_side_effect_decision_schema",
+                "active side-effect decision schema must use Graph v2",
+                schema_version=schema_version,
+            )
+        object.__setattr__(self, "schema_version", schema_version)
         decided_at = _optional_datetime(self.decided_at, "decided_at")
         assert decided_at is not None
         object.__setattr__(self, "decided_at", decided_at)
@@ -463,6 +552,10 @@ class HarnessSideEffectDecision:
             kind=value.get("kind"),
             origin=value.get("origin"),
             run_id=value.get("run_id"),
+            graph_id=value.get("graph_id"),
+            graph_version=value.get("graph_version"),
+            graph_ref=value.get("graph_ref"),
+            graph_checksum=value.get("graph_checksum"),
             handler=value.get("handler"),
             identity_scope_ref=value.get("identity_scope_ref"),
             subject_scope_ref=value.get("subject_scope_ref"),
@@ -472,6 +565,9 @@ class HarnessSideEffectDecision:
             causation_id=value.get("causation_id"),
             disposition=value.get("disposition"),
             status=value.get("status", HarnessSideEffectDecisionStatus.AUTHORIZED),
+            node_id=value.get("node_id"),
+            node_instance_id=value.get("node_instance_id"),
+            activity_id=value.get("activity_id"),
             step_id=value.get("step_id"),
             terminal_action=value.get("terminal_action"),
             attempt=value.get("attempt", 1),
@@ -486,6 +582,7 @@ class HarnessSideEffectDecision:
             effect_attempt_limit=value.get("effect_attempt_limit", 1),
             reason_code=value.get("reason_code", "authorized"),
             decision_version=value.get("decision_version", "1"),
+            schema_version=value.get("schema_version", SIDE_EFFECT_DECISION_SCHEMA_VERSION),
             decided_at=parse_datetime(value.get("decided_at")) or utc_now(),
             checksum=value.get("checksum"),
         )
@@ -498,7 +595,13 @@ class HarnessSideEffectDecision:
             "kind": self.kind,
             "origin": self.origin.value,
             "run_id": self.run_id,
-            "step_id": self.step_id,
+            "graph_id": self.graph_id,
+            "graph_version": self.graph_version,
+            "graph_ref": self.graph_ref,
+            "graph_checksum": self.graph_checksum,
+            "node_id": self.node_id,
+            "node_instance_id": self.node_instance_id,
+            "activity_id": self.activity_id,
             "terminal_action": self.terminal_action,
             "attempt": self.attempt,
             "handler": self.handler.to_dict(),
@@ -521,11 +624,12 @@ class HarnessSideEffectDecision:
             "status": self.status.value,
             "reason_code": self.reason_code,
             "decision_version": self.decision_version,
+            "schema_version": self.schema_version,
             "decided_at": format_datetime(self.decided_at),
         }
 
     def to_dict(self) -> dict[str, Any]:
-        return {**self._checksum_payload(), "checksum": self.checksum}
+        return {**self._checksum_payload(), "step_id": self.step_id, "checksum": self.checksum}
 
 
 HarnessSideEffectAuthorization = HarnessSideEffectDecision
@@ -537,6 +641,13 @@ class HarnessSideEffectAttemptLease:
     lease_id: str
     owner_id: str
     effect_id: str
+    graph_id: str
+    graph_version: str
+    graph_ref: str
+    graph_checksum: str
+    node_id: str | None
+    node_instance_id: str | None
+    activity_id: str | None
     decision_ref: str
     idempotency_key: str
     identity_scope_ref: str
@@ -565,6 +676,18 @@ class HarnessSideEffectAttemptLease:
                 field_name,
                 _required_text(getattr(self, field_name), field_name),
             )
+        graph_id = _identifier(self.graph_id, "graph_id")
+        graph_version = _version(self.graph_version)
+        graph_ref = _required_text(self.graph_ref, "graph_ref")
+        if graph_ref != f"{graph_id}@{graph_version}":
+            raise HarnessValidationError("graph_ref must match graph_id and graph_version")
+        object.__setattr__(self, "graph_id", graph_id)
+        object.__setattr__(self, "graph_version", graph_version)
+        object.__setattr__(self, "graph_ref", graph_ref)
+        object.__setattr__(self, "graph_checksum", _checksum(self.graph_checksum, "graph_checksum"))
+        object.__setattr__(self, "node_id", _optional_text(self.node_id, "node_id"))
+        object.__setattr__(self, "node_instance_id", _optional_text(self.node_instance_id, "node_instance_id"))
+        object.__setattr__(self, "activity_id", _optional_text(self.activity_id, "activity_id"))
         for field_name in (
             "attempt_id",
             "decision_ref",
@@ -670,6 +793,13 @@ class HarnessSideEffectAttemptLease:
             lease_id=_required_text(lease_id, "lease_id"),
             owner_id=_required_text(owner_id, "owner_id"),
             effect_id=decision.effect_id,
+            graph_id=decision.graph_id,
+            graph_version=decision.graph_version,
+            graph_ref=decision.graph_ref,
+            graph_checksum=decision.graph_checksum,
+            node_id=decision.node_id,
+            node_instance_id=decision.node_instance_id,
+            activity_id=decision.activity_id,
             decision_ref=decision.checksum,
             idempotency_key=decision.idempotency_key,
             identity_scope_ref=decision.identity_scope_ref,
@@ -689,6 +819,13 @@ class HarnessSideEffectAttemptLease:
             lease_id=value.get("lease_id"),
             owner_id=value.get("owner_id"),
             effect_id=value.get("effect_id"),
+            graph_id=value.get("graph_id"),
+            graph_version=value.get("graph_version"),
+            graph_ref=value.get("graph_ref"),
+            graph_checksum=value.get("graph_checksum"),
+            node_id=value.get("node_id"),
+            node_instance_id=value.get("node_instance_id"),
+            activity_id=value.get("activity_id"),
             decision_ref=value.get("decision_ref"),
             idempotency_key=value.get("idempotency_key"),
             identity_scope_ref=value.get("identity_scope_ref"),
@@ -768,6 +905,13 @@ class HarnessSideEffectAttemptLease:
             "lease_id": self.lease_id,
             "owner_id": self.owner_id,
             "effect_id": self.effect_id,
+            "graph_id": self.graph_id,
+            "graph_version": self.graph_version,
+            "graph_ref": self.graph_ref,
+            "graph_checksum": self.graph_checksum,
+            "node_id": self.node_id,
+            "node_instance_id": self.node_instance_id,
+            "activity_id": self.activity_id,
             "decision_ref": self.decision_ref,
             "idempotency_key": self.idempotency_key,
             "identity_scope_ref": self.identity_scope_ref,
@@ -792,6 +936,11 @@ class HarnessSideEffectOutcome:
     effect_id: str
     decision_ref: str
     run_id: str
+    graph_id: str
+    graph_version: str
+    graph_ref: str
+    graph_checksum: str
+    origin: HarnessSideEffectOrigin | str
     kind: str
     handler: HarnessSideEffectHandlerReference | str | Mapping[str, Any]
     idempotency_key: str
@@ -802,6 +951,12 @@ class HarnessSideEffectOutcome:
     status: HarnessSideEffectOutcomeStatus | str = (
         HarnessSideEffectOutcomeStatus.COMMITTED
     )
+    attempt: int = 1
+    node_id: str | None = None
+    node_instance_id: str | None = None
+    activity_id: str | None = None
+    step_id: str | None = None
+    terminal_action: str | None = None
     candidate_refs: tuple[str, ...] = ()
     public_refs: tuple[str, ...] = ()
     result_ref: str | None = None
@@ -811,7 +966,7 @@ class HarnessSideEffectOutcome:
     metadata: Mapping[str, Any] = field(default_factory=dict)
     attempt_id: str | None = None
     fencing_generation: int | None = None
-    schema_version: str = "newsroom.harness-side-effect-outcome/v1"
+    schema_version: str = SIDE_EFFECT_OUTCOME_SCHEMA_VERSION
     checksum: str | None = None
 
     def __post_init__(self) -> None:
@@ -830,6 +985,17 @@ class HarnessSideEffectOutcome:
             object.__setattr__(
                 self, field_name, _required_text(getattr(self, field_name), field_name)
             )
+        graph_id = _identifier(self.graph_id, "graph_id")
+        graph_version = _version(self.graph_version)
+        graph_ref = _required_text(self.graph_ref, "graph_ref")
+        if graph_ref != f"{graph_id}@{graph_version}":
+            raise HarnessValidationError("graph_ref must match graph_id and graph_version")
+        graph_checksum = _checksum(self.graph_checksum, "graph_checksum")
+        object.__setattr__(self, "graph_id", graph_id)
+        object.__setattr__(self, "graph_version", graph_version)
+        object.__setattr__(self, "graph_ref", graph_ref)
+        object.__setattr__(self, "graph_checksum", graph_checksum)
+        object.__setattr__(self, "origin", _enum(HarnessSideEffectOrigin, self.origin, "origin"))
         object.__setattr__(
             self, "decision_ref", _checksum(self.decision_ref, "decision_ref")
         )
@@ -856,6 +1022,20 @@ class HarnessSideEffectOutcome:
             "status",
             _enum(HarnessSideEffectOutcomeStatus, self.status, "status"),
         )
+        object.__setattr__(self, "attempt", _positive_int(self.attempt, "attempt"))
+        object.__setattr__(self, "node_id", _optional_text(self.node_id, "node_id"))
+        object.__setattr__(self, "node_instance_id", _optional_text(self.node_instance_id, "node_instance_id"))
+        object.__setattr__(self, "activity_id", _optional_text(self.activity_id, "activity_id"))
+        object.__setattr__(self, "step_id", _optional_text(self.step_id, "step_id"))
+        object.__setattr__(self, "terminal_action", _optional_text(self.terminal_action, "terminal_action"))
+        if self.origin is HarnessSideEffectOrigin.WORKER:
+            if self.node_id is None or self.node_instance_id is None or self.activity_id is None:
+                raise HarnessValidationError("worker side-effect outcome requires Graph node/activity identity")
+            if self.terminal_action is not None:
+                raise HarnessValidationError("worker side-effect outcome cannot carry terminal identity")
+        else:
+            if self.terminal_action is None or self.node_id is not None or self.node_instance_id is not None or self.activity_id is not None or self.step_id is not None:
+                raise HarnessValidationError("controller-terminal side-effect outcome identity is incomplete")
         object.__setattr__(self, "candidate_refs", _candidate_refs(self.candidate_refs))
         object.__setattr__(
             self,
@@ -879,20 +1059,8 @@ class HarnessSideEffectOutcome:
                 fencing_generation,
                 "fencing_generation",
             )
-        if self.schema_version == "newsroom.harness-side-effect-outcome/v1":
-            if attempt_id is not None:
-                raise HarnessValidationError(
-                    "side-effect outcome v1 cannot carry attempt fencing identity"
-                )
-        elif self.schema_version == "newsroom.harness-side-effect-outcome/v2":
-            if attempt_id is None:
-                raise HarnessValidationError(
-                    "side-effect outcome v2 requires attempt fencing identity"
-                )
-        else:
-            raise HarnessValidationError(
-                "side-effect outcome schema version is unsupported"
-            )
+        if self.schema_version != SIDE_EFFECT_OUTCOME_SCHEMA_VERSION:
+            raise HarnessValidationError("active side-effect outcome schema must use Graph v2")
         object.__setattr__(self, "attempt_id", attempt_id)
         object.__setattr__(self, "fencing_generation", fencing_generation)
         committed_at = _optional_datetime(self.committed_at, "committed_at")
@@ -931,6 +1099,11 @@ class HarnessSideEffectOutcome:
             effect_id=value.get("effect_id"),
             decision_ref=value.get("decision_ref"),
             run_id=value.get("run_id"),
+            graph_id=value.get("graph_id"),
+            graph_version=value.get("graph_version"),
+            graph_ref=value.get("graph_ref"),
+            graph_checksum=value.get("graph_checksum"),
+            origin=value.get("origin"),
             kind=value.get("kind"),
             handler=value.get("handler"),
             idempotency_key=value.get("idempotency_key"),
@@ -939,6 +1112,12 @@ class HarnessSideEffectOutcome:
             atomic_group=value.get("atomic_group"),
             disposition=value.get("disposition"),
             status=value.get("status", HarnessSideEffectOutcomeStatus.COMMITTED),
+            attempt=value.get("attempt", 1),
+            node_id=value.get("node_id"),
+            node_instance_id=value.get("node_instance_id"),
+            activity_id=value.get("activity_id"),
+            step_id=value.get("step_id"),
+            terminal_action=value.get("terminal_action"),
             candidate_refs=tuple(value.get("candidate_refs", ())),
             public_refs=tuple(value.get("public_refs", ())),
             result_ref=value.get("result_ref"),
@@ -949,7 +1128,7 @@ class HarnessSideEffectOutcome:
             attempt_id=value.get("attempt_id"),
             fencing_generation=value.get("fencing_generation"),
             schema_version=value.get(
-                "schema_version", "newsroom.harness-side-effect-outcome/v1"
+                "schema_version", SIDE_EFFECT_OUTCOME_SCHEMA_VERSION
             ),
             checksum=value.get("checksum"),
         )
@@ -961,6 +1140,11 @@ class HarnessSideEffectOutcome:
             "effect_id": self.effect_id,
             "decision_ref": self.decision_ref,
             "run_id": self.run_id,
+            "graph_id": self.graph_id,
+            "graph_version": self.graph_version,
+            "graph_ref": self.graph_ref,
+            "graph_checksum": self.graph_checksum,
+            "origin": self.origin.value,
             "kind": self.kind,
             "handler": self.handler.to_dict(),
             "idempotency_key": self.idempotency_key,
@@ -969,6 +1153,11 @@ class HarnessSideEffectOutcome:
             "atomic_group": self.atomic_group,
             "disposition": self.disposition.value,
             "status": self.status.value,
+            "attempt": self.attempt,
+            "node_id": self.node_id,
+            "node_instance_id": self.node_instance_id,
+            "activity_id": self.activity_id,
+            "terminal_action": self.terminal_action,
             "candidate_refs": list(self.candidate_refs),
             "public_refs": list(self.public_refs),
             "result_ref": self.result_ref,
@@ -977,13 +1166,12 @@ class HarnessSideEffectOutcome:
             "retention_until": format_datetime(self.retention_until),
             "metadata": to_jsonable(self.metadata),
         }
-        if self.schema_version == "newsroom.harness-side-effect-outcome/v2":
-            payload["attempt_id"] = self.attempt_id
-            payload["fencing_generation"] = self.fencing_generation
+        payload["attempt_id"] = self.attempt_id
+        payload["fencing_generation"] = self.fencing_generation
         return payload
 
     def to_dict(self) -> dict[str, Any]:
-        return {**self._checksum_payload(), "checksum": self.checksum}
+        return {**self._checksum_payload(), "step_id": self.step_id, "checksum": self.checksum}
 
 
 @dataclass(frozen=True, slots=True)
@@ -1423,6 +1611,9 @@ def _validation_error(
 
 
 __all__ = [
+    "SIDE_EFFECT_DECISION_SCHEMA_VERSION",
+    "SIDE_EFFECT_INTENT_SCHEMA_VERSION",
+    "SIDE_EFFECT_OUTCOME_SCHEMA_VERSION",
     "HarnessSideEffectAuthorization",
     "HarnessSideEffectAttemptLease",
     "HarnessSideEffectAttemptStatus",
@@ -1431,6 +1622,7 @@ __all__ = [
     "HarnessSideEffectDisposition",
     "HarnessSideEffectHandlerRef",
     "HarnessSideEffectHandlerReference",
+    "HarnessSideEffectGraphIdentity",
     "HarnessSideEffectIntent",
     "HarnessSideEffectOrigin",
     "HarnessSideEffectOutcome",

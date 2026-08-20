@@ -42,6 +42,10 @@ _IDENTITY_SCOPE = checksum_for({"tenant_id": "tenant-a", "user_id": "user-a"})
 _SUBJECT_SCOPE = checksum_for({"paper_id": "paper-1"})
 _MEMORY_GATE_REF = "ReaderRepairMemoryPolicyGate@1"
 _COMMITTED_AT = datetime(2026, 8, 16, 8, 0, tzinfo=UTC)
+_GRAPH_ID = "research.reader-repair"
+_GRAPH_VERSION = "2"
+_GRAPH_REF = f"{_GRAPH_ID}@{_GRAPH_VERSION}"
+_GRAPH_CHECKSUM = checksum_for({"graph_id": _GRAPH_ID, "graph_version": _GRAPH_VERSION})
 
 
 class _AtomicMemoryCommitPort:
@@ -275,6 +279,13 @@ def _worker_result():
         strategy_candidate_bundle=_strategy_bundle(repair_case),
         identity_scope_ref=_IDENTITY_SCOPE,
         subject_scope_ref=_SUBJECT_SCOPE,
+        graph_id=_GRAPH_ID,
+        graph_version=_GRAPH_VERSION,
+        graph_ref=_GRAPH_REF,
+        graph_checksum=_GRAPH_CHECKSUM,
+        node_id="repair_memory_write",
+        node_instance_id="node:repair-run-1:repair-memory",
+        activity_id="activity:repair-run-1:repair-memory",
     )
 
 
@@ -299,6 +310,10 @@ def _worker_decision(
         "kind": intent.kind,
         "origin": intent.origin,
         "run_id": intent.run_id,
+        "graph_id": intent.graph_id,
+        "graph_version": intent.graph_version,
+        "graph_ref": intent.graph_ref,
+        "graph_checksum": intent.graph_checksum,
         "handler": intent.handler,
         "identity_scope_ref": intent.identity_scope_ref,
         "subject_scope_ref": intent.subject_scope_ref,
@@ -308,6 +323,9 @@ def _worker_decision(
         "causation_id": "command:reader-repair-worker",
         "disposition": HarnessSideEffectDisposition.PREPARED,
         "step_id": intent.step_id,
+        "node_id": intent.node_id,
+        "node_instance_id": intent.node_instance_id,
+        "activity_id": intent.activity_id,
         "attempt": intent.attempt,
         "worker_result_ref": intent.worker_result_ref,
         "gate_refs": (_MEMORY_GATE_REF,),
@@ -338,6 +356,10 @@ def _terminal_authority(
         effect_id="reader-repair-memory-terminal:repair-run-1",
         kind=READER_REPAIR_MEMORY_EFFECT_KIND,
         run_id="repair-run-1",
+        graph_id=_GRAPH_ID,
+        graph_version=_GRAPH_VERSION,
+        graph_ref=_GRAPH_REF,
+        graph_checksum=_GRAPH_CHECKSUM,
         origin=HarnessSideEffectOrigin.CONTROLLER_TERMINAL,
         atomic_group=atomic_group,
         identity_scope_ref=_IDENTITY_SCOPE,
@@ -359,6 +381,10 @@ def _terminal_authority(
         kind=intent.kind,
         origin=intent.origin,
         run_id=intent.run_id,
+        graph_id=intent.graph_id,
+        graph_version=intent.graph_version,
+        graph_ref=intent.graph_ref,
+        graph_checksum=intent.graph_checksum,
         handler=intent.handler,
         identity_scope_ref=intent.identity_scope_ref,
         subject_scope_ref=intent.subject_scope_ref,

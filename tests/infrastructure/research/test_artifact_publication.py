@@ -16,8 +16,11 @@ from framework.harness import (
     InMemoryHarnessSideEffectStore,
 )
 from framework.harness.artifacts import GraphTerminalManifestHistoryError
+from framework.harness.graph import HarnessGraphCompiler
+from framework.harness.graph.execution_versions import GraphExecutionVersionManifest
 from framework.shared.time import utc_now
 
+from business.research.graphs import build_paper_analysis_graph_definition
 from business.research.ports.artifact_publication import (
     RESEARCH_ARTIFACT_EFFECT_KIND,
     RESEARCH_ARTIFACT_HANDLER_REF,
@@ -440,7 +443,15 @@ def test_v2_reader_rejects_rehashed_manifest_tampering(
     manifest = port.read_terminal_manifest(intent.run_id)
     assert manifest.publication is not None
     publication = replace(manifest.publication, **{field: value})
-    tampered = replace(manifest, publication=publication, manifest_hash=None)
+    tampered = replace(
+        manifest,
+        terminal=replace(
+            manifest.terminal,
+            publication=publication,
+            manifest_hash=None,
+        ),
+        manifest_hash=None,
+    )
     port.manager.write_json(intent.run_id, "manifest.json", tampered.to_dict())
 
     with pytest.raises(Exception, match="(?:evidence|authority) mismatch"):
@@ -467,7 +478,7 @@ def test_v2_reader_rejects_member_byte_tamper_before_authorization(
         port.read_artifact(f"artifact://{intent.run_id}/research-analysis")
 
 
-def test_unpublished_staging_is_non_destructive_and_diagnostic_only(
+def test_unpublished_staging_is_non_destructive_and_not_live_readable(
     tmp_path: Path,
 ) -> None:
     accepted_calls: list[object] = []
@@ -475,9 +486,7 @@ def test_unpublished_staging_is_non_destructive_and_diagnostic_only(
     port = FilesystemHarnessArtifactPort(
         tmp_path,
         accepted_run_resolver=lambda claim: (accepted_calls.append(claim) or False),
-        diagnostic_run_resolver=lambda claim: (
-            diagnostic_calls.append(claim) or claim.disposition == "legacy_quarantined"
-        ),
+        diagnostic_run_resolver=lambda claim: diagnostic_calls.append(claim) or True,
     )
     with port.bind_run("legacy-run"):
         ref = port.write_artifact(
@@ -493,12 +502,14 @@ def test_unpublished_staging_is_non_destructive_and_diagnostic_only(
         port.read_artifact(ref.ref)
     assert error.value.disposition == "staging_only"
     assert accepted_calls == []
-    assert port.read_diagnostic_artifact(
-        ref.ref,
-        identity_scope_ref=_IDENTITY_SCOPE,
-        subject_scope_ref=_SUBJECT_SCOPE,
-    )["payload"] == {"status": "failed"}
-    assert diagnostic_calls[0].disposition == "legacy_quarantined"
+    with pytest.raises(ArtifactPublicationVisibilityError) as diagnostic:
+        port.read_diagnostic_artifact(
+            ref.ref,
+            identity_scope_ref=_IDENTITY_SCOPE,
+            subject_scope_ref=_SUBJECT_SCOPE,
+        )
+    assert diagnostic.value.disposition == "legacy_quarantined"
+    assert diagnostic_calls == []
     assert port.list_staged_artifacts("legacy-run") == staged_before
 
 
@@ -601,6 +612,7 @@ def _handler(
 
 
 def _worker_authority() -> tuple[HarnessSideEffectIntent, HarnessSideEffectDecision]:
+    execution_versions = _execution_versions()
     members = [
         ArtifactWriteRequest(
             "research-analysis",
@@ -617,11 +629,18 @@ def _worker_authority() -> tuple[HarnessSideEffectIntent, HarnessSideEffectDecis
         effect_id="research-artifact-effect:worker-a",
         kind=RESEARCH_ARTIFACT_EFFECT_KIND,
         run_id="run-a",
+        graph_id=execution_versions.graph_id,
+        graph_version=execution_versions.graph_version,
+        graph_ref=f"{execution_versions.graph_id}@{execution_versions.graph_version}",
+        graph_checksum=execution_versions.normalized_graph_checksum,
         origin=HarnessSideEffectOrigin.WORKER,
         atomic_group="research-artifacts:group-a",
         identity_scope_ref=_IDENTITY_SCOPE,
         subject_scope_ref=_SUBJECT_SCOPE,
         step_id="publish_artifacts",
+        node_id="publish_artifacts",
+        node_instance_id="node:run-a:publish_artifacts",
+        activity_id="activity:run-a:publish_artifacts",
         worker_result_ref="worker-result://run-a/publish_artifacts/1",
         candidate_checksum=checksum_for({"members": members}),
         handler=RESEARCH_ARTIFACT_HANDLER_REF,
@@ -639,6 +658,10 @@ def _worker_authority() -> tuple[HarnessSideEffectIntent, HarnessSideEffectDecis
         kind=intent.kind,
         origin=intent.origin,
         run_id=intent.run_id,
+        graph_id=intent.graph_id,
+        graph_version=intent.graph_version,
+        graph_ref=intent.graph_ref,
+        graph_checksum=intent.graph_checksum,
         handler=RESEARCH_ARTIFACT_HANDLER_REF,
         identity_scope_ref=intent.identity_scope_ref,
         subject_scope_ref=intent.subject_scope_ref,
@@ -648,6 +671,10 @@ def _worker_authority() -> tuple[HarnessSideEffectIntent, HarnessSideEffectDecis
         causation_id="command:worker-a",
         disposition=HarnessSideEffectDisposition.PREPARED,
         step_id="publish_artifacts",
+        node_id=intent.node_id,
+        node_instance_id=intent.node_instance_id,
+        activity_id=intent.activity_id,
+        attempt=intent.attempt,
         worker_result_ref=intent.worker_result_ref,
         gate_refs=("output_schema@1",),
         gate_result_refs=(checksum_for("gate-result"),),
@@ -662,10 +689,15 @@ def _worker_authority() -> tuple[HarnessSideEffectIntent, HarnessSideEffectDecis
 def _terminal_authority(
     prepared,
 ) -> tuple[HarnessSideEffectIntent, HarnessSideEffectDecision]:
+    execution_versions = _execution_versions()
     intent = HarnessSideEffectIntent(
         effect_id="harness-terminal-effect:terminal-a",
         kind=RESEARCH_ARTIFACT_EFFECT_KIND,
         run_id="run-a",
+        graph_id=execution_versions.graph_id,
+        graph_version=execution_versions.graph_version,
+        graph_ref=f"{execution_versions.graph_id}@{execution_versions.graph_version}",
+        graph_checksum=execution_versions.normalized_graph_checksum,
         origin=HarnessSideEffectOrigin.CONTROLLER_TERMINAL,
         atomic_group=prepared.atomic_group,
         identity_scope_ref=_IDENTITY_SCOPE,
@@ -679,13 +711,18 @@ def _terminal_authority(
             "history_cutoff": "event-before-terminal",
             "graph_terminal_manifest_context": {
                 "tenant_id": "research-scope:tenant-a",
-                "graph_id": "research.paper_analysis.graph",
-                "graph_version": "1.0.0",
-                "graph_schema_version": "1.0.0",
-                "compiler_version": "1.0.0",
-                "normalized_graph_checksum": checksum_for("normalized-graph"),
+                "graph_id": execution_versions.graph_id,
+                "graph_version": execution_versions.graph_version,
+                "graph_schema_version": (
+                    execution_versions.normalized_graph_schema_version
+                ),
+                "compiler_version": execution_versions.compiler_version,
+                "normalized_graph_checksum": (
+                    execution_versions.normalized_graph_checksum
+                ),
+                "execution_versions": execution_versions.to_dict(),
                 "started_at": "2026-08-14T00:00:00Z",
-                "terminal_node_ids": ["publish_artifacts"],
+                "terminal_node_ids": list(execution_versions.terminal_node_ids),
             },
         },
         candidate_refs=prepared.candidate_refs,
@@ -697,6 +734,10 @@ def _terminal_authority(
         kind=intent.kind,
         origin=intent.origin,
         run_id=intent.run_id,
+        graph_id=intent.graph_id,
+        graph_version=intent.graph_version,
+        graph_ref=intent.graph_ref,
+        graph_checksum=intent.graph_checksum,
         handler=RESEARCH_ARTIFACT_HANDLER_REF,
         identity_scope_ref=intent.identity_scope_ref,
         subject_scope_ref=intent.subject_scope_ref,
@@ -715,3 +756,10 @@ def _terminal_authority(
         decided_at=utc_now(),
     )
     return intent, decision
+
+
+def _execution_versions() -> GraphExecutionVersionManifest:
+    graph = HarnessGraphCompiler().compile(
+        build_paper_analysis_graph_definition()
+    ).graph
+    return GraphExecutionVersionManifest.from_normalized_graph(graph)

@@ -28,6 +28,10 @@ from infrastructure.storage.harness import SQLiteHarnessSideEffectStore
 IDENTITY_SCOPE_REF = checksum_for({"tenant_id": "tenant-1"})
 SUBJECT_SCOPE_REF = checksum_for({"paper_id": "paper-1"})
 COMMITTED_AT = datetime(2026, 7, 20, 4, 0, tzinfo=UTC)
+GRAPH_ID = "test.graph"
+GRAPH_VERSION = "1"
+GRAPH_REF = f"{GRAPH_ID}@{GRAPH_VERSION}"
+GRAPH_CHECKSUM = checksum_for({"graph_id": GRAPH_ID, "graph_version": GRAPH_VERSION})
 
 
 def _store(tmp_path: Path, **kwargs) -> SQLiteHarnessSideEffectStore:
@@ -57,6 +61,10 @@ def _intent(
         "effect_id": effect_id,
         "kind": "artifact",
         "run_id": "run-1",
+        "graph_id": GRAPH_ID,
+        "graph_version": GRAPH_VERSION,
+        "graph_ref": GRAPH_REF,
+        "graph_checksum": GRAPH_CHECKSUM,
         "origin": origin,
         "atomic_group": f"group-{effect_id}",
         "identity_scope_ref": IDENTITY_SCOPE_REF,
@@ -67,6 +75,9 @@ def _intent(
     if origin == "worker":
         common.update(
             step_id="publish_artifacts",
+            node_id="publish_artifacts",
+            node_instance_id=f"node:{effect_id}",
+            activity_id=f"activity:{effect_id}",
             worker_result_ref=checksum_for({"worker": effect_id}),
             candidate_checksum=checksum_for({"candidate": effect_id}),
         )
@@ -92,6 +103,10 @@ def _decision(
         kind=intent.kind,
         origin=intent.origin,
         run_id=intent.run_id,
+        graph_id=intent.graph_id,
+        graph_version=intent.graph_version,
+        graph_ref=intent.graph_ref,
+        graph_checksum=intent.graph_checksum,
         handler=intent.handler,
         identity_scope_ref=intent.identity_scope_ref,
         subject_scope_ref=intent.subject_scope_ref,
@@ -100,6 +115,10 @@ def _decision(
         command_ordinal=command_ordinal,
         causation_id=f"event-{intent.effect_id}",
         disposition="prepared" if intent.origin.value == "worker" else "accepted",
+        node_id=intent.node_id,
+        node_instance_id=intent.node_instance_id,
+        activity_id=intent.activity_id,
+        attempt=intent.attempt,
         step_id=intent.step_id,
         terminal_action=intent.terminal_action,
         worker_result_ref=intent.worker_result_ref,
@@ -122,12 +141,23 @@ def _outcome(
         effect_id=decision.effect_id,
         decision_ref=decision.checksum,
         run_id=decision.run_id,
+        graph_id=decision.graph_id,
+        graph_version=decision.graph_version,
+        graph_ref=decision.graph_ref,
+        graph_checksum=decision.graph_checksum,
+        origin=decision.origin,
         kind=decision.kind,
         handler=decision.handler,
         idempotency_key=decision.idempotency_key,
         identity_scope_ref=decision.identity_scope_ref,
         subject_scope_ref=decision.subject_scope_ref,
         atomic_group=decision.atomic_group,
+        node_id=decision.node_id,
+        node_instance_id=decision.node_instance_id,
+        activity_id=decision.activity_id,
+        step_id=decision.step_id,
+        terminal_action=decision.terminal_action,
+        attempt=decision.attempt,
         disposition=normalized,
         candidate_refs=(f"candidate://run-1/{decision.effect_id}",),
         public_refs=(f"artifact://run-1/{decision.effect_id}",)
@@ -486,7 +516,7 @@ def test_fenced_attempt_is_restart_durable_and_requires_confirmed_termination(
     committed = reconstructed.complete_attempt(second, _outcome(decision))
     assert committed.attempt_id == second.attempt_id
     assert committed.fencing_generation == second.fencing_generation
-    assert committed.schema_version == "newsroom.harness-side-effect-outcome/v2"
+    assert committed.schema_version == "newsroom.harness-side-effect-outcome/v3"
     persisted = _store(tmp_path, clock=clock)
     assert (
         persisted.get_outcome(

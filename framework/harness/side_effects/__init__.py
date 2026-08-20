@@ -12,12 +12,16 @@ from framework.harness.side_effects.fake import (
     InMemoryHarnessSideEffectStore,
 )
 from framework.harness.side_effects.models import (
+    SIDE_EFFECT_DECISION_SCHEMA_VERSION,
+    SIDE_EFFECT_INTENT_SCHEMA_VERSION,
+    SIDE_EFFECT_OUTCOME_SCHEMA_VERSION,
     HarnessSideEffectAuthorization,
     HarnessSideEffectAttemptLease,
     HarnessSideEffectAttemptStatus,
     HarnessSideEffectDecision,
     HarnessSideEffectDecisionStatus,
     HarnessSideEffectDisposition,
+    HarnessSideEffectGraphIdentity,
     HarnessSideEffectHandlerRef,
     HarnessSideEffectHandlerReference,
     HarnessSideEffectIntent,
@@ -44,6 +48,9 @@ from framework.harness.side_effects.registry import (
 
 __all__ = [
     "CountingHarnessSideEffectHandler",
+    "SIDE_EFFECT_DECISION_SCHEMA_VERSION",
+    "SIDE_EFFECT_INTENT_SCHEMA_VERSION",
+    "SIDE_EFFECT_OUTCOME_SCHEMA_VERSION",
     "HarnessFencedSideEffectHandler",
     "HarnessFencedSideEffectStorePort",
     "HarnessSideEffectApprovalEvidence",
@@ -56,6 +63,7 @@ __all__ = [
     "HarnessSideEffectDecision",
     "HarnessSideEffectDecisionStatus",
     "HarnessSideEffectDisposition",
+    "HarnessSideEffectGraphIdentity",
     "HarnessSideEffectHandler",
     "HarnessSideEffectHandlerBinding",
     "HarnessSideEffectHandlerContext",

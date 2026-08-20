@@ -844,9 +844,7 @@ class SQLiteHarnessSideEffectStore:
                 if decision is None:
                     raise _corruption("side-effect outcome has no decision")
                 _assert_stored_outcome_matches_decision(outcome, decision)
-                if outcome.schema_version == (
-                    "newsroom.harness-side-effect-outcome/v2"
-                ):
+                if outcome.attempt_id is not None:
                     matching_attempts = attempts_by_outcome_ref.get(
                         outcome.checksum,
                         [],
@@ -1365,6 +1363,13 @@ def _assert_attempt_matches_decision(
 ) -> None:
     if (
         attempt.effect_id != decision.effect_id
+        or attempt.graph_id != decision.graph_id
+        or attempt.graph_version != decision.graph_version
+        or attempt.graph_ref != decision.graph_ref
+        or attempt.graph_checksum != decision.graph_checksum
+        or attempt.node_id != decision.node_id
+        or attempt.node_instance_id != decision.node_instance_id
+        or attempt.activity_id != decision.activity_id
         or attempt.decision_ref != decision.checksum
         or attempt.idempotency_key != decision.idempotency_key
         or attempt.identity_scope_ref != decision.identity_scope_ref
@@ -1379,6 +1384,13 @@ def _bind_outcome_to_attempt(
 ) -> HarnessSideEffectOutcome:
     if (
         outcome.effect_id != attempt.effect_id
+        or outcome.graph_id != attempt.graph_id
+        or outcome.graph_version != attempt.graph_version
+        or outcome.graph_ref != attempt.graph_ref
+        or outcome.graph_checksum != attempt.graph_checksum
+        or outcome.node_id != attempt.node_id
+        or outcome.node_instance_id != attempt.node_instance_id
+        or outcome.activity_id != attempt.activity_id
         or outcome.decision_ref != attempt.decision_ref
         or outcome.idempotency_key != attempt.idempotency_key
         or outcome.identity_scope_ref != attempt.identity_scope_ref
@@ -1393,7 +1405,7 @@ def _bind_outcome_to_attempt(
             outcome,
             attempt_id=attempt.attempt_id,
             fencing_generation=attempt.fencing_generation,
-            schema_version="newsroom.harness-side-effect-outcome/v2",
+            schema_version="newsroom.harness-side-effect-outcome/v3",
             checksum=None,
         )
     if (
@@ -1436,6 +1448,16 @@ def _assert_outcome_matches_decision(
         outcome.decision_ref != decision.checksum
         or outcome.effect_id != decision.effect_id
         or outcome.run_id != decision.run_id
+        or outcome.graph_id != decision.graph_id
+        or outcome.graph_version != decision.graph_version
+        or outcome.graph_ref != decision.graph_ref
+        or outcome.graph_checksum != decision.graph_checksum
+        or outcome.origin != decision.origin
+        or outcome.node_id != decision.node_id
+        or outcome.node_instance_id != decision.node_instance_id
+        or outcome.activity_id != decision.activity_id
+        or outcome.attempt != decision.attempt
+        or outcome.terminal_action != decision.terminal_action
         or outcome.kind != decision.kind
         or outcome.handler != decision.handler
         or outcome.idempotency_key != decision.idempotency_key

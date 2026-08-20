@@ -608,6 +608,11 @@ class CountingHarnessSideEffectHandler:
             effect_id=intent.effect_id,
             decision_ref=authorization.checksum,
             run_id=intent.run_id,
+            graph_id=intent.graph_id,
+            graph_version=intent.graph_version,
+            graph_ref=intent.graph_ref,
+            graph_checksum=intent.graph_checksum,
+            origin=intent.origin,
             kind=intent.kind,
             handler=authorization.handler,
             idempotency_key=intent.idempotency_key,
@@ -615,6 +620,12 @@ class CountingHarnessSideEffectHandler:
             subject_scope_ref=intent.subject_scope_ref,
             atomic_group=intent.atomic_group,
             disposition=self.disposition,
+            node_id=intent.node_id,
+            node_instance_id=intent.node_instance_id,
+            activity_id=intent.activity_id,
+            step_id=intent.step_id,
+            terminal_action=intent.terminal_action,
+            attempt=intent.attempt,
             candidate_refs=intent.candidate_refs,
             public_refs=public_refs,
             result_ref=checksum_for(
@@ -659,6 +670,10 @@ def _assert_intent_matches_decision(
         decision.intent_ref != intent.checksum
         or decision.effect_id != intent.effect_id
         or decision.run_id != intent.run_id
+        or decision.graph_id != intent.graph_id
+        or decision.graph_version != intent.graph_version
+        or decision.graph_ref != intent.graph_ref
+        or decision.graph_checksum != intent.graph_checksum
         or decision.kind != intent.kind
         or decision.origin is not intent.origin
         or decision.identity_scope_ref != intent.identity_scope_ref
@@ -676,6 +691,16 @@ def _assert_outcome_matches_decision(
     if (
         outcome.effect_id != decision.effect_id
         or outcome.run_id != decision.run_id
+        or outcome.graph_id != decision.graph_id
+        or outcome.graph_version != decision.graph_version
+        or outcome.graph_ref != decision.graph_ref
+        or outcome.graph_checksum != decision.graph_checksum
+        or outcome.origin != decision.origin
+        or outcome.node_id != decision.node_id
+        or outcome.node_instance_id != decision.node_instance_id
+        or outcome.activity_id != decision.activity_id
+        or outcome.attempt != decision.attempt
+        or outcome.terminal_action != decision.terminal_action
         or outcome.kind != decision.kind
         or outcome.handler != decision.handler
         or outcome.idempotency_key != decision.idempotency_key
@@ -704,6 +729,13 @@ def _bind_outcome_to_attempt(
 ) -> HarnessSideEffectOutcome:
     if (
         outcome.effect_id != attempt.effect_id
+        or outcome.graph_id != attempt.graph_id
+        or outcome.graph_version != attempt.graph_version
+        or outcome.graph_ref != attempt.graph_ref
+        or outcome.graph_checksum != attempt.graph_checksum
+        or outcome.node_id != attempt.node_id
+        or outcome.node_instance_id != attempt.node_instance_id
+        or outcome.activity_id != attempt.activity_id
         or outcome.decision_ref != attempt.decision_ref
         or outcome.idempotency_key != attempt.idempotency_key
         or outcome.identity_scope_ref != attempt.identity_scope_ref
@@ -718,7 +750,7 @@ def _bind_outcome_to_attempt(
             outcome,
             attempt_id=attempt.attempt_id,
             fencing_generation=attempt.fencing_generation,
-            schema_version="newsroom.harness-side-effect-outcome/v2",
+            schema_version="newsroom.harness-side-effect-outcome/v3",
             checksum=None,
         )
     if (

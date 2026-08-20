@@ -87,6 +87,11 @@ class ReaderRepairMemorySideEffectHandler:
             effect_id=intent.effect_id,
             decision_ref=authorization.checksum,
             run_id=intent.run_id,
+            graph_id=intent.graph_id,
+            graph_version=intent.graph_version,
+            graph_ref=intent.graph_ref,
+            graph_checksum=intent.graph_checksum,
+            origin=intent.origin,
             kind=intent.kind,
             handler=authorization.handler,
             idempotency_key=intent.idempotency_key,
@@ -94,6 +99,12 @@ class ReaderRepairMemorySideEffectHandler:
             subject_scope_ref=intent.subject_scope_ref,
             atomic_group=intent.atomic_group,
             disposition=HarnessSideEffectDisposition.PREPARED,
+            node_id=intent.node_id,
+            node_instance_id=intent.node_instance_id,
+            activity_id=intent.activity_id,
+            step_id=intent.step_id,
+            terminal_action=intent.terminal_action,
+            attempt=intent.attempt,
             candidate_refs=intent.candidate_refs,
             result_ref=projection.candidate_checksum,
             reason_code="memory_candidate_prepared",
@@ -132,6 +143,11 @@ class ReaderRepairMemorySideEffectHandler:
             effect_id=intent.effect_id,
             decision_ref=authorization.checksum,
             run_id=intent.run_id,
+            graph_id=intent.graph_id,
+            graph_version=intent.graph_version,
+            graph_ref=intent.graph_ref,
+            graph_checksum=intent.graph_checksum,
+            origin=intent.origin,
             kind=intent.kind,
             handler=authorization.handler,
             idempotency_key=intent.idempotency_key,
@@ -139,6 +155,12 @@ class ReaderRepairMemorySideEffectHandler:
             subject_scope_ref=intent.subject_scope_ref,
             atomic_group=intent.atomic_group,
             disposition=HarnessSideEffectDisposition.ACCEPTED,
+            node_id=intent.node_id,
+            node_instance_id=intent.node_instance_id,
+            activity_id=intent.activity_id,
+            step_id=intent.step_id,
+            terminal_action=intent.terminal_action,
+            attempt=intent.attempt,
             candidate_refs=intent.candidate_refs,
             public_refs=receipt.public_refs,
             result_ref=receipt.checksum,
@@ -524,10 +546,11 @@ def _assert_worker_authority(
 ) -> None:
     if (
         intent.origin is not HarnessSideEffectOrigin.WORKER
-        or intent.step_id != READER_REPAIR_MEMORY_STEP_ID
         or authorization.disposition is not HarnessSideEffectDisposition.PREPARED
-        or authorization.step_id != READER_REPAIR_MEMORY_STEP_ID
         or authorization.worker_result_ref != intent.worker_result_ref
+        or authorization.node_id != intent.node_id
+        or authorization.node_instance_id != intent.node_instance_id
+        or authorization.activity_id != intent.activity_id
     ):
         raise _error(
             "reader_repair_memory_worker_authority_invalid",
@@ -563,6 +586,10 @@ def _assert_common_authority(
         or authorization.effect_id != intent.effect_id
         or authorization.intent_ref != intent.checksum
         or authorization.run_id != intent.run_id
+        or authorization.graph_id != intent.graph_id
+        or authorization.graph_version != intent.graph_version
+        or authorization.graph_ref != intent.graph_ref
+        or authorization.graph_checksum != intent.graph_checksum
         or authorization.kind != READER_REPAIR_MEMORY_EFFECT_KIND
         or intent.kind != READER_REPAIR_MEMORY_EFFECT_KIND
         or str(authorization.handler) != READER_REPAIR_MEMORY_HANDLER_REF

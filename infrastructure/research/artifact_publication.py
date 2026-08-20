@@ -23,6 +23,12 @@ from framework.agent.artifacts import (
 )
 from framework.agent.artifacts.models import ArtifactRef as StorageArtifactRef
 from framework.events.canonical import checksum_for
+from framework.events.application import (
+    GraphEventProjectionApplicationPort,
+    GraphEventProjectionApplicationRequest,
+    GraphEventProjectionApplicationStatus,
+)
+from framework.shared.graph_identity import GraphRunIdentity
 from framework.harness import (
     ArtifactWriteRequest,
     HarnessSideEffectDecision,
@@ -36,6 +42,7 @@ from framework.harness.control_plane.errors import HarnessValidationError
 from framework.harness.artifacts import (
     GraphTerminalArtifact,
     GraphTerminalManifest,
+    GraphTerminalManifestV2,
     GraphTerminalManifestContext,
     GraphTerminalPublicationEvidence,
 )
@@ -95,6 +102,7 @@ class ResearchArtifactBundleHandler:
         side_effect_store: HarnessSideEffectStorePort,
         terminal_payload_factory: TerminalArtifactPayloadFactory | None = None,
         candidate_payload_factory: CandidateArtifactPayloadFactory | None = None,
+        graph_event_projection: GraphEventProjectionApplicationPort | None = None,
         retention: timedelta = _DEFAULT_RETENTION,
         failure_injector: Callable[[int, str, str], None] | None = None,
     ) -> None:
@@ -106,6 +114,15 @@ class ResearchArtifactBundleHandler:
         self.side_effect_store = side_effect_store
         self.terminal_payload_factory = terminal_payload_factory
         self.candidate_payload_factory = candidate_payload_factory
+        if graph_event_projection is not None and not isinstance(
+            graph_event_projection,
+            GraphEventProjectionApplicationPort,
+        ):
+            raise TypeError(
+                "graph_event_projection must implement "
+                "GraphEventProjectionApplicationPort"
+            )
+        self.graph_event_projection = graph_event_projection
         self.retention = retention
         self.failure_injector = failure_injector
         self.prepare_calls = 0
@@ -183,6 +200,11 @@ class ResearchArtifactBundleHandler:
                 effect_id=intent.effect_id,
                 decision_ref=authorization.checksum,
                 run_id=intent.run_id,
+                graph_id=intent.graph_id,
+                graph_version=intent.graph_version,
+                graph_ref=intent.graph_ref,
+                graph_checksum=intent.graph_checksum,
+                origin=intent.origin,
                 kind=intent.kind,
                 handler=authorization.handler,
                 idempotency_key=intent.idempotency_key,
@@ -190,6 +212,12 @@ class ResearchArtifactBundleHandler:
                 subject_scope_ref=intent.subject_scope_ref,
                 atomic_group=intent.atomic_group,
                 disposition=HarnessSideEffectDisposition.PREPARED,
+                node_id=intent.node_id,
+                node_instance_id=intent.node_instance_id,
+                activity_id=intent.activity_id,
+                step_id=intent.step_id,
+                terminal_action=intent.terminal_action,
+                attempt=intent.attempt,
                 candidate_refs=candidate_refs,
                 result_ref=_bundle_checksum(records),
                 reason_code="prepared",
@@ -303,6 +331,11 @@ class ResearchArtifactBundleHandler:
             effect_id=intent.effect_id,
             decision_ref=authorization.checksum,
             run_id=intent.run_id,
+            graph_id=intent.graph_id,
+            graph_version=intent.graph_version,
+            graph_ref=intent.graph_ref,
+            graph_checksum=intent.graph_checksum,
+            origin=intent.origin,
             kind=intent.kind,
             handler=authorization.handler,
             idempotency_key=intent.idempotency_key,
@@ -310,6 +343,12 @@ class ResearchArtifactBundleHandler:
             subject_scope_ref=intent.subject_scope_ref,
             atomic_group=intent.atomic_group,
             disposition=HarnessSideEffectDisposition.ACCEPTED,
+            node_id=intent.node_id,
+            node_instance_id=intent.node_instance_id,
+            activity_id=intent.activity_id,
+            step_id=intent.step_id,
+            terminal_action=intent.terminal_action,
+            attempt=intent.attempt,
             candidate_refs=tuple(
                 member["candidate_ref"]
                 for member in all_members
@@ -419,7 +458,7 @@ class ResearchArtifactBundleHandler:
                 except Exception:
                     persisted_manifest = None
                 if (
-                    isinstance(persisted_manifest, GraphTerminalManifest)
+                    isinstance(persisted_manifest, GraphTerminalManifestV2)
                     and persisted_manifest.publication is not None
                     and persisted_manifest.publication.terminal_side_effect_outcome_ref
                     == outcome.checksum
@@ -749,7 +788,7 @@ class ResearchArtifactBundleHandler:
         members: list[dict[str, Any]],
         *,
         committed_at: datetime,
-    ) -> GraphTerminalManifest:
+    ) -> GraphTerminalManifestV2:
         context_value = intent.payload.get("graph_terminal_manifest_context")
         if not isinstance(context_value, Mapping):
             raise HarnessValidationError(
@@ -764,6 +803,7 @@ class ResearchArtifactBundleHandler:
                 code="research_graph_manifest_context_invalid",
             ) from exc
 
+        self._stage_graph_event_projection(intent, context)
         staged = self.artifact_port.list_staged_artifacts(intent.run_id)
         invalid_staged = tuple(
             artifact.artifact_key
@@ -843,7 +883,7 @@ class ResearchArtifactBundleHandler:
                 "terminal_side_effect_outcome": outcome.to_dict(),
             },
         )
-        return GraphTerminalManifest(
+        terminal = GraphTerminalManifest(
             tenant_id=context.tenant_id,
             run_id=intent.run_id,
             graph_id=context.graph_id,
@@ -863,6 +903,53 @@ class ResearchArtifactBundleHandler:
             gate_evidence_refs=gate_evidence_refs,
             artifacts=all_artifacts,
             publication=publication,
+        )
+        return GraphTerminalManifestV2(
+            terminal=terminal,
+            execution_versions=context.execution_versions,
+        )
+
+    def _stage_graph_event_projection(
+        self,
+        intent: HarnessSideEffectIntent,
+        context: GraphTerminalManifestContext,
+    ) -> None:
+        if self.graph_event_projection is None:
+            # Standalone artifact-port tests may exercise publication without
+            # a durable event store. Production composition always injects the
+            # Graph projection port and therefore takes the branch below.
+            return
+        identity = GraphRunIdentity(
+            run_id=intent.run_id,
+            graph_id=context.graph_id,
+            graph_version=context.graph_version,
+            graph_ref=f"{context.graph_id}@{context.graph_version}",
+            graph_checksum=context.normalized_graph_checksum,
+        )
+        request = GraphEventProjectionApplicationRequest(
+            graph_identity=identity,
+            target=self.artifact_port.manager.run_dir(intent.run_id)
+            / "events.jsonl",
+            tenant_id=context.tenant_id,
+        )
+        result = self.graph_event_projection.project_graph_history(request)
+        if (
+            result.status is not GraphEventProjectionApplicationStatus.PROJECTED
+            or result.projection is None
+        ):
+            code = (
+                result.diagnostic.code.value
+                if result.diagnostic is not None
+                else "graph_event_projection_not_projectable"
+            )
+            raise HarnessValidationError(
+                f"Research terminal Graph event projection failed: {code}",
+                code="research_graph_event_projection_not_projectable",
+            )
+        self.artifact_port.stage_graph_event_projection(
+            result.projection,
+            graph_identity=identity,
+            tenant_id=context.tenant_id,
         )
 
 

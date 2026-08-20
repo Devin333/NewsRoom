@@ -33,6 +33,13 @@ def build_reader_repair_memory_worker_result(
     identity_scope_ref: str,
     subject_scope_ref: str,
     attempt: int = 1,
+    graph_id: str | None = None,
+    graph_version: str | None = None,
+    graph_ref: str | None = None,
+    graph_checksum: str | None = None,
+    node_id: str | None = None,
+    node_instance_id: str | None = None,
+    activity_id: str | None = None,
 ) -> HarnessWorkerResult:
     """Build a candidate-only Function result and its worker-origin intent."""
 
@@ -46,6 +53,17 @@ def build_reader_repair_memory_worker_result(
         raise ValueError("repair case run_id does not match the worker run")
     if isinstance(attempt, bool) or not isinstance(attempt, int) or attempt < 1:
         raise ValueError("attempt must be a positive integer")
+    graph_fields = (
+        graph_id,
+        graph_version,
+        graph_ref,
+        graph_checksum,
+        node_id,
+        node_instance_id,
+        activity_id,
+    )
+    if any(value is None or not str(value).strip() for value in graph_fields):
+        raise ValueError("Reader Repair memory worker requires exact Graph activity identity")
 
     bundle = dict(strategy_candidate_bundle)
     candidate = MemoryWriteCandidate(
@@ -84,11 +102,18 @@ def build_reader_repair_memory_worker_result(
         effect_id=f"reader-repair-memory-effect:{effect_digest}",
         kind=READER_REPAIR_MEMORY_EFFECT_KIND,
         run_id=run_id,
+        graph_id=graph_id,
+        graph_version=graph_version,
+        graph_ref=graph_ref,
+        graph_checksum=graph_checksum,
         origin=HarnessSideEffectOrigin.WORKER,
         atomic_group=f"reader-repair-memory:{effect_digest}",
         identity_scope_ref=identity_scope_ref,
         subject_scope_ref=subject_scope_ref,
         attempt=attempt,
+        node_id=node_id,
+        node_instance_id=node_instance_id,
+        activity_id=activity_id,
         step_id=READER_REPAIR_MEMORY_STEP_ID,
         worker_result_ref=(
             f"worker-result-candidate://{run_id}/"

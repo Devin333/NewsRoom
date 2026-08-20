@@ -293,10 +293,21 @@ class FakeSkillEvolutionPort:
             "release_id": release.release_id,
         }
         effect_digest = checksum_for(effect_identity).removeprefix("sha256:")
+        graph_id = "fake-skill-evolution"
+        graph_version = "1"
+        graph_ref = f"{graph_id}@{graph_version}"
+        graph_checksum = checksum_for({"graph_id": graph_id, "graph_version": graph_version})
+        node_id = "skill_evolution.release"
+        node_instance_id = f"fake-skill-node:{effect_digest}"
+        activity_id = f"fake-skill-activity:{effect_digest}"
         intent = HarnessSideEffectIntent(
             effect_id=f"skill-release-effect:{effect_digest}",
             kind=SKILL_RELEASE_EFFECT_KIND,
             run_id="run://fake-skill-evolution",
+            graph_id=graph_id,
+            graph_version=graph_version,
+            graph_ref=graph_ref,
+            graph_checksum=graph_checksum,
             origin="worker",
             atomic_group=f"skill-release:{effect_digest}",
             identity_scope_ref=checksum_for({"scope": "fake-skill-evolution"}),
@@ -304,6 +315,9 @@ class FakeSkillEvolutionPort:
                 {"skill_name": candidate.base_version.skill_name}
             ),
             step_id="skill_evolution.release",
+            node_id=node_id,
+            node_instance_id=node_instance_id,
+            activity_id=activity_id,
             worker_result_ref=checksum_for(effect_identity),
             candidate_checksum=candidate_ref,
             handler=self.release_authority_resolver.handler,
@@ -323,6 +337,10 @@ class FakeSkillEvolutionPort:
             kind=intent.kind,
             origin=intent.origin,
             run_id=intent.run_id,
+            graph_id=intent.graph_id,
+            graph_version=intent.graph_version,
+            graph_ref=intent.graph_ref,
+            graph_checksum=intent.graph_checksum,
             handler=intent.handler,
             identity_scope_ref=intent.identity_scope_ref,
             subject_scope_ref=intent.subject_scope_ref,
@@ -331,6 +349,9 @@ class FakeSkillEvolutionPort:
             command_ordinal=1,
             causation_id="fake-skill-evolution:promotion-gate",
             disposition=HarnessSideEffectDisposition.ACCEPTED,
+            node_id=intent.node_id,
+            node_instance_id=intent.node_instance_id,
+            activity_id=intent.activity_id,
             step_id=intent.step_id,
             attempt=intent.attempt,
             worker_result_ref=intent.worker_result_ref,
