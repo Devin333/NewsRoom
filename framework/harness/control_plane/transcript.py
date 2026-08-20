@@ -7,15 +7,12 @@ from typing import Any
 
 from framework.events.canonical import StoredEvent, thaw_canonical_json
 from framework.events.errors import EventStoreCorruptionError
-from framework.harness.control_plane.activity import (
-    HARNESS_ACTIVITY_EXTENSION,
-    HarnessActivity,
-)
+from framework.harness.control_plane.graph_runtime import HarnessGraphActivity
 from framework.harness.control_plane.errors import HarnessValidationError
-from framework.harness.control_plane.transition import (
-    HARNESS_EVENT_SOURCE,
-    HARNESS_TRANSITION_EVENT_TYPE,
-    HarnessTransitionCommitted,
+from framework.harness.control_plane.event import HARNESS_EVENT_SOURCE
+from framework.harness.control_plane.event_log import (
+    _stored_graph_context,
+    _stored_harness_node_id,
 )
 from framework.shared.json import stable_json_dumps, to_jsonable
 from framework.shared.time import format_datetime, parse_datetime, utc_now
@@ -26,7 +23,7 @@ class HarnessTranscriptEntry:
     run_id: str
     phase: str
     entry_id: str | None = None
-    step_id: str | None = None
+    node_id: str | None = None
     decision: dict[str, Any] | None = None
     input_refs: tuple[str, ...] = ()
     output_refs: tuple[str, ...] = ()
@@ -54,7 +51,7 @@ class HarnessTranscriptEntry:
         if not str(self.phase).strip():
             raise HarnessValidationError("phase is required")
         metadata = dict(self.metadata)
-        entry_id = self.entry_id or _stable_entry_id(self.run_id, self.phase, self.step_id, metadata, self.timestamp)
+        entry_id = self.entry_id or _stable_entry_id(self.run_id, self.phase, self.node_id, metadata, self.timestamp)
         object.__setattr__(self, "entry_id", entry_id)
         object.__setattr__(self, "decision", dict(self.decision) if self.decision is not None else None)
         object.__setattr__(self, "input_refs", tuple(str(ref) for ref in self.input_refs))
@@ -77,7 +74,7 @@ class HarnessTranscriptEntry:
         return {
             "entry_id": self.entry_id,
             "run_id": self.run_id,
-            "step_id": self.step_id,
+            "node_id": self.node_id,
             "phase": self.phase,
             "decision": to_jsonable(self.decision),
             "input_refs": list(self.input_refs),
@@ -121,9 +118,9 @@ class HarnessTranscriptEntry:
                 payload.pop("entry_id", None),
                 "entry_id",
             ),
-            "step_id": _transcript_optional_text(
-                payload.pop("step_id", None),
-                "step_id",
+            "node_id": _transcript_optional_text(
+                payload.pop("node_id", None),
+                "node_id",
             ),
             "decision": _transcript_optional_mapping(
                 payload.pop("decision", None),
@@ -284,8 +281,12 @@ def transcript_entry_from_event(event: Any, *, phase_index: int | None = None) -
     payload = event.to_dict() if hasattr(event, "to_dict") else dict(event)
     event_type = str(payload.get("event_type"))
     event_payload = dict(payload.get("payload", {})) if isinstance(payload.get("payload", {}), dict) else {}
+    phase_payload = event_payload
+    graph_phase_transition = event_payload.get("graph_phase_transition")
+    if isinstance(graph_phase_transition, Mapping):
+        phase_payload = dict(graph_phase_transition)
     phase = _transcript_phase_label(
-        event_payload.get("phase", _phase_from_event(event_type, event_payload))
+        phase_payload.get("phase", _phase_from_event(event_type, event_payload))
     )
     metadata = dict(payload.get("metadata", {}))
     metadata.update({"event_type": event_type, "event_payload": event_payload})
@@ -297,7 +298,7 @@ def transcript_entry_from_event(event: Any, *, phase_index: int | None = None) -
     return HarnessTranscriptEntry(
         entry_id=_optional_text(payload.get("event_id")),
         run_id=str(payload.get("run_id")),
-        step_id=payload.get("step_id"),
+        node_id=payload.get("node_id"),
         phase=phase,
         decision=event_payload if event_type == "decision_recorded" else None,
         input_refs=(
@@ -340,10 +341,12 @@ def transcript_entry_from_stored_event(
     payload = thaw_canonical_json(event.payload or {})
     if not isinstance(payload, dict):
         raise HarnessValidationError("stored Harness payload must be an object")
-    if event.event_type == HARNESS_TRANSITION_EVENT_TYPE:
-        payload = HarnessTransitionCommitted.from_stored_event(event).to_payload()
-    elif event.data_schema != "newsroom.harness-event/v1":
-        raise EventStoreCorruptionError("stored Harness event schema is invalid")
+    if event.data_schema != "newsroom.harness-graph-event/v1":
+        raise EventStoreCorruptionError("stored Graph event schema is invalid")
+    if event.event_type == "graph_worker_result_recorded" and event.payload_ref is None:
+        raise EventStoreCorruptionError(
+            "Graph activity result is missing its recorded payload reference"
+        )
     if event.payload_ref is not None:
         payload = _stored_activity_payload(event)
     return transcript_entry_from_event(
@@ -351,7 +354,7 @@ def transcript_entry_from_stored_event(
             "event_id": event.event_id,
             "event_type": event.event_type,
             "run_id": run_id,
-            "step_id": event.business_context.step_id,
+            "node_id": _stored_harness_node_id(event, _stored_graph_context(event), run_id=run_id),
             "payload": payload,
             "occurred_at": format_datetime(event.occurred_at),
             "metadata": {
@@ -366,36 +369,41 @@ def transcript_entry_from_stored_event(
 
 
 def _phase_from_event(event_type: str, payload: dict[str, Any]) -> str:
-    if event_type == HARNESS_TRANSITION_EVENT_TYPE:
-        return _phase_from_transition_kind(payload.get("transition_kind"))
     return _phase_from_event_type(event_type)
 
 
 def _stored_activity_payload(event: StoredEvent) -> dict[str, Any]:
+    if event.event_type != "graph_worker_result_recorded":
+        raise EventStoreCorruptionError(
+            "stored Harness payload reference is not a Graph activity result"
+        )
     extension = thaw_canonical_json(
-        event.extensions.get(HARNESS_ACTIVITY_EXTENSION, {})
+        event.extensions.get("harness_graph_activity", {})
     )
     if not isinstance(extension, dict):
         raise HarnessValidationError(
-            "stored Harness activity extension must be an object"
+            "stored Graph activity extension must be an object"
         )
     activity_value = extension.get("activity")
     if not isinstance(activity_value, dict):
         raise HarnessValidationError(
-            "stored Harness activity descriptor is missing"
+            "stored Graph activity descriptor is missing"
         )
     try:
-        activity = HarnessActivity.from_dict(activity_value)
+        activity = HarnessGraphActivity.from_dict(activity_value)
     except (HarnessValidationError, TypeError, ValueError) as exc:
         raise HarnessValidationError(
-            "stored Harness activity descriptor is invalid"
+            "stored Graph activity descriptor is invalid"
         ) from exc
     assert event.payload_ref is not None
     return {
         "activity_id": activity.activity_id,
-        "worker_type": activity.activity_type,
-        "input_ref": activity.input_checksum,
+        "worker_type": activity.activity_ref.exact_ref,
+        "input_ref": activity.input_ref,
         "output_ref": event.payload_ref.expected_checksum,
+        "activity_checksum": activity.activity_checksum,
+        "graph_ref": activity.graph_ref.to_dict(),
+        "node_instance_id": activity.node_instance_id,
         "status": extension.get("status"),
     }
 
@@ -418,27 +426,6 @@ def _phase_from_event_type(event_type: str) -> str:
     return "event"
 
 
-def _phase_from_transition_kind(value: Any) -> str:
-    transition_kind = str(value or "").strip()
-    for phase in ("plan", "execute", "verify", "replan"):
-        if transition_kind == phase or transition_kind.startswith(f"{phase}_"):
-            return phase
-    if transition_kind == "worker_result_committed":
-        return "execute"
-    if transition_kind in {"halt", "failure", "budget_exhaustion"}:
-        return "halt"
-    if transition_kind in {
-        "wait",
-        "wait_for_approval",
-        "approval_resume",
-        "approval_cancel",
-    }:
-        return "wait"
-    if transition_kind in {"retry", "route_to_repair", "route_to_step"}:
-        return "decision"
-    return transition_kind or "transition"
-
-
 def _transcript_phase_label(value: Any) -> str:
     text = str(value).strip()
     if text in {"plan", "execute", "verify", "replan", "halt"}:
@@ -446,11 +433,11 @@ def _transcript_phase_label(value: Any) -> str:
     return text
 
 
-def _stable_entry_id(run_id: str, phase: str, step_id: str | None, metadata: dict[str, Any], timestamp: Any) -> str:
+def _stable_entry_id(run_id: str, phase: str, node_id: str | None, metadata: dict[str, Any], timestamp: Any) -> str:
     payload = {
         "run_id": run_id,
         "phase": phase,
-        "step_id": step_id,
+        "node_id": node_id,
         "metadata": metadata,
         "timestamp": format_datetime(timestamp),
     }

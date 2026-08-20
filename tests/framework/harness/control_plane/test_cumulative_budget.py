@@ -12,15 +12,23 @@ from framework.harness import HarnessWorkerResult
 from framework.harness.control_plane.cumulative_budget import (
     resolve_harness_cumulative_budget_fact,
 )
+from framework.shared.graph_identity import GraphExecutionIdentity
 
 
 class _FactResolver:
     def __init__(self, fact: CanonicalBudgetFact | None) -> None:
         self.fact = fact
-        self.calls: list[tuple[str, str, int]] = []
+        self.calls: list[tuple[str, str, int, object | None]] = []
 
-    def resolve(self, *, run_id: str, operation_id: str, ledger_revision: int):
-        self.calls.append((run_id, operation_id, ledger_revision))
+    def resolve(
+        self,
+        *,
+        run_id: str,
+        operation_id: str,
+        ledger_revision: int,
+        expected_identity=None,
+    ):
+        self.calls.append((run_id, operation_id, ledger_revision, expected_identity))
         return self.fact
 
 
@@ -43,7 +51,37 @@ def test_worker_locator_resolves_verified_durable_budget_fact() -> None:
     assert resolved.resolution_status == "verified"
     assert resolved.fact_ref == fact.fact_ref
     assert resolved.event_type == "budget_reservation_settled"
-    assert resolver.calls == [("run-budget", "operation-1", 2)]
+    assert resolver.calls == [("run-budget", "operation-1", 2, None)]
+
+
+def test_worker_locator_forwards_expected_graph_identity() -> None:
+    fact = _fact(event_type="budget_reservation_settled", revision=2)
+    resolver = _FactResolver(fact)
+    identity = GraphExecutionIdentity(
+        run_id="run-budget",
+        graph_id="research.paper-analysis",
+        graph_version="4",
+        graph_ref="research.paper-analysis@4",
+        graph_checksum="sha256:" + "a" * 64,
+        node_id="analyze",
+        node_instance_id="analyze:1",
+        activity_id="activity-budget",
+        attempt=1,
+    )
+
+    resolved = resolve_harness_cumulative_budget_fact(
+        run_id="run-budget",
+        worker_result=_worker_check(
+            within_budget=True,
+            ledger_revision=2,
+            reservation_id="reservation-1",
+        ),
+        resolver=resolver,  # type: ignore[arg-type]
+        expected_identity=identity,
+    )
+
+    assert resolved is not None
+    assert resolver.calls == [("run-budget", "operation-1", 2, identity)]
 
 
 def test_worker_decision_cannot_override_durable_budget_fact() -> None:

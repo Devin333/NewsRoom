@@ -68,6 +68,7 @@ from framework.harness.graph.bindings import (
     HarnessActivityCapabilities,
     HarnessActivityContractBinding,
     HarnessCompensationHandlerBinding,
+    HarnessLeafActivityBinding,
     HarnessRuntimeBindingAuthority,
     HarnessWorkerBinding,
 )
@@ -83,14 +84,24 @@ from framework.harness.graph.model import (
     HarnessExecutableNode,
     NormalizedHarnessGraph,
 )
-from framework.harness.workflow.spec import HarnessWorkflowSpec
-from framework.harness.graph.activity import HarnessRetryPolicy, HarnessStepSpec
+from framework.harness.graph.activity import (
+    HarnessLeafActivityKind,
+    HarnessRetryPolicy,
+    HarnessStepSpec,
+    HarnessWorkerType,
+)
+from framework.harness.graph.definition import HarnessGraphDefinition, HarnessGraphLeafBinding
+from framework.harness.graph.model import HarnessContractKind, HarnessContractReference
 from framework.harness.graph.validation import HarnessGraphPreflightPolicy
 from framework.harness.graph.validation import HarnessGraphPreflight
 from framework.harness.workers.result import (
     HarnessWorkerResult,
     harness_worker_candidate_ref,
 )
+from framework.harness.runtime.activity_executor import HarnessGraphPhysicalActivityExecutor
+from framework.harness.runtime.graph_dispatcher import HarnessGraphPhysicalActivityDispatcher
+from framework.harness import InMemoryHarnessNodeOutputResource
+from framework.shared.attempts import AttemptSupervisor
 
 
 IDENTITY_SCOPE_REF = checksum_for({"tenant_id": "tenant-compensation"})
@@ -138,12 +149,21 @@ class _FailBeforeCompensationCallPort(InMemoryHarnessEventPort):
         super().__init__()
         self.failed = False
 
-    def accept_activity(self, activity, inputs, *, accepted_at, started_at):
-        if not self.failed and activity.step_id == "undo":
+    def accept_graph_activity(
+        self,
+        activity,
+        graph,
+        inputs,
+        *,
+        accepted_at,
+        started_at,
+    ):
+        if not self.failed and activity.node_id.startswith("compensation:"):
             self.failed = True
             raise RuntimeError("injected crash before compensation handler call")
-        return super().accept_activity(
+        return super().accept_graph_activity(
             activity,
+            graph,
             inputs,
             accepted_at=accepted_at,
             started_at=started_at,
@@ -391,7 +411,7 @@ class _FailGate(DeterministicGate):
 class _CandidateWorker:
     worker_id: str = "test.publish"
     worker_version: str = "1"
-    worker_type: str = "script"
+    worker_type: str = "function"
     call_count: int = 0
 
     def execute(self, task: dict) -> HarnessWorkerResult:
@@ -406,7 +426,10 @@ class _CandidateWorker:
             "metrics": {},
             "error": None,
         }
-        attempt = task["harness_activity"]["attempt"]
+        activity = task["harness_graph_activity"]["activity"]
+        graph_ref = activity["graph_ref"]
+        graph_contract = graph_ref["graph_ref"]
+        attempt = activity["attempt"]
         return HarnessWorkerResult(
             status="succeeded",
             output=output,
@@ -415,12 +438,19 @@ class _CandidateWorker:
                 effect_id=f"effect-{task['run_id']}-{task['step_id']}-{attempt}",
                 kind="artifact",
                 run_id=task["run_id"],
+                graph_id=graph_ref["graph_id"],
+                graph_version=graph_contract["version"],
+                graph_ref=f"{graph_ref['graph_id']}@{graph_contract['version']}",
+                graph_checksum=graph_ref["checksum"],
                 origin="worker",
                 atomic_group=f"group-{task['run_id']}",
                 identity_scope_ref=IDENTITY_SCOPE_REF,
                 subject_scope_ref=SUBJECT_SCOPE_REF,
                 attempt=attempt,
                 step_id=task["step_id"],
+                node_id=activity["node_id"],
+                node_instance_id=activity["node_instance_id"],
+                activity_id=activity["activity_id"],
                 worker_result_ref=harness_worker_candidate_ref(candidate_payload),
                 candidate_checksum=checksum_for({"candidate": output}),
                 handler="research.prepare@1",
@@ -433,7 +463,7 @@ class _CandidateWorker:
 class _CompensationWorker:
     worker_id: str = "test.undo"
     worker_version: str = "1"
-    worker_type: str = "script"
+    worker_type: str = "function"
     call_count: int = 0
 
     def execute(self, task: dict) -> HarnessWorkerResult:
@@ -445,7 +475,7 @@ class _CompensationWorker:
 class _FailingWorker:
     worker_id: str = "test.fail"
     worker_version: str = "1"
-    worker_type: str = "script"
+    worker_type: str = "function"
     call_count: int = 0
 
     def execute(self, task: dict) -> HarnessWorkerResult:
@@ -572,10 +602,10 @@ def test_successful_run_retains_dormant_pending_compensation_evidence() -> None:
     result = fixture.control_plane.run(fixture.run_spec)
 
     assert result.succeeded
-    assert result.graph_state is not None
-    assert result.graph_state.lifecycle is RunLifecycle.COMPLETED
-    assert result.graph_state.outcome is RunOutcome.SUCCEEDED
-    entry = _only_compensation_entry(result.graph_state)
+    assert result.state is not None
+    assert result.state.lifecycle is RunLifecycle.COMPLETED
+    assert result.state.outcome is RunOutcome.SUCCEEDED
+    entry = _only_compensation_entry(result.state)
     assert entry.status is HarnessCompensationStatus.PENDING
     assert entry.compensation_node_instance_id is None
     assert entry.outcome_ref is None
@@ -594,21 +624,24 @@ def test_terminal_side_effect_uses_only_explicit_terminal_run_binding() -> None:
 
     result = fixture.control_plane.run(fixture.run_spec)
 
-    assert result.graph_state is not None
-    assert result.graph_state.outcome is RunOutcome.SUCCEEDED
+    assert result.state is not None
+    assert result.state.outcome is RunOutcome.SUCCEEDED
     assert fixture.side_effect_handler.call_count == 2
-    entries = result.graph_state.compensation_stack
+    entries = result.state.compensation_stack
     assert len(entries) == 2
     node_entry, terminal_entry = entries
     assert node_entry.effect_commit_sequence < terminal_entry.effect_commit_sequence
-    assert node_entry.effect_outcome_ref == result.side_effect_outcomes["publish"].checksum
-    assert (
-        terminal_entry.effect_outcome_ref
-        == result.side_effect_outcomes["__terminal__"].checksum
+    node_slot = next(
+        key for key in result.side_effect_outcomes if not key.startswith("terminal:")
     )
+    assert node_entry.effect_outcome_ref == result.side_effect_outcomes[node_slot].checksum
+    terminal_slot = next(
+        key for key in result.side_effect_outcomes if key.startswith("terminal:")
+    )
+    assert terminal_entry.effect_outcome_ref == result.side_effect_outcomes[terminal_slot].checksum
     assert node_entry.status is HarnessCompensationStatus.PENDING
     assert terminal_entry.status is HarnessCompensationStatus.PENDING
-    origin = _origin_node(result.graph_state)
+    origin = _origin_node(result.state)
     assert origin.metadata["terminal_compensation_binding_id"] == "undo-terminal"
     assert origin.metadata["terminal_side_effect_outcome_ref"] == (
         terminal_entry.effect_outcome_ref
@@ -622,8 +655,8 @@ def test_parallel_failure_executes_compensation_handler_through_full_lifecycle()
 
     result = fixture.control_plane.run(fixture.run_spec)
 
-    assert result.graph_state is not None
-    state = result.graph_state
+    assert result.state is not None
+    state = result.state
     assert state.lifecycle is RunLifecycle.COMPLETED
     assert state.outcome is RunOutcome.COMPENSATED
     assert fixture.publish_worker.call_count == 1
@@ -694,8 +727,8 @@ def test_parallel_failure_executes_compensation_handler_through_full_lifecycle()
     phase_events = tuple(
         (event.payload["phase"], event.payload["boundary"])
         for event in result.events
-        if event.event_type.value == "phase_recorded"
-        and event.step_id == "undo"
+        if event.event_type.value == "graph_phase_transition_recorded"
+        and event.node_id == "compensation:undo-publish"
     )
     assert phase_events == (
         ("plan", "entry"),
@@ -717,8 +750,8 @@ def test_compensation_lineage_preserves_original_materialized_evidence() -> None
 
     result = fixture.control_plane.run(fixture.run_spec)
 
-    assert result.graph_state is not None
-    state = result.graph_state
+    assert result.state is not None
+    state = result.state
     assert state.outcome is RunOutcome.COMPENSATED
     original = next(
         item for item in state.node_instances if item.identity.node_id == "publish"
@@ -767,8 +800,8 @@ def test_compensation_retry_keeps_idempotency_and_advances_fencing() -> None:
 
     result = fixture.control_plane.run(fixture.run_spec)
 
-    assert result.graph_state is not None
-    assert result.graph_state.outcome is RunOutcome.COMPENSATED
+    assert result.state is not None
+    assert result.state.outcome is RunOutcome.COMPENSATED
     assert handler.call_count == 2
     recovery = fixture.event_port.recover_graph(fixture.run_spec.run_id)
     activities = tuple(
@@ -786,7 +819,7 @@ def test_compensation_retry_keeps_idempotency_and_advances_fencing() -> None:
         activities[0].idempotency_key
     }
     assert tuple(item.fencing_generation for item in activities) == (1, 2)
-    entry = _only_compensation_entry(result.graph_state)
+    entry = _only_compensation_entry(result.state)
     assert entry.fencing_generation == 2
     dispatches = tuple(
         item
@@ -812,8 +845,8 @@ def test_compensation_failure_halts_with_manual_intervention_evidence() -> None:
 
     result = fixture.control_plane.run(fixture.run_spec)
 
-    assert result.graph_state is not None
-    state = result.graph_state
+    assert result.state is not None
+    state = result.state
     assert state.lifecycle is RunLifecycle.HALTED
     assert state.outcome is RunOutcome.COMPENSATION_FAILED
     entry = _only_compensation_entry(state)
@@ -855,8 +888,8 @@ def test_recovery_after_compensation_dispatch_calls_handler_once() -> None:
 
     recovered = fixture.control_plane.recover_and_run(fixture.run_spec)
 
-    assert recovered.graph_state is not None
-    assert recovered.graph_state.outcome is RunOutcome.COMPENSATED
+    assert recovered.state is not None
+    assert recovered.state.outcome is RunOutcome.COMPENSATED
     assert fixture.compensation_handler.call_count == 1
     assert fixture.compensation_worker.call_count == 0
 
@@ -888,8 +921,8 @@ def test_recovery_reuses_durable_compensation_result_without_recalling_handler()
 
     recovered = fixture.control_plane.recover_and_run(fixture.run_spec)
 
-    assert recovered.graph_state is not None
-    assert recovered.graph_state.outcome is RunOutcome.COMPENSATED
+    assert recovered.state is not None
+    assert recovered.state.outcome is RunOutcome.COMPENSATED
     assert fixture.compensation_handler.call_count == 1
     graph_recovery = fixture.event_port.recover_graph(fixture.run_spec.run_id)
     assert (
@@ -900,10 +933,10 @@ def test_recovery_reuses_durable_compensation_result_without_recalling_handler()
         == 1
     )
     replayed = fixture.control_plane.recover_and_run(fixture.run_spec)
-    assert replayed.graph_state is not None
+    assert replayed.state is not None
     assert (
-        replayed.graph_state.projection_checksum
-        == recovered.graph_state.projection_checksum
+        replayed.state.projection_checksum
+        == recovered.state.projection_checksum
     )
     assert fixture.compensation_handler.call_count == 1
 
@@ -929,9 +962,9 @@ def test_recovery_projects_committed_compensation_completion_exactly_once() -> N
     first = fixture.control_plane.recover_graph(fixture.run_spec)
     second = fixture.control_plane.recover_graph(fixture.run_spec)
 
-    assert recovered.graph_state is not None
-    assert recovered.graph_state.outcome is RunOutcome.COMPENSATED
-    assert first == second == recovered.graph_state
+    assert recovered.state is not None
+    assert recovered.state.outcome is RunOutcome.COMPENSATED
+    assert first == second == recovered.state
     assert fixture.compensation_handler.call_count == 1
     final_recovery = event_port.recover_graph(fixture.run_spec.run_id)
     assert final_recovery.pending_decisions == ()
@@ -954,8 +987,8 @@ def test_parallel_effects_compensate_in_reverse_order_and_preserve_partial_failu
 
     result = fixture.control_plane.run(fixture.run_spec)
 
-    assert result.graph_state is not None
-    state = result.graph_state
+    assert result.state is not None
+    state = result.state
     assert state.lifecycle is RunLifecycle.HALTED
     assert state.outcome is RunOutcome.COMPENSATION_FAILED
     entries = state.compensation_stack
@@ -985,8 +1018,8 @@ def test_compensation_budget_exhaustion_preserves_remaining_entry_for_manual_wor
 
     result = fixture.control_plane.run(fixture.run_spec)
 
-    assert result.graph_state is not None
-    state = result.graph_state
+    assert result.state is not None
+    state = result.state
     assert state.lifecycle is RunLifecycle.HALTED
     assert state.outcome is RunOutcome.COMPENSATION_FAILED
     first_entry = next(
@@ -1111,8 +1144,8 @@ def test_failed_verify_never_pushes_compensation_entry() -> None:
     result = fixture.control_plane.run(fixture.run_spec)
 
     assert not result.succeeded
-    assert result.graph_state is not None
-    assert result.graph_state.compensation_stack == ()
+    assert result.state is not None
+    assert result.state.compensation_stack == ()
     assert fixture.side_effect_handler.call_count == 0
     assert fixture.store.decision_write_count == 0
     assert fixture.store.outcome_write_count == 0
@@ -1226,7 +1259,9 @@ def _fixture(
 ) -> _RuntimeFixture:
     store = store or InMemoryHarnessSideEffectStore()
     event_port = event_port or InMemoryHarnessEventPort()
-    side_effect_handler = side_effect_handler or CountingHarnessSideEffectHandler(store)
+    side_effect_handler = side_effect_handler or _DecisionDispositionSideEffectHandler(
+        store
+    )
     worker = worker or _CandidateWorker()
     compensation_worker = compensation_worker or _CompensationWorker()
     compensation_handler = compensation_handler or _CompensationHandler()
@@ -1241,8 +1276,8 @@ def _fixture(
     )
     authority = HarnessRuntimeBindingAuthority(
         workers=(
-            HarnessWorkerBinding("test.publish@1", "script", worker),
-            HarnessWorkerBinding("test.undo@1", "script", compensation_worker),
+            HarnessWorkerBinding("test.publish@1", "function", worker),
+            HarnessWorkerBinding("test.undo@1", "function", compensation_worker),
         ),
         activities=(
             HarnessActivityContractBinding(
@@ -1260,19 +1295,33 @@ def _fixture(
                 compensation_handler,
             ),
         ),
+        leaf_activities=tuple(
+            HarnessLeafActivityBinding(
+                HarnessLeafActivityKind.FUNCTION,
+                f"test.{worker_id}@1",
+                (
+                    "research.undo.activity@1"
+                    if worker_id == "undo"
+                    else "newsroom.harness-worker-activity@v1"
+                ),
+            )
+            for worker_id in ("publish", "undo")
+        ),
         side_effect_registry=side_effect_registry,
     )
     kwargs = {}
     if verify_gates is not None:
         kwargs["verify_gates"] = verify_gates
-    return _RuntimeFixture(
-        control_plane=control_plane_type(
+    control_plane = control_plane_type(
             event_port=event_port,
             side_effect_registry=side_effect_registry,
             side_effect_store=store,
             runtime_binding_authority=authority,
             **kwargs,
-        ),
+        )
+    _install_local_physical_dispatcher(control_plane)
+    return _RuntimeFixture(
+        control_plane=control_plane,
         run_spec=run_spec or _run_spec(run_id),
         event_port=event_port,
         store=store,
@@ -1310,9 +1359,9 @@ def _parallel_compensation_fixture(
     )
     authority = HarnessRuntimeBindingAuthority(
         workers=(
-            HarnessWorkerBinding("test.publish@1", "script", publish_worker),
-            HarnessWorkerBinding("test.fail@1", "script", failing_worker),
-            HarnessWorkerBinding("test.undo@1", "script", compensation_worker),
+            HarnessWorkerBinding("test.publish@1", "function", publish_worker),
+            HarnessWorkerBinding("test.fail@1", "function", failing_worker),
+            HarnessWorkerBinding("test.undo@1", "function", compensation_worker),
         ),
         activities=(
             HarnessActivityContractBinding(
@@ -1330,15 +1379,29 @@ def _parallel_compensation_fixture(
                 compensation_handler,
             ),
         ),
+        leaf_activities=(
+            HarnessLeafActivityBinding(
+                HarnessLeafActivityKind.FUNCTION,
+                "test.publish@1",
+                "newsroom.harness-worker-activity@v1",
+            ),
+            HarnessLeafActivityBinding(
+                HarnessLeafActivityKind.FUNCTION,
+                "test.fail@1",
+                "newsroom.harness-worker-activity@v1",
+            ),
+            HarnessLeafActivityBinding(
+                HarnessLeafActivityKind.FUNCTION,
+                "test.undo@1",
+                "research.undo.activity@1",
+            ),
+        ),
         side_effect_registry=side_effect_registry,
     )
-    workflow = HarnessWorkflowSpec(
-        workflow_id="parallel-compensation",
-        workflow_version="1",
-        steps=(
+    activities = (
             HarnessStepSpec(
                 "publish",
-                "script",
+                "function",
                 output_key="candidate",
                 side_effect_handler="research.prepare@1",
                 metadata={
@@ -1349,7 +1412,8 @@ def _parallel_compensation_fixture(
             ),
             HarnessStepSpec(
                 "fail",
-                "script",
+                "function",
+                output_key="failure_output",
                 metadata={
                     "step_version": "1",
                     "worker_id": "test.fail",
@@ -1358,7 +1422,8 @@ def _parallel_compensation_fixture(
             ),
             HarnessStepSpec(
                 "undo",
-                "script",
+                "function",
+                output_key="compensation_output",
                 retry_policy=HarnessRetryPolicy(max_retries=1),
                 metadata={
                     "step_version": "1",
@@ -1366,9 +1431,8 @@ def _parallel_compensation_fixture(
                     "worker_version": "1",
                 },
             ),
-        ),
-        entry_step_id="publish",
-        graph=HarnessGraphSpec(
+        )
+    graph = HarnessGraphSpec(
             graph_id="parallel-compensation-graph",
             root=ParallelAll(
                 "fork",
@@ -1388,11 +1452,10 @@ def _parallel_compensation_fixture(
                     "research.undo.activity@1",
                 ),
             ),
-        ),
-    )
+        )
     run_spec = HarnessRunSpec(
         run_id=run_id,
-        workflow=workflow,
+        graph=_graph_definition(graph, activities),
         metadata={
             "tenant_scope_ref": checksum_for({"tenant_id": "tenant-compensation"}),
             "identity_scope_ref": IDENTITY_SCOPE_REF,
@@ -1405,8 +1468,7 @@ def _parallel_compensation_fixture(
             max_worker_calls=max_worker_calls,
         ),
     )
-    return _ParallelRuntimeFixture(
-        control_plane=control_plane_type(
+    control_plane = control_plane_type(
             event_port=event_port,
             side_effect_registry=side_effect_registry,
             side_effect_store=store,
@@ -1418,7 +1480,10 @@ def _parallel_compensation_fixture(
                     max_parallelism=1,
                 )
             ),
-        ),
+        )
+    _install_local_physical_dispatcher(control_plane)
+    return _ParallelRuntimeFixture(
+        control_plane=control_plane,
         run_spec=run_spec,
         event_port=event_port,
         store=store,
@@ -1467,17 +1532,17 @@ def _multi_effect_compensation_fixture(
     )
     authority = HarnessRuntimeBindingAuthority(
         workers=(
-            HarnessWorkerBinding("test.first@1", "script", first_worker),
-            HarnessWorkerBinding("test.second@1", "script", second_worker),
-            HarnessWorkerBinding("test.fail@1", "script", failing_worker),
+            HarnessWorkerBinding("test.first@1", "function", first_worker),
+            HarnessWorkerBinding("test.second@1", "function", second_worker),
+            HarnessWorkerBinding("test.fail@1", "function", failing_worker),
             HarnessWorkerBinding(
                 "test.undo.first@1",
-                "script",
+                "function",
                 undo_first_worker,
             ),
             HarnessWorkerBinding(
                 "test.undo.second@1",
-                "script",
+                "function",
                 undo_second_worker,
             ),
         ),
@@ -1505,15 +1570,39 @@ def _multi_effect_compensation_fixture(
                 second_handler,
             ),
         ),
+        leaf_activities=(
+            HarnessLeafActivityBinding(
+                HarnessLeafActivityKind.FUNCTION,
+                "test.first@1",
+                "newsroom.harness-worker-activity@v1",
+            ),
+            HarnessLeafActivityBinding(
+                HarnessLeafActivityKind.FUNCTION,
+                "test.second@1",
+                "newsroom.harness-worker-activity@v1",
+            ),
+            HarnessLeafActivityBinding(
+                HarnessLeafActivityKind.FUNCTION,
+                "test.fail@1",
+                "newsroom.harness-worker-activity@v1",
+            ),
+            HarnessLeafActivityBinding(
+                HarnessLeafActivityKind.FUNCTION,
+                "test.undo.first@1",
+                "research.undo.first.activity@1",
+            ),
+            HarnessLeafActivityBinding(
+                HarnessLeafActivityKind.FUNCTION,
+                "test.undo.second@1",
+                "research.undo.second.activity@1",
+            ),
+        ),
         side_effect_registry=side_effect_registry,
     )
-    workflow = HarnessWorkflowSpec(
-        workflow_id="multi-effect-compensation",
-        workflow_version="1",
-        steps=(
+    activities = (
             HarnessStepSpec(
                 "first",
-                "script",
+                "function",
                 output_key="first_candidate",
                 side_effect_handler="research.prepare@1",
                 metadata={
@@ -1524,7 +1613,7 @@ def _multi_effect_compensation_fixture(
             ),
             HarnessStepSpec(
                 "second",
-                "script",
+                "function",
                 output_key="second_candidate",
                 side_effect_handler="research.prepare@1",
                 metadata={
@@ -1535,7 +1624,8 @@ def _multi_effect_compensation_fixture(
             ),
             HarnessStepSpec(
                 "fail",
-                "script",
+                "function",
+                output_key="fail_output",
                 metadata={
                     "step_version": "1",
                     "worker_id": "test.fail",
@@ -1544,7 +1634,8 @@ def _multi_effect_compensation_fixture(
             ),
             HarnessStepSpec(
                 "undo_first",
-                "script",
+                "function",
+                output_key="undo_first_output",
                 metadata={
                     "step_version": "1",
                     "worker_id": "test.undo.first",
@@ -1553,16 +1644,16 @@ def _multi_effect_compensation_fixture(
             ),
             HarnessStepSpec(
                 "undo_second",
-                "script",
+                "function",
+                output_key="undo_second_output",
                 metadata={
                     "step_version": "1",
                     "worker_id": "test.undo.second",
                     "worker_version": "1",
                 },
             ),
-        ),
-        entry_step_id="first",
-        graph=HarnessGraphSpec(
+        )
+    graph = HarnessGraphSpec(
             graph_id="multi-effect-compensation-graph",
             root=ParallelAll(
                 "fork",
@@ -1594,11 +1685,10 @@ def _multi_effect_compensation_fixture(
                     "research.undo.second.activity@1",
                 ),
             ),
-        ),
-    )
+        )
     run_spec = HarnessRunSpec(
         run_id=run_id,
-        workflow=workflow,
+        graph=_graph_definition(graph, activities),
         metadata={
             "tenant_scope_ref": checksum_for({"tenant_id": "tenant-compensation"}),
             "identity_scope_ref": IDENTITY_SCOPE_REF,
@@ -1625,6 +1715,7 @@ def _multi_effect_compensation_fixture(
             )
         ),
     )
+    _install_local_physical_dispatcher(control_plane)
     return _MultiEffectRuntimeFixture(
         control_plane=control_plane,
         run_spec=run_spec,
@@ -1635,14 +1726,32 @@ def _multi_effect_compensation_fixture(
     )
 
 
+def _install_local_physical_dispatcher(control_plane: HarnessControlPlane) -> None:
+    executor = HarnessGraphPhysicalActivityExecutor(
+        binding_authority=control_plane.runtime_binding_authority,
+        input_resolver=control_plane,
+        node_output_resource=InMemoryHarnessNodeOutputResource(),
+        result_committer=None,
+        supervisor=AttemptSupervisor(),
+    )
+    control_plane.install_graph_activity_dispatcher(
+        HarnessGraphPhysicalActivityDispatcher(
+            executor=executor,
+            graph_resolver=control_plane.graph_for_activity,
+            input_resolver=control_plane,
+            accept=control_plane.accept_graph_activity_for_execution,
+            record_call_marker=control_plane.record_graph_activity_call_marker,
+            record_result=control_plane.record_graph_activity_result_event,
+            apply_result=control_plane.commit_physical_graph_result,
+        )
+    )
+
+
 def _terminal_compensation_run_spec(run_id: str) -> HarnessRunSpec:
-    workflow = HarnessWorkflowSpec(
-        workflow_id="terminal-compensation-entry",
-        workflow_version="1",
-        steps=(
+    activities = (
             HarnessStepSpec(
                 "publish",
-                "script",
+                "function",
                 output_key="candidate",
                 side_effect_handler="research.prepare@1",
                 metadata={
@@ -1653,16 +1762,15 @@ def _terminal_compensation_run_spec(run_id: str) -> HarnessRunSpec:
             ),
             HarnessStepSpec(
                 "undo",
-                "script",
+                "function",
                 metadata={
                     "step_version": "1",
                     "worker_id": "test.undo",
                     "worker_version": "1",
                 },
             ),
-        ),
-        entry_step_id="publish",
-        graph=HarnessGraphSpec(
+        )
+    graph = HarnessGraphSpec(
             graph_id="terminal-compensation-entry-graph",
             root=StepRef("publish"),
             compensations=(
@@ -1682,22 +1790,21 @@ def _terminal_compensation_run_spec(run_id: str) -> HarnessRunSpec:
                     scope="terminal_run",
                 ),
             ),
-        ),
-        terminal_side_effect_policy=HarnessTerminalSideEffectPolicy(
-            policy_id="terminal-publication",
-            version="1",
-            handler="research.prepare@1",
-            kind="artifact",
-            requires_approval=False,
-            retry_limit=1,
-            not_required_evidence_ref=checksum_for(
-                {"approval": "not-required", "policy": "terminal-publication@1"}
-            ),
+        )
+    terminal_policy = HarnessTerminalSideEffectPolicy(
+        policy_id="terminal-publication",
+        version="1",
+        handler="research.prepare@1",
+        kind="artifact",
+        requires_approval=False,
+        retry_limit=1,
+        not_required_evidence_ref=checksum_for(
+            {"approval": "not-required", "policy": "terminal-publication@1"}
         ),
     )
     return HarnessRunSpec(
         run_id=run_id,
-        workflow=workflow,
+        graph=_graph_definition(graph, activities, terminal_policy=terminal_policy),
         metadata={
             "tenant_scope_ref": checksum_for({"tenant_id": "tenant-compensation"}),
             "identity_scope_ref": IDENTITY_SCOPE_REF,
@@ -1713,13 +1820,10 @@ def _terminal_compensation_run_spec(run_id: str) -> HarnessRunSpec:
 
 
 def _run_spec(run_id: str) -> HarnessRunSpec:
-    workflow = HarnessWorkflowSpec(
-        workflow_id="compensation-entry-durability",
-        workflow_version="1",
-        steps=(
+    activities = (
             HarnessStepSpec(
                 "publish",
-                "script",
+                "function",
                 output_key="candidate",
                 side_effect_handler="research.prepare@1",
                 metadata={
@@ -1730,16 +1834,15 @@ def _run_spec(run_id: str) -> HarnessRunSpec:
             ),
             HarnessStepSpec(
                 "undo",
-                "script",
+                "function",
                 metadata={
                     "step_version": "1",
                     "worker_id": "test.undo",
                     "worker_version": "1",
                 },
             ),
-        ),
-        entry_step_id="publish",
-        graph=HarnessGraphSpec(
+        )
+    graph = HarnessGraphSpec(
             graph_id="compensation-entry-durability-graph",
             root=StepRef("publish"),
             compensations=(
@@ -1751,11 +1854,10 @@ def _run_spec(run_id: str) -> HarnessRunSpec:
                     activity_contract_ref="research.undo.activity@1",
                 ),
             ),
-        ),
-    )
+        )
     return HarnessRunSpec(
         run_id=run_id,
-        workflow=workflow,
+        graph=_graph_definition(graph, activities),
         metadata={
             "tenant_scope_ref": checksum_for({"tenant_id": "tenant-compensation"}),
             "identity_scope_ref": IDENTITY_SCOPE_REF,
@@ -1766,6 +1868,53 @@ def _run_spec(run_id: str) -> HarnessRunSpec:
             max_replans=0,
             max_retries_per_step=0,
             max_worker_calls=2,
+        ),
+    )
+
+
+def _graph_definition(
+    graph: HarnessGraphSpec,
+    activities: tuple[HarnessStepSpec, ...],
+    *,
+    terminal_policy: HarnessTerminalSideEffectPolicy | None = None,
+) -> HarnessGraphDefinition:
+    return HarnessGraphDefinition(
+        graph_id=graph.graph_id,
+        graph_version="1",
+        root=graph,
+        activities=activities,
+        leaf_activity_bindings=tuple(
+            HarnessGraphLeafBinding(
+                activity_id=step.step_id,
+                leaf_activity_kind=HarnessLeafActivityKind.FUNCTION,
+                worker_ref=HarnessContractReference(
+                    HarnessContractKind.WORKER,
+                    str(step.metadata.get("worker_id", step.step_id)),
+                    str(step.metadata.get("worker_version", "1")),
+                ),
+                activity_ref=HarnessContractReference(
+                    HarnessContractKind.ACTIVITY,
+                    (
+                        f"research.{step.step_id.replace('_', '.')}.activity"
+                        if step.step_id.startswith("undo")
+                        else "newsroom.harness-worker-activity"
+                    ),
+                    "1" if step.step_id.startswith("undo") else "v1",
+                ),
+            )
+            for step in activities
+        ),
+        task_plan_stage_bindings=(),
+        committed_output_bindings=(),
+        repair_bindings=(),
+        terminal_side_effect_policy=terminal_policy or HarnessTerminalSideEffectPolicy(
+            policy_id="research.prepare.terminal",
+            version="1",
+            handler="research.prepare@1",
+            kind="artifact",
+            requires_approval=False,
+            retry_limit=1,
+            not_required_evidence_ref=checksum_for("compensation-terminal-not-required"),
         ),
     )
 

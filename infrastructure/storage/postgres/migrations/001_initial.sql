@@ -1,7 +1,7 @@
-CREATE TABLE IF NOT EXISTS workflow_runs (
+CREATE TABLE IF NOT EXISTS graph_runs (
     run_id TEXT PRIMARY KEY,
-    workflow_id TEXT NOT NULL,
-    workflow_version TEXT NOT NULL,
+    graph_id TEXT NOT NULL,
+    graph_version TEXT NOT NULL,
     status TEXT NOT NULL,
     profile TEXT NOT NULL,
     topic TEXT,
@@ -17,7 +17,7 @@ CREATE TABLE IF NOT EXISTS workflow_runs (
 
 CREATE TABLE IF NOT EXISTS reports (
     report_id TEXT PRIMARY KEY,
-    run_id TEXT NOT NULL REFERENCES workflow_runs(run_id) ON DELETE CASCADE,
+    run_id TEXT NOT NULL REFERENCES graph_runs(run_id) ON DELETE CASCADE,
     status TEXT NOT NULL,
     title TEXT,
     report_json JSONB NOT NULL DEFAULT '{}'::jsonb,
@@ -33,33 +33,6 @@ CREATE TABLE IF NOT EXISTS reports (
 ALTER TABLE reports
     ADD COLUMN IF NOT EXISTS citation_coverage_score DOUBLE PRECISION;
 
-CREATE TABLE IF NOT EXISTS workflow_events (
-    event_id TEXT PRIMARY KEY,
-    run_id TEXT NOT NULL,
-    event_offset BIGINT NOT NULL,
-    event_type TEXT NOT NULL,
-    timestamp TIMESTAMPTZ NOT NULL,
-    workflow_id TEXT,
-    step_id TEXT,
-    task_id TEXT,
-    agent_id TEXT,
-    tool_call_id TEXT,
-    request_id TEXT,
-    severity TEXT NOT NULL DEFAULT 'info',
-    trace_id TEXT,
-    redacted BOOLEAN NOT NULL DEFAULT TRUE,
-    payload JSONB NOT NULL DEFAULT '{}'::jsonb,
-    metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    UNIQUE (run_id, event_offset)
-);
-
-CREATE INDEX IF NOT EXISTS idx_workflow_events_run_offset
-    ON workflow_events(run_id, event_offset);
-
-CREATE INDEX IF NOT EXISTS idx_workflow_events_step
-    ON workflow_events(run_id, step_id);
-
 CREATE TABLE IF NOT EXISTS artifact_index (
     artifact_id TEXT NOT NULL,
     run_id TEXT NOT NULL,
@@ -72,6 +45,15 @@ CREATE TABLE IF NOT EXISTS artifact_index (
     redacted BOOLEAN NOT NULL DEFAULT TRUE,
     created_at TIMESTAMPTZ NOT NULL,
     metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+    graph_id TEXT,
+    graph_version TEXT,
+    graph_ref TEXT,
+    graph_checksum TEXT,
+    node_id TEXT,
+    node_instance_id TEXT,
+    graph_checkpoint_ref TEXT,
+    activity_id TEXT,
+    attempt INTEGER,
     indexed_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     PRIMARY KEY (run_id, artifact_id)
 );
@@ -81,6 +63,25 @@ CREATE INDEX IF NOT EXISTS idx_artifact_index_run_created
 
 CREATE INDEX IF NOT EXISTS idx_artifact_index_step
     ON artifact_index(run_id, step_id);
+
+-- Existing installations may have created artifact_index before Graph lineage
+-- became part of the contract. Add the columns before the Graph indexes below.
+ALTER TABLE artifact_index
+    ADD COLUMN IF NOT EXISTS graph_id TEXT,
+    ADD COLUMN IF NOT EXISTS graph_version TEXT,
+    ADD COLUMN IF NOT EXISTS graph_ref TEXT,
+    ADD COLUMN IF NOT EXISTS graph_checksum TEXT,
+    ADD COLUMN IF NOT EXISTS node_id TEXT,
+    ADD COLUMN IF NOT EXISTS node_instance_id TEXT,
+    ADD COLUMN IF NOT EXISTS graph_checkpoint_ref TEXT,
+    ADD COLUMN IF NOT EXISTS activity_id TEXT,
+    ADD COLUMN IF NOT EXISTS attempt INTEGER;
+
+CREATE INDEX IF NOT EXISTS idx_artifact_index_graph
+    ON artifact_index(run_id, graph_id, graph_version, created_at, artifact_id);
+
+CREATE INDEX IF NOT EXISTS idx_artifact_index_node_instance
+    ON artifact_index(run_id, node_instance_id, created_at, artifact_id);
 
 CREATE TABLE IF NOT EXISTS lineage_refs (
     lineage_id TEXT PRIMARY KEY,
@@ -92,6 +93,7 @@ CREATE TABLE IF NOT EXISTS lineage_refs (
     relation_type TEXT NOT NULL,
     created_at TIMESTAMPTZ NOT NULL,
     metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+    graph_identity JSONB NOT NULL DEFAULT '{}'::jsonb,
     indexed_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
@@ -104,9 +106,12 @@ CREATE INDEX IF NOT EXISTS idx_lineage_refs_target
 CREATE INDEX IF NOT EXISTS idx_lineage_refs_source
     ON lineage_refs(run_id, source_type, source_id);
 
+ALTER TABLE lineage_refs
+    ADD COLUMN IF NOT EXISTS graph_identity JSONB NOT NULL DEFAULT '{}'::jsonb;
+
 CREATE TABLE IF NOT EXISTS source_items (
     source_item_id TEXT PRIMARY KEY,
-    run_id TEXT REFERENCES workflow_runs(run_id) ON DELETE CASCADE,
+    run_id TEXT REFERENCES graph_runs(run_id) ON DELETE CASCADE,
     source_id TEXT NOT NULL,
     title TEXT NOT NULL,
     url TEXT NOT NULL,
@@ -122,7 +127,7 @@ CREATE TABLE IF NOT EXISTS source_items (
 
 CREATE TABLE IF NOT EXISTS evidence_items (
     evidence_id TEXT PRIMARY KEY,
-    run_id TEXT REFERENCES workflow_runs(run_id) ON DELETE CASCADE,
+    run_id TEXT REFERENCES graph_runs(run_id) ON DELETE CASCADE,
     source_url TEXT NOT NULL,
     source_urls JSONB NOT NULL DEFAULT '[]'::jsonb,
     source_item_ids JSONB NOT NULL DEFAULT '[]'::jsonb,
@@ -140,7 +145,7 @@ CREATE TABLE IF NOT EXISTS evidence_items (
 
 CREATE TABLE IF NOT EXISTS claims (
     claim_id TEXT PRIMARY KEY,
-    run_id TEXT REFERENCES workflow_runs(run_id) ON DELETE CASCADE,
+    run_id TEXT REFERENCES graph_runs(run_id) ON DELETE CASCADE,
     status TEXT NOT NULL,
     text TEXT NOT NULL,
     payload JSONB NOT NULL DEFAULT '{}'::jsonb,
@@ -154,7 +159,7 @@ CREATE INDEX IF NOT EXISTS idx_claims_run
 CREATE TABLE IF NOT EXISTS claim_supports (
     claim_support_id TEXT PRIMARY KEY,
     claim_id TEXT NOT NULL REFERENCES claims(claim_id) ON DELETE CASCADE,
-    run_id TEXT REFERENCES workflow_runs(run_id) ON DELETE CASCADE,
+    run_id TEXT REFERENCES graph_runs(run_id) ON DELETE CASCADE,
     evidence_id TEXT NOT NULL,
     support_type TEXT NOT NULL,
     confidence DOUBLE PRECISION,
@@ -171,7 +176,7 @@ CREATE INDEX IF NOT EXISTS idx_claim_supports_evidence
 
 CREATE TABLE IF NOT EXISTS quality_results (
     quality_result_id TEXT PRIMARY KEY,
-    run_id TEXT REFERENCES workflow_runs(run_id) ON DELETE CASCADE,
+    run_id TEXT REFERENCES graph_runs(run_id) ON DELETE CASCADE,
     decision TEXT NOT NULL,
     passed BOOLEAN NOT NULL DEFAULT FALSE,
     quality_score DOUBLE PRECISION,
@@ -206,10 +211,9 @@ CREATE INDEX IF NOT EXISTS idx_memory_documents_run
 
 CREATE TABLE IF NOT EXISTS agent_conversations (
     conversation_id TEXT PRIMARY KEY,
-    run_id TEXT REFERENCES workflow_runs(run_id) ON DELETE CASCADE,
-    workflow_id TEXT,
+    run_id TEXT REFERENCES graph_runs(run_id) ON DELETE CASCADE,
+    graph_id TEXT,
     agent_id TEXT,
-    step_id TEXT,
     message_count INTEGER NOT NULL DEFAULT 0,
     payload JSONB NOT NULL DEFAULT '{}'::jsonb,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -231,7 +235,6 @@ CREATE TABLE IF NOT EXISTS agent_conversation_messages (
     created_at TIMESTAMPTZ NOT NULL,
     agent_id TEXT,
     run_id TEXT,
-    step_id TEXT,
     redacted BOOLEAN NOT NULL DEFAULT TRUE,
     metadata_json JSONB NOT NULL DEFAULT '{}'::jsonb,
     indexed_at TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -264,8 +267,8 @@ CREATE INDEX IF NOT EXISTS idx_agent_conversation_state_updated
 
 CREATE TABLE IF NOT EXISTS tool_executions (
     tool_execution_id TEXT PRIMARY KEY,
-    run_id TEXT REFERENCES workflow_runs(run_id) ON DELETE CASCADE,
-    workflow_id TEXT,
+    run_id TEXT REFERENCES graph_runs(run_id) ON DELETE CASCADE,
+    graph_id TEXT,
     step_id TEXT,
     tool_name TEXT NOT NULL,
     status TEXT NOT NULL,
@@ -327,20 +330,27 @@ ALTER TABLE source_health
 CREATE INDEX IF NOT EXISTS idx_source_health_status
     ON source_health(status);
 
-CREATE INDEX IF NOT EXISTS idx_workflow_runs_finished ON workflow_runs(updated_at DESC);
-CREATE INDEX IF NOT EXISTS idx_workflow_runs_workflow_id ON workflow_runs(workflow_id, updated_at DESC);
-CREATE INDEX IF NOT EXISTS idx_workflow_runs_status ON workflow_runs(status, updated_at DESC);
-CREATE INDEX IF NOT EXISTS idx_workflow_runs_topic ON workflow_runs(topic, updated_at DESC);
-CREATE INDEX IF NOT EXISTS idx_workflow_runs_metrics_gin ON workflow_runs USING GIN(metrics);
+CREATE INDEX IF NOT EXISTS idx_graph_runs_finished ON graph_runs(updated_at DESC);
+
+-- A partially migrated installation may already have graph_runs without the
+-- Graph identity columns. Add them before any Graph-specific index is built.
+ALTER TABLE graph_runs
+    ADD COLUMN IF NOT EXISTS graph_id TEXT,
+    ADD COLUMN IF NOT EXISTS graph_version TEXT;
+
+CREATE INDEX IF NOT EXISTS idx_graph_runs_graph_id ON graph_runs(graph_id, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_graph_runs_status ON graph_runs(status, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_graph_runs_topic ON graph_runs(topic, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_graph_runs_metrics_gin ON graph_runs USING GIN(metrics);
 CREATE INDEX IF NOT EXISTS idx_reports_run_id ON reports(run_id);
 CREATE INDEX IF NOT EXISTS idx_reports_status ON reports(status, updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_reports_json_gin ON reports USING GIN(report_json);
 CREATE INDEX IF NOT EXISTS idx_reports_metadata_gin ON reports USING GIN(metadata_json);
 
-ALTER TABLE workflow_runs
+ALTER TABLE graph_runs
     ADD COLUMN IF NOT EXISTS topic TEXT;
 
-ALTER TABLE workflow_runs
+ALTER TABLE graph_runs
     ADD COLUMN IF NOT EXISTS metadata_json JSONB NOT NULL DEFAULT '{}'::jsonb;
 
 ALTER TABLE reports
@@ -357,6 +367,12 @@ ALTER TABLE source_items
 
 ALTER TABLE source_items
     ADD COLUMN IF NOT EXISTS raw_artifact_id TEXT;
+
+ALTER TABLE agent_conversations
+    ADD COLUMN IF NOT EXISTS graph_id TEXT;
+
+ALTER TABLE tool_executions
+    ADD COLUMN IF NOT EXISTS graph_id TEXT;
 
 ALTER TABLE source_items
     ADD COLUMN IF NOT EXISTS metadata_json JSONB NOT NULL DEFAULT '{}'::jsonb;

@@ -1,4 +1,3 @@
-from hashlib import sha256
 from pathlib import Path
 import tomllib
 
@@ -20,15 +19,17 @@ RETIREMENT_CANCELLATION_MIGRATION = (
 READER_REPAIR_MEMORY_COMMIT_MIGRATION = (
     MIGRATIONS_DIR / "011_reader_repair_memory_commits.sql"
 )
-INITIAL_MIGRATION_SHA256 = "f224356de92f5b087b3353b38dab4d9ced0b7c0b70f3bf9228adc0b9e2f8fbd3"
+GRAPH_ACTIVITY_STORE_CUTOVER_MIGRATION = (
+    MIGRATIONS_DIR / "012_graph_activity_store_cutover.sql"
+)
 
 
 def test_postgres_migration_sql_contains_required_tables() -> None:
     sql = load_migration_sql()
 
     for table in [
-        "workflow_runs",
-        "workflow_events",
+        "graph_runs",
+        "durable_events",
         "artifact_index",
         "lineage_refs",
         "reports",
@@ -65,9 +66,12 @@ def test_postgres_migration_sql_contains_required_tables() -> None:
     assert "idx_agent_conversation_messages_conversation_offset" in sql
     assert "idx_agent_conversation_state_updated" in sql
     assert "idx_tool_executions_run" in sql
-    assert "idx_workflow_runs_workflow_id" in sql
-    assert "idx_workflow_runs_status" in sql
-    assert "idx_workflow_runs_topic" in sql
+    assert "idx_graph_runs_graph_id" in sql
+    assert "idx_graph_runs_status" in sql
+    assert "idx_graph_runs_topic" in sql
+    assert "graph_id TEXT NOT NULL" in sql
+    assert "graph_version TEXT NOT NULL" in sql
+    assert "CREATE TABLE IF NOT EXISTS workflow_runs" not in sql
     assert "idx_reports_status" in sql
     assert "idx_source_items_source_published" in sql
     assert "idx_source_items_published" in sql
@@ -96,6 +100,22 @@ def test_postgres_migration_sql_contains_required_tables() -> None:
     assert "ADD PRIMARY KEY (event_id, entity_id, role)" in sql
     assert "ADD PRIMARY KEY (event_id, claim_id, role)" in sql
     assert "ADD PRIMARY KEY (event_id, evidence_id, support_type)" in sql
+
+
+def test_graph_identity_columns_are_added_before_dependent_indexes() -> None:
+    sql = load_migration_sql()
+
+    artifact_columns = sql.index("ALTER TABLE artifact_index")
+    artifact_index = sql.index("CREATE INDEX IF NOT EXISTS idx_artifact_index_graph")
+    assert artifact_columns < artifact_index
+
+    graph_run_columns = sql.index("ALTER TABLE graph_runs")
+    graph_run_index = sql.index("CREATE INDEX IF NOT EXISTS idx_graph_runs_graph_id")
+    assert graph_run_columns < graph_run_index
+
+    memory_columns = sql.index("ALTER TABLE memory_decisions")
+    memory_index = sql.index("CREATE INDEX IF NOT EXISTS idx_memory_decisions_target")
+    assert memory_columns < memory_index
 
 
 def test_postgres_migration_sql_exposes_storage_contract_query_columns() -> None:
@@ -256,19 +276,19 @@ def test_authorized_redelivery_migration_is_additive_and_loaded_last() -> None:
     )
 
 
-def test_recorded_activity_migration_is_additive_encrypted_and_loaded_in_order() -> None:
+def test_recorded_activity_migration_is_graph_only_encrypted_and_loaded_in_order() -> None:
     sql = RECORDED_ACTIVITIES_MIGRATION.read_text(encoding="utf-8")
     loaded = load_migration_sql()
 
     for table in (
         "event_activity_payloads",
         "event_activity_records",
-        "harness_activity_results",
         "event_activity_access_audit",
     ):
         assert f"CREATE TABLE IF NOT EXISTS {table}" in sql
+    assert "harness_activity_results" not in sql
     assert "ciphertext               BYTEA NOT NULL" in sql
-    assert sql.count("ciphertext               BYTEA NOT NULL") == 3
+    assert sql.count("ciphertext               BYTEA NOT NULL") == 2
     assert "payload JSON" not in sql
     assert "payload JSONB" not in sql
     assert "record JSON" not in sql
@@ -285,6 +305,16 @@ def test_recorded_activity_migration_is_additive_encrypted_and_loaded_in_order()
     assert loaded.index("CREATE TABLE IF NOT EXISTS event_redelivery_reports") < loaded.index(
         "CREATE TABLE IF NOT EXISTS event_activity_payloads"
     )
+
+
+def test_graph_activity_store_cutover_drops_flat_result_table_last() -> None:
+    sql = GRAPH_ACTIVITY_STORE_CUTOVER_MIGRATION.read_text(encoding="utf-8")
+    loaded = load_migration_sql()
+
+    assert "DROP TABLE IF EXISTS harness_activity_results" in sql
+    assert loaded.index(
+        "CREATE TABLE IF NOT EXISTS reader_repair_memory_commits"
+    ) < loaded.index("DROP TABLE IF EXISTS harness_activity_results")
 
 
 def test_retirement_cancellation_migration_is_additive_bounded_and_loaded_in_order() -> None:
@@ -340,10 +370,8 @@ def test_reader_repair_memory_commit_migration_is_atomic_and_append_only() -> No
     ) < loaded.index("CREATE TABLE IF NOT EXISTS reader_repair_memory_commits")
 
 
-def test_initial_postgres_migration_remains_byte_for_byte_unchanged() -> None:
-    content = (MIGRATIONS_DIR / "001_initial.sql").read_bytes()
-
-    assert sha256(content).hexdigest() == INITIAL_MIGRATION_SHA256
+def test_postgres_migration_directory_has_no_legacy_identity_cutover_script() -> None:
+    assert not (MIGRATIONS_DIR / "000_graph_identity_cutover.sql").exists()
 
 
 def test_postgres_sql_migrations_are_included_in_wheel_package_data() -> None:

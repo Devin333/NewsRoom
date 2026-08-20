@@ -5,9 +5,6 @@ from pathlib import Path
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-EVENT_MIGRATION_SERVICE = (
-    PROJECT_ROOT / "interfaces" / "services" / "event_migration_service.py"
-)
 GRAPH_PHASE_CONTRACT = PROJECT_ROOT / "framework" / "events" / "graph_phase.py"
 ACTIVE_PHASE_WRITERS = (
     PROJECT_ROOT / "framework" / "harness" / "control_plane" / "harness.py",
@@ -15,55 +12,32 @@ ACTIVE_PHASE_WRITERS = (
 )
 
 
-def test_event_migration_service_does_not_import_workflow_projection() -> None:
-    tree = ast.parse(
-        EVENT_MIGRATION_SERVICE.read_text(encoding="utf-8"),
-        filename=str(EVENT_MIGRATION_SERVICE),
-    )
-
-    assert [
-        f"{node.lineno}:{module}"
-        for node in ast.walk(tree)
-        for module in _imported_modules(node)
-        if module == "framework.workflow"
-        or module.startswith("framework.workflow.")
-    ] == []
-
-
 def test_event_projection_mechanics_are_owned_by_framework_events() -> None:
     owner = PROJECT_ROOT / "framework" / "events" / "projection.py"
-    legacy = (
-        PROJECT_ROOT / "framework" / "workflow" / "runtime" / "event_projection.py"
-    )
     owner_tree = ast.parse(owner.read_text(encoding="utf-8"), filename=str(owner))
-    legacy_tree = ast.parse(
-        legacy.read_text(encoding="utf-8"),
-        filename=str(legacy),
-    )
 
     owner_classes = {
         node.name for node in ast.walk(owner_tree) if isinstance(node, ast.ClassDef)
     }
-    legacy_bases = {
-        base.id
-        for node in ast.walk(legacy_tree)
-        if isinstance(node, ast.ClassDef)
-        and node.name == "WorkflowEventProjectionExporter"
-        for base in node.bases
-        if isinstance(base, ast.Name)
-    }
-
     assert "EventProjectionExporter" in owner_classes
-    assert legacy_bases == {"EventProjectionExporter"}
+    assert "GraphRunIdentity" not in owner_classes
+    imported_modules = {
+        module
+        for node in ast.walk(owner_tree)
+        for module in _imported_modules(node)
+    }
+    assert "framework.shared.graph_identity" in imported_modules
+    assert not (PROJECT_ROOT / "framework/workflow/runtime/event_projection.py").exists()
 
 
-def test_graph_phase_transition_contract_is_event_owned_and_inactive() -> None:
+def test_graph_phase_transition_contract_is_event_owned_and_active() -> None:
     source = GRAPH_PHASE_CONTRACT.read_text(encoding="utf-8")
     tree = ast.parse(source, filename=str(GRAPH_PHASE_CONTRACT))
 
     assert "class GraphPhaseTransitionRecord" in source
     assert "class GraphRunIdentity" not in source
     assert "GraphEventContext" in source
+    assert "GRAPH_PHASE_TRANSITION_SCHEMA" in source
     assert [
         module
         for node in ast.walk(tree)
@@ -75,8 +49,7 @@ def test_graph_phase_transition_contract_is_event_owned_and_inactive() -> None:
     ] == []
     for writer in ACTIVE_PHASE_WRITERS:
         writer_source = writer.read_text(encoding="utf-8")
-        assert "GraphPhaseTransitionRecord" not in writer_source
-        assert "GRAPH_PHASE_TRANSITION_SCHEMA" not in writer_source
+        assert "GraphPhaseTransitionRecord" in writer_source
 
 
 def _imported_modules(node: ast.AST) -> tuple[str, ...]:

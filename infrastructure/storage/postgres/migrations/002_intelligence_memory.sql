@@ -70,7 +70,10 @@ CREATE TABLE IF NOT EXISTS memory_decisions (
     decision TEXT NOT NULL,
     reason TEXT,
     run_id TEXT NOT NULL,
-    workflow_id TEXT,
+    graph_id TEXT,
+    graph_version TEXT,
+    graph_ref TEXT,
+    graph_checksum TEXT,
     agent_id TEXT,
     input_features JSONB NOT NULL DEFAULT '{}'::jsonb,
     output_scores JSONB NOT NULL DEFAULT '{}'::jsonb,
@@ -81,6 +84,12 @@ CREATE TABLE IF NOT EXISTS memory_decisions (
 
 CREATE INDEX IF NOT EXISTS idx_memory_decisions_run
     ON memory_decisions(run_id);
+
+ALTER TABLE memory_decisions
+    ADD COLUMN IF NOT EXISTS graph_id TEXT,
+    ADD COLUMN IF NOT EXISTS graph_version TEXT,
+    ADD COLUMN IF NOT EXISTS graph_ref TEXT,
+    ADD COLUMN IF NOT EXISTS graph_checksum TEXT;
 
 CREATE INDEX IF NOT EXISTS idx_memory_decisions_target
     ON memory_decisions(target_type, target_id);

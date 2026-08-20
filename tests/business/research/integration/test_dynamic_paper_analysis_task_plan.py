@@ -25,16 +25,13 @@ from business.research.graphs import (
     build_research_analysis_task_gate_registry,
     build_research_analysis_task_plan_policy,
     build_paper_analysis_gate_registry,
-)
-from business.research.workflows.paper_analysis_workflow import (
-    build_dynamic_paper_analysis_workflow_spec,
+    build_dynamic_paper_analysis_graph_definition,
 )
 from framework.harness import (
     ContextEnvelope,
     FakeArtifactPort,
     HarnessBudget,
     HarnessBudgetSnapshot,
-    HarnessState,
     HarnessWorkerResult,
     InMemoryHarnessEventPort,
     InMemoryTaskPlanStore,
@@ -48,14 +45,22 @@ from framework.harness import (
     TaskPlanStageBinding,
     subagent_attempt_evidence,
 )
+from framework.harness.control_plane.activity_execution import (
+    HARNESS_GRAPH_ACTIVITY_TASK_CONTEXT_KEY,
+    HarnessGraphActivityTaskContext,
+)
 from framework.harness.control_plane.gates import GateContext
+from framework.harness.control_plane.graph_runtime import initial_graph_state
+from framework.harness.control_plane.state import run_spec_checksum
 from framework.harness.graph import HarnessWorkerType
-from framework.harness.workflow.compiler import HarnessWorkflowGraphCompiler
+from framework.harness.graph.compiler import HarnessGraphCompiler
 from framework.harness.graph.bindings import HarnessWorkerBinding
 from framework.harness.graph.model import (
     HarnessContractKind,
     HarnessContractReference,
 )
+from framework.harness.graph.validation import HarnessGraphPreflightPolicy
+from framework.harness.task_plan import task_plan_context_identities
 from infrastructure.storage.harness import FilesystemSubAgentTranscriptStore
 from interfaces.services.research_service import (
     InMemoryResearchRunStore,
@@ -70,6 +75,7 @@ from tests.business.research.fakes import (
     FakeResearchLLMWorker,
     FakeResearchRAGRuntime,
     FakeResearchSourceProvider,
+    in_memory_node_output_resource_factory,
 )
 
 
@@ -182,19 +188,6 @@ class _DynamicTaskPlanFactory:
             dependencies.llm_worker,
             self.outline_transform,
         )
-        context_pack = ContextEnvelope(
-            envelope_id=f"research-task-plan-context:{workspace.request.run_id}",
-            run_id=workspace.request.run_id,
-            workflow_id="research.paper_analysis.dynamic",
-            step_id="dynamic_analysis_stage",
-            phase="EXECUTE",
-            worker_id="research.task-plan",
-            worker_type=HarnessWorkerType.TASK_PLAN.value,
-            dynamic_tail={
-                "input_refs": ["document", "evidence_pack"],
-                "raw_parent_messages_included": False,
-            },
-        )
         budget = HarnessBudgetSnapshot.from_budget(HarnessBudget.safe_default())
 
         def gate_context(task_request):
@@ -206,35 +199,27 @@ class _DynamicTaskPlanFactory:
                 workspace.request,
                 created_at=FIXED_NOW,
             )
-            base_state = HarnessState.initial(run_spec)
-            state = HarnessState(
-                run_spec=base_state.run_spec,
-                status=base_state.status,
-                step_states=base_state.step_states,
-                current_step_id="dynamic_analysis_stage",
-                metadata={
-                    "outputs": {
-                        "evidence_pack": {
-                            "evidence_pack": workspace.evidence_pack.to_dict()
-                        }
-                    }
-                },
-                updated_at=base_state.updated_at,
+            compiled_graph = HarnessGraphCompiler().compile(run_spec.graph).graph
+            graph_state = initial_graph_state(
+                run_spec,
+                compiled_graph,
+                HarnessGraphPreflightPolicy(),
+                run_spec_checksum=run_spec_checksum(run_spec),
             )
             step_spec = next(
                 step
-                for step in run_spec.workflow.steps
+                for step in run_spec.graph.activities
                 if step.step_id == "dynamic_analysis_stage"
             )
-            step_state = next(
-                item
-                for item in state.step_states
-                if item.step_id == "dynamic_analysis_stage"
-            )
             return GateContext(
-                state=state,
+                run_spec=run_spec,
+                graph_state=graph_state,
                 step_spec=step_spec,
-                step_state=step_state,
+                outputs={
+                    "evidence_pack": {
+                        "evidence_pack": workspace.evidence_pack.to_dict()
+                    }
+                },
                 worker_result=task_request.worker_result,
                 budget=budget,
             )
@@ -258,16 +243,42 @@ class _DynamicTaskPlanFactory:
             )
             return plan, resolved_task
 
-        def invoke_child(resolved_binding, task_instance, *, recover: bool = False):
+        def invoke_child(
+            resolved_binding,
+            task_instance,
+            execution_identity,
+            *,
+            recover: bool = False,
+        ):
             plan, resolved_task = resolve_task(task_instance)
             method = adapter.recover if recover else adapter.invoke
+            graph_identity, task_identity = task_plan_context_identities(
+                plan,
+                task_instance,
+                execution_identity=execution_identity,
+            )
             return method(
                 plan=plan,
                 resolved_task=resolved_task,
                 binding=resolved_binding,
                 instance=task_instance,
-                context_pack=context_pack,
+                context_pack=ContextEnvelope.for_graph(
+                    envelope_id=(
+                        "research-task-plan-context:"
+                        f"{task_instance.task_instance_id}"
+                    ),
+                    graph_identity=graph_identity,
+                    task_execution_identity=task_identity,
+                    phase="EXECUTE",
+                    worker_id="research.task-plan",
+                    worker_type=HarnessWorkerType.TASK_PLAN.value,
+                    dynamic_tail={
+                        "input_refs": ["document", "evidence_pack"],
+                        "raw_parent_messages_included": False,
+                    },
+                ),
                 budget_snapshot=budget,
+                execution_identity=execution_identity,
             )
 
         def worker_result(subagent_result, *, recovered: bool = False):
@@ -288,8 +299,14 @@ class _DynamicTaskPlanFactory:
                 error=None if succeeded else "Research analysis subagent gate failed",
             )
 
-        def execute(resolved_binding, task_instance):
-            result = worker_result(invoke_child(resolved_binding, task_instance))
+        def execute(resolved_binding, task_instance, execution_identity):
+            result = worker_result(
+                invoke_child(
+                    resolved_binding,
+                    task_instance,
+                    execution_identity,
+                )
+            )
             assert result is not None
             if (
                 self.crash_after_receipt_once
@@ -299,14 +316,19 @@ class _DynamicTaskPlanFactory:
                 raise RuntimeError("injected post-receipt crash")
             return result
 
-        def recover(resolved_binding, task_instance):
+        def recover(resolved_binding, task_instance, execution_identity):
             return worker_result(
-                invoke_child(resolved_binding, task_instance, recover=True),
+                invoke_child(
+                    resolved_binding,
+                    task_instance,
+                    execution_identity,
+                    recover=True,
+                ),
                 recovered=True,
             )
 
-        graph = HarnessWorkflowGraphCompiler().compile(
-            build_dynamic_paper_analysis_workflow_spec()
+        graph = HarnessGraphCompiler().compile(
+            build_dynamic_paper_analysis_graph_definition()
         ).graph
         stage_worker = ResearchAnalysisTaskPlanStageWorker(
             stage_binding=TaskPlanStageBinding(graph, RESEARCH_DYNAMIC_STAGE_ID),
@@ -375,9 +397,12 @@ def test_dynamic_task_plan_fake_llm_and_subagents_publish_through_fixed_path() -
         "harness-trace",
         "harness-transcript",
     }.issubset(result.artifact_refs)
-    assert result.diagnostics["worker_results"]["publish_artifacts"]["status"] == (
-        "succeeded"
+    publish_result = next(
+        item
+        for item in result.diagnostics["worker_results"].values()
+        if item["node_id"] == "publish_artifacts"
     )
+    assert publish_result["status"] == "succeeded"
 
 
 def test_missing_dynamic_role_stops_before_subagent_and_publication() -> None:
@@ -402,7 +427,9 @@ def test_missing_dynamic_role_stops_before_subagent_and_publication() -> None:
     assert all(
         worker.calls == [] for worker in factory.subagent_workers[0].values()
     )
-    assert set(result.diagnostics["worker_results"]) == {
+    assert {
+        item["node_id"] for item in result.diagnostics["worker_results"].values()
+    } == {
         "load_paper_source",
         "compile_document",
         "run_research_rag",
@@ -430,12 +457,15 @@ def test_dynamic_claim_gate_failure_blocks_quality_reader_and_publication() -> N
     assert result.succeeded is False
     assert result.artifact_refs == {}
     worker_results = result.diagnostics["worker_results"]
-    assert worker_results["dynamic_analysis_stage"]["status"] == "succeeded"
-    assert worker_results["verify_claims"]["status"] == "succeeded"
-    assert "quality_gate" not in worker_results
-    assert "build_reader_payload" not in worker_results
-    assert "build_paper_card" not in worker_results
-    assert "publish_artifacts" not in worker_results
+    worker_results_by_node = {
+        item["node_id"]: item for item in worker_results.values()
+    }
+    assert worker_results_by_node["dynamic_analysis_stage"]["status"] == "succeeded"
+    assert worker_results_by_node["verify_claims"]["status"] == "succeeded"
+    assert "quality_gate" not in worker_results_by_node
+    assert "build_reader_payload" not in worker_results_by_node
+    assert "build_paper_card" not in worker_results_by_node
+    assert "publish_artifacts" not in worker_results_by_node
     assert any(
         failure["details"]["harness_gate"]["reference"] == "ClaimEvidenceGate@1"
         for failure in result.diagnostics["gate_failures"]
@@ -559,9 +589,11 @@ def test_dynamic_task_plan_recovers_post_receipt_crash_without_duplicate_worker(
         crash_after_receipt_once=True,
     )
     artifact_port = FakeArtifactPort()
+    event_port = InMemoryHarnessEventPort()
     runtime = _runtime(
         dynamic_factory=factory,
         artifact_port=artifact_port,
+        event_port=event_port,
     )
     request = AnalyzePaperRequest(
         run_id="dynamic-post-receipt-crash",
@@ -591,6 +623,23 @@ def test_dynamic_task_plan_recovers_post_receipt_crash_without_duplicate_worker(
     ) == 1
     assert sum(state.status is TaskLifecycle.PENDING for state in projection.tasks) == 2
 
+    recovery = event_port.recover_graph(request.run_id)
+    recovery_state = recovery.state
+    assert recovery_state is not None
+    activity = next(
+        item
+        for item in recovery.activities
+        if item.node_id == RESEARCH_DYNAMIC_STAGE_ID
+    )
+    activity_context = HarnessGraphActivityTaskContext(
+        activity=activity,
+        graph_checkpoint_ref=(
+            f"graph-checkpoint://{request.run_id}/"
+            f"{recovery_state.last_event_sequence}/"
+            f"{recovery_state.projection_checksum}"
+        ),
+    ).to_dict()
+
     resumed = factory.stage_workers[0].run(
         {
             "run_id": request.run_id,
@@ -600,6 +649,7 @@ def test_dynamic_task_plan_recovers_post_receipt_crash_without_duplicate_worker(
                 "document": {},
                 "evidence_pack": {},
             },
+            HARNESS_GRAPH_ACTIVITY_TASK_CONTEXT_KEY: activity_context,
         }
     )
 
@@ -613,8 +663,8 @@ def test_dynamic_task_plan_recovers_post_receipt_crash_without_duplicate_worker(
 
 def test_production_shaped_stage_worker_rejects_in_memory_store_by_default() -> None:
     policy = build_research_analysis_task_plan_policy()
-    graph = HarnessWorkflowGraphCompiler().compile(
-        build_dynamic_paper_analysis_workflow_spec()
+    graph = HarnessGraphCompiler().compile(
+        build_dynamic_paper_analysis_graph_definition()
     ).graph
 
     with pytest.raises(Exception) as exc_info:
@@ -719,6 +769,7 @@ def _runtime(
         artifact_port=artifact_port or FakeArtifactPort(),
         event_port_factory=lambda _run_id: event_port or InMemoryHarnessEventPort(),
         dynamic_task_plan_runner_factory=dynamic_factory,
+        node_output_resource_factory=in_memory_node_output_resource_factory,
     )
 
 

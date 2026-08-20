@@ -7,6 +7,7 @@ from framework.events.budget import CanonicalBudgetFact, DurableBudgetFactResolv
 from framework.governance.budget import BudgetHistoryError
 from framework.governance.budget import MAX_BUDGET_REASON_CODES
 from framework.harness.workers.result import HarnessWorkerResult
+from framework.shared.graph_identity import GraphExecutionIdentity, GraphRunIdentity
 
 
 _TERMINAL_ALLOWED_EVENTS = frozenset(
@@ -116,6 +117,7 @@ def resolve_harness_cumulative_budget_fact(
     run_id: str,
     worker_result: HarnessWorkerResult,
     resolver: DurableBudgetFactResolver | None,
+    expected_identity: GraphRunIdentity | GraphExecutionIdentity | None = None,
 ) -> HarnessCumulativeBudgetFact | None:
     check = _budget_check(worker_result)
     if check is None:
@@ -150,10 +152,15 @@ def resolve_harness_cumulative_budget_fact(
             reason_code="budget_fact_resolver_unavailable",
         )
     try:
+        resolve_kwargs: dict[str, Any] = {
+            "run_id": run_id,
+            "operation_id": operation_id,
+            "ledger_revision": revision,
+        }
+        if expected_identity is not None:
+            resolve_kwargs["expected_identity"] = expected_identity
         fact = resolver.resolve(
-            run_id=run_id,
-            operation_id=operation_id,
-            ledger_revision=revision,
+            **resolve_kwargs,
         )
     except (BudgetHistoryError, TypeError, ValueError):
         return _invalid_fact(

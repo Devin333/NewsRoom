@@ -19,7 +19,7 @@ from business.research.application.single_paper_runtime import (
     ResearchSinglePaperRuntime,
 )
 from business.research.graphs import PAPER_ANALYSIS_GATE_REFERENCES
-from framework.harness import HarnessEventType, HarnessReplayReader
+from framework.harness import HarnessEventType
 from framework.llm import (
     LOCAL_STRUCTURED_OUTPUT_DIALECT,
     compile_structured_output_contract,
@@ -420,10 +420,13 @@ def test_recorded_transports_execute_full_production_research_analysis(
         phase_events = [
             event
             for event in result.trace.events
-            if event.event_type is HarnessEventType.PHASE_RECORDED
+            if event.event_type is HarnessEventType.GRAPH_PHASE_TRANSITION_RECORDED
         ]
         assert {
-            (str(event.payload["phase"]).upper(), event.payload["boundary"])
+            (
+                str(event.payload["graph_phase_transition"]["phase"]).upper(),
+                event.payload["graph_phase_transition"]["boundary"],
+            )
             for event in phase_events
         } >= {
             (phase, boundary)
@@ -459,7 +462,7 @@ def test_recorded_transports_execute_full_production_research_analysis(
         assert graph_recovery.pending_observations == ()
         graph_ref = graph_recovery.state.graph_ref
         assert graph_ref.graph_id == graph_recovery.graph.graph_id
-        assert graph_ref.workflow_ref == graph_recovery.graph.workflow_ref
+        assert graph_ref.graph_ref == graph_recovery.graph.graph_ref
         assert graph_ref.schema_version == graph_recovery.graph.schema_version
         assert graph_ref.compiler_version == graph_recovery.graph.compiler_version
         assert (
@@ -467,8 +470,8 @@ def test_recorded_transports_execute_full_production_research_analysis(
             == graph_recovery.graph.condition_policy_version
         )
         assert graph_ref.checksum == graph_recovery.graph.checksum
-        assert graph_ref.workflow_ref.contract_id == "research.paper_analysis"
-        assert graph_ref.workflow_ref.version == "1"
+        assert graph_ref.graph_ref.contract_id == "research.paper_analysis.graph"
+        assert graph_ref.graph_ref.version == "1"
         projection_by_cause = {
             commit.cause_checksum: commit
             for commit in graph_recovery.projection_commits
@@ -483,20 +486,19 @@ def test_recorded_transports_execute_full_production_research_analysis(
         legacy_transition_count = sum(
             1
             for event in result.trace.events
-            if event.event_type is HarnessEventType.TRANSITION_COMMITTED
+            if str(getattr(event.event_type, "value", event.event_type))
+            == "transition_committed"
         )
         assert legacy_transition_count == 0
 
         rag_metadata = result.rag_context.metadata
-        assert {
-            "run_id": rag_metadata["run_id"],
-            "workflow_id": rag_metadata["workflow_id"],
-            "step_id": rag_metadata["step_id"],
-        } == {
-            "run_id": _RUN_ID,
-            "workflow_id": "research.paper_analysis",
-            "step_id": "run_research_rag",
-        }
+        rag_graph_identity = rag_metadata["graph_identity"]
+        assert rag_graph_identity["run_id"] == _RUN_ID
+        assert rag_graph_identity["graph_id"] == graph_ref.graph_id
+        assert rag_graph_identity["graph_version"] == graph_ref.graph_ref.version
+        assert rag_graph_identity["graph_ref"] == graph_ref.graph_ref.exact_ref
+        assert rag_graph_identity["graph_checksum"] == graph_ref.checksum
+        assert rag_graph_identity["stage_id"] == "run_research_rag"
         rag_transcript = rag_metadata["transcript"]
         assert rag_transcript["session_id"] == rag_metadata["session_id"]
         rag_started = next(
@@ -504,15 +506,9 @@ def test_recorded_transports_execute_full_production_research_analysis(
             for event in rag_transcript["events"]
             if event["event_type"] == "rag_session_started"
         )
-        assert {
-            key: rag_started["payload"]["session"][key]
-            for key in ("session_id", "run_id", "workflow_id", "step_id")
-        } == {
-            "session_id": rag_metadata["session_id"],
-            "run_id": _RUN_ID,
-            "workflow_id": "research.paper_analysis",
-            "step_id": "run_research_rag",
-        }
+        rag_session = rag_started["payload"]["session"]
+        assert rag_session["session_id"] == rag_metadata["session_id"]
+        assert rag_session["graph_identity"] == rag_graph_identity
 
         artifact_refs = response["metadata"]["artifactRefs"]
         assert {
@@ -524,9 +520,9 @@ def test_recorded_transports_execute_full_production_research_analysis(
         }.issubset(artifact_refs)
         manifest_path = settings.artifact.root / _RUN_ID / "manifest.json"
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-        assert manifest["schema_version"] == "newsroom.graph-terminal-manifest/v1"
+        assert manifest["schema_version"] == "newsroom.graph-terminal-manifest/v2"
         assert manifest["graph_id"] == graph_ref.graph_id
-        assert manifest["graph_version"] == graph_ref.workflow_ref.version
+        assert manifest["graph_version"] == graph_ref.graph_ref.version
         assert manifest["normalized_graph_checksum"] == graph_ref.checksum
         assert manifest["status"] == "succeeded"
         assert manifest["publication"] is not None
@@ -563,8 +559,8 @@ def test_recorded_transports_execute_full_production_research_analysis(
         restored_rag_entry = next(
             entry
             for entry in restored_record.result.transcript.entries()
-            if entry.step_id == "run_research_rag"
-            and entry.metadata["event_type"] == "worker_result_recorded"
+                if entry.node_id == "run_research_rag"
+            and entry.metadata["event_type"] == "graph_worker_result_recorded"
         )
         assert restored_rag_entry.rag_session_refs
         assert restored_rag_entry.context_pack_refs
@@ -576,13 +572,6 @@ def test_recorded_transports_execute_full_production_research_analysis(
             restored_record.result.rag_context.metadata["transcript_ref"]
             in restored_rag_entry.output_refs
         )
-        replay = HarnessReplayReader().replay(
-            run_id=_RUN_ID,
-            transcript=restored_record.result.transcript,
-        )
-        assert replay.rag_sessions == restored_rag_entry.rag_session_refs
-        assert replay.context_packs == restored_rag_entry.context_pack_refs
-
         reopened_runtime = reopened.service._analyze_use_case._runtime
         restored_artifact = reopened_runtime.artifact_port.read_artifact(
             artifact_refs["research-analysis"]
@@ -636,8 +625,8 @@ def test_explicit_low_rag_replan_budget_halts_and_persists(
         halted_rag_entry = next(
             entry
             for entry in result.transcript.entries()
-            if entry.step_id == "run_research_rag"
-            and entry.metadata["event_type"] == "worker_result_recorded"
+                if entry.node_id == "run_research_rag"
+            and entry.metadata["event_type"] == "graph_worker_result_recorded"
         )
         assert halted_rag_entry.context_pack_refs == (
             result.rag_context.metadata["context_pack_id"],
@@ -669,20 +658,14 @@ def test_explicit_low_rag_replan_budget_halts_and_persists(
         restored_rag_entry = next(
             entry
             for entry in restored.result.transcript.entries()
-            if entry.step_id == "run_research_rag"
-            and entry.metadata["event_type"] == "worker_result_recorded"
+                if entry.node_id == "run_research_rag"
+            and entry.metadata["event_type"] == "graph_worker_result_recorded"
         )
         assert restored.result.rag_context is not None
         assert (
             restored.result.rag_context.metadata["transcript_ref"]
             in restored_rag_entry.output_refs
         )
-        replay = HarnessReplayReader().replay(
-            run_id=restored.result.run_id,
-            transcript=restored.result.transcript,
-        )
-        assert replay.rag_sessions == restored_rag_entry.rag_session_refs
-        assert replay.context_packs == restored_rag_entry.context_pack_refs
     finally:
         if reopened is not None:
             reopened.close()

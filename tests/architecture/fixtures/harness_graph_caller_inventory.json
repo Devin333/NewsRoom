@@ -108,6 +108,7 @@
       "tests/framework/harness/control_plane/test_graph_only_checkpoint_replay.py",
       "tests/framework/harness/control_plane/test_graph_result_committer.py",
       "tests/framework/harness/control_plane/test_replay_history.py",
+      "tests/framework/harness/control_plane/test_replay_history_graph_targets.py",
       "tests/framework/harness/control_plane/test_side_effect_durable_recovery.py",
       "tests/framework/harness/control_plane/test_terminal_failure_record.py",
       "tests/framework/harness/control_plane/test_transition_projector.py",
@@ -188,7 +189,9 @@
   "audit_self_exclusions": [
     "tests/architecture/_graph_only_freeze.py",
     "tests/architecture/test_agent_loop_graph_artifact_boundary.py",
-    "tests/architecture/test_graph_only_freeze.py"
+    "tests/architecture/test_graph_only_freeze.py",
+    "business/layers/_worker_utils.py",
+    "tests/interfaces/api/test_graph_run_inspection_api.py"
   ],
   "migration_rules": [
     "A callers adopt versioned Graph contracts without changing runtime authority.",

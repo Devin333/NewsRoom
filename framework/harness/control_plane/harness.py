@@ -18,16 +18,28 @@ from framework.events.errors import (
     EventStoreCorruptionError,
     EventStreamVersionConflictError,
 )
+from framework.events.projection import (
+    GRAPH_EVENT_CONTEXT_EXTENSION,
+    GraphEventContext,
+    GraphEventExecutionVersion,
+)
+from framework.events.graph_phase import (
+    GraphExecutionPhase,
+    GraphPhaseBoundary,
+    GraphPhaseTransitionRecord,
+)
+from framework.shared.graph_identity import (
+    GraphExecutionIdentity,
+    GraphRunIdentity,
+    GraphStageIdentity,
+)
 from framework.events.budget import DurableBudgetFactResolver
 from framework.harness.control_plane.cumulative_budget import (
     HarnessCumulativeBudgetFact,
     resolve_harness_cumulative_budget_fact,
 )
-from framework.harness.control_plane.activity import (
-    HARNESS_ACTIVITY_CONTRACT,
-    HarnessActivity,
-    harness_activity_input_checksum,
-    validate_activity_call_marker,
+from framework.harness.control_plane.activity_execution import (
+    HarnessGraphActivityExecutionInput,
 )
 from framework.harness.control_plane.compensation_runtime import (
     compensation_entry_for_node,
@@ -102,8 +114,9 @@ from framework.harness.control_plane.graph_state import (
     HarnessPendingSideEffectStatus,
     RunLifecycle,
     RunOutcome,
-    project_public_legacy_status,
+    project_public_graph_status,
 )
+from framework.harness.control_plane.node_output import HarnessNodeOutputCandidate
 from framework.harness.control_plane.phase import (
     HarnessPhase,
     HarnessPhaseBoundary,
@@ -124,15 +137,7 @@ from framework.harness.control_plane.step_lifecycle import (
 from framework.harness.control_plane.state import (
     HarnessRunSpec,
     HarnessRunStatus,
-    HarnessState,
-    HarnessStepState,
     HarnessStepStatus,
-)
-from framework.harness.control_plane.transitions import get_step_state
-from framework.harness.control_plane.transition import (
-    HarnessStateProjection,
-    HarnessTransitionCommitted,
-    HarnessTransitionKind,
     run_spec_checksum,
 )
 from framework.harness.quality.verdict import (
@@ -156,12 +161,12 @@ from framework.harness.side_effects import (
     HarnessSideEffectStorePort,
 )
 from framework.harness.graph.bindings import (
+    HarnessActivityUsage,
     HarnessActivityCapabilities,
-    HarnessActivityContractBinding,
     HarnessRuntimeBindingAuthority,
     HarnessWorkerBinding,
 )
-from framework.harness.workflow.compiler import HarnessWorkflowGraphCompiler
+from framework.harness.graph.compiler import HarnessGraphCompiler
 from framework.harness.graph.model import (
     HarnessControlNode,
     HarnessContractKind,
@@ -172,13 +177,19 @@ from framework.harness.graph.model import (
     HarnessMergeKind,
     NormalizedHarnessGraph,
 )
+from framework.harness.graph.execution_versions import GraphExecutionVersionManifest
 from framework.harness.graph.runtime_resolution import (
     HarnessGraphRuntimeResolver,
     HarnessResolvedRuntimeBindings,
 )
+from framework.harness.graph.reference import HarnessGraphReference
 from framework.shared.time import format_datetime
-from framework.harness.graph.activity import HarnessStepSpec, HarnessWorkerType
-from framework.harness.workflow.spec import HarnessRouteKind
+from framework.harness.graph.activity import (
+    graph_activity_input_checksum,
+    HarnessLeafActivityKind,
+    HarnessStepSpec,
+    HarnessWorkerType,
+)
 from framework.harness.graph.validation import (
     HarnessGraphPreflight,
     HarnessGraphPreflightPolicy,
@@ -195,32 +206,43 @@ from framework.harness.waits.models import (
 )
 from framework.harness.waits.ports import HarnessTimerWakePort
 
-WorkerCallable = Callable[[dict[str, Any]], HarnessWorkerResult]
-
 if TYPE_CHECKING:
     from framework.harness.ports import (
         HarnessGraphResultCommitterPort,
-        HarnessGraphResultObserverPort,
         HarnessTransitionPort,
     )
 
 
 @dataclass(frozen=True)
 class HarnessRunResult:
-    state: HarnessState
+    state: HarnessGraphState
     decisions: tuple[HarnessGraphDecision, ...]
     events: tuple[HarnessEvent, ...]
+    # Public result maps are keyed by the immutable runtime instance identity.
+    # A definition-level ``step_id`` is not unique across loop/retry branches.
     worker_results: dict[str, HarnessWorkerResult]
     quality_verdicts: dict[str, HarnessQualityVerdict]
     side_effect_outcomes: dict[str, HarnessSideEffectOutcome] = field(
         default_factory=dict
     )
-    graph_state: HarnessGraphState | None = None
     graph_terminal_node_ids: tuple[str, ...] = ()
 
     @property
+    def status(self) -> HarnessRunStatus:
+        waiting_for_approval = any(
+            registration.unresolved
+            and registration.kind.value == "approval"
+            for registration in self.state.wait_registrations
+        )
+        return project_public_graph_status(
+            self.state.lifecycle,
+            self.state.outcome,
+            waiting_for_approval=waiting_for_approval,
+        )
+
+    @property
     def succeeded(self) -> bool:
-        return self.state.status == HarnessRunStatus.SUCCEEDED
+        return self.status is HarnessRunStatus.SUCCEEDED
 
 
 @dataclass(frozen=True)
@@ -230,42 +252,6 @@ class _PreparedSideEffect:
     authorization: HarnessSideEffectDecision
     binding: HarnessSideEffectHandlerBinding
     prepare: bool
-
-
-@dataclass(slots=True)
-class _WorkerImplementationAdapter:
-    worker_id: str
-    worker_version: str
-    worker_type: HarnessWorkerType
-    delegate: object
-    _queued_results: list[HarnessWorkerResult] | None = field(default=None, init=False)
-
-    def execute(self, task: dict[str, Any]) -> HarnessWorkerResult:
-        return _invoke_worker_delegate(self, task)
-
-
-@dataclass(frozen=True, slots=True)
-class _ReplayOnlyWorkerDelegate:
-    reference: str
-
-    def __call__(self, _task: dict[str, Any]) -> HarnessWorkerResult:
-        raise EventIncompleteHistoryError(
-            "Graph recovery requires recorded activity evidence; live Worker "
-            f"fallback is forbidden for {self.reference}"
-        )
-
-
-@dataclass(frozen=True, slots=True)
-class _ActivityImplementationAdapter:
-    activity_contract_id: str
-    activity_contract_version: str
-    event_port: Any
-    capabilities: HarnessActivityCapabilities = HarnessActivityCapabilities(
-        stable_idempotency=True,
-    )
-
-    def dispatch(self, request: dict[str, Any]) -> HarnessActivity:
-        return self.event_port.create_activity(**request)
 
 
 @dataclass(slots=True)
@@ -439,36 +425,11 @@ class InMemoryHarnessEventPort:
     def __init__(self) -> None:
         self.events: list[HarnessEvent] = []
         self.activity_results: dict[str, HarnessWorkerResult] = {}
-        self.created_activities: list[HarnessActivity] = []
         self._graph_transition_port = InMemoryHarnessGraphTransitionPort()
 
     def record(self, event: HarnessEvent) -> HarnessEvent:
         self.events.append(event)
         return event
-
-    def create_activity(
-        self,
-        *,
-        run_id: str,
-        step_id: str,
-        attempt: int,
-        activity_type: str,
-        inputs: dict[str, Any],
-        contract_version: str = HARNESS_ACTIVITY_CONTRACT,
-        worker_version: str = "1",
-    ) -> HarnessActivity:
-        activity = HarnessActivity.for_worker_call(
-            run_id=run_id,
-            step_id=step_id,
-            attempt=attempt,
-            activity_type=activity_type,
-            inputs=inputs,
-            contract_version=contract_version,
-            worker_version=worker_version,
-        )
-        self.created_activities.append(activity)
-        return activity
-
 
     def read_history(self, run_id: str) -> tuple[HarnessEvent, ...]:
         return tuple(event for event in self.events if event.run_id == run_id)
@@ -476,15 +437,23 @@ class InMemoryHarnessEventPort:
     def require_activity_storage(self) -> None:
         return None
 
-    def accept_activity(
+    def accept_graph_activity(
         self,
-        activity: HarnessActivity,
+        activity: HarnessGraphActivity,
+        graph: NormalizedHarnessGraph,
         inputs: dict[str, Any],
         *,
         accepted_at,
         started_at,
     ) -> HarnessWorkerResult | None:
-        del inputs, accepted_at, started_at
+        del graph, accepted_at, started_at
+        if not isinstance(activity, HarnessGraphActivity):
+            raise TypeError("activity must be HarnessGraphActivity")
+        if graph_activity_input_checksum(inputs) != activity.input_ref:
+            raise EventReplayMismatchError(
+                sequence=activity.causal_decision_sequence,
+                reason="Graph accepted activity input conflicts with descriptor",
+            )
         return self.activity_results.get(activity.activity_id)
 
     def resolve_graph_replay_activity(
@@ -503,7 +472,7 @@ class InMemoryHarnessEventPort:
                 "graph replay activity has no executable definition"
             )
         if inputs is not None and (
-            harness_activity_input_checksum(inputs) != activity.input_ref
+            graph_activity_input_checksum(inputs) != activity.input_ref
         ):
             raise EventReplayMismatchError(
                 sequence=activity.causal_decision_sequence,
@@ -516,30 +485,34 @@ class InMemoryHarnessEventPort:
             )
         return result
 
-    def record_activity_result(
+    def record_graph_activity_result(
         self,
-        activity: HarnessActivity,
+        activity: HarnessGraphActivity,
+        graph: NormalizedHarnessGraph,
         result: HarnessWorkerResult,
         *,
         completed_at,
+        graph_context,
     ) -> HarnessEvent:
+        del graph, graph_context
         existing = self.activity_results.get(activity.activity_id)
         if existing is not None and existing.to_dict() != result.to_dict():
             raise EventReplayMismatchError(
                 sequence=len(self.events),
-                reason="Harness activity retry produced a different result",
+                reason="Graph activity retry produced a different result",
             )
         self.activity_results[activity.activity_id] = result
         projected = HarnessEvent(
-            event_id=activity.result_event_id,
-            event_type=HarnessEventType.WORKER_RESULT_RECORDED,
+            event_id=_graph_worker_result_event_id(activity.activity_id),
+            event_type=HarnessEventType.GRAPH_WORKER_RESULT_RECORDED,
             run_id=activity.run_id,
-            step_id=activity.step_id,
+            node_id=activity.node_id,
             payload={
                 "projection_schema": "harness-safe-summary/v1",
                 "status": result.status.value,
                 "output_ref": checksum_for(result.to_dict()),
                 "activity_id": activity.activity_id,
+                "graph_activity": activity.to_dict(),
             },
             occurred_at=completed_at,
         )
@@ -578,8 +551,6 @@ class HarnessControlPlane:
         *,
         scheduler: HarnessScheduler | None = None,
         event_port: HarnessTransitionPort | None = None,
-        worker_registry: dict[str, WorkerCallable | Iterable[HarnessWorkerResult]]
-        | None = None,
         plan_gates: tuple[DeterministicGate, ...] | None = None,
         verify_gates: tuple[DeterministicGate, ...] | None = None,
         gate_registry: DeterministicGateRegistry | None = None,
@@ -588,10 +559,8 @@ class HarnessControlPlane:
         approval_evidence_resolver: HarnessSideEffectApprovalResolver | None = None,
         runtime_binding_authority: HarnessRuntimeBindingAuthority | None = None,
         graph_preflight: HarnessGraphPreflight | None = None,
-        legacy_workflow_compiler: object | None = None,
         graph_activity_dispatcher: HarnessGraphActivityDispatcherPort | None = None,
         graph_result_committer: HarnessGraphResultCommitterPort | None = None,
-        graph_result_observer: HarnessGraphResultObserverPort | None = None,
         timer_wake_port: HarnessTimerWakePort | None = None,
         side_effect_attempt_owner_id: str | None = None,
         budget_fact_resolver: DurableBudgetFactResolver | None = None,
@@ -606,7 +575,6 @@ class HarnessControlPlane:
             )
         self.scheduler = scheduler or HarnessScheduler()
         self.event_port = event_port
-        self.worker_registry = dict(worker_registry or {})
         self.plan_gates = plan_gates or default_plan_gates()
         self.verify_gates = verify_gates or default_verify_gates()
         self.gate_registry = (
@@ -646,12 +614,7 @@ class HarnessControlPlane:
             HarnessGraphPreflight,
         ):
             raise TypeError("graph_preflight must be HarnessGraphPreflight")
-        if legacy_workflow_compiler is not None and not callable(
-            getattr(legacy_workflow_compiler, "compile", None)
-        ):
-            raise TypeError("legacy_workflow_compiler must implement compile")
         self.runtime_binding_authority = runtime_binding_authority
-        self.legacy_workflow_compiler = legacy_workflow_compiler
         if timer_wake_port is not None and not isinstance(
             timer_wake_port,
             HarnessTimerWakePort,
@@ -679,14 +642,6 @@ class HarnessControlPlane:
                 "HarnessGraphResultCommitterPort"
             )
         self._graph_result_committer = graph_result_committer
-        if graph_result_observer is not None and not callable(
-            getattr(graph_result_observer, "observe_result", None)
-        ):
-            raise TypeError(
-                "graph_result_observer must implement "
-                "HarnessGraphResultObserverPort"
-            )
-        self._graph_result_observer = graph_result_observer
         self._uses_external_graph_dispatcher = graph_activity_dispatcher is not None
         self._graph_dispatch_queue = _GraphDispatchQueue(graph_activity_dispatcher)
         self._graph_runtime = (
@@ -716,8 +671,8 @@ class HarnessControlPlane:
             HarnessResolvedRuntimeBindings,
         ] = {}
         self._worker_bindings_by_run: dict[str, dict[str, HarnessWorkerBinding]] = {}
-        self._activity_contract_versions_by_run: dict[str, dict[str, str]] = {}
         self._prepared_run_specs: dict[str, str] = {}
+        self._prepared_run_specs_by_id: dict[str, HarnessRunSpec] = {}
         self._graph_worker_results: dict[
             str,
             dict[str, HarnessWorkerResult],
@@ -761,8 +716,8 @@ class HarnessControlPlane:
             self._prepared_graphs,
             self._resolved_graph_bindings,
             self._worker_bindings_by_run,
-            self._activity_contract_versions_by_run,
             self._prepared_run_specs,
+            self._prepared_run_specs_by_id,
             self._graph_worker_results,
             self._graph_outputs,
             self._graph_gate_results,
@@ -798,8 +753,6 @@ class HarnessControlPlane:
     def _prepare_run_spec(
         self,
         run_spec: HarnessRunSpec,
-        *,
-        recovery_only: bool = False,
     ) -> None:
         if not isinstance(run_spec, HarnessRunSpec):
             raise TypeError("run_spec must be HarnessRunSpec")
@@ -813,28 +766,16 @@ class HarnessControlPlane:
                 )
             return
 
-        steps_by_id = {step.step_id: step for step in run_spec.workflow.steps}
-        for rule in run_spec.workflow.routing_rules:
-            if rule.kind != HarnessRouteKind.ON_VERDICT:
-                continue
-            source_step = steps_by_id[rule.from_step]
-            if source_step.quality_gate is None:
-                raise HarnessValidationError(
-                    "ON_VERDICT routing requires a declared deterministic quality gate",
-                    code="missing_quality_gate_for_verdict_route",
-                    details={
-                        "code": "missing_quality_gate_for_verdict_route",
-                        "step_id": source_step.step_id,
-                    },
-                )
+        steps_by_id = {step.step_id: step for step in run_spec.graph.activities}
 
         graph = self._graph_replay_recovery(run_spec, compile_only=True)
         self.graph_preflight.validate_static(graph).raise_if_invalid()
-        authority = self.runtime_binding_authority or self._legacy_runtime_authority(
-            run_spec.workflow,
-            graph,
-            recovery_only=recovery_only,
-        )
+        authority = self.runtime_binding_authority
+        if authority is None:
+            raise HarnessValidationError(
+                "Graph-only production admission requires an explicit runtime binding authority",
+                code="graph_runtime_binding_authority_missing",
+            )
         dispatcher_capabilities: dict[str, HarnessActivityCapabilities] | None = None
         if (
             self._uses_external_graph_dispatcher
@@ -868,7 +809,7 @@ class HarnessControlPlane:
         validation.raise_if_invalid()
 
         # Plan gates are also committed and replayed, so moving aliases must be
-        # rejected before RUN_CREATED even though they are not workflow-bound.
+        # rejected before RUN_CREATED even though they are not Graph-bound.
         for gate in self.plan_gates:
             _gate_reference(gate)
 
@@ -889,7 +830,6 @@ class HarnessControlPlane:
 
         bindings: dict[str, tuple[GateBinding, ...]] = {}
         worker_bindings: dict[str, HarnessWorkerBinding] = {}
-        activity_contract_versions: dict[str, str] = {}
         side_effect_bindings: dict[str, HarnessSideEffectHandlerBinding] = {}
         for node in graph.nodes:
             if not isinstance(node, HarnessExecutableNode):
@@ -920,18 +860,6 @@ class HarnessControlPlane:
                 resolved.workers_by_node[node.node_id],
                 code="ambiguous_step_worker_binding",
             )
-            activity_contract_version = str(
-                step.metadata.get(
-                    "activity_contract_version",
-                    HARNESS_ACTIVITY_CONTRACT,
-                )
-            )
-            _bind_step_value(
-                activity_contract_versions,
-                step.step_id,
-                activity_contract_version,
-                code="ambiguous_step_activity_binding",
-            )
             side_effect_binding = resolved.side_effects_by_node.get(node.node_id)
             if side_effect_binding is not None:
                 _bind_step_value(
@@ -940,10 +868,10 @@ class HarnessControlPlane:
                     side_effect_binding,
                     code="ambiguous_step_side_effect_binding",
                 )
-        for step in run_spec.workflow.steps:
+        for step in run_spec.graph.activities:
             bindings.setdefault(step.step_id, ())
 
-        terminal_policy = run_spec.workflow.terminal_side_effect_policy
+        terminal_policy = run_spec.graph.terminal_side_effect_policy
         terminal_binding = resolved.terminal_side_effect
         if terminal_policy is not None:
             if terminal_binding is None:
@@ -985,7 +913,7 @@ class HarnessControlPlane:
         approval_required = any(
             step.side_effect_handler is not None
             and step.metadata.get("approval_required") is True
-            for step in run_spec.workflow.steps
+            for step in run_spec.graph.activities
         ) or bool(terminal_policy is not None and terminal_policy.requires_approval)
         if approval_required and self.approval_evidence_resolver is None:
             raise HarnessValidationError(
@@ -1001,83 +929,163 @@ class HarnessControlPlane:
         self._prepared_graphs[run_spec.run_id] = graph
         self._resolved_graph_bindings[run_spec.run_id] = resolved
         self._worker_bindings_by_run[run_spec.run_id] = worker_bindings
-        self._activity_contract_versions_by_run[run_spec.run_id] = (
-            activity_contract_versions
-        )
         if dispatcher_capabilities is not None:
             self._graph_dispatch_queue.pin_parallel_capabilities(
                 run_spec.run_id,
                 dispatcher_capabilities,
             )
         self._prepared_run_specs[run_spec.run_id] = spec_ref
+        self._prepared_run_specs_by_id[run_spec.run_id] = run_spec
 
-    def _legacy_runtime_authority(
+    def install_graph_activity_dispatcher(
         self,
-        workflow,
-        graph: NormalizedHarnessGraph,
-        *,
-        recovery_only: bool = False,
-    ) -> HarnessRuntimeBindingAuthority:
-        steps_by_id = {step.step_id: step for step in workflow.steps}
-        worker_bindings: dict[HarnessContractReference, HarnessWorkerBinding] = {}
-        activity_bindings: dict[
-            HarnessContractReference,
-            HarnessActivityContractBinding,
-        ] = {}
-        default_activity_ref = HarnessContractReference(
-            HarnessContractKind.ACTIVITY,
-            HARNESS_ACTIVITY_CONTRACT.rsplit("/", maxsplit=1)[0],
-            HARNESS_ACTIVITY_CONTRACT.rsplit("/", maxsplit=1)[1],
+        dispatcher: HarnessGraphActivityDispatcherPort,
+    ) -> None:
+        """Install the one physical Graph dispatcher before a run starts."""
+
+        if not isinstance(dispatcher, HarnessGraphActivityDispatcherPort):
+            raise TypeError(
+                "dispatcher must implement HarnessGraphActivityDispatcherPort"
+            )
+        if self._graph_dispatch_queue.downstream not in (None, dispatcher):
+            raise HarnessValidationError(
+                "Graph activity dispatcher is immutable for a control plane",
+                code="graph_activity_dispatcher_rebind_forbidden",
+            )
+        self._graph_dispatch_queue.downstream = dispatcher
+        self._uses_external_graph_dispatcher = True
+
+    def resolve_graph_activity_execution_input(
+        self,
+        activity: HarnessGraphActivity,
+    ) -> HarnessGraphActivityExecutionInput:
+        """Resolve the exact worker input from the durable Graph projection."""
+
+        if not isinstance(activity, HarnessGraphActivity):
+            raise TypeError("activity must be HarnessGraphActivity")
+        run_spec = self._prepared_run_specs_by_id.get(activity.run_id)
+        if run_spec is None:
+            raise HarnessValidationError(
+                "Graph activity has no prepared run specification",
+                code="graph_activity_run_not_prepared",
+            )
+        graph = self._prepared_graphs.get(activity.run_id)
+        if graph is None:
+            raise HarnessValidationError(
+                "Graph activity has no prepared normalized Graph",
+                code="graph_activity_graph_not_prepared",
+            )
+        recovery = self._require_graph_runtime().transition_port.recover_graph(
+            activity.run_id
         )
-        for node in graph.nodes:
-            if not isinstance(node, HarnessExecutableNode):
-                continue
-            step = steps_by_id[node.step_id]
-            delegate = self.worker_registry.get(step.step_id)
-            if delegate is None:
-                delegate = self.worker_registry.get(step.worker_type.value)
-            if delegate is None and recovery_only:
-                delegate = _ReplayOnlyWorkerDelegate(node.worker_ref.exact_ref)
-            if delegate is not None:
-                adapter = _WorkerImplementationAdapter(
-                    worker_id=node.worker_ref.contract_id,
-                    worker_version=node.worker_ref.version,
-                    worker_type=step.worker_type,
-                    delegate=delegate,
-                )
-                binding = HarnessWorkerBinding(
-                    node.worker_ref,
-                    step.worker_type,
-                    adapter,
-                )
-                existing = worker_bindings.get(node.worker_ref)
-                if (
-                    existing is not None
-                    and existing.implementation.delegate is not delegate
-                ):
-                    raise HarnessValidationError(
-                        "one exact worker reference resolves to multiple implementations",
-                        code="ambiguous_runtime_worker_binding",
-                        details={"reference": node.worker_ref.exact_ref},
-                    )
-                worker_bindings[node.worker_ref] = binding
-            if node.activity_ref == default_activity_ref:
-                activity_bindings.setdefault(
-                    node.activity_ref,
-                    HarnessActivityContractBinding(
-                        node.activity_ref,
-                        _ActivityImplementationAdapter(
-                            activity_contract_id=node.activity_ref.contract_id,
-                            activity_contract_version=node.activity_ref.version,
-                            event_port=self.event_port,
-                        ),
-                    ),
-                )
-        return HarnessRuntimeBindingAuthority(
-            workers=tuple(worker_bindings.values()),
-            activities=tuple(activity_bindings.values()),
-            gate_registry=self.gate_registry,
-            side_effect_registry=self.side_effect_registry,
+        state = recovery.state
+        if state is None:
+            raise EventIncompleteHistoryError(
+                "Graph activity input has no committed projection"
+            )
+        self._validate_prepared_graph_state(run_spec, state)
+        task = self._graph_activity_task(run_spec, state, activity)
+        if isinstance(task.get("compensation"), Mapping):
+            self._validate_graph_compensation_execution(
+                run_spec,
+                state,
+                activity,
+                task,
+            )
+        if graph_activity_input_checksum(task) != activity.input_ref:
+            raise EventReplayMismatchError(
+                sequence=activity.causal_decision_sequence,
+                reason="Graph activity input no longer matches its committed descriptor",
+            )
+        definition = _graph_definition_by_id(graph, activity.node_id)
+        if not isinstance(definition, HarnessExecutableNode):
+            raise EventIncompleteHistoryError(
+                "Graph activity has no executable node definition"
+            )
+        worker_type = definition.metadata.get("worker_type")
+        try:
+            leaf_kind = HarnessLeafActivityKind(str(worker_type))
+        except (TypeError, ValueError) as exc:
+            raise HarnessValidationError(
+                "Graph activity worker type has no physical leaf kind",
+                code="graph_activity_leaf_kind_missing",
+                details={"worker_type": str(worker_type)},
+            ) from exc
+        usage = (
+            HarnessActivityUsage.COMPENSATION
+            if isinstance(task.get("compensation"), Mapping)
+            else HarnessActivityUsage.SERIAL
+        )
+        graph_checkpoint_ref = (
+            f"graph-checkpoint://{activity.run_id}/"
+            f"{state.last_event_sequence}/{state.projection_checksum}"
+        )
+        timeout_seconds = task.get("timeout_seconds")
+        if timeout_seconds is None:
+            timeout_seconds = task.get("metadata", {}).get("timeout_seconds")
+        if timeout_seconds is not None and (
+            isinstance(timeout_seconds, bool)
+            or not isinstance(timeout_seconds, int | float)
+        ):
+            timeout_seconds = None
+        return HarnessGraphActivityExecutionInput.for_activity(
+            activity,
+            task=task,
+            leaf_activity_kind=leaf_kind,
+            required_usage=usage,
+            graph_checkpoint_ref=graph_checkpoint_ref,
+            output_keys=tuple(definition.output_keys),
+            timeout_seconds=timeout_seconds,
+        )
+
+    def graph_for_activity(
+        self,
+        activity: HarnessGraphActivity,
+    ) -> NormalizedHarnessGraph:
+        """Return the normalized Graph pinned for a committed activity."""
+
+        if not isinstance(activity, HarnessGraphActivity):
+            raise TypeError("activity must be HarnessGraphActivity")
+        graph = self._prepared_graphs.get(activity.run_id)
+        if graph is None:
+            raise HarnessValidationError(
+                "Graph activity has no prepared normalized Graph",
+                code="graph_activity_graph_not_prepared",
+            )
+        if HarnessGraphReference.from_graph(graph) != activity.graph_ref:
+            raise EventReplayMismatchError(
+                sequence=activity.causal_decision_sequence,
+                reason="Graph activity references a different prepared Graph",
+            )
+        return graph
+
+    def resolve_execution_input(
+        self,
+        activity: HarnessGraphActivity,
+    ) -> HarnessGraphActivityExecutionInput:
+        """Protocol adapter used by the physical Graph executor."""
+
+        return self.resolve_graph_activity_execution_input(activity)
+
+    def accept_graph_activity_for_execution(
+        self,
+        activity: HarnessGraphActivity,
+        execution_input: HarnessGraphActivityExecutionInput,
+    ) -> HarnessWorkerResult | None:
+        run_spec = self._prepared_run_specs_by_id.get(activity.run_id)
+        graph = self._prepared_graphs.get(activity.run_id)
+        if run_spec is None or graph is None:
+            raise HarnessValidationError(
+                "Graph activity execution requires a prepared run",
+                code="graph_activity_run_not_prepared",
+            )
+        self.event_port.require_activity_storage()
+        return self.event_port.accept_graph_activity(
+            activity,
+            graph,
+            dict(execution_input.task),
+            accepted_at=_graph_time(run_spec, activity.causal_decision_sequence),
+            started_at=_graph_time(run_spec, activity.causal_decision_sequence),
         )
 
     def initialize(
@@ -1187,6 +1195,177 @@ class HarnessControlPlane:
                 code="graph_activity_result_run_mismatch",
             )
         return state
+
+    def record_graph_activity_call_marker(
+        self,
+        activity: HarnessGraphActivity,
+        execution_input: HarnessGraphActivityExecutionInput,
+    ) -> None:
+        """Persist the Graph worker-call fact before physical execution."""
+
+        if not isinstance(activity, HarnessGraphActivity):
+            raise TypeError("activity must be HarnessGraphActivity")
+        if not isinstance(
+            execution_input,
+            HarnessGraphActivityExecutionInput,
+        ):
+            raise TypeError(
+                "execution_input must be HarnessGraphActivityExecutionInput"
+            )
+        run_spec = self._prepared_run_specs_by_id.get(activity.run_id)
+        graph = self._prepared_graphs.get(activity.run_id)
+        if run_spec is None or graph is None:
+            raise HarnessValidationError(
+                "Graph worker marker requires a prepared run",
+                code="graph_activity_run_not_prepared",
+            )
+        existing = tuple(
+            event
+            for event in self.event_port.read_history(activity.run_id)
+            if event.event_type is HarnessEventType.GRAPH_WORKER_CALLED
+            and event.payload.get("activity_id") == activity.activity_id
+        )
+        if existing:
+            if len(existing) != 1:
+                raise EventStoreCorruptionError(
+                    "Graph activity has duplicate durable worker-call markers"
+                )
+            return
+        definition = _graph_definition_by_id(graph, activity.node_id)
+        if not isinstance(definition, HarnessExecutableNode):
+            raise EventIncompleteHistoryError(
+                "Graph worker marker has no executable node definition"
+            )
+        task = dict(execution_input.task)
+        self._record_event(
+            HarnessEvent(
+                event_type=HarnessEventType.GRAPH_WORKER_CALLED,
+                run_id=activity.run_id,
+                node_id=activity.node_id,
+                payload={
+                    "run_id": activity.run_id,
+                    "node_id": activity.node_id,
+                    "worker_type": definition.metadata.get("worker_type"),
+                    "activity_id": activity.activity_id,
+                    "node_instance_id": activity.node_instance_id,
+                    "idempotency_key": activity.idempotency_key,
+                    "activity_attempt": activity.attempt,
+                    "activity_contract_version": activity.activity_ref.version,
+                    "activity_checksum": activity.activity_checksum,
+                    "graph_ref": activity.graph_ref.to_dict(),
+                    "step_ref": activity.step_ref.to_dict(),
+                    "worker_ref": activity.worker_ref.to_dict(),
+                    "activity_ref": activity.activity_ref.to_dict(),
+                    "activity_input_ref": activity.input_ref,
+                    "input_ref": execution_input.input_ref,
+                    "inputs": dict(task.get("inputs", {})),
+                    "metadata": {
+                        **dict(task.get("metadata", {})),
+                        **(
+                            {"compensation": task["compensation"]}
+                            if isinstance(task.get("compensation"), Mapping)
+                            else {}
+                        ),
+                    },
+                },
+                occurred_at=_graph_time(
+                    run_spec,
+                    activity.causal_decision_sequence,
+                ),
+            )
+        )
+
+    def record_graph_activity_result_event(
+        self,
+        activity: HarnessGraphActivity,
+        graph: NormalizedHarnessGraph,
+        worker_result: HarnessWorkerResult,
+    ) -> HarnessEvent:
+        """Persist the physical Worker's terminal candidate/evidence fact."""
+
+        run_spec = self._prepared_run_specs_by_id.get(activity.run_id)
+        if run_spec is None:
+            raise HarnessValidationError(
+                "Graph result requires a prepared run",
+                code="graph_activity_run_not_prepared",
+            )
+        event = self.event_port.record_graph_activity_result(
+            activity,
+            graph,
+            worker_result,
+            completed_at=_graph_time(
+                run_spec,
+                activity.causal_decision_sequence + 1,
+            ),
+            graph_context=_graph_event_context_for_activity(graph, activity),
+        )
+        if not isinstance(event, HarnessEvent):
+            raise HarnessValidationError(
+                "Graph result storage returned an invalid event",
+                code="graph_result_event_invalid",
+            )
+        if not any(item.event_id == event.event_id for item in self._committed_events):
+            self._committed_events.append(event)
+        return event
+
+    def commit_physical_graph_result(
+        self,
+        activity: HarnessGraphActivity,
+        worker_result: HarnessWorkerResult,
+        graph_result: HarnessGraphActivityResult,
+    ) -> HarnessGraphState:
+        """Apply one physical result through the normal Graph result authority."""
+
+        run_spec = self._prepared_run_specs_by_id.get(activity.run_id)
+        graph = self._prepared_graphs.get(activity.run_id)
+        if run_spec is None or graph is None:
+            raise HarnessValidationError(
+                "Graph physical result requires a prepared run",
+                code="graph_activity_run_not_prepared",
+            )
+        result_at = _graph_time(
+            run_spec,
+            activity.causal_decision_sequence + 2,
+        )
+        if self._graph_result_committer is None:
+            state = self.accept_graph_activity_result(
+                run_spec,
+                graph_result,
+                occurred_at=result_at,
+            )
+        else:
+            state = self._graph_result_committer.commit_result(
+                activity=activity,
+                graph=graph,
+                run_spec_checksum=self._prepared_run_specs[activity.run_id],
+                worker_result=worker_result,
+                occurred_at=result_at,
+            )
+            self._validate_materialized_graph_result_commit(
+                activity=activity,
+                graph=graph,
+                state=state,
+            )
+        self._graph_worker_results.setdefault(activity.run_id, {})[
+            activity.node_instance_id
+        ] = worker_result
+        budget_fact = resolve_harness_cumulative_budget_fact(
+            run_id=activity.run_id,
+            worker_result=worker_result,
+            resolver=self._budget_fact_resolver,
+            expected_identity=_graph_execution_identity_for_activity(graph, activity),
+        )
+        if budget_fact is not None:
+            self._graph_budget_facts.setdefault(activity.run_id, {})[
+                activity.node_instance_id
+            ] = budget_fact
+            self._record_or_validate_budget_fact(run_spec, activity, budget_fact)
+        return self._record_graph_worker_status(
+            run_spec,
+            state,
+            activity,
+            worker_result,
+        )
 
     def accept_graph_observation(
         self,
@@ -1390,13 +1569,7 @@ class HarnessControlPlane:
                 item
                 for item in state.node_instances
                 if item.instance_id == node_instance_id
-                and (
-                    item.node_kind is HarnessGraphNodeKind.WAIT
-                    or (
-                        item.node_kind is HarnessGraphNodeKind.EXECUTABLE
-                        and item.step_status is HarnessStepStatus.WAITING_APPROVAL
-                    )
-                )
+                and item.node_kind is HarnessGraphNodeKind.WAIT
             ),
             None,
         )
@@ -1636,31 +1809,18 @@ class HarnessControlPlane:
             ),
             None,
         )
-        is_legacy_approval = (
-            isinstance(definition, HarnessExecutableNode)
-            and registration is not None
-            and registration.kind.value == "approval"
-        )
-        if (
-            not (
-                isinstance(definition, HarnessControlNode)
-                and definition.wait is not None
-            )
-            and not is_legacy_approval
+        if not (
+            isinstance(definition, HarnessControlNode)
+            and definition.wait is not None
         ):
             raise HarnessValidationError(
                 "Wait cause definition is not a Wait control node",
                 code="graph_wait_contract_missing",
             )
-        contract_ref = (
-            HarnessContractReference(
-                HarnessContractKind.WAIT,
-                definition.wait.signal_type,
-                definition.wait.signal_version,
-            )
-            if isinstance(definition, HarnessControlNode)
-            and definition.wait is not None
-            else HarnessContractReference(HarnessContractKind.WAIT, "approval", "1")
+        contract_ref = HarnessContractReference(
+            HarnessContractKind.WAIT,
+            definition.wait.signal_type,
+            definition.wait.signal_version,
         )
         observation = HarnessAcceptedGraphObservation(
             HarnessGraphObservationType.WAIT_CAUSE,
@@ -1737,15 +1897,11 @@ class HarnessControlPlane:
         *,
         compile_only: bool = False,
     ) -> NormalizedHarnessGraph | tuple[HarnessGraphRecovery, NormalizedHarnessGraph]:
-        """Compile through one pinned adapter and optionally resolve history."""
+        """Compile the immutable Graph definition and optionally resolve history."""
 
         if not isinstance(run_spec, HarnessRunSpec):
             raise TypeError("run_spec must be HarnessRunSpec")
-        compiler = self.legacy_workflow_compiler
-        if compiler is None:
-            compiler = HarnessWorkflowGraphCompiler()
-            self.legacy_workflow_compiler = compiler
-        compiled_graph = compiler.compile(run_spec.workflow).graph
+        compiled_graph = HarnessGraphCompiler().compile(run_spec.graph).graph
         if compile_only:
             return compiled_graph
         recovery = self._require_graph_runtime().transition_port.recover_graph(
@@ -1937,10 +2093,39 @@ class HarnessControlPlane:
                 task,
             )
             worker_result = _coerce_worker_result(recorded)
-            if (
-                checksum_for(worker_result.to_dict())
-                != result_commit.result.payload_ref
-            ):
+            expected_payload_refs = {worker_result.candidate_result_ref}
+            if result_commit.result.status is HarnessGraphActivityResultStatus.SUCCEEDED:
+                # A successful Graph result is authoritative only when its
+                # payload points at the durable node-output candidate.  The
+                # Worker candidate reference is evidence inside that commit,
+                # never a substitute for the physical commit itself.
+                expected_payload_refs = set()
+                output_keys = tuple(definition.output_keys)
+                if len(output_keys) == 1:
+                    projected_outputs = {output_keys[0]: worker_result.output}
+                elif set(output_keys).issubset(worker_result.output):
+                    projected_outputs = {
+                        key: worker_result.output[key] for key in output_keys
+                    }
+                else:
+                    projected_outputs = {}
+                if projected_outputs:
+                    candidate = HarnessNodeOutputCandidate(
+                        output_refs={
+                            key: checksum_for(value)
+                            for key, value in projected_outputs.items()
+                        },
+                        evidence_refs=(
+                            worker_result.candidate_result_ref,
+                            *(
+                                item.evidence_checksum
+                                for item in worker_result.evidence
+                            ),
+                        ),
+                        worker_result=worker_result.to_dict(),
+                    )
+                    expected_payload_refs.add(candidate.candidate_ref)
+            if result_commit.result.payload_ref not in expected_payload_refs:
                 raise EventReplayMismatchError(
                     sequence=result_commit.sequence,
                     reason="recorded Worker result differs from graph activity evidence",
@@ -2071,12 +2256,11 @@ class HarnessControlPlane:
 
         The method deliberately keeps Worker/Gate adapters here, while all
         readiness, routing, and terminal decisions remain Scheduler outputs.
-        ``HarnessState`` is created only as a read-only adapter for existing
-        Gate and side-effect contracts; it never supplies Graph routing state.
+        Gate and side-effect contracts consume this durable Graph projection
+        directly; no flat state projection is created.
         """
 
         run_id = run_spec.run_id
-        graph = self._prepared_graphs[run_id]
         decisions: list[HarnessGraphDecision] = list(initial_decisions)
         self._hydrate_graph_execution(run_spec, state)
         self._restore_graph_auxiliary_recovery(run_spec)
@@ -2138,7 +2322,6 @@ class HarnessControlPlane:
                 run_spec,
                 recovery.expected_last_sequence + 1,
             )
-            step_id = self._graph_step_id(graph, decision.node_id)
             worker_result = self._graph_worker_for_decision(
                 run_id,
                 decision.node_instance_id,
@@ -2166,7 +2349,7 @@ class HarnessControlPlane:
             if decision.decision_type is HarnessGraphDecisionType.ENTER_STEP_PHASE:
                 self._record_graph_phase(
                     run_spec,
-                    step_id,
+                    decision.node_instance_id,
                     HarnessPhase.PLAN,
                     HarnessPhaseBoundary.ENTRY,
                     state,
@@ -2174,12 +2357,12 @@ class HarnessControlPlane:
                 state = self._run_graph_plan_gates(
                     run_spec,
                     state,
-                    step_id,
+                    decision.node_instance_id,
                     worker_result=None,
                 )
                 self._record_graph_phase(
                     run_spec,
-                    step_id,
+                    decision.node_instance_id,
                     HarnessPhase.PLAN,
                     HarnessPhaseBoundary.EXIT,
                     state,
@@ -2187,7 +2370,7 @@ class HarnessControlPlane:
             elif decision.decision_type is HarnessGraphDecisionType.DISPATCH_ACTIVITY:
                 self._record_graph_phase(
                     run_spec,
-                    step_id,
+                    decision.node_instance_id,
                     HarnessPhase.EXECUTE,
                     HarnessPhaseBoundary.ENTRY,
                     state,
@@ -2196,7 +2379,7 @@ class HarnessControlPlane:
                 state = self.recover_graph(run_spec)
                 self._record_graph_phase(
                     run_spec,
-                    step_id,
+                    decision.node_instance_id,
                     HarnessPhase.EXECUTE,
                     HarnessPhaseBoundary.EXIT,
                     state,
@@ -2207,7 +2390,7 @@ class HarnessControlPlane:
             ):
                 self._record_graph_phase(
                     run_spec,
-                    step_id,
+                    decision.node_instance_id,
                     HarnessPhase.VERIFY,
                     HarnessPhaseBoundary.ENTRY,
                     state,
@@ -2215,12 +2398,12 @@ class HarnessControlPlane:
                 state = self._run_graph_verify_gates(
                     run_spec,
                     state,
-                    step_id,
+                    decision.node_instance_id,
                     worker_result,
                 )
                 self._record_graph_phase(
                     run_spec,
-                    step_id,
+                    decision.node_instance_id,
                     HarnessPhase.VERIFY,
                     HarnessPhaseBoundary.EXIT,
                     state,
@@ -2249,40 +2432,32 @@ class HarnessControlPlane:
         *,
         decisions: list[HarnessGraphDecision],
     ) -> HarnessRunResult:
-        worker_results_by_step: dict[str, HarnessWorkerResult] = {}
-        quality_by_step: dict[str, HarnessQualityVerdict] = {}
+        worker_results_by_instance: dict[str, HarnessWorkerResult] = {}
+        quality_by_instance_result: dict[str, HarnessQualityVerdict] = {}
         worker_by_instance = self._graph_worker_results.get(run_spec.run_id, {})
         quality_by_instance = self._graph_quality_verdicts.get(run_spec.run_id, {})
         for node in state.node_instances:
-            if node.step_id is None:
-                continue
             if node.instance_id in worker_by_instance:
-                worker_results_by_step[node.step_id] = worker_by_instance[
+                worker_results_by_instance[node.instance_id] = worker_by_instance[
                     node.instance_id
                 ]
             if node.instance_id in quality_by_instance:
-                quality_by_step[node.step_id] = quality_by_instance[node.instance_id]
-        compatibility = self._graph_compat_state(
-            run_spec,
-            state,
-            step_id=None,
-            outputs=self._graph_outputs.get(run_spec.run_id, {}),
-            worker_result=None,
-        )
+                quality_by_instance_result[node.instance_id] = quality_by_instance[
+                    node.instance_id
+                ]
         return HarnessRunResult(
-            state=compatibility,
+            state=state,
             decisions=tuple(decisions),
             events=tuple(
                 event
                 for event in self._committed_events
                 if event.run_id == run_spec.run_id
             ),
-            worker_results=worker_results_by_step,
-            quality_verdicts=quality_by_step,
+            worker_results=worker_results_by_instance,
+            quality_verdicts=quality_by_instance_result,
             side_effect_outcomes=dict(
                 self._side_effect_outcomes.get(run_spec.run_id, {})
             ),
-            graph_state=state,
             graph_terminal_node_ids=(
                 ()
                 if self._prepared_graphs.get(run_spec.run_id) is None
@@ -2336,6 +2511,7 @@ class HarnessControlPlane:
                 run_id=run_id,
                 worker_result=result,
                 resolver=self._budget_fact_resolver,
+                expected_identity=_graph_execution_identity_for_activity(graph, activity),
             )
             if fact is not None:
                 self._graph_budget_facts[run_id][activity.node_instance_id] = fact
@@ -2495,9 +2671,13 @@ class HarnessControlPlane:
             if outcome is None:
                 continue
             slot = (
-                authorization.step_id
+                (
+                    f"node:{authorization.node_instance_id}:effect:{authorization.effect_id}"
+                    if authorization.node_instance_id is not None
+                    else None
+                )
                 if authorization.origin is HarnessSideEffectOrigin.WORKER
-                else "__terminal__"
+                else f"terminal:{authorization.effect_id}"
                 if authorization.origin is HarnessSideEffectOrigin.CONTROLLER_TERMINAL
                 else None
             )
@@ -2572,19 +2752,10 @@ class HarnessControlPlane:
                 raise EventIncompleteHistoryError(
                     "pending node side effect lacks its Step identity"
                 )
-            compat_state = self._graph_compat_state(
+            prepared = self._prepare_worker_side_effect(
                 run_spec,
                 state,
-                step_id=node.step_id,
-                outputs=self._graph_scoped_output_projection(
-                    run_spec,
-                    state,
-                    node_instance_id=node.instance_id,
-                ),
-                worker_result=worker_result,
-            )
-            prepared = self._prepare_worker_side_effect(
-                compat_state,
+                node,
                 decided_at=commit.occurred_at,
                 decision_input=decision_input,
                 step_id=node.step_id,
@@ -2599,15 +2770,9 @@ class HarnessControlPlane:
                 ),
             )
         else:
-            compat_state = self._graph_compat_state(
+            prepared = self._prepare_terminal_side_effect(
                 run_spec,
                 state,
-                step_id=node.step_id,
-                outputs=self._graph_outputs.get(run_spec.run_id, {}),
-                worker_result=worker_result,
-            )
-            prepared = self._prepare_terminal_side_effect(
-                compat_state,
                 decided_at=commit.occurred_at,
                 decision_input=decision_input,
             )
@@ -2633,7 +2798,7 @@ class HarnessControlPlane:
                 state,
                 commit.decision,
                 prepared,
-                compat_state=compat_state,
+                graph_state=state,
                 reason_code=exc.code,
             )
         return self._record_graph_side_effect_outcome(
@@ -2692,7 +2857,7 @@ class HarnessControlPlane:
         decision: HarnessGraphDecision,
         prepared: _PreparedSideEffect,
         *,
-        compat_state: HarnessState,
+        graph_state: HarnessGraphState,
         reason_code: str,
     ) -> HarnessGraphState:
         node = None
@@ -2749,23 +2914,52 @@ class HarnessControlPlane:
         )
         indeterminate = reason_code == "side_effect_attempt_indeterminate"
         if not indeterminate:
-            self._quarantine_prepared_side_effects(compat_state)
+            self._quarantine_prepared_side_effects(graph_state)
         return projected
 
     def _process_graph_dispatches(self, run_spec: HarnessRunSpec) -> None:
-        if self._uses_external_graph_dispatcher:
-            return
-        activities = tuple(
-            sorted(
-                self._graph_dispatch_queue.activities.values(),
-                key=lambda item: (
-                    item.causal_decision_sequence,
-                    item.node_instance_id,
-                ),
+        if not self._uses_external_graph_dispatcher:
+            raise HarnessValidationError(
+                "Graph execution requires the physical Graph dispatcher",
+                code="graph_physical_dispatcher_missing",
             )
+
+    def _require_physical_graph_admission(self, run_spec: HarnessRunSpec) -> None:
+        """Admit a live Graph only after its physical execution boundary exists.
+
+        Graph preparation is read-only, but ``initialize_graph`` commits the
+        first durable projection.  Keep the dispatcher check immediately before
+        that boundary so a production run cannot leave a durable Graph that can
+        never execute its executable nodes.
+        """
+
+        if not isinstance(run_spec, HarnessRunSpec):
+            raise TypeError("run_spec must be HarnessRunSpec")
+        self._prepare_run_spec(run_spec)
+        graph = self._prepared_graphs.get(run_spec.run_id)
+        if graph is None:
+            raise HarnessValidationError(
+                "Graph physical admission has no prepared normalized Graph",
+                code="graph_activity_graph_not_prepared",
+            )
+        has_executable = any(
+            isinstance(node, HarnessExecutableNode) for node in graph.nodes
         )
-        for activity in activities:
-            self._process_graph_activity(run_spec, activity)
+        if not has_executable:
+            return
+        dispatcher = self._graph_dispatch_queue.downstream
+        if not self._uses_external_graph_dispatcher or dispatcher is None:
+            raise HarnessValidationError(
+                "Graph-only production admission requires an injected physical dispatcher",
+                code="graph_physical_dispatcher_missing",
+                details={"run_id": run_spec.run_id},
+            )
+        if not callable(getattr(dispatcher, "dispatch", None)):
+            raise HarnessValidationError(
+                "Graph physical dispatcher does not implement dispatch",
+                code="graph_physical_dispatcher_invalid",
+                details={"run_id": run_spec.run_id},
+            )
 
     def _reconcile_graph_activities(
         self,
@@ -2774,23 +2968,11 @@ class HarnessControlPlane:
     ) -> HarnessGraphState:
         if not state.active_activities:
             return state
-        if self._uses_external_graph_dispatcher:
-            return state
-        port = self._require_graph_runtime().transition_port
-        recovery = port.recover_graph(run_spec.run_id)
-        completed_ids = {
-            item.result.activity_id for item in recovery.activity_result_commits
-        }
-        for active in state.active_activities:
-            if active.activity_id in completed_ids:
-                continue
-            activity = port.activity_for(active.activity_id)
-            if activity is None:
-                raise EventIncompleteHistoryError(
-                    "active graph attempt is missing its durable activity descriptor"
-                )
-            self._process_graph_activity(run_spec, activity)
-            state = self.recover_graph(run_spec)
+        if not self._uses_external_graph_dispatcher:
+            raise HarnessValidationError(
+                "Graph recovery requires the physical Graph dispatcher",
+                code="graph_physical_dispatcher_missing",
+            )
         return state
 
     def _reconcile_graph_merges(
@@ -2929,179 +3111,6 @@ class HarnessControlPlane:
             occurred_at=_graph_time(run_spec, observation.event_sequence),
         )
 
-    def _process_graph_activity(
-        self,
-        run_spec: HarnessRunSpec,
-        activity: HarnessGraphActivity,
-    ) -> None:
-        run_id = run_spec.run_id
-        definition = self._graph_definition(run_id, activity.node_id)
-        step = self._graph_step(run_spec, definition.step_id)
-        current_state = self.recover_graph(run_spec)
-        task = self._graph_activity_task(run_spec, current_state, activity)
-        if harness_activity_input_checksum(task) != activity.input_ref:
-            raise EventReplayMismatchError(
-                sequence=activity.causal_decision_sequence,
-                reason="graph activity input no longer matches its committed descriptor",
-            )
-        compensation_task = task.get("compensation")
-        is_compensation = isinstance(compensation_task, Mapping)
-        event_activity = _event_activity_from_graph(activity, step)
-        accepted_at = _graph_time(run_spec, activity.causal_decision_sequence)
-        self.event_port.require_activity_storage()
-        worker_result = self.event_port.accept_activity(
-            event_activity,
-            task,
-            accepted_at=accepted_at,
-            started_at=accepted_at,
-        )
-        if worker_result is None:
-            if _graph_worker_call_marker_committed(
-                self.event_port,
-                run_id=run_id,
-                activity_id=activity.activity_id,
-            ):
-                raise EventIncompleteHistoryError(
-                    "graph Worker call is durable without a recorded result; "
-                    "re-execution is forbidden"
-                )
-            self._record_event(
-                HarnessEvent(
-                    event_type=HarnessEventType.WORKER_CALLED,
-                    run_id=run_id,
-                    step_id=step.step_id,
-                    payload={
-                        **task,
-                        "activity_id": activity.activity_id,
-                        "idempotency_key": activity.idempotency_key,
-                        "activity_attempt": activity.attempt,
-                        "activity_contract_version": event_activity.contract_version,
-                        "node_instance_id": activity.node_instance_id,
-                    },
-                    occurred_at=accepted_at,
-                )
-            )
-            binding = self._worker_bindings_by_run.get(run_id, {}).get(step.step_id)
-            if is_compensation:
-                worker_result = self._execute_graph_compensation(
-                    run_spec,
-                    current_state,
-                    activity,
-                    compensation_task,
-                )
-            else:
-                if binding is None or not callable(
-                    getattr(binding.implementation, "execute", None)
-                ):
-                    raise HarnessValidationError(
-                        "exact graph Worker binding is unavailable",
-                        code="unknown_runtime_worker_binding",
-                        details={"step_id": step.step_id},
-                    )
-                worker_result = _coerce_worker_result(
-                    binding.implementation.execute(
-                        _task_with_activity(task, event_activity)
-                    )
-                )
-        else:
-            worker_result = _coerce_worker_result(worker_result)
-        result_event = self.event_port.record_activity_result(
-            event_activity,
-            worker_result,
-            completed_at=_graph_time(run_spec, activity.causal_decision_sequence + 1),
-        )
-        if not isinstance(result_event, HarnessEvent):
-            raise HarnessValidationError(
-                "graph Worker result storage returned an invalid event"
-            )
-        if not any(
-            item.event_id == result_event.event_id for item in self._committed_events
-        ):
-            self._committed_events.append(result_event)
-        graph_result_at = _graph_time(
-            run_spec,
-            activity.causal_decision_sequence + 2,
-        )
-        if self._graph_result_observer is not None:
-            observed_event = self._graph_result_observer.observe_result(
-                activity=activity,
-                graph=self._prepared_graphs[run_id],
-                run_spec_checksum=self._prepared_run_specs[run_id],
-                worker_result=worker_result,
-                occurred_at=graph_result_at,
-            )
-            if observed_event is not None:
-                if not isinstance(observed_event, HarnessEvent):
-                    raise HarnessValidationError(
-                        "graph result observer returned an invalid event",
-                        code="graph_result_observer_event_invalid",
-                    )
-                if not any(
-                    item.event_id == observed_event.event_id
-                    for item in self._committed_events
-                ):
-                    self._committed_events.append(observed_event)
-        if self._graph_result_committer is None:
-            payload_ref = checksum_for(worker_result.to_dict())
-            graph_result = HarnessGraphActivityResult.for_activity(
-                activity,
-                evidence_ref=checksum_for(
-                    {
-                        "activity_id": activity.activity_id,
-                        "result_event_id": result_event.event_id,
-                        "payload_ref": payload_ref,
-                    }
-                ),
-                payload_ref=payload_ref,
-                status=(
-                    HarnessGraphActivityResultStatus.FAILED
-                    if worker_result.status is HarnessWorkerStatus.FAILED
-                    else HarnessGraphActivityResultStatus.SUCCEEDED
-                ),
-                termination_confirmed=True,
-            )
-            state = self.accept_graph_activity_result(
-                run_spec,
-                graph_result,
-                occurred_at=graph_result_at,
-            )
-        else:
-            state = self._graph_result_committer.commit_result(
-                activity=activity,
-                graph=self._prepared_graphs[run_id],
-                run_spec_checksum=self._prepared_run_specs[run_id],
-                worker_result=worker_result,
-                occurred_at=graph_result_at,
-            )
-            self._validate_materialized_graph_result_commit(
-                activity=activity,
-                graph=self._prepared_graphs[run_id],
-                state=state,
-            )
-        self._graph_worker_results.setdefault(run_id, {})[activity.node_instance_id] = (
-            worker_result
-        )
-        budget_fact = resolve_harness_cumulative_budget_fact(
-            run_id=run_id,
-            worker_result=worker_result,
-            resolver=self._budget_fact_resolver,
-        )
-        if budget_fact is not None:
-            self._graph_budget_facts.setdefault(run_id, {})[
-                activity.node_instance_id
-            ] = budget_fact
-            self._record_or_validate_budget_fact(
-                run_spec,
-                activity,
-                budget_fact,
-            )
-        self._record_graph_worker_status(
-            run_spec,
-            state,
-            activity,
-            worker_result,
-        )
-
     def _validate_materialized_graph_result_commit(
         self,
         *,
@@ -3156,13 +3165,15 @@ class HarnessControlPlane:
         activity: HarnessGraphActivity,
         fact: HarnessCumulativeBudgetFact,
     ) -> HarnessEvent:
-        step_id = activity.step_ref.contract_id
+        node_id = activity.node_id
         expected_payload = fact.control_projection()
         matches = tuple(
             event
             for event in self.event_port.read_history(run_spec.run_id)
             if event.event_type is HarnessEventType.BUDGET_FACT_RECORDED
-            and event.step_id == step_id
+            and event.node_id == node_id
+            and event.metadata.get("node_instance_id") == activity.node_instance_id
+            and event.metadata.get("attempt") == activity.attempt
             and event.payload.get("operation_id") == fact.operation_id
             and event.payload.get("ledger_revision") == fact.ledger_revision
         )
@@ -3179,7 +3190,7 @@ class HarnessControlPlane:
             HarnessEvent(
                 event_type=HarnessEventType.BUDGET_FACT_RECORDED,
                 run_id=run_spec.run_id,
-                step_id=step_id,
+                node_id=node_id,
                 payload=expected_payload,
                 metadata={
                     "node_instance_id": activity.node_instance_id,
@@ -3192,60 +3203,83 @@ class HarnessControlPlane:
             )
         )
 
-    def _execute_graph_compensation(
+    def _validate_graph_compensation_execution(
         self,
         run_spec: HarnessRunSpec,
         state: HarnessGraphState,
         activity: HarnessGraphActivity,
-        compensation_task: Mapping[str, Any],
-    ) -> HarnessWorkerResult:
+        task: Mapping[str, Any],
+    ) -> None:
+        compensation_task = task.get("compensation")
+        if not isinstance(compensation_task, Mapping):
+            raise HarnessValidationError(
+                "Graph compensation activity is missing its durable entry",
+                code="graph_compensation_binding_missing",
+            )
         node = _graph_node_by_instance(state, activity.node_instance_id)
         entry = compensation_entry_for_node(state, node)
         binding_id = compensation_task.get("binding_id")
+        graph = self._prepared_graphs.get(run_spec.run_id)
+        if graph is None:
+            raise EventIncompleteHistoryError(
+                "Graph compensation activity has no prepared Graph"
+            )
+        bindings = tuple(
+            item
+            for item in graph.compensation_refs
+            if item.binding_id == binding_id
+            and item.compensation_node_id == activity.node_id
+        )
+        if len(bindings) != 1:
+            raise HarnessValidationError(
+                "compensation activity has no unique pinned Graph binding",
+                code="graph_compensation_binding_mismatch",
+                details={"binding_id": binding_id},
+            )
+        graph_binding = bindings[0]
         resolved = self._resolved_graph_bindings.get(run_spec.run_id)
         binding = (
             None
             if resolved is None or not isinstance(binding_id, str)
             else resolved.compensations_by_binding.get(binding_id)
         )
-        if binding is None or binding.reference != entry.handler_ref:
+        if (
+            binding is None
+            or binding.reference != entry.handler_ref
+            or graph_binding.handler_ref != entry.handler_ref
+            or graph_binding.activity_ref != entry.activity_ref
+        ):
             raise HarnessValidationError(
                 "exact compensation handler binding is unavailable",
                 code="unknown_runtime_compensation_binding",
                 details={"binding_id": binding_id},
             )
         if (
-            activity.activity_ref != entry.activity_ref
+            task.get("run_id") != run_spec.run_id
+            or compensation_task.get("effect_outcome_ref")
+            != entry.effect_outcome_ref
+            or compensation_task.get("effect_commit_sequence")
+            != entry.effect_commit_sequence
+            or compensation_task.get("tenant_scope_ref")
+            != state.metadata.get("tenant_scope_ref")
+            or compensation_task.get("identity_scope_ref")
+            != state.metadata.get("identity_scope_ref")
+            or compensation_task.get("subject_scope_ref")
+            != state.metadata.get("subject_scope_ref")
+            or activity.run_id != run_spec.run_id
+            or activity.node_instance_id != node.instance_id
+            or activity.activity_ref != entry.activity_ref
             or activity.fencing_generation != entry.fencing_generation
             or compensation_task.get("entry_id") != entry.entry_id
+            or compensation_task.get("origin_node_instance_id")
+            != entry.origin_node_instance_id
             or compensation_task.get("idempotency_key") != entry.idempotency_key
+            or compensation_task.get("handler_ref") != entry.handler_ref.exact_ref
+            or compensation_task.get("activity_ref") != entry.activity_ref.exact_ref
         ):
             raise HarnessValidationError(
                 "compensation activity does not match its durable entry",
                 code="graph_compensation_binding_mismatch",
-            )
-        request = {
-            "run_id": run_spec.run_id,
-            "step_id": node.step_id,
-            **dict(compensation_task),
-            "attempt": activity.attempt,
-            "fencing_generation": activity.fencing_generation,
-            "harness_activity": {
-                "activity_id": activity.activity_id,
-                "activity_idempotency_key": activity.idempotency_key,
-                "attempt": activity.attempt,
-                "activity_ref": activity.activity_ref.exact_ref,
-                "causal_decision_checksum": activity.causal_decision_checksum,
-                "fencing_generation": activity.fencing_generation,
-            },
-        }
-        try:
-            value = binding.implementation.compensate(request)
-            return _coerce_compensation_result(value)
-        except Exception as exc:  # noqa: BLE001 - failure becomes durable evidence
-            return HarnessWorkerResult(
-                HarnessWorkerStatus.FAILED,
-                error=f"compensation_handler_failed:{type(exc).__name__}",
             )
 
     def _record_graph_worker_status(
@@ -3447,24 +3481,11 @@ class HarnessControlPlane:
         if not candidates:
             return False, None
 
-        latest_by_definition: dict[
-            str,
-            tuple[HarnessNodeInstanceState, HarnessGraphNode, int | None],
-        ] = {}
-        for candidate in candidates:
-            node = candidate[0]
-            existing = latest_by_definition.get(node.identity.node_id)
-            if existing is None or (
-                node.identity.activation_ordinal,
-                node.last_event_sequence,
-                node.instance_id,
-            ) > (
-                existing[0].identity.activation_ordinal,
-                existing[0].last_event_sequence,
-                existing[0].instance_id,
-            ):
-                latest_by_definition[node.identity.node_id] = candidate
-        narrowed = tuple(latest_by_definition.values())
+        # Keep every exact node-instance producer until the Graph scope and
+        # dominance rules have selected one.  Definition-level "latest"
+        # selection is incorrect for loop iterations, parallel branches, and
+        # replayed attempts because it discards durable instance identity.
+        narrowed = tuple(candidates)
         if consumer is not None:
             nearest_distance = min(item[2] for item in narrowed if item[2] is not None)
             selected = tuple(item for item in narrowed if item[2] == nearest_distance)
@@ -3719,7 +3740,7 @@ class HarnessControlPlane:
                 state=state,
                 node_instance_id=decision.node_instance_id,
             )
-        return harness_activity_input_checksum(task)
+        return graph_activity_input_checksum(task)
 
     def _graph_evaluation_context(
         self,
@@ -3818,18 +3839,20 @@ class HarnessControlPlane:
                     HarnessNodeInstanceStatus.COMPENSATING,
                 }
             ):
-                if not (
-                    node.status is HarnessNodeInstanceStatus.WAITING
-                    and node.step_status is HarnessStepStatus.WAITING_APPROVAL
-                    and node.metadata.get("approval_granted") is True
-                    and any(
-                        evidence.kind is HarnessEvidenceKind.APPROVAL
-                        and evidence.attempt == node.attempt
-                        for evidence in node.evidence_refs
-                    )
-                ):
-                    continue
+                continue
             step = self._graph_step(run_spec, node.step_id or "")
+            definition = self._graph_definition(
+                run_spec.run_id,
+                node.identity.node_id,
+            )
+            # TaskPlan authority is injected by the compiler and is therefore
+            # part of the pinned normalized Graph, not the source activity.
+            step = replace(step)
+            object.__setattr__(
+                step,
+                "metadata",
+                thaw_canonical_json(definition.metadata["step_metadata"]),
+            )
             inputs.append(
                 HarnessGraphStepSchedulingInput(
                     node.instance_id,
@@ -4010,16 +4033,19 @@ class HarnessControlPlane:
         self,
         run_spec: HarnessRunSpec,
         state: HarnessGraphState,
-        step_id: str | None,
+        node_instance_id: str | None,
         *,
         worker_result: HarnessWorkerResult | None,
     ) -> HarnessGraphState:
-        if step_id is None:
-            raise HarnessValidationError("PLAN decision is missing its Step binding")
+        if node_instance_id is None:
+            raise HarnessValidationError(
+                "PLAN decision is missing its node-instance binding",
+                code="graph_step_decision_identity_missing",
+            )
         results = self._evaluate_graph_gates(
             run_spec,
             state,
-            step_id,
+            node_instance_id,
             tuple((_gate_reference(gate), gate) for gate in self.plan_gates),
             worker_result=worker_result,
         )
@@ -4031,7 +4057,7 @@ class HarnessControlPlane:
         return self._accept_graph_gate_results(
             run_spec,
             state,
-            step_id,
+            node_instance_id,
             results,
         )
 
@@ -4039,29 +4065,32 @@ class HarnessControlPlane:
         self,
         run_spec: HarnessRunSpec,
         state: HarnessGraphState,
-        step_id: str | None,
+        node_instance_id: str | None,
         worker_result: HarnessWorkerResult | None,
     ) -> HarnessGraphState:
-        if step_id is None:
-            raise HarnessValidationError("VERIFY decision is missing its Step binding")
-        entries = self._graph_verify_gate_entries(run_spec, state, step_id)
+        if node_instance_id is None:
+            raise HarnessValidationError(
+                "VERIFY decision is missing its node-instance binding",
+                code="graph_step_decision_identity_missing",
+            )
+        entries = self._graph_verify_gate_entries(run_spec, state, node_instance_id)
         results = self._evaluate_graph_gates(
             run_spec,
             state,
-            step_id,
+            node_instance_id,
             entries,
             worker_result=worker_result,
         )
         state = self._accept_graph_gate_results(
             run_spec,
             state,
-            step_id,
+            node_instance_id,
             results,
         )
         return self._accept_graph_verify_verdict(
             run_spec,
             state,
-            step_id,
+            node_instance_id,
             results,
         )
 
@@ -4069,20 +4098,24 @@ class HarnessControlPlane:
         self,
         run_spec: HarnessRunSpec,
         state: HarnessGraphState,
-        step_id: str,
+        node_instance_id: str,
     ) -> tuple[tuple[str, DeterministicGate], ...]:
         entries: list[tuple[str, DeterministicGate]] = [
             (_gate_reference(gate), gate) for gate in self.verify_gates
         ]
-        node = _graph_node_for_step(state, step_id)
+        node = _graph_node_by_instance(state, node_instance_id)
+        if node.step_id is None:
+            raise EventIncompleteHistoryError(
+                "Graph node instance lacks its executable Step binding"
+            )
+        step_id = node.step_id
         cumulative_budget_fact = self._graph_budget_facts.get(
             run_spec.run_id,
             {},
         ).get(node.instance_id)
         if cumulative_budget_fact is None:
-            # The cumulative ledger is opt-in at the worker boundary. Keep
-            # legacy graph runs byte-for-byte compatible until a durable fact
-            # is actually available for deterministic verification.
+            # The cumulative ledger is optional at the worker boundary; the
+            # deterministic gate applies only when its durable fact exists.
             entries = [
                 (reference, gate)
                 for reference, gate in entries
@@ -4108,15 +4141,19 @@ class HarnessControlPlane:
         self,
         run_spec: HarnessRunSpec,
         state: HarnessGraphState,
-        step_id: str,
+        node_instance_id: str,
         results: tuple[HarnessGateResult, ...],
     ) -> HarnessGraphState:
-        step = self._graph_step(run_spec, step_id)
+        node = _graph_node_by_instance(state, node_instance_id)
+        if node.step_id is None:
+            raise EventIncompleteHistoryError(
+                "Graph node instance lacks its executable Step binding"
+            )
+        step = self._graph_step(run_spec, node.step_id)
         verdict = aggregate_gate_verdict(
             results,
             declared_gate_reference=step.quality_gate,
         )
-        node = _graph_node_for_step(state, step_id)
         self._graph_gate_results.setdefault(run_spec.run_id, {})[node.instance_id] = (
             results
         )
@@ -4168,7 +4205,11 @@ class HarnessControlPlane:
                 raise EventIncompleteHistoryError(
                     "verifying Graph node lacks its Step binding"
                 )
-            entries = self._graph_verify_gate_entries(run_spec, state, step_id)
+            entries = self._graph_verify_gate_entries(
+                run_spec,
+                state,
+                node.instance_id,
+            )
             observations = tuple(
                 commit.observation
                 for commit in recovery.observation_commits
@@ -4214,14 +4255,14 @@ class HarnessControlPlane:
                 new_results = self._evaluate_graph_gates(
                     run_spec,
                     state,
-                    step_id,
+                    node.instance_id,
                     missing_entries,
                     worker_result=worker_result,
                 )
                 state = self._accept_graph_gate_results(
                     run_spec,
                     state,
-                    step_id,
+                    node.instance_id,
                     new_results,
                 )
                 existing_results.update(
@@ -4248,7 +4289,7 @@ class HarnessControlPlane:
                 state = self._accept_graph_verify_verdict(
                     run_spec,
                     state,
-                    step_id,
+                    node.instance_id,
                     ordered_results,
                 )
             if missing_entries or (
@@ -4261,28 +4302,28 @@ class HarnessControlPlane:
         self,
         run_spec: HarnessRunSpec,
         state: HarnessGraphState,
-        step_id: str,
+        node_instance_id: str,
         entries: tuple[tuple[str, DeterministicGate], ...],
         *,
         worker_result: HarnessWorkerResult | None,
     ) -> tuple[HarnessGateResult, ...]:
-        node = _graph_node_for_step(state, step_id)
-        compatibility = self._graph_compat_state(
-            run_spec,
-            state,
-            step_id=step_id,
+        node = _graph_node_by_instance(state, node_instance_id)
+        if node.step_id is None:
+            raise EventIncompleteHistoryError(
+                "Graph node instance lacks its executable Step binding"
+            )
+        step_id = node.step_id
+        step = self._graph_step(run_spec, step_id)
+        context = GateContext(
+            run_spec=run_spec,
+            graph_state=state,
+            step_spec=step,
+            node_state=node,
             outputs=self._graph_scoped_output_projection(
                 run_spec,
                 state,
                 node_instance_id=node.instance_id,
             ),
-            worker_result=worker_result,
-        )
-        step = self._graph_step(run_spec, step_id)
-        context = GateContext(
-            state=compatibility,
-            step_spec=step,
-            step_state=get_step_state(compatibility, step_id),
             worker_result=worker_result,
             quality_verdict=None,
             budget=self._graph_budget_snapshot(run_spec, state),
@@ -4300,7 +4341,7 @@ class HarnessControlPlane:
                 HarnessEvent(
                     event_type=HarnessEventType.GATE_EVALUATED,
                     run_id=run_spec.run_id,
-                    step_id=step_id,
+                    node_id=step_id,
                     payload=result.to_dict(),
                     metadata={
                         "node_instance_id": node.instance_id,
@@ -4318,10 +4359,10 @@ class HarnessControlPlane:
         self,
         run_spec: HarnessRunSpec,
         state: HarnessGraphState,
-        step_id: str,
+        node_instance_id: str,
         results: tuple[HarnessGateResult, ...],
     ) -> HarnessGraphState:
-        node = _graph_node_for_step(state, step_id)
+        node = _graph_node_by_instance(state, node_instance_id)
         for result in results:
             evidence = gate_result_evidence(result)
             reference = GateReference.parse(str(evidence["reference"]))
@@ -4452,225 +4493,74 @@ class HarnessControlPlane:
     def _record_graph_phase(
         self,
         run_spec: HarnessRunSpec,
-        step_id: str | None,
+        node_instance_id: str | None,
         phase: HarnessPhase,
         boundary: HarnessPhaseBoundary,
         state: HarnessGraphState,
     ) -> None:
-        if step_id is None:
-            return
-        node = _graph_node_for_step(state, step_id)
+        if node_instance_id is None:
+            raise HarnessValidationError(
+                "Graph phase transition is missing its node-instance binding",
+                code="graph_phase_node_instance_required",
+            )
+        node = _graph_node_by_instance(state, node_instance_id)
         gate_results = self._graph_gate_results.get(run_spec.run_id, {}).get(
             node.instance_id,
             (),
         )
-        record = HarnessPhaseRecord(
-            phase=phase,
-            step_id=step_id,
-            boundary=boundary,
-            gate_results=tuple(item.to_dict() for item in gate_results),
-            metadata={
-                "node_instance_id": node.instance_id,
-                "attempt": node.attempt,
-                "turn_count": state.budgets.require("turns").used,
-                "worker_call_count": state.budgets.require("worker_calls").used,
-            },
-            occurred_at=_graph_time(run_spec, state.last_event_sequence),
+        graph = self._prepared_graphs.get(run_spec.run_id)
+        if graph is None:
+            raise HarnessValidationError(
+                "Graph phase transition requires a prepared graph",
+                code="graph_phase_graph_missing",
+            )
+        graph_identity = GraphRunIdentity(
+            run_id=run_spec.run_id,
+            graph_id=graph.graph_id,
+            graph_version=graph.graph_ref.version,
+            graph_ref=f"{graph.graph_id}@{graph.graph_ref.version}",
+            graph_checksum=graph.checksum,
+        )
+        context = GraphEventContext(
+            identity=graph_identity,
+            execution_version=GraphEventExecutionVersion(
+                graph_schema_version=graph.schema_version,
+                compiler_version=graph.compiler_version,
+                normalized_graph_checksum=graph.checksum,
+            ),
+            stage_identity=GraphStageIdentity(
+                run_id=run_spec.run_id,
+                graph_id=graph.graph_id,
+                graph_version=graph.graph_ref.version,
+                graph_ref=f"{graph.graph_id}@{graph.graph_ref.version}",
+                graph_checksum=graph.checksum,
+                node_id=node.identity.node_id,
+                node_instance_id=node.instance_id,
+            ),
+        )
+        event_sequence = self._next_graph_sequence(run_spec.run_id)
+        gate_evidence_refs = tuple(
+            gate_result_evidence(result)["result_ref"] for result in gate_results
+        )
+        record = GraphPhaseTransitionRecord(
+            context=context,
+            phase=GraphExecutionPhase(phase.value),
+            boundary=GraphPhaseBoundary(boundary.value),
+            attempt=node.attempt,
+            event_sequence=event_sequence,
+            gate_evidence_refs=gate_evidence_refs,
+            occurred_at=_graph_time(run_spec, event_sequence),
         )
         self._record_event(
             HarnessEvent(
-                event_type=HarnessEventType.PHASE_RECORDED,
+                event_type=HarnessEventType.GRAPH_PHASE_TRANSITION_RECORDED,
                 run_id=run_spec.run_id,
-                step_id=step_id,
+                node_id=node.identity.node_id,
                 payload=record.to_dict(),
+                metadata={GRAPH_EVENT_CONTEXT_EXTENSION: context.to_dict()},
                 occurred_at=record.occurred_at,
             )
         )
-
-    def _graph_compat_state(
-        self,
-        run_spec: HarnessRunSpec,
-        state: HarnessGraphState,
-        *,
-        step_id: str | None,
-        outputs: Mapping[str, Any],
-        worker_result: HarnessWorkerResult | None,
-    ) -> HarnessState:
-        latest_by_step: dict[str, HarnessNodeInstanceState] = {}
-        for node in state.node_instances:
-            if node.step_id is None:
-                continue
-            previous = latest_by_step.get(node.step_id)
-            if previous is None or (
-                node.identity.activation_ordinal,
-                node.last_event_sequence,
-            ) > (
-                previous.identity.activation_ordinal,
-                previous.last_event_sequence,
-            ):
-                latest_by_step[node.step_id] = node
-        updated_at = _graph_time(run_spec, state.last_event_sequence)
-        step_states: list[HarnessStepState] = []
-        for step in run_spec.workflow.steps:
-            node = latest_by_step.get(step.step_id)
-            result = (
-                None
-                if node is None
-                else self._graph_worker_results.get(run_spec.run_id, {}).get(
-                    node.instance_id
-                )
-            )
-            metadata: dict[str, Any] = {}
-            if node is not None:
-                metadata["node_instance_id"] = node.instance_id
-            if result is not None:
-                metadata["worker_result"] = result.to_dict()
-            if node is not None and "approval_granted" in node.metadata:
-                metadata["approval_granted"] = node.metadata["approval_granted"]
-            if node is not None and "approval_evidence_ref" in node.metadata:
-                metadata["approval_evidence_ref"] = node.metadata[
-                    "approval_evidence_ref"
-                ]
-            metadata.update(
-                self._graph_side_effect_metadata(run_spec.run_id, step.step_id)
-            )
-            step_states.append(
-                HarnessStepState(
-                    step_id=step.step_id,
-                    status=(
-                        HarnessStepStatus.PENDING
-                        if node is None or node.step_status is None
-                        else node.step_status
-                    ),
-                    attempts=0 if node is None else node.attempt,
-                    replans=0 if node is None else node.replans,
-                    output_ref=(
-                        step.output_key
-                        if node is not None
-                        and node.status is HarnessNodeInstanceStatus.SUCCEEDED
-                        else None
-                    ),
-                    error=(
-                        None
-                        if node is None
-                        else node.terminal_reason or node.error_code
-                    ),
-                    metadata=metadata,
-                    updated_at=updated_at,
-                )
-            )
-        blocked_by_worker = any(
-            item.status is HarnessNodeInstanceStatus.WAITING
-            and item.metadata.get("worker_blocked") is True
-            for item in state.node_instances
-        )
-        waiting_for_approval = any(
-            item.status is HarnessNodeInstanceStatus.WAITING
-            and item.metadata.get("worker_blocked") is not True
-            for item in state.node_instances
-        )
-        status = project_public_legacy_status(
-            state.lifecycle,
-            state.outcome,
-            waiting_for_approval=(
-                waiting_for_approval and state.lifecycle is RunLifecycle.WAITING
-            ),
-        )
-        if state.lifecycle is RunLifecycle.RUNNING and waiting_for_approval:
-            status = HarnessRunStatus.WAITING_APPROVAL
-        if state.lifecycle is RunLifecycle.WAITING and blocked_by_worker:
-            status = HarnessRunStatus.BLOCKED
-        current_step_id = step_id
-        if current_step_id is None:
-            active_steps = tuple(
-                item.step_id
-                for item in state.node_instances
-                if item.step_id is not None and not item.is_terminal
-            )
-            current_step_id = active_steps[0] if len(active_steps) == 1 else None
-        if current_step_id is None and latest_by_step:
-            current_step_id = max(
-                latest_by_step.values(),
-                key=lambda item: item.identity.activation_ordinal,
-            ).step_id
-        metadata = {
-            **run_spec.metadata,
-            "outputs": dict(outputs),
-            "graph_id": state.graph_ref.graph_id,
-            "graph_version": state.graph_ref.identity_version,
-            "graph_checksum": state.graph_ref.checksum,
-            "graph_lifecycle": state.lifecycle.value,
-            "graph_outcome": state.outcome.value,
-            "terminal_reason": _graph_compat_terminal_reason(
-                state.terminal_reason_code,
-                outcome=state.outcome,
-            ),
-        }
-        terminal_outcome = self._side_effect_outcomes.get(run_spec.run_id, {}).get(
-            "__terminal__"
-        )
-        if state.outcome is RunOutcome.SUCCEEDED and terminal_outcome is not None:
-            metadata.update(
-                {
-                    "terminal_side_effect_effect_ref": checksum_for(
-                        terminal_outcome.effect_id
-                    ),
-                    "terminal_side_effect_decision_ref": terminal_outcome.decision_ref,
-                    "terminal_side_effect_outcome_ref": terminal_outcome.checksum,
-                    "terminal_side_effect_disposition": (
-                        terminal_outcome.disposition.value
-                    ),
-                }
-            )
-        if worker_result is not None and current_step_id is not None:
-            metadata["current_worker_result_ref"] = worker_result.candidate_result_ref
-        return HarnessState(
-            run_spec=run_spec,
-            status=status,
-            step_states=tuple(step_states),
-            current_step_id=current_step_id,
-            turn_count=state.budgets.require("turns").used,
-            replan_count=state.budgets.require("replans").used,
-            worker_call_count=state.budgets.require("worker_calls").used,
-            metadata=metadata,
-            updated_at=updated_at,
-        )
-
-    def _graph_side_effect_metadata(
-        self,
-        run_id: str,
-        step_id: str,
-    ) -> dict[str, Any]:
-        outcome = self._side_effect_outcomes.get(run_id, {}).get(step_id)
-        if outcome is None:
-            return {}
-        metadata: dict[str, Any] = {
-            "side_effect_effect_ref": checksum_for(outcome.effect_id),
-            "side_effect_decision_ref": outcome.decision_ref,
-            "side_effect_outcome_ref": outcome.checksum,
-            "side_effect_disposition": outcome.disposition.value,
-        }
-        if self.side_effect_store is None:
-            return metadata
-        decisions = tuple(
-            item
-            for item in self.side_effect_store.list_decisions(run_id=run_id)
-            if item.origin is HarnessSideEffectOrigin.WORKER
-            and item.step_id == step_id
-            and item.checksum == outcome.decision_ref
-        )
-        if len(decisions) != 1:
-            raise EventStoreCorruptionError(
-                "durable Graph side-effect outcome has no unique authorization"
-            )
-        authorization = decisions[0]
-        metadata.update(
-            {
-                "approval_evidence_ref": authorization.approval_evidence_ref,
-                "side_effect_intent_ref": authorization.intent_ref,
-            }
-        )
-        return metadata
 
     def _graph_definition(
         self,
@@ -4699,7 +4589,7 @@ class HarnessControlPlane:
         step_id: str,
     ) -> HarnessStepSpec:
         step = next(
-            (item for item in run_spec.workflow.steps if item.step_id == step_id),
+            (item for item in run_spec.graph.activities if item.step_id == step_id),
             None,
         )
         if step is None:
@@ -4765,6 +4655,7 @@ class HarnessControlPlane:
 
 
     def run(self, run_spec: HarnessRunSpec) -> HarnessRunResult:
+        self._require_physical_graph_admission(run_spec)
         state = self.initialize_graph(run_spec)
         self._ensure_graph_run_created(run_spec)
         return self._drive_graph(run_spec, state)
@@ -4781,7 +4672,7 @@ class HarnessControlPlane:
                 "Harness run has no committed Graph state; legacy execution "
                 "recovery is forbidden"
             )
-        self._prepare_run_spec(run_spec, recovery_only=True)
+        self._require_physical_graph_admission(run_spec)
         state = self.recover_graph(run_spec)
         self._ensure_graph_run_created(run_spec)
         return self._drive_graph(run_spec, state)
@@ -4808,8 +4699,9 @@ class HarnessControlPlane:
                 event_type=HarnessEventType.RUN_CREATED,
                 run_id=run_spec.run_id,
                 metadata={
-                    "workflow_id": run_spec.workflow.workflow_id,
-                    "workflow_version": run_spec.workflow.workflow_version,
+                    "graph_id": run_spec.graph.graph_id,
+                    "graph_version": run_spec.graph.graph_version,
+                    "graph_definition_checksum": run_spec.graph.definition_checksum,
                 },
                 occurred_at=run_spec.created_at,
             )
@@ -4817,46 +4709,50 @@ class HarnessControlPlane:
 
     def resume_after_approval(
         self,
-        state: HarnessState | HarnessRunSpec,
+        run_spec: HarnessRunSpec,
         *,
         approved: bool,
         reason: str | None = None,
-        approval_ref: str | None = None,
+        approval_ref: str,
+        actor_identity_scope_ref: str,
     ) -> HarnessRunResult:
         """Durably resume or cancel one approval-waiting Harness projection."""
 
-        if isinstance(state, HarnessRunSpec):
-            supplied_state = None
-            run_spec = state
-        elif isinstance(state, HarnessState):
-            supplied_state = state
-            run_spec = state.run_spec
-        else:
-            raise TypeError("state must be HarnessState or HarnessRunSpec")
+        if not isinstance(run_spec, HarnessRunSpec):
+            raise TypeError("run_spec must be HarnessRunSpec")
+        if not _is_checksum_ref(approval_ref):
+            raise HarnessValidationError(
+                "approval_ref must be an exact durable checksum",
+                code="side_effect_approval_ref_required",
+            )
+        if not _is_checksum_ref(actor_identity_scope_ref):
+            raise HarnessValidationError(
+                "actor_identity_scope_ref must be an exact checksum",
+                code="approval_actor_identity_required",
+            )
         self._prepare_run_spec(run_spec)
         if self.graph_transition_port is not None:
             graph_recovery = self.graph_transition_port.recover_graph(run_spec.run_id)
             if graph_recovery.state is not None:
                 return self._resume_graph_after_approval(
                     run_spec,
-                    supplied_state=supplied_state,
                     approved=approved,
                     reason=reason,
                     approval_ref=approval_ref,
+                    actor_identity_scope_ref=actor_identity_scope_ref,
                 )
         raise EventIncompleteHistoryError(
-            "Harness approval resume requires committed Graph state; legacy "
-            "execution recovery is forbidden"
+            "Harness approval resume requires committed Graph state"
         )
 
     def _resume_graph_after_approval(
         self,
         run_spec: HarnessRunSpec,
         *,
-        supplied_state: HarnessState | None,
         approved: bool,
         reason: str | None,
-        approval_ref: str | None,
+        approval_ref: str,
+        actor_identity_scope_ref: str,
     ) -> HarnessRunResult:
         state = self.recover_graph(run_spec)
         self._hydrate_graph_execution(run_spec, state)
@@ -4868,81 +4764,13 @@ class HarnessControlPlane:
             for node in state.node_instances
             if node.instance_id == registration.node_instance_id
             and node.status is HarnessNodeInstanceStatus.WAITING
-            and (
-                node.node_kind is HarnessGraphNodeKind.WAIT
-                or node.step_status is HarnessStepStatus.WAITING_APPROVAL
-            )
+            and node.node_kind is HarnessGraphNodeKind.WAIT
         )
         if len(waiting) != 1:
             raise HarnessValidationError("Harness run is not waiting for approval")
         node, registration = waiting[0]
-        step = None
-        if node.node_kind is HarnessGraphNodeKind.EXECUTABLE:
-            if node.step_id is None:
-                raise EventIncompleteHistoryError(
-                    "approval-waiting Graph node is missing its Step identity"
-                )
-            step = self._graph_step(run_spec, node.step_id)
-            if step.metadata.get("approval_required") is not True:
-                raise HarnessValidationError(
-                    "approval-waiting Graph node has no pinned approval policy",
-                    code="graph_approval_policy_missing",
-                )
-            compatibility = self._graph_compat_state(
-                run_spec,
-                state,
-                step_id=node.step_id,
-                outputs=self._graph_scoped_output_projection(
-                    run_spec,
-                    state,
-                    node_instance_id=node.instance_id,
-                ),
-                worker_result=None,
-            )
-            if supplied_state is not None and (
-                _approval_resume_projection_checksum(supplied_state)
-                != _approval_resume_projection_checksum(compatibility)
-            ):
-                raise EventReplayMismatchError(
-                    sequence=state.last_event_sequence,
-                    reason="supplied Harness state does not match durable Graph history",
-                )
-            if (
-                approved
-                and step.side_effect_handler is not None
-                and (not isinstance(approval_ref, str) or not approval_ref.strip())
-            ):
-                raise HarnessValidationError(
-                    "effectful approval resume requires an opaque durable approval ref",
-                    code="side_effect_approval_ref_required",
-                    details={
-                        "code": "side_effect_approval_ref_required",
-                        "step_id": node.step_id,
-                    },
-                )
         resolved_reason = reason or (
             "Harness approval granted" if approved else "Harness approval was cancelled"
-        )
-        resolved_approval_ref = (
-            approval_ref.strip()
-            if isinstance(approval_ref, str) and approval_ref.strip()
-            else checksum_for(
-                {
-                    "policy": "approval_recorded",
-                    "run_id": run_spec.run_id,
-                    "node_instance_id": node.instance_id,
-                    "attempt": node.attempt,
-                    "approved": approved,
-                    "reason": resolved_reason,
-                }
-            )
-        )
-        actor_scope_ref = checksum_for(
-            {
-                "source": "harness.resume_after_approval",
-                "run_id": run_spec.run_id,
-                "node_instance_id": node.instance_id,
-            }
         )
         cause = HarnessWaitApprovalEvidenceRecord(
             scope=HarnessWaitScope(
@@ -4954,8 +4782,8 @@ class HarnessControlPlane:
                 signal_schema_ref=registration.signal_schema_ref,
                 correlation_ref=registration.correlation_ref,
             ),
-            approval_event_ref=resolved_approval_ref,
-            actor_identity_scope_ref=actor_scope_ref,
+            approval_event_ref=approval_ref,
+            actor_identity_scope_ref=actor_identity_scope_ref,
             approved=approved,
             recorded_sequence=0,
         )
@@ -4970,7 +4798,9 @@ class HarnessControlPlane:
 
     def _prepare_worker_side_effect(
         self,
-        state: HarnessState,
+        run_spec: HarnessRunSpec,
+        state: HarnessGraphState,
+        node: HarnessNodeInstanceState,
         *,
         decided_at: Any,
         decision_input: Mapping[str, Any],
@@ -4980,7 +4810,7 @@ class HarnessControlPlane:
         quality_verdict: HarnessQualityVerdict | None,
     ) -> _PreparedSideEffect | None:
         declared_binding = self._side_effect_bindings_by_run.get(
-            state.run_spec.run_id,
+            run_spec.run_id,
             {},
         ).get(step_id)
         intent = None if worker_result is None else worker_result.effect_intent
@@ -5017,14 +4847,18 @@ class HarnessControlPlane:
                 details={"code": "side_effect_verdict_failed", "step_id": step_id},
             )
         bound_intent = self._bind_worker_side_effect_intent(
+            run_spec,
             state,
+            node,
             step_id=step_id,
             worker_result=worker_result,
             intent=intent,
             binding=declared_binding,
         )
         authorization = self._build_worker_side_effect_decision(
+            run_spec,
             state,
+            node,
             step_id=step_id,
             intent=bound_intent,
             binding=declared_binding,
@@ -5034,7 +4868,7 @@ class HarnessControlPlane:
             decided_at=decided_at,
         )
         return _PreparedSideEffect(
-            slot=step_id,
+            slot=f"node:{node.instance_id}:effect:{bound_intent.effect_id}",
             intent=bound_intent,
             authorization=authorization,
             binding=declared_binding,
@@ -5043,30 +4877,48 @@ class HarnessControlPlane:
 
     def _bind_worker_side_effect_intent(
         self,
-        state: HarnessState,
+        run_spec: HarnessRunSpec,
+        state: HarnessGraphState,
+        node: HarnessNodeInstanceState,
         *,
         step_id: str,
         worker_result: HarnessWorkerResult,
         intent: HarnessSideEffectIntent,
         binding: HarnessSideEffectHandlerBinding,
     ) -> HarnessSideEffectIntent:
-        step_state = get_step_state(state, step_id)
+        activity_id = self._graph_activity_id_for_node(run_spec.run_id, node)
+        graph = self._prepared_graphs.get(run_spec.run_id)
+        graph_id = graph.graph_id if graph is not None else state.graph_ref.graph_id
+        graph_version = (
+            graph.graph_ref.version if graph is not None else state.graph_ref.identity_version
+        )
+        graph_checksum = graph.checksum if graph is not None else state.graph_ref.checksum
+        graph_ref = f"{graph_id}@{graph_version}"
         if (
             intent.origin is not HarnessSideEffectOrigin.WORKER
-            or intent.run_id != state.run_spec.run_id
+            or intent.run_id != run_spec.run_id
+            or intent.graph_id != graph_id
+            or intent.graph_version != graph_version
+            or intent.graph_ref != graph_ref
+            or intent.graph_checksum != graph_checksum
+            or intent.node_id != node.identity.node_id
+            or intent.node_instance_id != node.instance_id
+            or intent.activity_id != activity_id
             or intent.step_id != step_id
-            or intent.attempt != step_state.attempts
+            or intent.attempt != node.attempt
         ):
             raise HarnessValidationError(
-                "worker side-effect intent does not match run, step, and attempt identity",
+                "worker side-effect intent does not match the exact Graph activity identity",
                 code="side_effect_intent_identity_mismatch",
                 details={
                     "code": "side_effect_intent_identity_mismatch",
                     "step_id": step_id,
+                    "node_instance_id": node.instance_id,
+                    "activity_id": activity_id,
                 },
             )
-        expected_identity_scope = _expected_identity_scope_ref(state, step_id)
-        expected_subject_scope = _expected_subject_scope_ref(state)
+        expected_identity_scope = _expected_identity_scope_ref(run_spec, state, node)
+        expected_subject_scope = _expected_subject_scope_ref(run_spec)
         if (
             expected_identity_scope is not None
             and intent.identity_scope_ref != expected_identity_scope
@@ -5087,12 +4939,12 @@ class HarnessControlPlane:
             )
         if intent.kind != binding.kind:
             raise HarnessValidationError(
-                "worker side-effect intent kind conflicts with workflow declaration",
+                "worker side-effect intent kind conflicts with Graph declaration",
                 code="side_effect_handler_kind_mismatch",
             )
         if intent.handler != binding.reference:
             raise HarnessValidationError(
-                "worker side-effect intent handler conflicts with workflow declaration",
+                "worker side-effect intent handler conflicts with Graph declaration",
                 code="side_effect_handler_mismatch",
             )
         worker_result_ref = worker_result.candidate_result_ref
@@ -5112,9 +4964,43 @@ class HarnessControlPlane:
             checksum=None,
         )
 
+    def _graph_activity_id_for_node(
+        self,
+        run_id: str,
+        node: HarnessNodeInstanceState,
+    ) -> str:
+        raw_activity_id = node.metadata.get("activity_id")
+        raw_attempt = node.metadata.get("activity_attempt", node.attempt)
+        if (
+            isinstance(raw_activity_id, str)
+            and raw_activity_id.strip()
+            and raw_attempt == node.attempt
+        ):
+            return raw_activity_id.strip()
+        recovery = self._require_graph_runtime().transition_port.recover_graph(run_id)
+        matches = [
+            activity
+            for activity in recovery.activities
+            if activity.node_instance_id == node.instance_id
+            and activity.attempt == node.attempt
+        ]
+        if not matches:
+            raise EventIncompleteHistoryError(
+                "Graph side-effect preparation lacks its physical activity identity"
+            )
+        return max(
+            matches,
+            key=lambda activity: (
+                activity.causal_decision_sequence,
+                activity.activity_id,
+            ),
+        ).activity_id
+
     def _build_worker_side_effect_decision(
         self,
-        state: HarnessState,
+        run_spec: HarnessRunSpec,
+        state: HarnessGraphState,
+        node: HarnessNodeInstanceState,
         *,
         step_id: str,
         intent: HarnessSideEffectIntent,
@@ -5124,18 +5010,19 @@ class HarnessControlPlane:
         decision_input: Mapping[str, Any],
         decided_at: Any,
     ) -> HarnessSideEffectDecision:
-        step_spec = _get_step_spec(state, step_id)
-        step_state = get_step_state(state, step_id)
+        step_spec = self._graph_step(run_spec, step_id)
         approval_ref = self._resolve_worker_side_effect_approval(
+            run_spec,
             state,
+            node,
             step_id=step_id,
             intent=intent,
         )
-        budget = self._budget_snapshot(state, None)
+        budget = self._budget_snapshot(run_spec, state)
         gate_refs, gate_result_refs = _side_effect_gate_refs(gate_results)
         allowed_attempts = min(
             step_spec.retry_policy.effective_max_attempts,
-            state.run_spec.budget.max_retries_per_step + 1,
+            run_spec.budget.max_retries_per_step + 1,
         )
         decision_identity = {
             "intent_ref": intent.checksum,
@@ -5153,6 +5040,10 @@ class HarnessControlPlane:
             kind=intent.kind,
             origin=intent.origin,
             run_id=intent.run_id,
+            graph_id=intent.graph_id,
+            graph_version=intent.graph_version,
+            graph_ref=intent.graph_ref,
+            graph_checksum=intent.graph_checksum,
             handler=binding.reference,
             identity_scope_ref=intent.identity_scope_ref,
             subject_scope_ref=intent.subject_scope_ref,
@@ -5161,8 +5052,11 @@ class HarnessControlPlane:
             command_ordinal=int(decision_input["command_ordinal"]),
             causation_id=str(decision_input["causation_id"]),
             disposition=HarnessSideEffectDisposition.PREPARED,
+            node_id=intent.node_id,
+            node_instance_id=intent.node_instance_id,
+            activity_id=intent.activity_id,
             step_id=step_id,
-            attempt=step_state.attempts,
+            attempt=node.attempt,
             worker_result_ref=intent.worker_result_ref,
             gate_refs=gate_refs,
             gate_result_refs=gate_result_refs,
@@ -5180,12 +5074,14 @@ class HarnessControlPlane:
 
     def _resolve_worker_side_effect_approval(
         self,
-        state: HarnessState,
+        run_spec: HarnessRunSpec,
+        state: HarnessGraphState,
+        node: HarnessNodeInstanceState,
         *,
         step_id: str,
         intent: HarnessSideEffectIntent,
     ) -> str:
-        step_spec = _get_step_spec(state, step_id)
+        step_spec = self._graph_step(run_spec, step_id)
         if step_spec.metadata.get("approval_required") is not True:
             return checksum_for(
                 {
@@ -5195,8 +5091,7 @@ class HarnessControlPlane:
                     "version": "1",
                 }
             )
-        step_state = get_step_state(state, step_id)
-        approval_ref = step_state.metadata.get("approval_evidence_ref")
+        approval_ref = node.metadata.get("approval_evidence_ref")
         if not isinstance(approval_ref, str) or not approval_ref.strip():
             raise HarnessValidationError(
                 "effectful step has no durable approval evidence ref",
@@ -5209,14 +5104,21 @@ class HarnessControlPlane:
             )
         evidence = self.approval_evidence_resolver.resolve(
             HarnessSideEffectApprovalRequest(
-                run_id=state.run_spec.run_id,
-                step_id=step_id,
-                attempt=step_state.attempts,
+                run_id=run_spec.run_id,
+                graph_id=intent.graph_id,
+                graph_version=intent.graph_version,
+                graph_ref=intent.graph_ref,
+                graph_checksum=intent.graph_checksum,
+                node_id=intent.node_id,
+                node_instance_id=intent.node_instance_id,
+                activity_id=intent.activity_id,
+                attempt=node.attempt,
                 effect_id=intent.effect_id,
                 candidate_checksum=intent.candidate_checksum,
                 identity_scope_ref=intent.identity_scope_ref,
                 subject_scope_ref=intent.subject_scope_ref,
                 decision_version="1",
+                step_id=step_id,
             ),
             approval_ref=approval_ref,
         )
@@ -5279,6 +5181,7 @@ class HarnessControlPlane:
                     raise HarnessValidationError(
                         "side-effect handler returned an invalid outcome"
                     )
+                outcome = _bind_side_effect_outcome(intent, authorization, outcome)
                 self.side_effect_store.put_outcome(outcome)
         resolved = self.side_effect_store.get_outcome(
             effect_id=intent.effect_id,
@@ -5477,6 +5380,7 @@ class HarnessControlPlane:
         attempt: HarnessSideEffectAttemptLease,
         outcome: HarnessSideEffectOutcome,
     ) -> HarnessSideEffectOutcome:
+        outcome = _bind_side_effect_outcome(intent, authorization, outcome)
         try:
             committed = store.complete_attempt(attempt, outcome)
         except HarnessValidationError as exc:
@@ -5512,6 +5416,7 @@ class HarnessControlPlane:
         attempt: HarnessSideEffectAttemptLease,
         outcome: HarnessSideEffectOutcome,
     ) -> HarnessSideEffectOutcome:
+        outcome = _bind_side_effect_outcome(intent, authorization, outcome)
         try:
             committed = store.reconcile_attempt(attempt, outcome)
         except HarnessValidationError as exc:
@@ -5545,21 +5450,22 @@ class HarnessControlPlane:
 
     def _prepare_terminal_side_effect(
         self,
-        state: HarnessState,
+        run_spec: HarnessRunSpec,
+        state: HarnessGraphState,
         *,
         decided_at: Any,
         decision_input: Mapping[str, Any],
     ) -> _PreparedSideEffect | None:
-        policy = state.run_spec.workflow.terminal_side_effect_policy
+        policy = run_spec.graph.terminal_side_effect_policy
         if policy is None:
             return None
-        binding = self._terminal_side_effect_bindings.get(state.run_spec.run_id)
+        binding = self._terminal_side_effect_bindings.get(run_spec.run_id)
         if binding is None:
             raise HarnessValidationError(
                 "terminal side-effect handler binding is unavailable",
                 code="terminal_side_effect_policy_missing",
             )
-        graph = self._prepared_graphs.get(state.run_spec.run_id)
+        graph = self._prepared_graphs.get(run_spec.run_id)
         compensation_node_ids = (
             frozenset()
             if graph is None
@@ -5567,26 +5473,42 @@ class HarnessControlPlane:
                 item.compensation_node_id for item in graph.compensation_refs
             )
         )
-        forward_step_ids = (
-            frozenset(step.step_id for step in state.step_states)
-            if graph is None
-            else frozenset(
-                node.step_id
+        forward_node_ids = (
+            frozenset(
+                node.node_id
                 for node in graph.nodes
                 if isinstance(node, HarnessExecutableNode)
                 and node.node_id not in compensation_node_ids
             )
+            if graph is not None
+            else frozenset(
+                node.identity.node_id
+                for node in state.node_instances
+                if node.node_kind is HarnessGraphNodeKind.EXECUTABLE
+            )
         )
+        # A terminal publication is allowed after a Graph control node has
+        # deliberately skipped/cancelled a branch (for example
+        # ``ParallelAny(cancel_losers)``).  Those branch outcomes are durable
+        # terminal evidence, not unfinished work.  Failed, waiting, or
+        # otherwise non-terminal activities still fail closed here.
+        terminal_forward_statuses = {
+            HarnessStepStatus.SUCCEEDED,
+            HarnessStepStatus.SKIPPED,
+            HarnessNodeInstanceStatus.CANCELLED,
+            HarnessNodeInstanceStatus.HALTED,
+        }
         if any(
-            step.step_id in forward_step_ids
-            and step.status is not HarnessStepStatus.SUCCEEDED
-            for step in state.step_states
+            node.identity.node_id in forward_node_ids
+            and node.status not in terminal_forward_statuses
+            for node in state.node_instances
+            if node.node_kind is HarnessGraphNodeKind.EXECUTABLE
         ):
             raise HarnessValidationError(
                 "terminal side effect requires every step outcome to be durable and successful",
                 code="terminal_side_effect_steps_incomplete",
             )
-        run_id = state.run_spec.run_id
+        run_id = run_spec.run_id
         state_checksum = decision_input.get("graph_projection_checksum")
         if not _is_checksum_ref(state_checksum):
             raise HarnessValidationError(
@@ -5594,8 +5516,8 @@ class HarnessControlPlane:
                 code="graph_side_effect_preparation_mismatch",
             )
         completion_input_ref = checksum_for(decision_input)
-        identity_scope_ref = _expected_identity_scope_ref(state, state.current_step_id)
-        subject_scope_ref = _expected_subject_scope_ref(state)
+        identity_scope_ref = _expected_identity_scope_ref(run_spec, state, None)
+        subject_scope_ref = _expected_subject_scope_ref(run_spec)
         if identity_scope_ref is None or subject_scope_ref is None:
             raise HarnessValidationError(
                 "terminal side effect has no authoritative scope refs",
@@ -5621,7 +5543,23 @@ class HarnessControlPlane:
             "prepared_outcome_refs": [outcome.checksum for outcome in prepared],
             "history_cutoff": self._terminal_history_cutoff(run_id),
         }
-        tenant_id = state.run_spec.metadata.get("graph_terminal_tenant_id")
+        graph_identity = graph
+        graph_id = (
+            graph_identity.graph_id
+            if graph_identity is not None
+            else state.graph_ref.graph_id
+        )
+        graph_version = (
+            graph_identity.graph_ref.version
+            if graph_identity is not None
+            else state.graph_ref.identity_version
+        )
+        graph_checksum = (
+            graph_identity.checksum
+            if graph_identity is not None
+            else state.graph_ref.checksum
+        )
+        tenant_id = run_spec.metadata.get("graph_terminal_tenant_id")
         if graph is not None and isinstance(tenant_id, str) and tenant_id.strip():
             terminal_payload["graph_terminal_manifest_context"] = {
                 "tenant_id": tenant_id,
@@ -5630,13 +5568,20 @@ class HarnessControlPlane:
                 "graph_schema_version": graph.schema_version,
                 "compiler_version": graph.compiler_version,
                 "normalized_graph_checksum": graph.checksum,
-                "started_at": format_datetime(state.run_spec.created_at),
+                "execution_versions": GraphExecutionVersionManifest.from_normalized_graph(
+                    graph
+                ).to_dict(),
+                "started_at": format_datetime(run_spec.created_at),
                 "terminal_node_ids": list(graph.terminal_node_ids),
             }
         intent = HarnessSideEffectIntent(
             effect_id=f"harness-terminal-effect:{checksum_for(effect_identity).removeprefix('sha256:')}",
             kind=policy.kind,
             run_id=run_id,
+            graph_id=graph_id,
+            graph_version=graph_version,
+            graph_ref=f"{graph_id}@{graph_version}",
+            graph_checksum=graph_checksum,
             origin=HarnessSideEffectOrigin.CONTROLLER_TERMINAL,
             atomic_group=(
                 prepared[0].atomic_group
@@ -5654,7 +5599,7 @@ class HarnessControlPlane:
         )
         approval_ref = policy.not_required_evidence_ref
         if policy.requires_approval:
-            configured_ref = state.run_spec.metadata.get(
+            configured_ref = run_spec.metadata.get(
                 "terminal_approval_evidence_ref"
             )
             if not isinstance(configured_ref, str) or not configured_ref.strip():
@@ -5670,13 +5615,20 @@ class HarnessControlPlane:
             evidence = self.approval_evidence_resolver.resolve(
                 HarnessSideEffectApprovalRequest(
                     run_id=run_id,
-                    step_id="__terminal__",
+                    graph_id=graph_id,
+                    graph_version=graph_version,
+                    graph_ref=f"{graph_id}@{graph_version}",
+                    graph_checksum=graph_checksum,
+                    node_id=None,
+                    node_instance_id=None,
+                    activity_id=None,
                     attempt=1,
                     effect_id=intent.effect_id,
                     candidate_checksum=completion_input_ref,
                     identity_scope_ref=identity_scope_ref,
                     subject_scope_ref=subject_scope_ref,
                     decision_version=policy.version,
+                    terminal_action="complete_run",
                 ),
                 approval_ref=configured_ref,
             )
@@ -5699,7 +5651,7 @@ class HarnessControlPlane:
                         "missing": sorted(required.difference(gate_refs)),
                     },
                 )
-        budget_ref = checksum_for(self._budget_snapshot(state, None).to_dict())
+        budget_ref = checksum_for(self._budget_snapshot(run_spec, state).to_dict())
         authorization = HarnessSideEffectDecision(
             decision_id=f"harness-side-effect-decision:{checksum_for({'intent_ref': intent.checksum, 'policy': policy.reference, 'budget_ref': budget_ref}).removeprefix('sha256:')}",
             intent_ref=intent.checksum,
@@ -5707,6 +5659,10 @@ class HarnessControlPlane:
             kind=intent.kind,
             origin=intent.origin,
             run_id=run_id,
+            graph_id=intent.graph_id,
+            graph_version=intent.graph_version,
+            graph_ref=intent.graph_ref,
+            graph_checksum=intent.graph_checksum,
             handler=binding.reference,
             identity_scope_ref=intent.identity_scope_ref,
             subject_scope_ref=intent.subject_scope_ref,
@@ -5728,7 +5684,7 @@ class HarnessControlPlane:
             decided_at=decided_at,
         )
         return _PreparedSideEffect(
-            slot="__terminal__",
+            slot=f"terminal:{intent.effect_id}",
             intent=intent,
             authorization=authorization,
             binding=binding,
@@ -5742,13 +5698,13 @@ class HarnessControlPlane:
 
     def _durable_prepared_outcomes(
         self,
-        state: HarnessState,
+        state: HarnessGraphState,
     ) -> tuple[HarnessSideEffectOutcome, ...]:
         if self.side_effect_store is None:
             return ()
         outcomes: list[tuple[int, HarnessSideEffectOutcome]] = []
         for decision in self.side_effect_store.list_decisions(
-            run_id=state.run_spec.run_id
+            run_id=state.run_id
         ):
             if decision.origin is not HarnessSideEffectOrigin.WORKER:
                 continue
@@ -5770,10 +5726,10 @@ class HarnessControlPlane:
             )
         )
 
-    def _quarantine_prepared_side_effects(self, state: HarnessState) -> None:
+    def _quarantine_prepared_side_effects(self, state: HarnessGraphState) -> None:
         if self.side_effect_store is None:
             return
-        run_id = state.run_spec.run_id
+        run_id = state.run_id
         for decision in self.side_effect_store.list_decisions(run_id=run_id):
             outcome = self.side_effect_store.get_outcome(
                 effect_id=decision.effect_id,
@@ -5793,7 +5749,11 @@ class HarnessControlPlane:
                 subject_scope_ref=decision.subject_scope_ref,
             )
             if quarantined is not None:
-                slot = decision.step_id or "__terminal__"
+                slot = (
+                    f"node:{decision.node_instance_id}:effect:{decision.effect_id}"
+                    if decision.node_instance_id is not None
+                    else f"terminal:{decision.effect_id}"
+                )
                 self._side_effect_outcomes.setdefault(run_id, {})[slot] = quarantined
 
     def _evaluate_gate(
@@ -5815,6 +5775,8 @@ class HarnessControlPlane:
                 details={
                     "reason_code": "gate_exception",
                     "exception_type": type(exc).__name__,
+                    "exception_message": str(exc),
+                    "exception_code": getattr(exc, "code", None),
                 },
             )
         if not isinstance(result, HarnessGateResult):
@@ -5852,14 +5814,14 @@ class HarnessControlPlane:
 
     def _budget_snapshot(
         self,
-        state: HarnessState,
-        worker_result: HarnessWorkerResult | None,
+        run_spec: HarnessRunSpec,
+        state: HarnessGraphState,
     ) -> HarnessBudgetSnapshot:
         return HarnessBudgetSnapshot.from_budget(
-            state.run_spec.budget,
-            turns_used=state.turn_count,
-            replans_used=state.replan_count,
-            worker_calls_used=state.worker_call_count,
+            run_spec.budget,
+            turns_used=state.budgets.require("turns").used,
+            replans_used=state.budgets.require("replans").used,
+            worker_calls_used=state.budgets.require("worker_calls").used,
             evolution_epochs_used=int(state.metadata.get("evolution_epochs_used", 0)),
             candidates_used=int(state.metadata.get("candidates_used", 0)),
             patch_operations_used=int(state.metadata.get("patch_operations_used", 0)),
@@ -5869,6 +5831,7 @@ class HarnessControlPlane:
 
 
     def _record_event(self, event: HarnessEvent) -> HarnessEvent:
+        event = self._with_graph_event_context(event)
         committed = self.event_port.record(event)
         if not isinstance(committed, HarnessEvent):
             raise HarnessValidationError(
@@ -5876,7 +5839,7 @@ class HarnessControlPlane:
             )
         if (
             committed.run_id != event.run_id
-            or committed.step_id != event.step_id
+            or committed.node_id != event.node_id
             or committed.event_type != event.event_type
         ):
             raise HarnessValidationError(
@@ -5885,40 +5848,88 @@ class HarnessControlPlane:
         self._committed_events.append(committed)
         return committed
 
-def _event_activity_from_graph(
+    def _with_graph_event_context(self, event: HarnessEvent) -> HarnessEvent:
+        graph = self._prepared_graphs.get(event.run_id)
+        if graph is None or GRAPH_EVENT_CONTEXT_EXTENSION in event.metadata:
+            return event
+        node_instance_id = event.metadata.get("node_instance_id")
+        if node_instance_id is None:
+            node_instance_id = event.payload.get("node_instance_id")
+        stage_identity = None
+        if (
+            isinstance(event.node_id, str)
+            and event.node_id.strip()
+            and isinstance(node_instance_id, str)
+            and node_instance_id.strip()
+        ):
+            stage_identity = GraphStageIdentity(
+                run_id=event.run_id,
+                graph_id=graph.graph_id,
+                graph_version=graph.graph_ref.version,
+                graph_ref=f"{graph.graph_id}@{graph.graph_ref.version}",
+                graph_checksum=graph.checksum,
+                node_id=event.node_id,
+                node_instance_id=node_instance_id,
+            )
+        context = GraphEventContext(
+            identity=GraphRunIdentity(
+                run_id=event.run_id,
+                graph_id=graph.graph_id,
+                graph_version=graph.graph_ref.version,
+                graph_ref=f"{graph.graph_id}@{graph.graph_ref.version}",
+                graph_checksum=graph.checksum,
+            ),
+            execution_version=GraphEventExecutionVersion(
+                graph_schema_version=graph.schema_version,
+                compiler_version=graph.compiler_version,
+                normalized_graph_checksum=graph.checksum,
+            ),
+            stage_identity=stage_identity,
+        )
+        return replace(
+            event,
+            metadata={
+                **event.metadata,
+                GRAPH_EVENT_CONTEXT_EXTENSION: context.to_dict(),
+            },
+        )
+
+def _graph_event_context_for_activity(
+    graph: NormalizedHarnessGraph,
     activity: HarnessGraphActivity,
-    step: HarnessStepSpec,
-) -> HarnessActivity:
-    return HarnessActivity(
-        activity_id=activity.activity_id,
-        run_id=activity.run_id,
-        step_id=step.step_id,
-        attempt=activity.attempt,
-        activity_type=step.worker_type.value,
-        idempotency_key=activity.idempotency_key,
-        input_checksum=activity.input_ref,
-        identity_scope_ref=activity.identity_scope_ref,
-        contract_version=HARNESS_ACTIVITY_CONTRACT,
-        worker_version=activity.worker_ref.version,
+) -> GraphEventContext:
+    return GraphEventContext(
+        identity=GraphRunIdentity(
+            run_id=activity.run_id,
+            graph_id=graph.graph_id,
+            graph_version=graph.graph_ref.version,
+            graph_ref=f"{graph.graph_id}@{graph.graph_ref.version}",
+            graph_checksum=graph.checksum,
+        ),
+        execution_version=GraphEventExecutionVersion(
+            graph_schema_version=graph.schema_version,
+            compiler_version=graph.compiler_version,
+            normalized_graph_checksum=graph.checksum,
+        ),
+        execution_identity=_graph_execution_identity_for_activity(graph, activity),
     )
 
 
-def _graph_compat_terminal_reason(
-    reason_code: str | None,
-    *,
-    outcome: RunOutcome,
-) -> str | None:
-    if reason_code is None:
-        return "workflow has no next step" if outcome is RunOutcome.SUCCEEDED else None
-    return {
-        "verification_failed_replans_exhausted": (
-            "verification failed and replan budget is exhausted"
-        ),
-        "plan_failed_replans_exhausted": (
-            "plan gate failed and replan budget is exhausted"
-        ),
-        "side_effect_retry_exhausted": ("side-effect failure: effect_retry_exhausted"),
-    }.get(reason_code, reason_code)
+def _graph_execution_identity_for_activity(
+    graph: NormalizedHarnessGraph,
+    activity: HarnessGraphActivity,
+) -> GraphExecutionIdentity:
+    return GraphExecutionIdentity(
+        run_id=activity.run_id,
+        graph_id=graph.graph_id,
+        graph_version=graph.graph_ref.version,
+        graph_ref=f"{graph.graph_id}@{graph.graph_ref.version}",
+        graph_checksum=graph.checksum,
+        node_id=activity.node_id,
+        node_instance_id=activity.node_instance_id,
+        activity_id=activity.activity_id,
+        attempt=activity.attempt,
+    )
 
 
 def _graph_time(run_spec: HarnessRunSpec, sequence: int):
@@ -5990,23 +6001,6 @@ def _graph_side_effect_outcome_for_completion(
             code="graph_side_effect_preparation_mismatch",
         )
     return outcome_ref
-
-
-def _graph_node_for_step(
-    state: HarnessGraphState,
-    step_id: str,
-) -> HarnessNodeInstanceState:
-    matches = tuple(item for item in state.node_instances if item.step_id == step_id)
-    if not matches:
-        raise EventIncompleteHistoryError("graph Step has no activated node instance")
-    return max(
-        matches,
-        key=lambda item: (
-            item.identity.activation_ordinal,
-            item.last_event_sequence,
-            item.instance_id,
-        ),
-    )
 
 
 def _graph_evidence_for_observation(
@@ -6174,14 +6168,14 @@ def _side_effect_gate_refs_from_history(
 
 
 def _expected_identity_scope_ref(
-    state: HarnessState, step_id: str | None
+    run_spec: HarnessRunSpec,
+    state: HarnessGraphState,
+    node: HarnessNodeInstanceState | None,
 ) -> str | None:
-    value = state.run_spec.metadata.get("identity_scope_ref")
+    value = run_spec.metadata.get("identity_scope_ref")
     if _is_checksum_ref(value):
-        if step_id is not None:
-            activity_scope = get_step_state(state, step_id).metadata.get(
-                "activity_identity_scope_ref"
-            )
+        if node is not None:
+            activity_scope = node.metadata.get("activity_identity_scope_ref")
             if activity_scope is not None and activity_scope != value:
                 raise HarnessValidationError(
                     "worker activity identity scope conflicts with run authority scope",
@@ -6191,8 +6185,8 @@ def _expected_identity_scope_ref(
     return None
 
 
-def _expected_subject_scope_ref(state: HarnessState) -> str | None:
-    value = state.run_spec.metadata.get("subject_scope_ref")
+def _expected_subject_scope_ref(run_spec: HarnessRunSpec) -> str | None:
+    value = run_spec.metadata.get("subject_scope_ref")
     if _is_checksum_ref(value):
         return value
     return None
@@ -6207,12 +6201,22 @@ def _validate_side_effect_outcome(
         outcome.effect_id != intent.effect_id
         or outcome.decision_ref != authorization.checksum
         or outcome.run_id != intent.run_id
+        or outcome.graph_id != intent.graph_id
+        or outcome.graph_version != intent.graph_version
+        or outcome.graph_ref != intent.graph_ref
+        or outcome.graph_checksum != intent.graph_checksum
+        or outcome.origin != intent.origin
         or outcome.kind != intent.kind
         or outcome.handler != authorization.handler
         or outcome.idempotency_key != intent.idempotency_key
         or outcome.identity_scope_ref != intent.identity_scope_ref
         or outcome.subject_scope_ref != intent.subject_scope_ref
         or outcome.atomic_group != intent.atomic_group
+        or outcome.node_id != intent.node_id
+        or outcome.node_instance_id != intent.node_instance_id
+        or outcome.activity_id != intent.activity_id
+        or outcome.attempt != intent.attempt
+        or outcome.terminal_action != intent.terminal_action
         or outcome.disposition is not authorization.disposition
         or outcome.checksum is None
     ):
@@ -6220,6 +6224,47 @@ def _validate_side_effect_outcome(
             "durable side-effect outcome conflicts with authorization",
             code="side_effect_outcome_mismatch",
         )
+
+
+def _bind_side_effect_outcome(
+    intent: HarnessSideEffectIntent,
+    authorization: HarnessSideEffectDecision,
+    outcome: HarnessSideEffectOutcome,
+) -> HarnessSideEffectOutcome:
+    """Attach controller-owned Graph identity before an outcome reaches storage."""
+
+    if not isinstance(outcome, HarnessSideEffectOutcome):
+        raise TypeError("outcome must be HarnessSideEffectOutcome")
+    if outcome.effect_id != intent.effect_id or outcome.kind != intent.kind:
+        raise HarnessValidationError(
+            "side-effect handler returned an outcome for another effect",
+            code="side_effect_outcome_mismatch",
+        )
+    return replace(
+        outcome,
+        effect_id=intent.effect_id,
+        decision_ref=authorization.checksum,
+        run_id=intent.run_id,
+        graph_id=intent.graph_id,
+        graph_version=intent.graph_version,
+        graph_ref=intent.graph_ref,
+        graph_checksum=intent.graph_checksum,
+        origin=intent.origin,
+        kind=intent.kind,
+        handler=authorization.handler,
+        idempotency_key=intent.idempotency_key,
+        identity_scope_ref=intent.identity_scope_ref,
+        subject_scope_ref=intent.subject_scope_ref,
+        atomic_group=intent.atomic_group,
+        node_id=intent.node_id,
+        node_instance_id=intent.node_instance_id,
+        activity_id=intent.activity_id,
+        step_id=intent.step_id,
+        terminal_action=intent.terminal_action,
+        attempt=intent.attempt,
+        schema_version="newsroom.harness-side-effect-outcome/v3",
+        checksum=None,
+    )
 
 
 
@@ -6238,19 +6283,16 @@ def _gate_reference(gate: DeterministicGate) -> str:
 
 
 def _gate_input_ref(context: GateContext, reference: str) -> str:
-    step_state = context.step_state.to_dict()
-    step_metadata = dict(step_state.get("metadata", {}))
-    # The worker result is already an explicit checksum input. In-memory state
-    # retains a raw duplicate here while durable projections retain only refs.
-    step_metadata.pop("worker_result", None)
-    step_state["metadata"] = step_metadata
     return checksum_for(
         {
             "gate_reference": reference,
-            "run_id": context.state.run_spec.run_id,
-            "workflow": context.state.run_spec.workflow.to_dict(),
+            "run_spec": context.run_spec.to_dict(),
+            "graph_state": context.graph_state.to_dict(),
             "step_spec": context.step_spec.to_dict(),
-            "step_state": step_state,
+            "node_state": (
+                None if context.node_state is None else context.node_state.to_dict()
+            ),
+            "outputs": context.outputs,
             "worker_result": (
                 None
                 if context.worker_result is None
@@ -6320,62 +6362,11 @@ def _bind_step_value(
 ) -> None:
     if step_id in bindings and bindings[step_id] != value:
         raise HarnessValidationError(
-            "one workflow step resolves to conflicting graph runtime bindings",
+            "one Graph activity resolves to conflicting runtime bindings",
             code=code,
             details={"code": code, "step_id": step_id},
         )
     bindings[step_id] = value
-
-
-def _invoke_worker_delegate(
-    adapter: _WorkerImplementationAdapter,
-    task: dict[str, Any],
-) -> HarnessWorkerResult:
-    delegate = adapter.delegate
-    if callable(delegate):
-        return _coerce_worker_result(delegate(task))
-    execute = getattr(delegate, "execute", None)
-    if callable(execute):
-        return _coerce_worker_result(execute(task))
-    if adapter.worker_type is HarnessWorkerType.LLM:
-        generate = getattr(delegate, "generate", None)
-        if callable(generate):
-            return _coerce_worker_result(generate(task))
-    if adapter.worker_type is HarnessWorkerType.SKILL:
-        run_skill = getattr(delegate, "run_skill", None)
-        if callable(run_skill):
-            return _coerce_worker_result(
-                run_skill(
-                    str(task.get("skill_name", task["step_id"])),
-                    dict(task.get("inputs", {})),
-                    dict(task.get("context", {})),
-                )
-            )
-    if adapter.worker_type is HarnessWorkerType.SUBAGENT:
-        run_subagent = getattr(delegate, "run_subagent", None)
-        if callable(run_subagent):
-            return _coerce_worker_result(
-                run_subagent(
-                    str(task.get("subagent_id", task["step_id"])),
-                    dict(task),
-                    dict(task.get("budget", {})),
-                )
-            )
-    if adapter._queued_results is None:
-        try:
-            adapter._queued_results = list(delegate)
-        except TypeError as exc:
-            raise HarnessValidationError(
-                "worker registry value must be callable, a Harness worker port, or result iterable",
-                code="invalid_runtime_worker_implementation",
-                details={"reference": f"{adapter.worker_id}@{adapter.worker_version}"},
-            ) from exc
-    if not adapter._queued_results:
-        return HarnessWorkerResult(
-            status=HarnessWorkerStatus.FAILED,
-            error="fake worker queue is exhausted",
-        )
-    return _coerce_worker_result(adapter._queued_results.pop(0))
 
 
 def _coerce_worker_result(value: Any) -> HarnessWorkerResult:
@@ -6389,24 +6380,6 @@ def _coerce_worker_result(value: Any) -> HarnessWorkerResult:
         raise HarnessValidationError(
             "worker returned an invalid result contract"
         ) from exc
-
-
-def _coerce_compensation_result(value: Any) -> HarnessWorkerResult:
-    to_dict = getattr(value, "to_dict", None)
-    payload = to_dict() if callable(to_dict) else value
-    if isinstance(payload, Mapping) and "status" not in payload:
-        result = HarnessWorkerResult(
-            HarnessWorkerStatus.SUCCEEDED,
-            output=dict(payload),
-        )
-    else:
-        result = _coerce_worker_result(payload)
-    if result.effect_intent is not None:
-        raise HarnessValidationError(
-            "compensation handler cannot emit a forward side-effect intent",
-            code="compensation_side_effect_intent_rejected",
-        )
-    return result
 
 
 def _is_checksum_ref(value: Any) -> bool:
@@ -6537,54 +6510,44 @@ def _is_transition_port(value: Any) -> bool:
         callable(getattr(value, method_name, None))
         for method_name in (
             "record",
-            "create_activity",
             "read_history",
             "require_activity_storage",
-            "accept_activity",
+            "accept_graph_activity",
             "resolve_graph_replay_activity",
-            "record_activity_result",
+            "record_graph_activity_result",
         )
     )
 
 
 
 
-def _get_step_spec(state: HarnessState, step_id: str) -> HarnessStepSpec:
-    for step in state.run_spec.workflow.steps:
-        if step.step_id == step_id:
-            return step
-    raise LookupError(step_id)
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-def _task_with_activity(
+def _task_with_graph_activity(
     task: dict[str, Any],
-    activity: HarnessActivity | None,
+    activity: HarnessGraphActivity,
 ) -> dict[str, Any]:
-    if activity is None:
-        return dict(task)
     return {
         **task,
-        "harness_activity": {
+        "harness_graph_activity": {
             "activity_id": activity.activity_id,
             "idempotency_key": activity.idempotency_key,
             "attempt": activity.attempt,
-            "contract_version": activity.contract_version,
+            "activity_checksum": activity.activity_checksum,
+            "input_ref": activity.input_ref,
+            "graph_ref": activity.graph_ref.to_dict(),
+            "node_id": activity.node_id,
+            "node_instance_id": activity.node_instance_id,
+            "step_ref": activity.step_ref.to_dict(),
+            "worker_ref": activity.worker_ref.to_dict(),
+            "activity_ref": activity.activity_ref.to_dict(),
+            "causal_decision_checksum": activity.causal_decision_checksum,
         },
     }
+
+
+def _graph_worker_result_event_id(activity_id: str) -> str:
+    if not isinstance(activity_id, str) or not activity_id.strip():
+        raise HarnessValidationError("activity_id must not be blank")
+    return f"harness-graph-worker-result:{activity_id.strip()}"
 
 
 def _validate_merge_reference_manifest(
@@ -6628,23 +6591,12 @@ def _graph_worker_call_marker_committed(
     activity_id: str,
 ) -> bool:
     return any(
-        event.event_type is HarnessEventType.WORKER_CALLED
+        event.event_type is HarnessEventType.GRAPH_WORKER_CALLED
         and event.payload.get("activity_id") == activity_id
         for event in event_port.read_history(run_id)
     )
 
 
-
-
-def _approval_resume_projection_checksum(state: HarnessState) -> str:
-    """Compare durable approval state while ignoring lazily hydrated outputs."""
-
-    projection = HarnessStateProjection.from_state(state).to_dict()
-    metadata = dict(projection["metadata"])
-    metadata.pop("outputs_count", None)
-    metadata.pop("outputs_ref", None)
-    projection["metadata"] = metadata
-    return checksum_for(projection)
 
 
 def _wait_cause_from_observation(
