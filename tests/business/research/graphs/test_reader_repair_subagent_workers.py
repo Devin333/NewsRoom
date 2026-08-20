@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
+from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -9,7 +10,8 @@ import pytest
 
 from framework.events.canonical import checksum_for
 from framework.harness import HarnessValidationError, HarnessWorkerStatus
-from framework.harness.graph import HarnessWorkerType
+from framework.harness.graph import HarnessGraphCompiler, HarnessWorkerType
+from framework.shared.graph_identity import GraphExecutionIdentity
 
 from business.research.domain import (
     ReaderNavigationItem,
@@ -51,14 +53,17 @@ class _CandidateWorker:
         self.patch_proposal: dict[str, Any] | None = None
         self.observation_proposal: dict[str, Any] | None = None
         self.calls: list[tuple[str, dict[str, Any]]] = []
+        self.execution_identities: list[GraphExecutionIdentity | None] = []
 
     def generate_candidate(
         self,
         *,
         task: str,
         payload: dict[str, Any],
+        execution_identity: GraphExecutionIdentity | None = None,
     ) -> dict[str, Any]:
         self.calls.append((task, deepcopy(payload)))
+        self.execution_identities.append(execution_identity)
         if task == READER_REPAIR_PATCH_CANDIDATE_TASK:
             if self.patch_proposal is None:
                 raise AssertionError("patch proposal was not configured")
@@ -180,6 +185,96 @@ def test_reader_repair_subagents_enrich_candidates_without_llm_authority() -> No
         READER_REPAIR_PATCH_CANDIDATE_TASK,
         READER_REPAIR_APPLICATION_OBSERVATION_TASK,
     ]
+
+
+def test_reader_repair_subagents_forward_physical_graph_identity() -> None:
+    payload, context_pack = _payload_and_context()
+    candidate_worker = _CandidateWorker()
+    candidate_worker.patch_proposal = _patch_proposal(payload)
+    candidate_worker.observation_proposal = {
+        "observations": [
+            {
+                "check_id": "source-backed-application",
+                "finding": "The candidate restored the cited source section.",
+                "evidence_refs": [_SOURCE_REF],
+            }
+        ]
+    }
+    workers = build_reader_repair_subagent_worker_implementations(
+        candidate_worker=candidate_worker,
+    )
+    definition = build_reader_repair_graph_definition()
+    identity = _physical_identity(step_id="propose_repair_candidate")
+
+    proposer = workers["propose_repair_candidate"].execute(
+        _task(
+            definition,
+            "propose_repair_candidate",
+            {
+                "reader_payload": payload.to_dict(),
+                "reader_repair_context_pack": context_pack.to_dict(),
+            },
+        ),
+        execution_identity=identity,
+    )
+    candidate = ReaderRepairPatchCandidate.model_validate(
+        proposer.output["reader_repair_patch_candidate"]
+    )
+    application = apply_reader_repair_candidate(
+        payload=payload,
+        candidate=candidate,
+    )
+    observation_identity = _physical_identity(
+        step_id="collect_repair_application_observation",
+    )
+    workers["collect_repair_application_observation"].execute(
+        _task(
+            definition,
+            "collect_repair_application_observation",
+            {
+                "reader_issue": context_pack.issue.to_dict(),
+                "reader_repair_patch_candidate": candidate.to_dict(),
+                "reader_repair_application_candidate": application.to_dict(),
+            },
+        ),
+        execution_identity=observation_identity,
+    )
+
+    assert candidate_worker.execution_identities == [identity, observation_identity]
+
+
+def test_reader_repair_subagents_reject_mismatched_execution_identity() -> None:
+    payload, context_pack = _payload_and_context()
+    candidate_worker = _CandidateWorker()
+    candidate_worker.patch_proposal = _patch_proposal(payload)
+    worker = build_reader_repair_subagent_worker_implementations(
+        candidate_worker=candidate_worker,
+    )["propose_repair_candidate"]
+    definition = build_reader_repair_graph_definition()
+    task = _task(
+        definition,
+        "propose_repair_candidate",
+        {
+            "reader_payload": payload.to_dict(),
+            "reader_repair_context_pack": context_pack.to_dict(),
+        },
+    )
+    identity = _physical_identity(step_id="propose_repair_candidate")
+
+    for invalid_identity in (
+        replace(identity, run_id="other-run"),
+        replace(identity, node_id="collect_repair_application_observation"),
+        replace(identity, graph_checksum=checksum_for({"graph": "other"})),
+    ):
+        with pytest.raises(HarnessValidationError) as captured:
+            worker.execute(task, execution_identity=invalid_identity)
+
+        assert captured.value.code == (
+            "reader_repair_subagent_worker_contract_invalid"
+        )
+        assert captured.value.details["identity_mismatches"]
+
+    assert candidate_worker.calls == []
 
 
 @pytest.mark.parametrize(
@@ -485,6 +580,23 @@ def _task(
         "inputs": inputs,
         "metadata": dict(activity.metadata),
     }
+
+
+def _physical_identity(*, step_id: str) -> GraphExecutionIdentity:
+    graph = HarnessGraphCompiler().compile(
+        build_reader_repair_graph_definition()
+    ).graph
+    return GraphExecutionIdentity(
+        run_id=_RUN_ID,
+        graph_id=graph.graph_id,
+        graph_version=graph.graph_version,
+        graph_ref=graph.graph_ref.exact_ref,
+        graph_checksum=graph.checksum,
+        node_id=step_id,
+        node_instance_id=f"{step_id}:1",
+        activity_id=f"reader-repair-{step_id}:1",
+        attempt=1,
+    )
 
 
 def _payload_and_context() -> tuple[ResearchReaderPayload, ReaderRepairContextPack]:

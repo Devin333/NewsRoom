@@ -14,8 +14,13 @@ from framework.harness import (
     HarnessWorkerResult,
     HarnessWorkerStatus,
 )
-from framework.harness.graph import HarnessGraphDefinition, HarnessWorkerType
+from framework.harness.graph import (
+    HarnessGraphCompiler,
+    HarnessGraphDefinition,
+    HarnessWorkerType,
+)
 from framework.harness.subagents import SubAgentSpec
+from framework.shared.graph_identity import GraphExecutionIdentity
 
 from business.research.domain import (
     ReaderIssue,
@@ -77,6 +82,7 @@ class _ReaderRepairSubAgentTask:
     run_id: str
     step_id: str
     inputs: Mapping[str, Any]
+    execution_identity: GraphExecutionIdentity | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -84,6 +90,10 @@ class _ReaderRepairSubAgentWorker:
     step_id: str
     worker_id: str
     worker_version: str
+    graph_id: str
+    graph_version: str
+    graph_ref: str
+    graph_checksum: str
     input_keys: tuple[str, ...]
     spec: SubAgentSpec
     handler: Callable[[_ReaderRepairSubAgentTask], HarnessWorkerResult] = field(
@@ -91,11 +101,21 @@ class _ReaderRepairSubAgentWorker:
     )
     worker_type: HarnessWorkerType = HarnessWorkerType.SUBAGENT
 
-    def execute(self, task: dict[str, Any]) -> HarnessWorkerResult:
+    def execute(
+        self,
+        task: dict[str, Any],
+        *,
+        execution_identity: GraphExecutionIdentity | None = None,
+    ) -> HarnessWorkerResult:
         parsed = _parse_task(
             task,
             expected_step_id=self.step_id,
             expected_input_keys=self.input_keys,
+            expected_graph_id=self.graph_id,
+            expected_graph_version=self.graph_version,
+            expected_graph_ref=self.graph_ref,
+            expected_graph_checksum=self.graph_checksum,
+            execution_identity=execution_identity,
         )
         result = self.handler(parsed)
         if not isinstance(result, HarnessWorkerResult):  # pragma: no cover
@@ -112,6 +132,10 @@ class _ReaderRepairSubAgentWorkerBuilder:
     definition: HarnessGraphDefinition
     candidate_worker: ResearchCandidateWorkerPort
     specs: Mapping[str, SubAgentSpec]
+    graph_id: str
+    graph_version: str
+    graph_ref: str
+    graph_checksum: str
 
     def build(self) -> Mapping[str, object]:
         handlers: dict[
@@ -143,6 +167,10 @@ class _ReaderRepairSubAgentWorkerBuilder:
                 step_id=step_id,
                 worker_id=leaf.worker_ref.contract_id,
                 worker_version=leaf.worker_ref.version,
+                graph_id=self.graph_id,
+                graph_version=self.graph_version,
+                graph_ref=self.graph_ref,
+                graph_checksum=self.graph_checksum,
                 input_keys=activity.input_keys,
                 spec=spec,
                 handler=handler,
@@ -173,12 +201,14 @@ class _ReaderRepairSubAgentWorkerBuilder:
 
         proposal = _normalize_patch_proposal(
             _candidate_mapping(
-                self.candidate_worker.generate_candidate(
+                _generate_candidate(
+                    self.candidate_worker,
                     task=READER_REPAIR_PATCH_CANDIDATE_TASK,
                     payload={
                         "reader_payload": payload.to_dict(),
                         "reader_repair_context_pack": context_pack.to_dict(),
                     },
+                    execution_identity=task.execution_identity,
                 ),
                 step_id=task.step_id,
             ),
@@ -325,13 +355,15 @@ class _ReaderRepairSubAgentWorkerBuilder:
             )
 
         proposal = _candidate_mapping(
-            self.candidate_worker.generate_candidate(
+            _generate_candidate(
+                self.candidate_worker,
                 task=READER_REPAIR_APPLICATION_OBSERVATION_TASK,
                 payload={
                     "reader_issue": issue.to_dict(),
                     "reader_repair_patch_candidate": candidate.to_dict(),
                     "reader_repair_application_candidate": application.to_dict(),
                 },
+                execution_identity=task.execution_identity,
             ),
             step_id=task.step_id,
         )
@@ -384,6 +416,7 @@ def build_reader_repair_subagent_worker_implementations(
             "candidate_worker must implement ResearchCandidateWorkerPort"
         )
     definition = build_reader_repair_graph_definition()
+    graph = HarnessGraphCompiler().compile(definition).graph
     specs = {
         spec.subagent_id: spec for spec in build_reader_repair_subagent_specs()
     }
@@ -393,6 +426,10 @@ def build_reader_repair_subagent_worker_implementations(
         definition=definition,
         candidate_worker=candidate_worker,
         specs=MappingProxyType(specs),
+        graph_id=graph.graph_id,
+        graph_version=graph.graph_version,
+        graph_ref=graph.graph_ref.exact_ref,
+        graph_checksum=graph.checksum,
     ).build()
 
 
@@ -401,7 +438,21 @@ def _parse_task(
     *,
     expected_step_id: str,
     expected_input_keys: tuple[str, ...],
+    expected_graph_id: str,
+    expected_graph_version: str,
+    expected_graph_ref: str,
+    expected_graph_checksum: str,
+    execution_identity: GraphExecutionIdentity | None,
 ) -> _ReaderRepairSubAgentTask:
+    if execution_identity is not None and not isinstance(
+        execution_identity,
+        GraphExecutionIdentity,
+    ):
+        raise _worker_error(
+            "Reader Repair SubAgent requires a typed Graph execution identity",
+            step_id=expected_step_id,
+            identity_type=type(execution_identity).__name__,
+        )
     if not isinstance(value, Mapping):
         raise _worker_error(
             "Reader Repair SubAgent task must be an object",
@@ -413,6 +464,28 @@ def _parse_task(
             "Reader Repair SubAgent task requires run_id",
             step_id=expected_step_id,
         )
+    if execution_identity is not None:
+        mismatches = {
+            field_name: {
+                "expected": expected,
+                "actual": getattr(execution_identity, field_name),
+            }
+            for field_name, expected in (
+                ("run_id", run_id),
+                ("graph_id", expected_graph_id),
+                ("graph_version", expected_graph_version),
+                ("graph_ref", expected_graph_ref),
+                ("graph_checksum", expected_graph_checksum),
+                ("node_id", expected_step_id),
+            )
+            if getattr(execution_identity, field_name) != expected
+        }
+        if mismatches:
+            raise _worker_error(
+                "Reader Repair SubAgent execution identity does not match its Graph activity",
+                step_id=expected_step_id,
+                identity_mismatches=mismatches,
+            )
     if value.get("step_id") != expected_step_id:
         raise _worker_error(
             "Reader Repair SubAgent task step does not match its worker",
@@ -447,6 +520,7 @@ def _parse_task(
         run_id=run_id,
         step_id=expected_step_id,
         inputs=dict(inputs),
+        execution_identity=execution_identity,
     )
 
 
@@ -484,6 +558,22 @@ def _candidate_mapping(value: Any, *, step_id: str) -> dict[str, Any]:
             step_id=step_id,
         )
     return dict(value)
+
+
+def _generate_candidate(
+    worker: ResearchCandidateWorkerPort,
+    *,
+    task: str,
+    payload: dict[str, Any],
+    execution_identity: GraphExecutionIdentity | None,
+) -> dict[str, Any]:
+    if execution_identity is None:
+        return worker.generate_candidate(task=task, payload=payload)
+    return worker.generate_candidate(
+        task=task,
+        payload=payload,
+        execution_identity=execution_identity,
+    )
 
 
 def _normalize_patch_proposal(
