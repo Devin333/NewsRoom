@@ -67,7 +67,7 @@ class HarnessSideEffectApprovalRequest:
             )
         for field_name in (
             "graph_id", "graph_version", "graph_ref", "graph_checksum", "run_id",
-            "node_id", "node_instance_id", "activity_id", "attempt", "step_id",
+            "node_id", "node_instance_id", "activity_id", "step_id",
         ):
             object.__setattr__(self, field_name, getattr(identity, field_name, None))
         object.__setattr__(self, "terminal_action", terminal_action)
