@@ -123,11 +123,17 @@ class FilesystemArtifactStore:
     def exists(self, artifact_ref: ArtifactRef) -> bool:
         self._assert_ref_path(artifact_ref)
         path = self._raw_artifact_path(artifact_ref.run_id, artifact_ref.path)
-        _reject_symlink_chain(
-            path,
-            root=self.root.resolve(strict=False),
-            artifact_id=artifact_ref.artifact_id,
-        )
+        try:
+            _reject_symlink_chain(
+                path,
+                root=self.root.resolve(strict=False),
+                artifact_id=artifact_ref.artifact_id,
+            )
+        except FileNotFoundError:
+            # A missing ancestor means the immutable artifact cannot exist.
+            # Keep the existence query total while preserving link rejection
+            # for every path component that is actually present.
+            return False
         return path.exists()
 
     def list(self, run_id: str) -> list[str]:

@@ -87,6 +87,12 @@ def test_filesystem_artifact_store_writes_reads_exists_and_deletes(tmp_path) -> 
         store.read(ref)
 
 
+def test_filesystem_artifact_store_exists_returns_false_for_missing_ancestors(tmp_path) -> None:
+    store = FilesystemArtifactStore(tmp_path)
+
+    assert store.exists(_ref("missing")) is False
+
+
 def test_filesystem_artifact_store_detects_checksum_mismatch(tmp_path) -> None:
     store = FilesystemArtifactStore(tmp_path)
     ref = store.write(
