@@ -9,12 +9,16 @@ from typing import Any, Callable
 import psycopg
 
 from infrastructure.storage.postgres.dsn import normalize_dsn
+from framework.shared.graph_identity import GraphRunIdentity
 
 from infrastructure.storage.conversation.models import (
     AgentIterationCheckpoint,
     AgentMessageRecord,
+    CONVERSATION_SCOPE_GRAPH,
     ConversationCompactionRecord,
     ConversationCursor,
+    CONVERSATION_SCOPE_STANDALONE,
+    message_scope_key,
 )
 from infrastructure.storage.security import StorageRedactor
 
@@ -52,19 +56,30 @@ class PostgresConversationStore:
                     )
                     INSERT INTO agent_conversation_messages (
                         conversation_id, message_id, message_offset, role, content,
-                        created_at, agent_id, run_id, step_id, redacted, metadata_json
+                        created_at, scope_kind, agent_id, run_id, graph_id, graph_version,
+                        graph_ref, graph_checksum, node_id, node_instance_id,
+                        graph_checkpoint_ref, activity_id, attempt, redacted, metadata_json
                     )
                     SELECT
                         %s, %s, next_offset.value, %s, %s::jsonb,
-                        %s, %s, %s, %s, %s, %s::jsonb
+                        %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb
                     FROM next_offset
                     ON CONFLICT (conversation_id, message_id) DO UPDATE SET
                         role = EXCLUDED.role,
                         content = EXCLUDED.content,
                         created_at = EXCLUDED.created_at,
+                        scope_kind = EXCLUDED.scope_kind,
                         agent_id = EXCLUDED.agent_id,
                         run_id = EXCLUDED.run_id,
-                        step_id = EXCLUDED.step_id,
+                        graph_id = EXCLUDED.graph_id,
+                        graph_version = EXCLUDED.graph_version,
+                        graph_ref = EXCLUDED.graph_ref,
+                        graph_checksum = EXCLUDED.graph_checksum,
+                        node_id = EXCLUDED.node_id,
+                        node_instance_id = EXCLUDED.node_instance_id,
+                        graph_checkpoint_ref = EXCLUDED.graph_checkpoint_ref,
+                        activity_id = EXCLUDED.activity_id,
+                        attempt = EXCLUDED.attempt,
                         redacted = EXCLUDED.redacted,
                         metadata_json = EXCLUDED.metadata_json,
                         indexed_at = now()
@@ -76,9 +91,18 @@ class PostgresConversationStore:
                         safe_message.role,
                         _json_value(safe_message.content),
                         safe_message.created_at,
+                        safe_message.scope_kind,
                         safe_message.agent_id,
                         safe_message.run_id,
-                        safe_message.step_id,
+                        safe_message.graph_id,
+                        safe_message.graph_version,
+                        safe_message.graph_ref,
+                        safe_message.graph_checksum,
+                        safe_message.node_id,
+                        safe_message.node_instance_id,
+                        safe_message.graph_checkpoint_ref,
+                        safe_message.activity_id,
+                        safe_message.attempt,
                         safe_message.redacted,
                         _json_object(safe_message.metadata),
                     ),
@@ -104,8 +128,10 @@ class PostgresConversationStore:
             raise ValueError("limit must be greater than zero")
         sql = """
             SELECT
-                message_id, conversation_id, role, content, created_at, agent_id,
-                run_id, step_id, redacted, metadata_json
+                message_id, conversation_id, role, content, created_at, scope_kind, agent_id,
+                run_id, graph_id, graph_version, graph_ref, graph_checksum,
+                node_id, node_instance_id, graph_checkpoint_ref, activity_id,
+                attempt, redacted, metadata_json
             FROM agent_conversation_messages
             WHERE conversation_id = %s
             ORDER BY message_offset ASC
@@ -114,12 +140,16 @@ class PostgresConversationStore:
         if limit is not None:
             sql = """
                 SELECT
-                    message_id, conversation_id, role, content, created_at, agent_id,
-                    run_id, step_id, redacted, metadata_json
+                    message_id, conversation_id, role, content, created_at, scope_kind, agent_id,
+                    run_id, graph_id, graph_version, graph_ref, graph_checksum,
+                    node_id, node_instance_id, graph_checkpoint_ref, activity_id,
+                    attempt, redacted, metadata_json
                 FROM (
                     SELECT
                         message_offset, message_id, conversation_id, role, content,
-                        created_at, agent_id, run_id, step_id, redacted, metadata_json
+                        created_at, scope_kind, agent_id, run_id, graph_id, graph_version, graph_ref,
+                        graph_checksum, node_id, node_instance_id, graph_checkpoint_ref,
+                        activity_id, attempt, redacted, metadata_json
                     FROM agent_conversation_messages
                     WHERE conversation_id = %s
                     ORDER BY message_offset DESC
@@ -129,6 +159,7 @@ class PostgresConversationStore:
             """
             params = (conversation_id, limit)
         messages = [_message_from_row(row) for row in self._fetch_all(sql, params)]
+        _assert_consistent_message_scope(messages)
         return messages
 
     def write_summary(self, conversation_id: str, summary: str) -> None:
@@ -207,6 +238,17 @@ class PostgresConversationStore:
                 "compacted_until_message_id": compacted[-1].message_id if compacted else None,
             },
             created_at=datetime.now(UTC),
+            scope_kind=_compaction_scope(messages),
+            run_id=_compaction_identity(messages, "run_id"),
+            graph_id=_compaction_identity(messages, "graph_id"),
+            graph_version=_compaction_identity(messages, "graph_version"),
+            graph_ref=_compaction_identity(messages, "graph_ref"),
+            graph_checksum=_compaction_identity(messages, "graph_checksum"),
+            node_id=_compaction_identity(messages, "node_id"),
+            node_instance_id=_compaction_identity(messages, "node_instance_id"),
+            graph_checkpoint_ref=_compaction_identity(messages, "graph_checkpoint_ref"),
+            activity_id=_compaction_identity(messages, "activity_id"),
+            attempt=_compaction_identity(messages, "attempt"),
             redacted=True,
             metadata={
                 "message_type": "conversation_compaction",
@@ -263,7 +305,13 @@ class PostgresConversationStore:
             metadata=metadata,
             schema_version=cursor.schema_version,
         )
-        self._write_state_json(cursor.conversation_id, "cursor_json", safe_cursor.to_dict())
+        self._write_state_json(
+            cursor.conversation_id,
+            "cursor_json",
+            safe_cursor.to_dict(),
+            scope_kind=_state_scope_kind(safe_cursor.run_id),
+            run_id=safe_cursor.run_id,
+        )
 
     def read_cursor(self, conversation_id: str) -> ConversationCursor | None:
         payload = self._read_state_json(conversation_id, "cursor_json")
@@ -326,6 +374,8 @@ class PostgresConversationStore:
             checkpoint.conversation_id,
             "iteration_checkpoint_json",
             safe_checkpoint.to_dict(),
+            scope_kind=_state_scope_kind(safe_checkpoint.run_id),
+            run_id=safe_checkpoint.run_id,
         )
 
     def read_iteration_checkpoint(self, conversation_id: str) -> AgentIterationCheckpoint | None:
@@ -356,7 +406,15 @@ class PostgresConversationStore:
             return None
         return _dict_or_none(row[0])
 
-    def _write_state_json(self, conversation_id: str, column: str, payload: dict[str, Any]) -> None:
+    def _write_state_json(
+        self,
+        conversation_id: str,
+        column: str,
+        payload: dict[str, Any],
+        *,
+        scope_kind: str | None = None,
+        run_id: str | None = None,
+    ) -> None:
         _validate_id(conversation_id, "conversation_id")
         _validate_state_column(column)
         self._upsert_state(
@@ -365,6 +423,8 @@ class PostgresConversationStore:
             insert_columns=column,
             insert_values="%s::jsonb",
             params=(_json_object(payload),),
+            scope_kind=scope_kind,
+            run_id=run_id,
         )
 
     def _upsert_state(
@@ -375,10 +435,18 @@ class PostgresConversationStore:
         insert_columns: str,
         insert_values: str,
         params: tuple[Any, ...],
+        scope_kind: str | None = None,
+        run_id: str | None = None,
     ) -> None:
         with self._connection_factory() as connection:
             with connection.cursor() as cursor:
-                _upsert_conversation(cursor, conversation_id, None)
+                _upsert_conversation(
+                    cursor,
+                    conversation_id,
+                    None,
+                    state_scope_kind=scope_kind,
+                    state_run_id=run_id,
+                )
                 _cursor_execute(
                     cursor,
                     f"""
@@ -421,7 +489,16 @@ class PostgresConversationStore:
             created_at=message.created_at,
             agent_id=message.agent_id,
             run_id=message.run_id,
-            step_id=message.step_id,
+            graph_id=message.graph_id,
+            graph_version=message.graph_version,
+            graph_ref=message.graph_ref,
+            graph_checksum=message.graph_checksum,
+            node_id=message.node_id,
+            node_instance_id=message.node_instance_id,
+            graph_checkpoint_ref=message.graph_checkpoint_ref,
+            activity_id=message.activity_id,
+            attempt=message.attempt,
+            scope_kind=message.scope_kind,
             redacted=True,
             metadata=metadata,
         )
@@ -443,25 +520,82 @@ def _upsert_conversation(
     cursor: Any,
     conversation_id: str,
     message: AgentMessageRecord | None,
+    *,
+    state_scope_kind: str | None = None,
+    state_run_id: str | None = None,
 ) -> None:
+    _validate_state_scope(state_scope_kind, state_run_id)
+    scope_kind = (
+        message.scope_kind if message is not None else CONVERSATION_SCOPE_STANDALONE
+    )
+    run_id = message.run_id if message is not None else None
+    graph_id = message.graph_id if message is not None else None
+    graph_version = message.graph_version if message is not None else None
+    graph_ref = message.graph_ref if message is not None else None
+    graph_checksum = message.graph_checksum if message is not None else None
+    cursor.execute(
+        "SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))",
+        (conversation_id,),
+    )
+    cursor.execute(
+        """
+        SELECT scope_kind, run_id, graph_id, graph_version, graph_ref, graph_checksum
+        FROM agent_conversations
+        WHERE conversation_id = %s
+        FOR UPDATE
+        """,
+        (conversation_id,),
+    )
+    existing = cursor.fetchone()
+    if existing is not None:
+        actual_scope = _parent_scope_key(existing)
+        expected_scope = (
+            message_scope_key(message)
+            if message is not None
+            else _state_scope_key(
+                actual_scope,
+                state_scope_kind=state_scope_kind,
+                state_run_id=state_run_id,
+            )
+        )
+        if actual_scope != expected_scope:
+            raise ValueError("conversation Graph/standalone scope does not match")
+        cursor.execute(
+            """
+            UPDATE agent_conversations
+            SET agent_id = COALESCE(%s, agent_id),
+                payload = payload || %s::jsonb,
+                updated_at = now()
+            WHERE conversation_id = %s
+            """,
+            (
+                message.agent_id if message is not None else None,
+                _json_object({"conversation_id": conversation_id}),
+                conversation_id,
+            ),
+        )
+        return
+    if state_scope_kind == CONVERSATION_SCOPE_GRAPH:
+        raise ValueError(
+            "Graph conversation state requires an existing exact Graph parent"
+        )
     cursor.execute(
         """
         INSERT INTO agent_conversations (
-            conversation_id, run_id, agent_id, step_id, message_count, payload
+            conversation_id, scope_kind, run_id, graph_id, graph_version, graph_ref,
+            graph_checksum, agent_id, message_count, payload
         )
-        VALUES (%s, %s, %s, %s, 0, %s::jsonb)
-        ON CONFLICT (conversation_id) DO UPDATE SET
-            run_id = COALESCE(EXCLUDED.run_id, agent_conversations.run_id),
-            agent_id = COALESCE(EXCLUDED.agent_id, agent_conversations.agent_id),
-            step_id = COALESCE(EXCLUDED.step_id, agent_conversations.step_id),
-            payload = agent_conversations.payload || EXCLUDED.payload,
-            updated_at = now()
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 0, %s::jsonb)
         """,
         (
             conversation_id,
-            message.run_id if message else None,
-            message.agent_id if message else None,
-            message.step_id if message else None,
+            scope_kind,
+            run_id,
+            graph_id,
+            graph_version,
+            graph_ref,
+            graph_checksum,
+            message.agent_id if message is not None else None,
             _json_object({"conversation_id": conversation_id}),
         ),
     )
@@ -478,12 +612,118 @@ def _message_from_row(row: tuple[Any, ...]) -> AgentMessageRecord:
         role=str(row[2]),
         content=_json_loaded(row[3]),
         created_at=_timestamp(row[4]),
-        agent_id=_optional_str(row[5]),
-        run_id=_optional_str(row[6]),
-        step_id=_optional_str(row[7]),
-        redacted=bool(row[8]),
-        metadata=_dict_or_empty(row[9]),
+        scope_kind=str(row[5]),
+        agent_id=_optional_str(row[6]),
+        run_id=_optional_str(row[7]),
+        graph_id=_optional_str(row[8]),
+        graph_version=_optional_str(row[9]),
+        graph_ref=_optional_str(row[10]),
+        graph_checksum=_optional_str(row[11]),
+        node_id=_optional_str(row[12]),
+        node_instance_id=_optional_str(row[13]),
+        graph_checkpoint_ref=_optional_str(row[14]),
+        activity_id=_optional_str(row[15]),
+        attempt=_optional_int(row[16]),
+        redacted=bool(row[17]),
+        metadata=_dict_or_empty(row[18]),
     )
+
+
+def _assert_consistent_message_scope(messages: list[AgentMessageRecord]) -> None:
+    if len({message_scope_key(message) for message in messages}) > 1:
+        raise ValueError("conversation messages have mixed Graph/standalone scope")
+
+
+def _state_scope_kind(run_id: str | None) -> str:
+    return (
+        CONVERSATION_SCOPE_GRAPH
+        if run_id is not None
+        else CONVERSATION_SCOPE_STANDALONE
+    )
+
+
+def _validate_state_scope(
+    scope_kind: str | None,
+    run_id: str | None,
+) -> None:
+    if scope_kind is None:
+        if run_id is not None:
+            raise ValueError("state run_id requires an explicit Graph scope")
+        return
+    if scope_kind == CONVERSATION_SCOPE_GRAPH:
+        if run_id is None:
+            raise ValueError("Graph conversation state requires run_id")
+        return
+    if scope_kind == CONVERSATION_SCOPE_STANDALONE:
+        if run_id is not None:
+            raise ValueError("standalone conversation state cannot carry run_id")
+        return
+    raise ValueError("state scope_kind must be 'graph' or 'standalone'")
+
+
+def _parent_scope_key(row: tuple[Any, ...]) -> tuple[str, ...]:
+    if len(row) != 6:
+        raise ValueError("conversation parent has an invalid live scope row")
+    scope_kind, run_id, graph_id, graph_version, graph_ref, graph_checksum = row
+    if scope_kind == CONVERSATION_SCOPE_STANDALONE:
+        if any(
+            value is not None
+            for value in (run_id, graph_id, graph_version, graph_ref, graph_checksum)
+        ):
+            raise ValueError("standalone conversation parent carries Graph identity")
+        return (CONVERSATION_SCOPE_STANDALONE,)
+    if scope_kind != CONVERSATION_SCOPE_GRAPH:
+        raise ValueError("conversation parent has no live Graph/standalone scope")
+    identity = GraphRunIdentity(
+        run_id=run_id,
+        graph_id=graph_id,
+        graph_version=graph_version,
+        graph_ref=graph_ref,
+        graph_checksum=graph_checksum,
+    )
+    return (
+        CONVERSATION_SCOPE_GRAPH,
+        identity.run_id,
+        identity.graph_ref,
+        identity.graph_checksum,
+    )
+
+
+def _state_scope_key(
+    actual_scope: tuple[str, ...],
+    *,
+    state_scope_kind: str | None,
+    state_run_id: str | None,
+) -> tuple[str, ...]:
+    if state_scope_kind is None:
+        return actual_scope
+    if state_scope_kind == CONVERSATION_SCOPE_STANDALONE:
+        return (CONVERSATION_SCOPE_STANDALONE,)
+    if actual_scope[0] != CONVERSATION_SCOPE_GRAPH:
+        return (CONVERSATION_SCOPE_GRAPH, str(state_run_id), "", "")
+    if actual_scope[1] != state_run_id:
+        return (
+            CONVERSATION_SCOPE_GRAPH,
+            str(state_run_id),
+            actual_scope[2],
+            actual_scope[3],
+        )
+    return actual_scope
+
+
+def _compaction_scope(messages: list[AgentMessageRecord]) -> str:
+    if not messages:
+        return CONVERSATION_SCOPE_STANDALONE
+    return messages[-1].scope_kind
+
+
+def _compaction_identity(
+    messages: list[AgentMessageRecord],
+    field_name: str,
+) -> Any:
+    if not messages:
+        return None
+    return getattr(messages[-1], field_name)
 
 
 def _json_value(value: Any) -> str:
@@ -530,6 +770,14 @@ def _optional_str(value: Any) -> str | None:
     if value is None:
         return None
     return str(value)
+
+
+def _optional_int(value: Any) -> int | None:
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise TypeError("attempt must be an integer")
+    return value
 
 
 def _validate_id(value: str, label: str) -> None:

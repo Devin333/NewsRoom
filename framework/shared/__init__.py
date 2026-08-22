@@ -48,6 +48,9 @@ from framework.shared.attempt_history import (
 )
 from framework.shared.hashing import hash_bytes, hash_text, short_hash, stable_hash
 from framework.shared.graph_identity import (
+    CONVERSATION_SCOPE_GRAPH,
+    CONVERSATION_SCOPE_STANDALONE,
+    ConversationMessageScope,
     GraphExecutionIdentity,
     GraphIdentity,
     GraphRunIdentity,
@@ -107,6 +110,9 @@ __all__ = [
     "ErrorDetail",
     "FrameworkError",
     "GraphRunIdentity",
+    "ConversationMessageScope",
+    "CONVERSATION_SCOPE_GRAPH",
+    "CONVERSATION_SCOPE_STANDALONE",
     "GraphStageIdentity",
     "GraphExecutionIdentity",
     "GraphIdentity",

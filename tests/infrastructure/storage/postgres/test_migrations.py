@@ -22,6 +22,9 @@ READER_REPAIR_MEMORY_COMMIT_MIGRATION = (
 GRAPH_ACTIVITY_STORE_CUTOVER_MIGRATION = (
     MIGRATIONS_DIR / "012_graph_activity_store_cutover.sql"
 )
+GRAPH_CONVERSATION_MESSAGE_IDENTITY_MIGRATION = (
+    MIGRATIONS_DIR / "013_graph_conversation_message_identity.sql"
+)
 
 
 def test_postgres_migration_sql_contains_required_tables() -> None:
@@ -62,8 +65,9 @@ def test_postgres_migration_sql_contains_required_tables() -> None:
         assert f"CREATE TABLE IF NOT EXISTS {table}" in sql
 
     assert "UNIQUE (claim_id, evidence_id, support_type)" in sql
-    assert "idx_agent_conversations_run" in sql
+    assert "idx_agent_conversations_graph" in sql
     assert "idx_agent_conversation_messages_conversation_offset" in sql
+    assert "idx_agent_conversation_messages_graph_node" in sql
     assert "idx_agent_conversation_state_updated" in sql
     assert "idx_tool_executions_run" in sql
     assert "idx_graph_runs_graph_id" in sql
@@ -116,6 +120,21 @@ def test_graph_identity_columns_are_added_before_dependent_indexes() -> None:
     memory_columns = sql.index("ALTER TABLE memory_decisions")
     memory_index = sql.index("CREATE INDEX IF NOT EXISTS idx_memory_decisions_target")
     assert memory_columns < memory_index
+
+
+def test_graph_conversation_message_identity_migration_is_strict_and_loaded() -> None:
+    sql = load_migration_sql()
+    migration = GRAPH_CONVERSATION_MESSAGE_IDENTITY_MIGRATION.read_text(encoding="utf-8")
+
+    assert migration in sql
+    assert "DROP COLUMN IF EXISTS step_id" in migration
+    assert "agent_conversations_live_scope_check" in migration
+    assert "agent_conversation_messages_live_scope_check" in migration
+    assert "trg_agent_conversation_message_scope" in migration
+    assert "trg_agent_conversation_message_identity_immutable" in migration
+    assert "idx_agent_conversations_graph" in migration
+    assert "idx_agent_conversation_messages_graph_node" in migration
+    assert "NOT VALID" in migration
 
 
 def test_postgres_migration_sql_exposes_storage_contract_query_columns() -> None:

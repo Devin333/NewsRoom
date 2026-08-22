@@ -6,6 +6,12 @@ UTC = _tz.utc
 from typing import Any
 from uuid import uuid4
 
+from framework.shared.graph_identity import (
+    CONVERSATION_SCOPE_GRAPH,
+    CONVERSATION_SCOPE_STANDALONE,
+    ConversationMessageScope,
+)
+
 
 # v1 is the migration-only history schema and is never live-readable.
 GRAPH_CONVERSATION_CURSOR_SCHEMA = "newsroom.graph-conversation-cursor/v2"
@@ -23,42 +29,126 @@ class AgentMessageRecord:
     conversation_id: str
     role: str
     content: Any
+    scope_kind: str
     message_id: str = field(default_factory=lambda: uuid4().hex)
     created_at: datetime = field(default_factory=_utc_now)
     agent_id: str | None = None
     run_id: str | None = None
-    step_id: str | None = None
+    graph_id: str | None = None
+    graph_version: str | None = None
+    graph_ref: str | None = None
+    graph_checksum: str | None = None
+    node_id: str | None = None
+    node_instance_id: str | None = None
+    graph_checkpoint_ref: str | None = None
+    activity_id: str | None = None
+    attempt: int | None = None
     redacted: bool = True
     metadata: dict[str, Any] = field(default_factory=dict)
 
+    def __post_init__(self) -> None:
+        _validate_message_scope(
+            scope_kind=self.scope_kind,
+            run_id=self.run_id,
+            graph_id=self.graph_id,
+            graph_version=self.graph_version,
+            graph_ref=self.graph_ref,
+            graph_checksum=self.graph_checksum,
+            node_id=self.node_id,
+            node_instance_id=self.node_instance_id,
+            graph_checkpoint_ref=self.graph_checkpoint_ref,
+            activity_id=self.activity_id,
+            attempt=self.attempt,
+        )
+
     def to_dict(self) -> dict[str, Any]:
-        return {
+        payload = {
             "message_id": self.message_id,
             "conversation_id": self.conversation_id,
             "role": self.role,
             "content": self.content,
             "created_at": self.created_at.isoformat().replace("+00:00", "Z"),
+            "scope_kind": self.scope_kind,
             "agent_id": self.agent_id,
             "run_id": self.run_id,
-            "step_id": self.step_id,
+            "graph_id": self.graph_id,
+            "graph_version": self.graph_version,
+            "graph_ref": self.graph_ref,
+            "graph_checksum": self.graph_checksum,
+            "node_id": self.node_id,
+            "node_instance_id": self.node_instance_id,
+            "graph_checkpoint_ref": self.graph_checkpoint_ref,
+            "activity_id": self.activity_id,
+            "attempt": self.attempt,
             "redacted": self.redacted,
             "metadata": dict(self.metadata),
         }
+        return payload
 
     @classmethod
     def from_dict(cls, payload: dict[str, Any]) -> AgentMessageRecord:
+        _require_exact_fields(
+            payload,
+            {
+                "message_id",
+                "conversation_id",
+                "role",
+                "content",
+                "created_at",
+                "scope_kind",
+                "agent_id",
+                "run_id",
+                "graph_id",
+                "graph_version",
+                "graph_ref",
+                "graph_checksum",
+                "node_id",
+                "node_instance_id",
+                "graph_checkpoint_ref",
+                "activity_id",
+                "attempt",
+                "redacted",
+                "metadata",
+            },
+            "agent message",
+        )
         return cls(
             message_id=str(payload["message_id"]),
             conversation_id=str(payload["conversation_id"]),
             role=str(payload["role"]),
             content=payload.get("content"),
             created_at=_parse_datetime(str(payload["created_at"])),
+            scope_kind=str(payload["scope_kind"]),
             agent_id=_optional_str(payload.get("agent_id")),
-            run_id=_optional_str(payload.get("run_id")),
-            step_id=_optional_str(payload.get("step_id")),
+            run_id=_optional_text(payload.get("run_id"), "run_id"),
+            graph_id=_optional_text(payload.get("graph_id"), "graph_id"),
+            graph_version=_optional_text(payload.get("graph_version"), "graph_version"),
+            graph_ref=_optional_text(payload.get("graph_ref"), "graph_ref"),
+            graph_checksum=_optional_text(payload.get("graph_checksum"), "graph_checksum"),
+            node_id=_optional_text(payload.get("node_id"), "node_id"),
+            node_instance_id=_optional_text(
+                payload.get("node_instance_id"), "node_instance_id"
+            ),
+            graph_checkpoint_ref=_optional_text(
+                payload.get("graph_checkpoint_ref"), "graph_checkpoint_ref"
+            ),
+            activity_id=_optional_text(payload.get("activity_id"), "activity_id"),
+            attempt=_optional_int(payload.get("attempt")),
             redacted=bool(payload.get("redacted", True)),
             metadata=dict(payload.get("metadata") or {}),
         )
+
+
+def message_scope_key(message: AgentMessageRecord) -> tuple[str, ...]:
+    """Return the conversation-level identity that all messages must share."""
+    if message.scope_kind == CONVERSATION_SCOPE_STANDALONE:
+        return (CONVERSATION_SCOPE_STANDALONE,)
+    return (
+        CONVERSATION_SCOPE_GRAPH,
+        str(message.run_id),
+        str(message.graph_ref),
+        str(message.graph_checksum),
+    )
 
 
 def _parse_datetime(value: str) -> datetime:
@@ -72,6 +162,43 @@ def _optional_str(value: Any) -> str | None:
     if value is None:
         return None
     return str(value)
+
+
+def _optional_int(value: Any) -> int | None:
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise TypeError("attempt must be an integer")
+    return value
+
+
+def _validate_message_scope(
+    *,
+    scope_kind: str,
+    run_id: str | None,
+    graph_id: str | None,
+    graph_version: str | None,
+    graph_ref: str | None,
+    graph_checksum: str | None,
+    node_id: str | None,
+    node_instance_id: str | None,
+    graph_checkpoint_ref: str | None,
+    activity_id: str | None,
+    attempt: int | None,
+) -> None:
+    ConversationMessageScope.from_message_fields(
+        scope_kind=scope_kind,
+        run_id=run_id,
+        graph_id=graph_id,
+        graph_version=graph_version,
+        graph_ref=graph_ref,
+        graph_checksum=graph_checksum,
+        node_id=node_id,
+        node_instance_id=node_instance_id,
+        graph_checkpoint_ref=graph_checkpoint_ref,
+        activity_id=activity_id,
+        attempt=attempt,
+    )
 
 
 @dataclass(frozen=True)

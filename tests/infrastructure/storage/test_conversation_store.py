@@ -34,9 +34,8 @@ def _message(message_id: str, role: str, content: str) -> AgentMessageRecord:
         role=role,
         content=content,
         created_at=datetime(2026, 5, 11, 1, 0, tzinfo=UTC),
+        scope_kind="standalone",
         agent_id="analyst",
-        run_id="run-1",
-        step_id="agent_loop",
         metadata={"safe": "visible"},
     )
 
@@ -115,6 +114,82 @@ def test_local_json_conversation_store_appends_reads_and_limits(tmp_path) -> Non
     assert path.exists()
     assert store.read_messages("conversation-1") == [first, second, third]
     assert store.read_messages("conversation-1", limit=2) == [second, third]
+
+
+def test_local_json_conversation_store_preserves_same_definition_instances_and_attempts(tmp_path) -> None:
+    store = LocalJsonConversationStore(tmp_path)
+    common = {
+        "conversation_id": "conversation-graph",
+        "role": "tool",
+        "scope_kind": "graph",
+        "run_id": "run-1",
+        "graph_id": "test.graph",
+        "graph_version": "1",
+        "graph_ref": "test.graph@1",
+        "graph_checksum": "sha256:" + "a" * 64,
+        "node_id": "analyze",
+        "graph_checkpoint_ref": "checkpoint://run-1/1",
+        "activity_id": "activity-1",
+    }
+    first = AgentMessageRecord(
+        message_id="message-instance-a",
+        content={"instance": "a"},
+        node_instance_id="analyze:1",
+        attempt=1,
+        **common,
+    )
+    second = AgentMessageRecord(
+        message_id="message-instance-b",
+        content={"instance": "b"},
+        node_instance_id="analyze:2",
+        attempt=2,
+        **common,
+    )
+
+    store.append_message("conversation-graph", first)
+    store.append_message("conversation-graph", second)
+
+    assert store.read_messages("conversation-graph") == [first, second]
+
+
+def test_local_json_conversation_store_rejects_cross_graph_scope_mix(tmp_path) -> None:
+    store = LocalJsonConversationStore(tmp_path)
+    first = AgentMessageRecord(
+        conversation_id="conversation-graph",
+        role="tool",
+        content={},
+        scope_kind="graph",
+        run_id="run-1",
+        graph_id="test.graph",
+        graph_version="1",
+        graph_ref="test.graph@1",
+        graph_checksum="sha256:" + "a" * 64,
+        node_id="analyze",
+        node_instance_id="analyze:1",
+        graph_checkpoint_ref="checkpoint://run-1/1",
+        activity_id="activity-1",
+        attempt=1,
+    )
+    second = AgentMessageRecord(
+        conversation_id="conversation-graph",
+        role="tool",
+        content={},
+        scope_kind="graph",
+        run_id="run-1",
+        graph_id="test.graph",
+        graph_version="2",
+        graph_ref="test.graph@2",
+        graph_checksum="sha256:" + "b" * 64,
+        node_id="analyze",
+        node_instance_id="analyze:2",
+        graph_checkpoint_ref="checkpoint://run-1/2",
+        activity_id="activity-1",
+        attempt=1,
+    )
+
+    store.append_message("conversation-graph", first)
+    with pytest.raises(ValueError, match="mixed Graph/standalone scope"):
+        store.append_message("conversation-graph", second)
 
 
 def test_local_json_conversation_store_writes_and_reads_summary(tmp_path) -> None:
@@ -232,6 +307,7 @@ def test_local_json_conversation_store_redacts_message_and_summary(tmp_path) -> 
             conversation_id="conversation-1",
             role="assistant",
             content=f"Do not persist {fake_secret}",
+            scope_kind="standalone",
             metadata={"token": fake_secret, "safe": "visible"},
         ),
     )
@@ -260,6 +336,7 @@ def test_local_json_conversation_store_compacts_messages(tmp_path) -> None:
                 role=role,
                 content={"text": f"Message {index} {fake_secret}"},
                 created_at=datetime(2026, 5, 11, index, 0, tzinfo=UTC),
+                scope_kind="standalone",
             ),
         )
 
@@ -383,6 +460,7 @@ def test_local_json_conversation_store_rejects_invalid_inputs(tmp_path) -> None:
                 conversation_id="conversation-1",
                 role="user",
                 content="ok",
+                scope_kind="standalone",
             ),
         )
 

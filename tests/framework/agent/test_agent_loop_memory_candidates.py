@@ -67,6 +67,7 @@ def test_graph_agent_loop_returns_memory_candidates_without_writing_store() -> N
         registry.export_schema_for_llm(agent.agent_id, agent.resolved_tool_policy()),
         run_id=identity.run_id,
         execution_identity=identity,
+        graph_checkpoint_ref="checkpoint://run-memory-candidate/1",
     )
 
     assert result.success is True

@@ -11,6 +11,7 @@ from infrastructure.storage.conversation.models import (
     AgentIterationCheckpoint,
     ConversationCompactionRecord,
     ConversationCursor,
+    message_scope_key,
 )
 from infrastructure.storage.security import StorageRedactor
 
@@ -37,6 +38,8 @@ class LocalJsonConversationStore:
         message = self._redacted_message(message)
         path = self._messages_path(conversation_id)
         path.parent.mkdir(parents=True, exist_ok=True)
+        existing = _read_messages(path) if path.exists() else []
+        _assert_consistent_scope(existing, message)
         with path.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(message.to_dict(), ensure_ascii=False, sort_keys=True))
             handle.write("\n")
@@ -50,6 +53,7 @@ class LocalJsonConversationStore:
         if not path.exists():
             return []
         messages = _read_messages(path)
+        _assert_consistent_scope(messages)
         if limit is not None:
             return messages[-limit:]
         return messages
@@ -129,6 +133,17 @@ class LocalJsonConversationStore:
                 "compacted_until_message_id": compacted[-1].message_id if compacted else None,
             },
             created_at=datetime.now(UTC),
+            scope_kind=_compaction_scope(messages),
+            run_id=_compaction_identity(messages, "run_id"),
+            graph_id=_compaction_identity(messages, "graph_id"),
+            graph_version=_compaction_identity(messages, "graph_version"),
+            graph_ref=_compaction_identity(messages, "graph_ref"),
+            graph_checksum=_compaction_identity(messages, "graph_checksum"),
+            node_id=_compaction_identity(messages, "node_id"),
+            node_instance_id=_compaction_identity(messages, "node_instance_id"),
+            graph_checkpoint_ref=_compaction_identity(messages, "graph_checkpoint_ref"),
+            activity_id=_compaction_identity(messages, "activity_id"),
+            attempt=_compaction_identity(messages, "attempt"),
             redacted=True,
             metadata={
                 "message_type": "conversation_compaction",
@@ -296,7 +311,16 @@ class LocalJsonConversationStore:
             created_at=message.created_at,
             agent_id=message.agent_id,
             run_id=message.run_id,
-            step_id=message.step_id,
+            graph_id=message.graph_id,
+            graph_version=message.graph_version,
+            graph_ref=message.graph_ref,
+            graph_checksum=message.graph_checksum,
+            node_id=message.node_id,
+            node_instance_id=message.node_instance_id,
+            graph_checkpoint_ref=message.graph_checkpoint_ref,
+            activity_id=message.activity_id,
+            attempt=message.attempt,
+            scope_kind=message.scope_kind,
             redacted=True,
             metadata=metadata,
         )
@@ -324,6 +348,7 @@ class LocalJsonConversationStore:
     def _write_messages(self, conversation_id: str, messages: list[AgentMessageRecord]) -> Path:
         path = self._messages_path(conversation_id)
         path.parent.mkdir(parents=True, exist_ok=True)
+        _assert_consistent_scope(messages)
         with path.open("w", encoding="utf-8") as handle:
             for message in messages:
                 handle.write(json.dumps(message.to_dict(), ensure_ascii=False, sort_keys=True))
@@ -340,6 +365,32 @@ def _read_messages(path: Path) -> list[AgentMessageRecord]:
                 continue
             messages.append(AgentMessageRecord.from_dict(json.loads(stripped)))
     return messages
+
+
+def _assert_consistent_scope(
+    messages: list[AgentMessageRecord],
+    candidate: AgentMessageRecord | None = None,
+) -> None:
+    scopes = {message_scope_key(message) for message in messages}
+    if candidate is not None:
+        scopes.add(message_scope_key(candidate))
+    if len(scopes) > 1:
+        raise ValueError("conversation messages have mixed Graph/standalone scope")
+
+
+def _compaction_scope(messages: list[AgentMessageRecord]) -> str:
+    if not messages:
+        return "standalone"
+    return messages[-1].scope_kind
+
+
+def _compaction_identity(
+    messages: list[AgentMessageRecord],
+    field_name: str,
+) -> Any:
+    if not messages:
+        return None
+    return getattr(messages[-1], field_name)
 
 
 def _validate_id(value: str, label: str) -> None:

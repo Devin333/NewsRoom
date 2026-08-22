@@ -6,6 +6,8 @@ from framework.agent.messages.message import (
     AgentMessage,
     AgentMessageRecord,
     AgentMessageRole,
+    CONVERSATION_SCOPE_GRAPH,
+    CONVERSATION_SCOPE_STANDALONE,
     ConversationCursor,
     GRAPH_AGENT_ITERATION_CHECKPOINT_SCHEMA,
     GRAPH_CONVERSATION_CURSOR_SCHEMA,

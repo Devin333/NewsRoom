@@ -10,6 +10,8 @@ from typing import Any, Mapping
 _CHECKSUM = re.compile(r"sha256:[0-9a-f]{64}\Z")
 _TEXT = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:+@/-]{0,511}\Z")
 _MOVING_VERSIONS = frozenset({"current", "default", "latest", "stable"})
+CONVERSATION_SCOPE_GRAPH = "graph"
+CONVERSATION_SCOPE_STANDALONE = "standalone"
 
 
 @dataclass(frozen=True, slots=True)
@@ -180,6 +182,136 @@ class GraphExecutionIdentity:
 
 
 @dataclass(frozen=True, slots=True)
+class ConversationMessageScope:
+    """Discriminated live scope for Graph-bound or standalone messages."""
+
+    scope_kind: str
+    graph_identity: GraphExecutionIdentity | None = None
+    graph_checkpoint_ref: str | None = None
+
+    def __post_init__(self) -> None:
+        if self.scope_kind == CONVERSATION_SCOPE_STANDALONE:
+            if self.graph_identity is not None or self.graph_checkpoint_ref is not None:
+                raise ValueError("standalone conversation message cannot carry Graph identity")
+            return
+        if self.scope_kind != CONVERSATION_SCOPE_GRAPH:
+            raise ValueError("scope_kind must be 'graph' or 'standalone'")
+        if self.graph_identity is None or self.graph_checkpoint_ref is None:
+            raise ValueError(
+                "Graph message identity requires GraphExecutionIdentity and "
+                "graph_checkpoint_ref"
+            )
+        object.__setattr__(
+            self,
+            "graph_checkpoint_ref",
+            _required_text(self.graph_checkpoint_ref, "graph_checkpoint_ref"),
+        )
+
+    @classmethod
+    def standalone(cls) -> "ConversationMessageScope":
+        return cls(scope_kind=CONVERSATION_SCOPE_STANDALONE)
+
+    @classmethod
+    def graph(
+        cls,
+        identity: GraphExecutionIdentity,
+        *,
+        graph_checkpoint_ref: str,
+    ) -> "ConversationMessageScope":
+        return cls(
+            scope_kind=CONVERSATION_SCOPE_GRAPH,
+            graph_identity=identity,
+            graph_checkpoint_ref=graph_checkpoint_ref,
+        )
+
+    @classmethod
+    def from_message_fields(
+        cls,
+        *,
+        scope_kind: str,
+        run_id: Any,
+        graph_id: Any,
+        graph_version: Any,
+        graph_ref: Any,
+        graph_checksum: Any,
+        node_id: Any,
+        node_instance_id: Any,
+        graph_checkpoint_ref: Any,
+        activity_id: Any,
+        attempt: Any,
+    ) -> "ConversationMessageScope":
+        graph_values = {
+            "run_id": run_id,
+            "graph_id": graph_id,
+            "graph_version": graph_version,
+            "graph_ref": graph_ref,
+            "graph_checksum": graph_checksum,
+            "node_id": node_id,
+            "node_instance_id": node_instance_id,
+            "activity_id": activity_id,
+            "attempt": attempt,
+        }
+        if scope_kind == CONVERSATION_SCOPE_STANDALONE:
+            if any(
+                value is not None
+                for value in (*graph_values.values(), graph_checkpoint_ref)
+            ):
+                raise ValueError("standalone conversation message cannot carry Graph identity")
+            return cls.standalone()
+        if scope_kind != CONVERSATION_SCOPE_GRAPH:
+            raise ValueError("scope_kind must be 'graph' or 'standalone'")
+        if any(value is None for value in (*graph_values.values(), graph_checkpoint_ref)):
+            raise ValueError(
+                "Graph message identity requires run_id, graph_id, graph_version, "
+                "graph_ref, graph_checksum, node_id, node_instance_id, "
+                "graph_checkpoint_ref, activity_id, and attempt"
+            )
+        identity = GraphExecutionIdentity.from_dict(graph_values)
+        for field_name, value in graph_values.items():
+            if getattr(identity, field_name) != value:
+                raise ValueError(f"{field_name} must be canonical")
+        scope = cls.graph(
+            identity,
+            graph_checkpoint_ref=graph_checkpoint_ref,
+        )
+        if scope.graph_checkpoint_ref != graph_checkpoint_ref:
+            raise ValueError("graph_checkpoint_ref must be canonical")
+        return scope
+
+    @property
+    def conversation_key(self) -> tuple[str, ...]:
+        if self.graph_identity is None:
+            return (CONVERSATION_SCOPE_STANDALONE,)
+        return (
+            CONVERSATION_SCOPE_GRAPH,
+            self.graph_identity.run_id,
+            self.graph_identity.graph_ref,
+            self.graph_identity.graph_checksum,
+        )
+
+    def to_message_fields(self) -> dict[str, Any]:
+        if self.graph_identity is None:
+            return {
+                "scope_kind": CONVERSATION_SCOPE_STANDALONE,
+                "run_id": None,
+                "graph_id": None,
+                "graph_version": None,
+                "graph_ref": None,
+                "graph_checksum": None,
+                "node_id": None,
+                "node_instance_id": None,
+                "graph_checkpoint_ref": None,
+                "activity_id": None,
+                "attempt": None,
+            }
+        return {
+            "scope_kind": CONVERSATION_SCOPE_GRAPH,
+            **self.graph_identity.to_dict(),
+            "graph_checkpoint_ref": self.graph_checkpoint_ref,
+        }
+
+
+@dataclass(frozen=True, slots=True)
 class GraphRunIdentity:
     """Exact immutable identity for one admitted Graph run."""
 
@@ -260,6 +392,9 @@ def coerce_graph_identity(value: Any) -> GraphIdentity:
 
 
 __all__ = [
+    "CONVERSATION_SCOPE_GRAPH",
+    "CONVERSATION_SCOPE_STANDALONE",
+    "ConversationMessageScope",
     "GraphExecutionIdentity",
     "GraphIdentity",
     "GraphRunIdentity",

@@ -17,8 +17,11 @@ from framework.tool import ToolRegistry
 from framework.agent.messages import (
     AgentIterationCheckpoint,
     AgentMessageRecord,
+    CONVERSATION_SCOPE_GRAPH,
+    CONVERSATION_SCOPE_STANDALONE,
     ConversationCursor,
 )
+from framework.shared.graph_identity import GraphExecutionIdentity
 
 
 class AgentRunner:
@@ -52,16 +55,67 @@ class AgentRunner:
         *,
         conversation_id: str | None = None,
         run_id: str | None = None,
-        step_id: str | None = None,
+        graph_id: str | None = None,
+        graph_version: str | None = None,
+        graph_ref: str | None = None,
+        graph_checksum: str | None = None,
+        node_id: str | None = None,
         node_instance_id: str | None = None,
         graph_checkpoint_ref: str | None = None,
+        activity_id: str | None = None,
+        attempt: int | None = None,
         resume_from_cursor: bool = False,
         global_budget_tracker: GlobalBudgetTracker | None = None,
+        standalone: bool = False,
     ) -> AgentLoopResult:
+        if not isinstance(standalone, bool):
+            raise TypeError("standalone must be boolean")
         _validate_graph_identity_arguments(
             run_id=run_id,
             node_instance_id=node_instance_id,
             graph_checkpoint_ref=graph_checkpoint_ref,
+        )
+        graph_identity = _graph_execution_identity(
+            run_id=run_id,
+            graph_id=graph_id,
+            graph_version=graph_version,
+            graph_ref=graph_ref,
+            graph_checksum=graph_checksum,
+            node_id=node_id,
+            node_instance_id=node_instance_id,
+            activity_id=activity_id,
+            attempt=attempt,
+        )
+        if standalone and (
+            graph_identity is not None
+            or node_instance_id is not None
+            or graph_checkpoint_ref is not None
+        ):
+            raise ValueError(
+                "standalone AgentRunner execution cannot carry Graph identity"
+            )
+        if graph_identity is None and not standalone:
+            raise ValueError(
+                "AgentRunner requires an exact GraphExecutionIdentity; "
+                "use standalone=True for an explicitly isolated run"
+            )
+        message_scope_kind = (
+            CONVERSATION_SCOPE_STANDALONE
+            if standalone
+            else CONVERSATION_SCOPE_GRAPH
+        )
+        message_identity = _message_identity(
+            scope_kind=message_scope_kind,
+            run_id=run_id,
+            graph_id=graph_id,
+            graph_version=graph_version,
+            graph_ref=graph_ref,
+            graph_checksum=graph_checksum,
+            node_id=node_id,
+            node_instance_id=node_instance_id,
+            graph_checkpoint_ref=graph_checkpoint_ref,
+            activity_id=activity_id,
+            attempt=attempt,
         )
         loop_inputs = self._inputs_with_resume_context(
             inputs,
@@ -79,8 +133,7 @@ class AgentRunner:
                 role="user",
                 content=inputs,
                 agent_id=agent.agent_id,
-                run_id=run_id,
-                step_id=step_id,
+                **message_identity,
                 metadata={"message_type": "agent_inputs"},
             ),
         )
@@ -88,32 +141,66 @@ class AgentRunner:
             agent.agent_id,
             agent.resolved_tool_policy(),
         )
+        effective_budget_tracker = global_budget_tracker or self._global_budget_tracker
+        if graph_identity is not None and effective_budget_tracker is not None:
+            effective_budget_tracker = effective_budget_tracker.for_execution_identity(
+                graph_identity
+            )
         loop = AgentLoop(
             llm_client=self._llm_client,
-            tool_executor=ToolExecutor(self._tool_registry),
+            tool_executor=ToolExecutor(
+                self._tool_registry,
+                graph_identity=graph_identity,
+            ),
             prompt_builder=PromptBuilder(),
             action_parser=AgentActionParser(),
             output_judge=self._output_judge,
             output_normalizer=self._output_normalizer,
-            global_budget_tracker=global_budget_tracker or self._global_budget_tracker,
+            global_budget_tracker=effective_budget_tracker,
             subagent_executor=self._subagent_executor,
             memory_runtime=self._memory_runtime,
             memory_policy=self._memory_policy,
         )
-        result = loop.run(agent, loop_inputs, tools, run_id=run_id)
+        result = loop.run(
+            agent,
+            loop_inputs,
+            tools,
+            run_id=run_id,
+            execution_identity=graph_identity,
+            graph_checkpoint_ref=graph_checkpoint_ref,
+            standalone=standalone,
+        )
         self._append_conversation_events(
             conversation_id,
             agent,
             result.events,
             run_id=run_id,
-            step_id=step_id,
+            graph_id=graph_id,
+            graph_version=graph_version,
+            graph_ref=graph_ref,
+            graph_checksum=graph_checksum,
+            node_id=node_id,
+            node_instance_id=node_instance_id,
+            graph_checkpoint_ref=graph_checkpoint_ref,
+            activity_id=activity_id,
+            attempt=attempt,
+            scope_kind=message_scope_kind,
         )
         self._append_conversation_diagnostics(
             conversation_id,
             agent,
             result,
             run_id=run_id,
-            step_id=step_id,
+            graph_id=graph_id,
+            graph_version=graph_version,
+            graph_ref=graph_ref,
+            graph_checksum=graph_checksum,
+            node_id=node_id,
+            node_instance_id=node_instance_id,
+            graph_checkpoint_ref=graph_checkpoint_ref,
+            activity_id=activity_id,
+            attempt=attempt,
+            scope_kind=message_scope_kind,
         )
         self._append_conversation_message(
             conversation_id,
@@ -122,8 +209,7 @@ class AgentRunner:
                 role="assistant",
                 content=_conversation_result_payload(result),
                 agent_id=agent.agent_id,
-                run_id=run_id,
-                step_id=step_id,
+                **message_identity,
                 metadata={
                     "message_type": "agent_result",
                     "status": result.status.value,
@@ -167,7 +253,7 @@ class AgentRunner:
         run_id: str | None = None,
     ) -> AgentLoopResult:
         inputs = input_text if isinstance(input_text, dict) else {"input_text": input_text}
-        return self.run(spec, dict(inputs), run_id=run_id)
+        return self.run(spec, dict(inputs), run_id=run_id, standalone=True)
 
     def _append_conversation_message(
         self,
@@ -185,7 +271,16 @@ class AgentRunner:
         events: list[dict[str, Any]],
         *,
         run_id: str | None = None,
-        step_id: str | None = None,
+        graph_id: str | None = None,
+        graph_version: str | None = None,
+        graph_ref: str | None = None,
+        graph_checksum: str | None = None,
+        node_id: str | None = None,
+        node_instance_id: str | None = None,
+        graph_checkpoint_ref: str | None = None,
+        activity_id: str | None = None,
+        attempt: int | None = None,
+        scope_kind: str,
     ) -> None:
         if self._conversation_store is None or not conversation_id:
             return
@@ -195,7 +290,16 @@ class AgentRunner:
                 agent,
                 event,
                 run_id=run_id,
-                step_id=step_id,
+                graph_id=graph_id,
+                graph_version=graph_version,
+                graph_ref=graph_ref,
+                graph_checksum=graph_checksum,
+                node_id=node_id,
+                node_instance_id=node_instance_id,
+                graph_checkpoint_ref=graph_checkpoint_ref,
+                activity_id=activity_id,
+                attempt=attempt,
+                scope_kind=scope_kind,
             )
             if message is not None:
                 self._conversation_store.append_message(conversation_id, message)
@@ -207,7 +311,16 @@ class AgentRunner:
         result: AgentLoopResult,
         *,
         run_id: str | None = None,
-        step_id: str | None = None,
+        graph_id: str | None = None,
+        graph_version: str | None = None,
+        graph_ref: str | None = None,
+        graph_checksum: str | None = None,
+        node_id: str | None = None,
+        node_instance_id: str | None = None,
+        graph_checkpoint_ref: str | None = None,
+        activity_id: str | None = None,
+        attempt: int | None = None,
+        scope_kind: str,
     ) -> None:
         if self._conversation_store is None or not conversation_id:
             return
@@ -225,8 +338,19 @@ class AgentRunner:
                     "trace_summary": trace_summary,
                 },
                 agent_id=agent.agent_id,
-                run_id=run_id,
-                step_id=step_id,
+                **_message_identity(
+                    scope_kind=scope_kind,
+                    run_id=run_id,
+                    graph_id=graph_id,
+                    graph_version=graph_version,
+                    graph_ref=graph_ref,
+                    graph_checksum=graph_checksum,
+                    node_id=node_id,
+                    node_instance_id=node_instance_id,
+                    graph_checkpoint_ref=graph_checkpoint_ref,
+                    activity_id=activity_id,
+                    attempt=attempt,
+                ),
                 metadata={
                     "message_type": "agent_loop_diagnostics",
                     "status": result.status.value,
@@ -420,6 +544,40 @@ def _validate_graph_identity_arguments(
             raise ValueError(f"{field_name} must be a valid non-empty string")
 
 
+def _graph_execution_identity(
+    *,
+    run_id: str | None,
+    graph_id: str | None,
+    graph_version: str | None,
+    graph_ref: str | None,
+    graph_checksum: str | None,
+    node_id: str | None,
+    node_instance_id: str | None,
+    activity_id: str | None,
+    attempt: int | None,
+) -> GraphExecutionIdentity | None:
+    values = {
+        "run_id": run_id,
+        "graph_id": graph_id,
+        "graph_version": graph_version,
+        "graph_ref": graph_ref,
+        "graph_checksum": graph_checksum,
+        "node_id": node_id,
+        "node_instance_id": node_instance_id,
+        "activity_id": activity_id,
+        "attempt": attempt,
+    }
+    if all(values[name] is None for name in values if name != "run_id"):
+        return None
+    missing = [name for name, value in values.items() if value is None]
+    if missing:
+        raise ValueError(
+            "Graph-bound AgentRunner tool execution requires complete identity; "
+            f"missing {', '.join(missing)}"
+        )
+    return GraphExecutionIdentity(**values)  # type: ignore[arg-type]
+
+
 def _persisted_graph_identity(
     *,
     run_id: str | None,
@@ -482,8 +640,30 @@ def _conversation_message_from_event(
     event: dict[str, Any],
     *,
     run_id: str | None = None,
-    step_id: str | None = None,
+    graph_id: str | None = None,
+    graph_version: str | None = None,
+    graph_ref: str | None = None,
+    graph_checksum: str | None = None,
+    node_id: str | None = None,
+    node_instance_id: str | None = None,
+    graph_checkpoint_ref: str | None = None,
+    activity_id: str | None = None,
+    attempt: int | None = None,
+    scope_kind: str,
 ) -> AgentMessageRecord | None:
+    message_identity = _message_identity(
+        scope_kind=scope_kind,
+        run_id=run_id,
+        graph_id=graph_id,
+        graph_version=graph_version,
+        graph_ref=graph_ref,
+        graph_checksum=graph_checksum,
+        node_id=node_id,
+        node_instance_id=node_instance_id,
+        graph_checkpoint_ref=graph_checkpoint_ref,
+        activity_id=activity_id,
+        attempt=attempt,
+    )
     event_type = str(event.get("event_type") or "")
     if event_type == "tool_observation":
         observation = event.get("observation")
@@ -494,8 +674,7 @@ def _conversation_message_from_event(
             role="tool",
             content=dict(observation),
             agent_id=agent.agent_id,
-            run_id=run_id,
-            step_id=step_id,
+            **message_identity,
             metadata={
                 "message_type": "agent_tool_observation",
                 "event_type": event_type,
@@ -514,8 +693,7 @@ def _conversation_message_from_event(
                 "via_tool": event.get("via_tool"),
             },
             agent_id=agent.agent_id,
-            run_id=run_id,
-            step_id=step_id,
+            **message_identity,
             metadata={
                 "message_type": "agent_judge_retry",
                 "event_type": event_type,
@@ -534,8 +712,7 @@ def _conversation_message_from_event(
             role="diagnostic",
             content=dict(event),
             agent_id=agent.agent_id,
-            run_id=run_id,
-            step_id=step_id,
+            **message_identity,
             metadata={
                 "message_type": "agent_loop_stop_event",
                 "event_type": event_type,
@@ -543,6 +720,37 @@ def _conversation_message_from_event(
             },
         )
     return None
+
+
+def _message_identity(
+    *,
+    scope_kind: str,
+    run_id: str | None,
+    graph_id: str | None,
+    graph_version: str | None,
+    graph_ref: str | None,
+    graph_checksum: str | None,
+    node_id: str | None,
+    node_instance_id: str | None,
+    graph_checkpoint_ref: str | None,
+    activity_id: str | None,
+    attempt: int | None,
+) -> dict[str, Any]:
+    if scope_kind == CONVERSATION_SCOPE_STANDALONE:
+        return {"scope_kind": CONVERSATION_SCOPE_STANDALONE}
+    return {
+        "scope_kind": CONVERSATION_SCOPE_GRAPH,
+        "run_id": run_id,
+        "graph_id": graph_id,
+        "graph_version": graph_version,
+        "graph_ref": graph_ref,
+        "graph_checksum": graph_checksum,
+        "node_id": node_id,
+        "node_instance_id": node_instance_id,
+        "graph_checkpoint_ref": graph_checkpoint_ref,
+        "activity_id": activity_id,
+        "attempt": attempt,
+    }
 
 
 def _result_stop_reason(result: AgentLoopResult) -> str:

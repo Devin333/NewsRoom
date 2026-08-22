@@ -16,6 +16,7 @@ from framework.events import (
     W3CTracePropagator,
     current_trace_context,
 )
+from framework.shared.graph_identity import GraphExecutionIdentity
 
 
 runner_module = import_module("framework.agent.loop.runner")
@@ -63,13 +64,19 @@ def test_subagent_handoff_extracts_child_scope_and_records_link(
         child_agent_id="critic",
         task="check evidence",
         trace_carrier=W3CTracePropagator().inject(producer),
-        metadata={
-            "session_id": "retired-shared-session",
-            "run_id": "run-1",
-            "graph_id": "graph-1",
-            "node_instance_id": "node:1",
-            "graph_checkpoint_ref": "checkpoint://run-1/1",
-        },
+        metadata={"session_id": "retired-shared-session"},
+        execution_identity=GraphExecutionIdentity(
+            run_id="run-1",
+            graph_id="graph-1",
+            graph_version="1",
+            graph_ref="graph-1@1",
+            graph_checksum="sha256:" + "a" * 64,
+            node_id="node",
+            node_instance_id="node:1",
+            activity_id="activity-1",
+            attempt=1,
+        ),
+        graph_checkpoint_ref="checkpoint://run-1/1",
     )
 
     result = executor.run(task)
@@ -80,8 +87,16 @@ def test_subagent_handoff_extracts_child_scope_and_records_link(
     assert child_inputs["graph_id"] == "graph-1"
     assert "session_id" not in child_inputs
     assert runner_kwargs["run_id"] == "run-1"
+    assert runner_kwargs["graph_id"] == "graph-1"
+    assert runner_kwargs["graph_version"] == "1"
+    assert runner_kwargs["graph_ref"] == "graph-1@1"
+    assert runner_kwargs["graph_checksum"] == "sha256:" + "a" * 64
+    assert runner_kwargs["node_id"] == "node"
     assert runner_kwargs["node_instance_id"] == "node:1"
     assert runner_kwargs["graph_checkpoint_ref"] == "checkpoint://run-1/1"
+    assert runner_kwargs["activity_id"] == "activity-1"
+    assert runner_kwargs["attempt"] == 1
+    assert runner_kwargs["standalone"] is False
     assert "step_id" not in runner_kwargs
     assert "workflow_checkpoint_id" not in runner_kwargs
     context = observed[0]
@@ -115,6 +130,7 @@ def test_subagent_task_rejects_non_trace_or_injected_headers(
             parent_agent_id="parent",
             child_agent_id="critic",
             task="check",
+            standalone=True,
             trace_carrier=carrier,
         )
 
@@ -127,6 +143,7 @@ def test_subagent_trace_carrier_is_an_immutable_input_snapshot() -> None:
         parent_agent_id="parent",
         child_agent_id="critic",
         task="check",
+        standalone=True,
         trace_carrier=source,
     )
     source["TraceParent"] = "mutated"

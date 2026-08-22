@@ -108,11 +108,12 @@ def test_stale_policy_is_rejected_and_metadata_session_id_is_not_promoted() -> N
             "run_id": "run-1",
             "graph_id": "graph-1",
         },
+        standalone=True,
     )
     child_inputs = _child_inputs(task)
     assert "session_id" not in child_inputs
-    assert child_inputs["run_id"] == "run-1"
-    assert child_inputs["graph_id"] == "graph-1"
+    assert "run_id" not in child_inputs
+    assert "graph_id" not in child_inputs
 
 
 def test_independent_session_owners_remain_present() -> None:

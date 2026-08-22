@@ -16,6 +16,7 @@ from framework.events import (
     trace_context_scope,
 )
 from framework.events.propagation import normalize_trace_carrier
+from framework.shared.graph_identity import GraphExecutionIdentity
 
 if TYPE_CHECKING:
     from framework.agent.models import AgentLoopResult, AgentSpec
@@ -38,9 +39,42 @@ class SubAgentTask:
     inputs: dict[str, Any] = field(default_factory=dict)
     handoff_reason: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
+    run_id: str | None = None
+    execution_identity: GraphExecutionIdentity | None = None
+    graph_checkpoint_ref: str | None = None
+    standalone: bool = False
     trace_carrier: Mapping[str, str] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
+        if not isinstance(self.standalone, bool):
+            raise TypeError("standalone must be boolean")
+        if self.execution_identity is not None and not isinstance(
+            self.execution_identity,
+            GraphExecutionIdentity,
+        ):
+            raise TypeError(
+                "SubAgentTask execution_identity must be GraphExecutionIdentity"
+            )
+        if self.standalone:
+            if self.execution_identity is not None or self.graph_checkpoint_ref is not None:
+                raise ValueError(
+                    "standalone SubAgentTask cannot carry Graph identity"
+                )
+        else:
+            if self.execution_identity is None or self.graph_checkpoint_ref is None:
+                raise ValueError(
+                    "SubAgentTask requires an exact GraphExecutionIdentity and "
+                    "graph_checkpoint_ref; use standalone=True for an isolated task"
+                )
+            if self.run_id is not None and self.run_id != self.execution_identity.run_id:
+                raise ValueError("SubAgentTask run_id does not match execution identity")
+            object.__setattr__(self, "run_id", self.execution_identity.run_id)
+            if (
+                not isinstance(self.graph_checkpoint_ref, str)
+                or not self.graph_checkpoint_ref
+                or self.graph_checkpoint_ref.strip() != self.graph_checkpoint_ref
+            ):
+                raise ValueError("graph_checkpoint_ref must be a canonical non-empty string")
         object.__setattr__(
             self,
             "trace_carrier",
@@ -57,6 +91,14 @@ class SubAgentTask:
             "inputs": redact_sensitive_values(inputs) if redact else inputs,
             "handoff_reason": self.handoff_reason,
             "metadata": redact_sensitive_values(metadata) if redact else metadata,
+            "run_id": self.run_id,
+            "execution_identity": (
+                self.execution_identity.to_dict()
+                if self.execution_identity is not None
+                else None
+            ),
+            "graph_checkpoint_ref": self.graph_checkpoint_ref,
+            "standalone": self.standalone,
             "trace_carrier": dict(self.trace_carrier),
         }
 
@@ -171,7 +213,7 @@ class LocalSubAgentExecutor:
                 self._global_budget_tracker.child_tracker(
                     (
                         f"subagent:{task.parent_agent_id}:{task.child_agent_id}:"
-                        f"{_optional_metadata_str(task.metadata, 'run_id') or 'run'}"
+                        f"{task.run_id or 'run'}"
                     )
                 )
                 if self._global_budget_tracker is not None
@@ -187,15 +229,10 @@ class LocalSubAgentExecutor:
                 child_agent,
                 child_inputs,
                 conversation_id=conversation_id,
-                run_id=_optional_metadata_str(task.metadata, "run_id"),
-                node_instance_id=_optional_metadata_str(
-                    task.metadata,
-                    "node_instance_id",
-                ),
-                graph_checkpoint_ref=_optional_metadata_str(
-                    task.metadata,
-                    "graph_checkpoint_ref",
-                ),
+                run_id=task.run_id,
+                **_runner_graph_identity_kwargs(task.execution_identity),
+                graph_checkpoint_ref=task.graph_checkpoint_ref,
+                standalone=task.standalone,
                 resume_from_cursor=bool(
                     task.metadata.get("resume_from_cursor", False)
                 ),
@@ -225,8 +262,15 @@ def _child_inputs(task: SubAgentTask) -> dict[str, Any]:
         "parent_agent_id": task.parent_agent_id,
         **deepcopy(task.inputs),
     }
-    for key in ("run_id", "graph_id"):
-        value = task.metadata.get(key)
+    for key, value in (
+        ("run_id", task.run_id),
+        (
+            "graph_id",
+            task.execution_identity.graph_id
+            if task.execution_identity is not None
+            else None,
+        ),
+    ):
         if key not in child_inputs and value:
             child_inputs[key] = str(value)
     return child_inputs
@@ -238,6 +282,18 @@ def _optional_metadata_str(metadata: dict[str, Any], key: str) -> str | None:
         return None
     text = str(value)
     return text if text else None
+
+
+def _runner_graph_identity_kwargs(
+    identity: GraphExecutionIdentity | None,
+) -> dict[str, Any]:
+    if identity is None:
+        return {}
+    return {
+        key: value
+        for key, value in identity.to_dict().items()
+        if key != "run_id"
+    }
 
 
 def _result_to_subagent_result(

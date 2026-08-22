@@ -137,6 +137,7 @@ class AgentLoop:
         *,
         run_id: str | None = None,
         execution_identity: GraphExecutionIdentity | None = None,
+        graph_checkpoint_ref: str | None = None,
         standalone: bool = False,
     ) -> AgentLoopResult:
         if not isinstance(standalone, bool):
@@ -148,10 +149,22 @@ class AgentLoop:
             raise TypeError(
                 "AgentLoop execution_identity must be GraphExecutionIdentity"
             )
+        if standalone and (
+            execution_identity is not None or graph_checkpoint_ref is not None
+        ):
+            raise ValueError("standalone AgentLoop cannot carry Graph identity")
         if execution_identity is None and not standalone:
             raise ValueError(
                 "AgentLoop requires an exact GraphExecutionIdentity; "
                 "use standalone=True for an explicitly isolated run"
+            )
+        if execution_identity is not None and (
+            not isinstance(graph_checkpoint_ref, str)
+            or not graph_checkpoint_ref
+            or graph_checkpoint_ref.strip() != graph_checkpoint_ref
+        ):
+            raise ValueError(
+                "Graph-bound AgentLoop requires a canonical graph_checkpoint_ref"
             )
         effective_run_id = run_id or _run_id_from_inputs(inputs)
         if execution_identity is not None and execution_identity.run_id != effective_run_id:
@@ -533,6 +546,10 @@ class AgentLoop:
                     agent=agent,
                     inputs=inputs,
                     action=action,
+                    run_id=effective_run_id,
+                    execution_identity=execution_identity,
+                    graph_checkpoint_ref=graph_checkpoint_ref,
+                    standalone=standalone,
                     metrics=metrics,
                     events=events,
                     trace=trace,
@@ -896,6 +913,10 @@ class AgentLoop:
         agent: AgentSpec,
         inputs: dict[str, Any],
         action: AgentAction,
+        run_id: str | None,
+        execution_identity: GraphExecutionIdentity | None,
+        graph_checkpoint_ref: str | None,
+        standalone: bool,
         metrics: AgentLoopMetrics,
         events: AgentLoopEventRecorder,
         trace: AgentLoopTrace,
@@ -950,6 +971,10 @@ class AgentLoop:
                         inputs=_subagent_inputs_snapshot(inputs=inputs, action=action),
                         handoff_reason=handoff_reason,
                         metadata=metadata,
+                        run_id=run_id,
+                        execution_identity=execution_identity,
+                        graph_checkpoint_ref=graph_checkpoint_ref,
+                        standalone=standalone,
                         trace_carrier=_subagent_trace_carrier(
                             events.trace_context
                         ),

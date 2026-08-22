@@ -7,8 +7,8 @@ from typing import Any
 
 
 REQUIRED_TABLES = [
-    "workflow_runs",
-    "workflow_events",
+    "graph_runs",
+    "durable_events",
     "artifact_index",
     "lineage_refs",
     "reports",
@@ -28,11 +28,12 @@ REQUIRED_TABLES = [
 ]
 
 REQUIRED_INDEXES = [
-    "idx_workflow_events_run_offset",
+    "idx_durable_events_stream_observed",
     "idx_artifact_index_run_created",
     "idx_lineage_refs_target",
-    "idx_agent_conversations_run",
+    "idx_agent_conversations_graph",
     "idx_agent_conversation_messages_conversation_offset",
+    "idx_agent_conversation_messages_graph_node",
     "idx_agent_conversation_state_updated",
     "idx_memory_documents_collection",
 ]

@@ -4,12 +4,14 @@ from dataclasses import fields
 import inspect
 
 from framework.agent.loop.runner import AgentRunner
+from framework.agent.messages import AgentMessageRecord as FrameworkMessageRecord
 from framework.agent.messages import (
     AgentIterationCheckpoint as FrameworkIterationCheckpoint,
 )
 from framework.agent.messages import ConversationCursor as FrameworkConversationCursor
 from infrastructure.storage.conversation import (
     AgentIterationCheckpoint as StorageIterationCheckpoint,
+    AgentMessageRecord as StorageMessageRecord,
 )
 from infrastructure.storage.conversation import (
     ConversationCursor as StorageConversationCursor,
@@ -44,6 +46,18 @@ def test_live_conversation_state_has_only_graph_checkpoint_identity() -> None:
         assert "workflow_checkpoint_id" not in model_fields
         assert "workflow_checkpoint_id" not in inspect.getsource(model.to_dict)
         assert "workflow_checkpoint_id" not in inspect.getsource(model.from_dict)
+
+
+def test_live_conversation_messages_use_discriminated_scope_without_step_id() -> None:
+    for model in (FrameworkMessageRecord, StorageMessageRecord):
+        model_fields = {item.name for item in fields(model)}
+        assert "scope_kind" in model_fields
+        assert "step_id" not in model_fields
+        assert "step_id" not in inspect.getsource(model.to_dict)
+        assert "step_id" not in inspect.getsource(model.from_dict)
+
+    runner_parameters = set(inspect.signature(AgentRunner.run).parameters)
+    assert "step_id" not in runner_parameters
 
 
 def test_agent_runner_accepts_graph_identity_and_retires_workflow_checkpoint() -> None:

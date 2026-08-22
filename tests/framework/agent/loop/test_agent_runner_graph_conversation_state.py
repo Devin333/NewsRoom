@@ -32,8 +32,18 @@ class _AcceptedLoop:
         tools: list[dict[str, Any]],
         *,
         run_id: str | None = None,
+        execution_identity: Any | None = None,
+        graph_checkpoint_ref: str | None = None,
+        standalone: bool = False,
     ) -> AgentLoopResult:
-        _ = agent, tools, run_id
+        _ = (
+            agent,
+            tools,
+            run_id,
+            execution_identity,
+            graph_checkpoint_ref,
+            standalone,
+        )
         self.observed_inputs.append(dict(inputs))
         return AgentLoopResult(
             success=True,
@@ -77,8 +87,15 @@ def test_agent_runner_persists_versioned_graph_outer_identity(
         {"query": "inspect"},
         conversation_id="conversation-1",
         run_id="run-1",
+        graph_id="test.graph",
+        graph_version="1",
+        graph_ref="test.graph@1",
+        graph_checksum="sha256:" + "a" * 64,
+        node_id="analyze",
         node_instance_id="analyze:1",
         graph_checkpoint_ref="checkpoint://run-1/7",
+        activity_id="activity-1",
+        attempt=1,
     )
 
     cursor = store.read_cursor("conversation-1")
@@ -114,6 +131,7 @@ def test_agent_runner_does_not_masquerade_standalone_run_as_graph_identity(
         {"query": "inspect"},
         conversation_id="conversation-standalone",
         run_id="standalone-run",
+        standalone=True,
     )
 
     cursor = store.read_cursor("conversation-standalone")
@@ -132,14 +150,45 @@ def test_agent_runner_does_not_masquerade_standalone_run_as_graph_identity(
     ) == (None, None, None)
 
 
+def test_agent_runner_rejects_graph_identity_declared_as_standalone(
+    graph_runner,
+) -> None:
+    runner, _, agent = graph_runner
+
+    with pytest.raises(ValueError, match="standalone.*cannot carry Graph identity"):
+        runner.run(
+            agent,
+            {"query": "inspect"},
+            conversation_id="conversation-invalid-scope",
+            run_id="run-1",
+            graph_id="test.graph",
+            graph_version="1",
+            graph_ref="test.graph@1",
+            graph_checksum="sha256:" + "a" * 64,
+            node_id="analyze",
+            node_instance_id="analyze:1",
+            graph_checkpoint_ref="checkpoint://run-1/7",
+            activity_id="activity-1",
+            attempt=1,
+            standalone=True,
+        )
+
+
 def test_agent_runner_injects_only_matching_graph_resume_context(
     graph_runner,
 ) -> None:
     runner, _, agent = graph_runner
     identity = {
         "run_id": "run-1",
+        "graph_id": "test.graph",
+        "graph_version": "1",
+        "graph_ref": "test.graph@1",
+        "graph_checksum": "sha256:" + "a" * 64,
+        "node_id": "analyze",
         "node_instance_id": "analyze:1",
         "graph_checkpoint_ref": "checkpoint://run-1/7",
+        "activity_id": "activity-1",
+        "attempt": 1,
     }
     runner.run(
         agent,
@@ -169,8 +218,15 @@ def test_agent_runner_injects_only_matching_graph_resume_context(
             {"query": "forged resume"},
             conversation_id="conversation-resume",
             run_id="run-1",
+            graph_id="test.graph",
+            graph_version="1",
+            graph_ref="test.graph@1",
+            graph_checksum="sha256:" + "a" * 64,
+            node_id="analyze",
             node_instance_id="other:1",
             graph_checkpoint_ref="checkpoint://run-1/7",
+            activity_id="activity-1",
+            attempt=1,
             resume_from_cursor=True,
         )
 
