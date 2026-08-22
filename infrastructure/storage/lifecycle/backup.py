@@ -199,6 +199,8 @@ def _iter_files(root: Path) -> list[tuple[Path, str]]:
         if not path.is_file():
             continue
         relative_path = _normalize_backup_path(path.relative_to(root).as_posix())
+        if any(part == "_locks" for part in Path(relative_path).parts):
+            continue
         files.append((path, relative_path))
     return files
 

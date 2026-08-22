@@ -124,13 +124,14 @@ def test_filesystem_store_storage_compatibility(tmp_path) -> None:
             run_id="run-1",
             artifact_id="a1",
             artifact_type="report",
-            step_id="draft",
+            scope_kind="standalone",
             content=b"{}",
             content_type="application/json",
         )
     )
 
-    assert ref.path == "steps/draft/artifacts/a1.json"
+    assert ref.scope_kind == "standalone"
+    assert ref.path.startswith("objects/")
     assert store.read(ref) == b"{}"
     store.delete(ref)
     assert store.exists(ref) is False
@@ -143,6 +144,7 @@ def test_filesystem_store_rejects_final_symlink(tmp_path) -> None:
             run_id="run-1",
             artifact_id="a1",
             artifact_type="report",
+            scope_kind="standalone",
             content=b"trusted",
         )
     )
@@ -158,6 +160,27 @@ def test_filesystem_store_rejects_final_symlink(tmp_path) -> None:
     with pytest.raises(ArtifactStoreMetadataError, match="symlink"):
         store.read(ref)
 
+    with pytest.raises(ArtifactStoreMetadataError, match="symlink"):
+        store.exists(ref)
+
+    with pytest.raises(ArtifactStoreMetadataError, match="symlink"):
+        store.delete(ref)
+
+
+def test_filesystem_store_rejects_symlinked_run_directory(tmp_path) -> None:
+    store = FilesystemArtifactStore(tmp_path / "runs")
+    outside = tmp_path / "outside"
+    outside.mkdir(parents=True)
+    (outside / "secret.txt").write_text("secret", encoding="utf-8")
+    run_dir = store.root / "run-1"
+    try:
+        run_dir.symlink_to(outside, target_is_directory=True)
+    except OSError as exc:
+        pytest.skip(f"symlink creation unavailable: {exc}")
+
+    with pytest.raises(ArtifactStoreMetadataError, match="symlink"):
+        store.list("run-1")
+
 
 def test_filesystem_store_rejects_opened_identity_change(
     tmp_path,
@@ -169,6 +192,7 @@ def test_filesystem_store_rejects_opened_identity_change(
             run_id="run-1",
             artifact_id="a1",
             artifact_type="report",
+            scope_kind="standalone",
             content=b"trusted",
         )
     )

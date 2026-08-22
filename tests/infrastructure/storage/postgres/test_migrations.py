@@ -25,6 +25,9 @@ GRAPH_ACTIVITY_STORE_CUTOVER_MIGRATION = (
 GRAPH_CONVERSATION_MESSAGE_IDENTITY_MIGRATION = (
     MIGRATIONS_DIR / "013_graph_conversation_message_identity.sql"
 )
+GRAPH_ARTIFACT_INDEX_IDENTITY_MIGRATION = (
+    MIGRATIONS_DIR / "014_graph_artifact_index_identity.sql"
+)
 
 
 def test_postgres_migration_sql_contains_required_tables() -> None:
@@ -126,7 +129,7 @@ def test_graph_conversation_message_identity_migration_is_strict_and_loaded() ->
     sql = load_migration_sql()
     migration = GRAPH_CONVERSATION_MESSAGE_IDENTITY_MIGRATION.read_text(encoding="utf-8")
 
-    assert migration in sql
+    assert migration.strip() in sql
     assert "DROP COLUMN IF EXISTS step_id" in migration
     assert "agent_conversations_live_scope_check" in migration
     assert "agent_conversation_messages_live_scope_check" in migration
@@ -135,6 +138,20 @@ def test_graph_conversation_message_identity_migration_is_strict_and_loaded() ->
     assert "idx_agent_conversations_graph" in migration
     assert "idx_agent_conversation_messages_graph_node" in migration
     assert "NOT VALID" in migration
+
+
+def test_graph_artifact_index_identity_migration_is_one_way_and_loaded() -> None:
+    sql = load_migration_sql()
+    migration = GRAPH_ARTIFACT_INDEX_IDENTITY_MIGRATION.read_text(encoding="utf-8")
+
+    assert migration.strip() in sql
+    assert "DROP COLUMN IF EXISTS step_id" in migration
+    assert "artifact_identity_key" in migration
+    assert "uq_artifact_index_identity" in migration
+    assert "idx_artifact_index_node_instance" in migration
+    assert "trg_artifact_index_immutable" in migration
+    assert "NOT VALID" in migration
+    assert "DROP INDEX IF EXISTS idx_artifact_index_step" in migration
 
 
 def test_postgres_migration_sql_exposes_storage_contract_query_columns() -> None:

@@ -24,7 +24,14 @@ from infrastructure.storage.artifacts.graph_terminal import (
     FilesystemGraphTerminalArtifactReader,
     FilesystemGraphTerminalArtifactStore,
 )
-from framework.agent.artifacts.models import ArtifactRef, ArtifactWriteRequest
+from framework.agent.artifacts.models import (
+    ARTIFACT_SCOPE_GRAPH,
+    ARTIFACT_SCOPE_STANDALONE,
+    ArtifactRef,
+    ArtifactWriteRequest,
+    artifact_identity_key,
+    canonical_artifact_relative_path,
+)
 
 __all__ = [
     "ArtifactChecksumMismatchError",
@@ -37,6 +44,10 @@ __all__ = [
     "ArtifactNotFoundError",
     "ArtifactRef",
     "ArtifactWriteRequest",
+    "ARTIFACT_SCOPE_GRAPH",
+    "ARTIFACT_SCOPE_STANDALONE",
+    "artifact_identity_key",
+    "canonical_artifact_relative_path",
     "FilesystemArtifactStore",
     "FilesystemGraphTerminalArtifactReader",
     "FilesystemGraphTerminalArtifactStore",

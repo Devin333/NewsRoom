@@ -36,7 +36,8 @@ ALTER TABLE reports
 CREATE TABLE IF NOT EXISTS artifact_index (
     artifact_id TEXT NOT NULL,
     run_id TEXT NOT NULL,
-    step_id TEXT,
+    scope_kind TEXT NOT NULL,
+    artifact_identity_key TEXT NOT NULL,
     artifact_type TEXT NOT NULL,
     path TEXT NOT NULL,
     content_type TEXT NOT NULL,
@@ -45,6 +46,7 @@ CREATE TABLE IF NOT EXISTS artifact_index (
     redacted BOOLEAN NOT NULL DEFAULT TRUE,
     created_at TIMESTAMPTZ NOT NULL,
     metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+    indexed_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     graph_id TEXT,
     graph_version TEXT,
     graph_ref TEXT,
@@ -54,19 +56,33 @@ CREATE TABLE IF NOT EXISTS artifact_index (
     graph_checkpoint_ref TEXT,
     activity_id TEXT,
     attempt INTEGER,
-    indexed_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    PRIMARY KEY (run_id, artifact_id)
+    PRIMARY KEY (artifact_identity_key),
+    CONSTRAINT artifact_index_scope_kind_check
+        CHECK (scope_kind IN ('graph', 'standalone')),
+    CONSTRAINT artifact_index_scope_fields_check
+        CHECK (
+            (scope_kind = 'standalone' AND graph_id IS NULL AND graph_version IS NULL
+                AND graph_ref IS NULL AND graph_checksum IS NULL AND node_id IS NULL
+                AND node_instance_id IS NULL AND graph_checkpoint_ref IS NULL
+                AND activity_id IS NULL AND attempt IS NULL)
+            OR
+            (scope_kind = 'graph' AND graph_id IS NOT NULL AND graph_version IS NOT NULL
+                AND graph_ref IS NOT NULL AND graph_checksum IS NOT NULL
+                AND node_id IS NOT NULL AND node_instance_id IS NOT NULL
+                AND ((activity_id IS NULL AND attempt IS NULL)
+                    OR (activity_id IS NOT NULL AND attempt IS NOT NULL AND attempt > 0)))
+        ),
+    CONSTRAINT artifact_index_graph_ref_check
+        CHECK (graph_ref IS NULL OR graph_ref = graph_id || '@' || graph_version),
+    CONSTRAINT artifact_index_checksum_check
+        CHECK (graph_checksum IS NULL OR graph_checksum ~ '^sha256:[0-9a-f]{64}$')
 );
 
-CREATE INDEX IF NOT EXISTS idx_artifact_index_run_created
-    ON artifact_index(run_id, created_at, artifact_id);
-
-CREATE INDEX IF NOT EXISTS idx_artifact_index_step
-    ON artifact_index(run_id, step_id);
-
--- Existing installations may have created artifact_index before Graph lineage
--- became part of the contract. Add the columns before the Graph indexes below.
+-- Keep the bootstrap migration runnable against installations created by an
+-- older package; migration 014 performs the one-way data cutover afterward.
 ALTER TABLE artifact_index
+    ADD COLUMN IF NOT EXISTS scope_kind TEXT,
+    ADD COLUMN IF NOT EXISTS artifact_identity_key TEXT,
     ADD COLUMN IF NOT EXISTS graph_id TEXT,
     ADD COLUMN IF NOT EXISTS graph_version TEXT,
     ADD COLUMN IF NOT EXISTS graph_ref TEXT,
@@ -77,8 +93,14 @@ ALTER TABLE artifact_index
     ADD COLUMN IF NOT EXISTS activity_id TEXT,
     ADD COLUMN IF NOT EXISTS attempt INTEGER;
 
+CREATE INDEX IF NOT EXISTS idx_artifact_index_run_created
+    ON artifact_index(run_id, created_at, artifact_id);
+
+CREATE INDEX IF NOT EXISTS idx_artifact_index_scope_run
+    ON artifact_index(scope_kind, run_id, created_at, artifact_id);
+
 CREATE INDEX IF NOT EXISTS idx_artifact_index_graph
-    ON artifact_index(run_id, graph_id, graph_version, created_at, artifact_id);
+    ON artifact_index(run_id, graph_id, graph_version, graph_checksum, created_at, artifact_id);
 
 CREATE INDEX IF NOT EXISTS idx_artifact_index_node_instance
     ON artifact_index(run_id, node_instance_id, created_at, artifact_id);
