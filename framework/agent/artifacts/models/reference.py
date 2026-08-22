@@ -176,23 +176,38 @@ class ArtifactRef:
             artifact_id=_required_payload_string(payload, "artifact_id"),
             run_id=_required_payload_string(payload, "run_id"),
             scope_kind=_required_payload_string(payload, "scope_kind"),
-            graph_ref=_optional_str(payload.get("graph_ref")),
-            graph_checksum=_optional_str(payload.get("graph_checksum")),
-            node_id=_optional_str(payload.get("node_id")),
-            node_instance_id=_optional_str(payload.get("node_instance_id")),
-            graph_checkpoint_ref=_optional_str(payload.get("graph_checkpoint_ref")),
-            activity_id=_optional_str(payload.get("activity_id")),
+            graph_ref=_strict_optional_string(payload.get("graph_ref"), "graph_ref"),
+            graph_checksum=_strict_optional_string(
+                payload.get("graph_checksum"),
+                "graph_checksum",
+            ),
+            node_id=_strict_optional_string(payload.get("node_id"), "node_id"),
+            node_instance_id=_strict_optional_string(
+                payload.get("node_instance_id"),
+                "node_instance_id",
+            ),
+            graph_checkpoint_ref=_strict_optional_string(
+                payload.get("graph_checkpoint_ref"),
+                "graph_checkpoint_ref",
+            ),
+            activity_id=_strict_optional_string(
+                payload.get("activity_id"),
+                "activity_id",
+            ),
             attempt=_optional_attempt(payload.get("attempt")),
             artifact_type=_required_payload_string(payload, "artifact_type"),
             path=_required_payload_string(payload, "path"),
             content_type=_required_payload_string(payload, "content_type"),
-            size_bytes=_optional_int(payload.get("size_bytes")),
-            checksum=_optional_str(payload.get("checksum") or payload.get("content_hash")),
-            redacted=bool(payload.get("redacted", True)),
-            created_at=parse_datetime(payload.get("created_at")) or utc_now(),
-            metadata=dict(payload.get("metadata") or {}),
-            graph_id=_optional_str(payload.get("graph_id")),
-            graph_version=_optional_str(payload.get("graph_version")),
+            size_bytes=_strict_optional_int(payload.get("size_bytes"), "size_bytes"),
+            checksum=_strict_optional_string(payload.get("checksum"), "checksum"),
+            redacted=_required_bool(payload.get("redacted"), "redacted"),
+            created_at=_required_datetime(payload.get("created_at"), "created_at"),
+            metadata=_required_metadata(payload.get("metadata"), "metadata"),
+            graph_id=_strict_optional_string(payload.get("graph_id"), "graph_id"),
+            graph_version=_strict_optional_string(
+                payload.get("graph_version"),
+                "graph_version",
+            ),
         )
 
 
@@ -250,6 +265,43 @@ def _optional_str(value: Any) -> str | None:
     if value is None:
         return None
     return str(value)
+
+
+def _strict_optional_string(value: Any, field: str) -> str | None:
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise TypeError(f"{field} must be a string or null")
+    return _required_string(value, field)
+
+
+def _strict_optional_int(value: Any, field: str) -> int | None:
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise TypeError(f"{field} must be an integer or null")
+    return value
+
+
+def _required_bool(value: Any, field: str) -> bool:
+    if not isinstance(value, bool):
+        raise TypeError(f"{field} must be a boolean")
+    return value
+
+
+def _required_datetime(value: Any, field: str) -> datetime:
+    if not isinstance(value, str):
+        raise TypeError(f"{field} must be a datetime string")
+    parsed = parse_datetime(value)
+    if parsed is None:
+        raise ValueError(f"{field} is required")
+    return parsed
+
+
+def _required_metadata(value: Any, field: str) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        raise TypeError(f"{field} must be an object")
+    return dict(value)
 
 
 def _validate_artifact_scope(

@@ -215,13 +215,12 @@ def test_fixture_sources_remain_valid_for_legacy_and_migration_readers() -> None
             encoding="utf-8"
         )
     )
-    checkpoint = durable_envelope_from_payload(checkpoint_payload)
-    artifact = ArtifactRef.from_dict(
-        json.loads(
-            (_FIXTURE_ROOT / "artifact-index/run-001/report-artifact.json")
-            .read_text(encoding="utf-8")
-        )
+    artifact_payload = json.loads(
+        (_FIXTURE_ROOT / "artifact-index/run-001/report-artifact.json")
+        .read_text(encoding="utf-8")
     )
+    with pytest.raises(ValueError, match="fields are invalid"):
+        ArtifactRef.from_dict(artifact_payload)
     cursor = json.loads(
         (_FIXTURE_ROOT / "cursors/conversation-001/cursor.json").read_text(
             encoding="utf-8"
@@ -237,7 +236,7 @@ def test_fixture_sources_remain_valid_for_legacy_and_migration_readers() -> None
     assert [item.stream_sequence for item in stored_events] == [1, 2]
     validate_run_manifest(manifest_payload, require_terminal_artifact=True)
     assert verify_durable_checkpoint_checksum(checkpoint)
-    assert artifact.artifact_id == "report-artifact"
+    assert artifact_payload["artifact_id"] == "report-artifact"
     assert cursor["workflow_checkpoint_id"] == "cp-001"
     assert iteration["workflow_checkpoint_id"] == "cp-001"
 

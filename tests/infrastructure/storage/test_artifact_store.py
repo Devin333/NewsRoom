@@ -200,6 +200,30 @@ def test_artifact_ref_rejects_legacy_step_payload_and_graph_path_tamper(tmp_path
         store.read(tampered)
 
 
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("graph_id", 7),
+        ("node_instance_id", 7),
+        ("attempt", "1"),
+        ("size_bytes", "2"),
+        ("redacted", 1),
+        ("created_at", None),
+        ("created_at", datetime.now(UTC)),
+    ],
+)
+def test_artifact_ref_reader_rejects_noncanonical_persisted_types(
+    field: str,
+    value,
+) -> None:
+    ref = _ref("artifact-typed")
+    payload = ref.to_dict()
+    payload[field] = value
+
+    with pytest.raises((TypeError, ValueError)):
+        ArtifactRef.from_dict(payload)
+
+
 def test_artifact_ref_rejects_control_character_identity_tokens() -> None:
     with pytest.raises(ValueError, match="control character"):
         _ref("artifact-\x1f-1")
