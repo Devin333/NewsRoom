@@ -222,7 +222,25 @@ class HarnessSideEffectIntent:
                     effect_id=effect_id,
                 )
 
-        idempotency_key = self.idempotency_key or f"harness-effect:{effect_id}"
+        idempotency_key = self.idempotency_key or (
+            "harness-effect:"
+            + side_effect_identity_key(
+                run_id=run_id,
+                graph_id=graph_id,
+                graph_version=graph_version,
+                graph_ref=graph_ref,
+                graph_checksum=graph_checksum,
+                effect_id=effect_id,
+                identity_scope_ref=identity_scope_ref,
+                subject_scope_ref=subject_scope_ref,
+                node_id=node_id,
+                node_instance_id=node_instance_id,
+                activity_id=activity_id,
+                attempt=attempt,
+                terminal_action=terminal_action,
+                origin=origin,
+            )
+        )
         idempotency_key = _required_text(idempotency_key, "idempotency_key")
         schema_version = _required_text(self.schema_version, "schema_version")
         if schema_version != SIDE_EFFECT_INTENT_SCHEMA_VERSION:
@@ -641,6 +659,8 @@ class HarnessSideEffectAttemptLease:
     lease_id: str
     owner_id: str
     effect_id: str
+    run_id: str
+    origin: HarnessSideEffectOrigin | str
     graph_id: str
     graph_version: str
     graph_ref: str
@@ -648,6 +668,7 @@ class HarnessSideEffectAttemptLease:
     node_id: str | None
     node_instance_id: str | None
     activity_id: str | None
+    terminal_action: str | None
     decision_ref: str
     idempotency_key: str
     identity_scope_ref: str
@@ -656,6 +677,7 @@ class HarnessSideEffectAttemptLease:
     fencing_generation: int
     acquired_at: datetime
     lease_expires_at: datetime
+    activity_attempt: int
     status: HarnessSideEffectAttemptStatus | str = HarnessSideEffectAttemptStatus.ACTIVE
     termination_confirmed: bool = False
     resolved_at: datetime | None = None
@@ -668,6 +690,7 @@ class HarnessSideEffectAttemptLease:
             "lease_id",
             "owner_id",
             "effect_id",
+            "run_id",
             "idempotency_key",
             "schema_version",
         ):
@@ -685,9 +708,24 @@ class HarnessSideEffectAttemptLease:
         object.__setattr__(self, "graph_version", graph_version)
         object.__setattr__(self, "graph_ref", graph_ref)
         object.__setattr__(self, "graph_checksum", _checksum(self.graph_checksum, "graph_checksum"))
+        object.__setattr__(self, "origin", _enum(HarnessSideEffectOrigin, self.origin, "origin"))
         object.__setattr__(self, "node_id", _optional_text(self.node_id, "node_id"))
         object.__setattr__(self, "node_instance_id", _optional_text(self.node_instance_id, "node_instance_id"))
         object.__setattr__(self, "activity_id", _optional_text(self.activity_id, "activity_id"))
+        object.__setattr__(self, "terminal_action", _optional_text(self.terminal_action, "terminal_action"))
+        if self.node_id is None or self.node_instance_id is None or self.activity_id is None:
+            if self.node_id is not None or self.node_instance_id is not None or self.activity_id is not None:
+                raise HarnessValidationError(
+                    "side-effect attempt physical identity is incomplete"
+                )
+            if self.terminal_action is None:
+                raise HarnessValidationError(
+                    "terminal side-effect attempt requires terminal_action"
+                )
+        elif self.terminal_action is not None:
+            raise HarnessValidationError(
+                "worker side-effect attempt cannot carry terminal_action"
+            )
         for field_name in (
             "attempt_id",
             "decision_ref",
@@ -700,6 +738,11 @@ class HarnessSideEffectAttemptLease:
                 _checksum(getattr(self, field_name), field_name),
             )
         object.__setattr__(self, "attempt", _positive_int(self.attempt, "attempt"))
+        object.__setattr__(
+            self,
+            "activity_attempt",
+            _positive_int(self.activity_attempt, "activity_attempt"),
+        )
         object.__setattr__(
             self,
             "fencing_generation",
@@ -793,6 +836,8 @@ class HarnessSideEffectAttemptLease:
             lease_id=_required_text(lease_id, "lease_id"),
             owner_id=_required_text(owner_id, "owner_id"),
             effect_id=decision.effect_id,
+            run_id=decision.run_id,
+            origin=decision.origin,
             graph_id=decision.graph_id,
             graph_version=decision.graph_version,
             graph_ref=decision.graph_ref,
@@ -800,6 +845,8 @@ class HarnessSideEffectAttemptLease:
             node_id=decision.node_id,
             node_instance_id=decision.node_instance_id,
             activity_id=decision.activity_id,
+            terminal_action=decision.terminal_action,
+            activity_attempt=decision.attempt,
             decision_ref=decision.checksum,
             idempotency_key=decision.idempotency_key,
             identity_scope_ref=decision.identity_scope_ref,
@@ -819,6 +866,8 @@ class HarnessSideEffectAttemptLease:
             lease_id=value.get("lease_id"),
             owner_id=value.get("owner_id"),
             effect_id=value.get("effect_id"),
+            run_id=value.get("run_id"),
+            origin=value.get("origin"),
             graph_id=value.get("graph_id"),
             graph_version=value.get("graph_version"),
             graph_ref=value.get("graph_ref"),
@@ -826,6 +875,8 @@ class HarnessSideEffectAttemptLease:
             node_id=value.get("node_id"),
             node_instance_id=value.get("node_instance_id"),
             activity_id=value.get("activity_id"),
+            terminal_action=value.get("terminal_action"),
+            activity_attempt=value.get("activity_attempt", value.get("attempt")),
             decision_ref=value.get("decision_ref"),
             idempotency_key=value.get("idempotency_key"),
             identity_scope_ref=value.get("identity_scope_ref"),
@@ -905,6 +956,8 @@ class HarnessSideEffectAttemptLease:
             "lease_id": self.lease_id,
             "owner_id": self.owner_id,
             "effect_id": self.effect_id,
+            "run_id": self.run_id,
+            "origin": self.origin.value,
             "graph_id": self.graph_id,
             "graph_version": self.graph_version,
             "graph_ref": self.graph_ref,
@@ -912,12 +965,14 @@ class HarnessSideEffectAttemptLease:
             "node_id": self.node_id,
             "node_instance_id": self.node_instance_id,
             "activity_id": self.activity_id,
+            "terminal_action": self.terminal_action,
             "decision_ref": self.decision_ref,
             "idempotency_key": self.idempotency_key,
             "identity_scope_ref": self.identity_scope_ref,
             "subject_scope_ref": self.subject_scope_ref,
             "attempt": self.attempt,
             "fencing_generation": self.fencing_generation,
+            "activity_attempt": self.activity_attempt,
             "acquired_at": format_datetime(self.acquired_at),
             "lease_expires_at": format_datetime(self.lease_expires_at),
             "status": self.status.value,
@@ -1484,6 +1539,73 @@ class HarnessTerminalFailureSideEffectPolicy:
             "disposition": self.disposition.value,
         }
 
+def side_effect_identity_key(
+    *,
+    run_id: str,
+    graph_id: str,
+    graph_version: str,
+    graph_ref: str,
+    graph_checksum: str,
+    effect_id: str,
+    identity_scope_ref: str,
+    subject_scope_ref: str,
+    node_id: str | None,
+    node_instance_id: str | None,
+    activity_id: str | None,
+    attempt: int,
+    terminal_action: str | None,
+    origin: HarnessSideEffectOrigin | str,
+) -> str:
+    """Return the immutable storage key for one Graph side-effect identity.
+
+    ``effect_id`` is a logical handler label. It is deliberately not used as
+    the durable key on its own because parallel instances of the same Graph
+    definition may legitimately reuse that label.
+    """
+    origin_value = origin.value if isinstance(origin, HarnessSideEffectOrigin) else origin
+    return checksum_for(
+        {
+            "schema_version": "newsroom.harness-side-effect-identity/v1",
+            "origin": origin_value,
+            "run_id": run_id,
+            "graph_id": graph_id,
+            "graph_version": graph_version,
+            "graph_ref": graph_ref,
+            "graph_checksum": graph_checksum,
+            "node_id": node_id,
+            "node_instance_id": node_instance_id,
+            "activity_id": activity_id,
+            "attempt": attempt,
+            "terminal_action": terminal_action,
+            "effect_id": effect_id,
+            "identity_scope_ref": identity_scope_ref,
+            "subject_scope_ref": subject_scope_ref,
+        }
+    )
+
+
+def side_effect_record_identity_key(record: Any) -> str:
+    return side_effect_identity_key(
+        run_id=record.run_id,
+        graph_id=record.graph_id,
+        graph_version=record.graph_version,
+        graph_ref=record.graph_ref,
+        graph_checksum=record.graph_checksum,
+        effect_id=record.effect_id,
+        identity_scope_ref=record.identity_scope_ref,
+        subject_scope_ref=record.subject_scope_ref,
+        node_id=getattr(record, "node_id", None),
+        node_instance_id=getattr(record, "node_instance_id", None),
+        activity_id=getattr(record, "activity_id", None),
+        attempt=(
+            record.activity_attempt
+            if hasattr(record, "activity_attempt")
+            else record.attempt
+        ),
+        terminal_action=getattr(record, "terminal_action", None),
+        origin=record.origin,
+    )
+
 
 def _identifier(value: Any, field_name: str) -> str:
     text = _required_text(value, field_name)
@@ -1629,4 +1751,6 @@ __all__ = [
     "HarnessSideEffectOutcomeStatus",
     "HarnessTerminalFailureSideEffectPolicy",
     "HarnessTerminalSideEffectPolicy",
+    "side_effect_identity_key",
+    "side_effect_record_identity_key",
 ]

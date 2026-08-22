@@ -21,7 +21,7 @@ from framework.harness import (
 )
 from framework.harness.side_effects.models import HarnessSideEffectAttemptStatus
 from framework.harness.side_effects.ports import HarnessFencedSideEffectStorePort
-from framework.shared.json import stable_json_dumps
+from framework.shared.json import json_loads, stable_json_dumps
 from infrastructure.storage.harness import SQLiteHarnessSideEffectStore
 
 
@@ -56,6 +56,7 @@ def _intent(
     *,
     effect_id: str = "effect-worker-1",
     origin: str = "worker",
+    node_instance_id: str | None = None,
 ) -> HarnessSideEffectIntent:
     common = {
         "effect_id": effect_id,
@@ -76,8 +77,8 @@ def _intent(
         common.update(
             step_id="publish_artifacts",
             node_id="publish_artifacts",
-            node_instance_id=f"node:{effect_id}",
-            activity_id=f"activity:{effect_id}",
+            node_instance_id=node_instance_id or f"node:{effect_id}",
+            activity_id=f"activity:{node_instance_id or effect_id}",
             worker_result_ref=checksum_for({"worker": effect_id}),
             candidate_checksum=checksum_for({"candidate": effect_id}),
         )
@@ -97,7 +98,7 @@ def _decision(
     command_ordinal: int = 1,
 ) -> HarnessSideEffectDecision:
     return HarnessSideEffectDecision(
-        decision_id=f"decision-{intent.effect_id}",
+        decision_id=f"decision-{intent.effect_id}-{intent.node_instance_id}",
         intent_ref=intent.checksum,
         effect_id=intent.effect_id,
         kind=intent.kind,
@@ -137,7 +138,7 @@ def _outcome(
 ) -> HarnessSideEffectOutcome:
     normalized = HarnessSideEffectDisposition(disposition)
     return HarnessSideEffectOutcome(
-        outcome_id=f"outcome-{decision.effect_id}",
+        outcome_id=f"outcome-{decision.effect_id}-{decision.node_instance_id}",
         effect_id=decision.effect_id,
         decision_ref=decision.checksum,
         run_id=decision.run_id,
@@ -273,6 +274,75 @@ def test_decision_outcome_and_attempt_survive_reconstruction(tmp_path: Path) -> 
         == 1
     )
     reconstructed.verify_integrity()
+
+
+def test_same_effect_id_different_node_instances_are_storage_isolated(
+    tmp_path: Path,
+) -> None:
+    left = _intent(effect_id="shared-effect", node_instance_id="publish:1")
+    right = _intent(effect_id="shared-effect", node_instance_id="publish:2")
+    left_decision = _decision(left)
+    right_decision = _decision(right)
+    store = _store(tmp_path)
+
+    store.put_decision(left_decision)
+    store.put_decision(right_decision)
+    left_outcome = store.put_outcome(_outcome(left_decision))
+    right_outcome = store.put_outcome(_outcome(right_decision))
+
+    assert left_outcome.node_instance_id == "publish:1"
+    assert right_outcome.node_instance_id == "publish:2"
+    assert (
+        store.get_outcome(
+            effect_id=left.effect_id,
+            identity_scope_ref=left.identity_scope_ref,
+            subject_scope_ref=left.subject_scope_ref,
+            idempotency_key=left.idempotency_key,
+        )
+        == left_outcome
+    )
+    with pytest.raises(HarnessValidationError, match="ambiguous"):
+        store.read_outcome(
+            effect_id=left.effect_id,
+            identity_scope_ref=left.identity_scope_ref,
+            subject_scope_ref=left.subject_scope_ref,
+        )
+    with pytest.raises(HarnessValidationError, match="ambiguous"):
+        store.set_disposition(
+            effect_id=left.effect_id,
+            disposition="quarantine",
+            identity_scope_ref=left.identity_scope_ref,
+            subject_scope_ref=left.subject_scope_ref,
+        )
+    store.verify_integrity()
+
+
+def test_same_effect_id_different_node_instances_have_independent_attempt_fences(
+    tmp_path: Path,
+) -> None:
+    left = _intent(effect_id="shared-effect-fence", node_instance_id="publish:1")
+    right = _intent(effect_id="shared-effect-fence", node_instance_id="publish:2")
+    left_decision = _decision(left)
+    right_decision = _decision(right)
+    store = _store(tmp_path)
+
+    store.put_decision(left_decision)
+    store.put_decision(right_decision)
+    left_attempt = store.acquire_attempt(
+        left_decision,
+        owner_id="owner:left",
+        lease_id="lease:left",
+    )
+    right_attempt = store.acquire_attempt(
+        right_decision,
+        owner_id="owner:right",
+        lease_id="lease:right",
+    )
+
+    assert left_attempt.node_instance_id == "publish:1"
+    assert right_attempt.node_instance_id == "publish:2"
+    assert left_attempt.attempt == right_attempt.attempt == 1
+    store.verify_integrity()
 
 
 @pytest.mark.parametrize("origin", ["worker", "controller_terminal"])
@@ -723,7 +793,7 @@ def test_v1_schema_migrates_without_reclassifying_serial_attempts(
         version = connection.execute(
             "SELECT schema_version FROM harness_side_effect_store_metadata"
         ).fetchone()[0]
-    assert version == 2
+    assert version == 3
     assert migrated.reserve_attempt(decision) == 2
     with pytest.raises(HarnessValidationError) as unfenced:
         migrated.acquire_attempt(
@@ -732,3 +802,82 @@ def test_v1_schema_migrates_without_reclassifying_serial_attempts(
             lease_id="lease-v2",
         )
     assert unfenced.value.code == "side_effect_attempt_termination_unconfirmed"
+
+
+def test_v2_schema_migrates_effect_only_fenced_identity(
+    tmp_path: Path,
+) -> None:
+    intent = _intent(
+        effect_id="effect-v2-identity-migration",
+        node_instance_id="publish:legacy",
+    )
+    decision = _decision(intent, attempt_limit=3)
+    store = _store(tmp_path)
+    store.put_decision(decision)
+    legacy_attempt = store.acquire_attempt(
+        decision,
+        owner_id="legacy-owner",
+        lease_id="legacy-lease",
+    )
+
+    with sqlite3.connect(store.database) as connection:
+        connection.execute("PRAGMA foreign_keys=OFF")
+        connection.execute(
+            "UPDATE harness_side_effect_store_metadata SET schema_version = 2"
+        )
+        connection.execute(
+            "UPDATE harness_side_effect_decisions SET effect_id = ?",
+            (decision.effect_id,),
+        )
+        connection.execute(
+            "UPDATE harness_side_effect_attempts SET effect_id = ?",
+            (decision.effect_id,),
+        )
+        connection.execute(
+            "UPDATE harness_side_effect_attempt_leases SET effect_id = ?, attempt_json = ?",
+            (
+                decision.effect_id,
+                stable_json_dumps(
+                    {
+                        key: value
+                        for key, value in json_loads(
+                            stable_json_dumps(legacy_attempt.to_dict())
+                        ).items()
+                        if key
+                        not in {
+                            "run_id",
+                            "origin",
+                            "terminal_action",
+                            "activity_attempt",
+                        }
+                    }
+                    | {"checksum": None}
+                ),
+            ),
+        )
+
+    migrated = _store(tmp_path)
+    with sqlite3.connect(migrated.database) as connection:
+        version = connection.execute(
+            "SELECT schema_version FROM harness_side_effect_store_metadata"
+        ).fetchone()[0]
+        stored_effect_id = connection.execute(
+            "SELECT effect_id FROM harness_side_effect_decisions"
+        ).fetchone()[0]
+    assert version == 3
+    assert stored_effect_id != decision.effect_id
+    restored_attempt = migrated.get_attempt(
+        effect_id=decision.effect_id,
+        identity_scope_ref=decision.identity_scope_ref,
+        subject_scope_ref=decision.subject_scope_ref,
+    )
+    assert restored_attempt is not None
+    assert restored_attempt.node_instance_id == "publish:legacy"
+    assert restored_attempt.run_id == decision.run_id
+    assert restored_attempt.activity_attempt == decision.attempt
+    assert migrated.attempt_count(
+        effect_id=decision.effect_id,
+        identity_scope_ref=decision.identity_scope_ref,
+        subject_scope_ref=decision.subject_scope_ref,
+    ) == 1
+    migrated.verify_integrity()

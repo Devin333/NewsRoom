@@ -30,6 +30,8 @@ from framework.harness.side_effects.models import (
     HarnessSideEffectOutcomeStatus,
     HarnessTerminalFailureSideEffectPolicy,
     HarnessTerminalSideEffectPolicy,
+    side_effect_identity_key,
+    side_effect_record_identity_key,
 )
 from framework.harness.side_effects.ports import (
     HarnessFencedSideEffectStorePort,
@@ -79,6 +81,8 @@ __all__ = [
     "HarnessSideEffectStorePort",
     "HarnessTerminalFailureSideEffectPolicy",
     "HarnessTerminalSideEffectPolicy",
+    "side_effect_identity_key",
+    "side_effect_record_identity_key",
     "InMemoryHarnessSideEffectApprovalResolver",
     "InMemoryHarnessSideEffectStore",
     "approval_evidence_ref",
