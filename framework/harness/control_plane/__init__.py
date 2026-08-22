@@ -1,14 +1,5 @@
 from __future__ import annotations
 
-from framework.harness.control_plane.decision import (
-    HarnessDecision,
-    HarnessDecisionType,
-)
-from framework.harness.control_plane.activity import (
-    HarnessActivity,
-    HarnessActivityResultRecord,
-    SecureHarnessActivityStorePort,
-)
 from framework.harness.control_plane.durable_events import (
     DurableHarnessEventPort,
     DurableHarnessTransitionPort,
@@ -45,7 +36,6 @@ from framework.harness.control_plane.gate_registry import (
     GateRegistration,
 )
 from framework.harness.control_plane.graph_checkpoint import (
-    HARNESS_LEGACY_EVENT_EVIDENCE_SCHEMA,
     HarnessGraphCheckpoint,
     HarnessGraphCheckpointReader,
     HarnessGraphCheckpointReadResult,
@@ -56,10 +46,6 @@ from framework.harness.control_plane.graph_checkpoint import (
     HarnessGraphReplayReadResult,
     HarnessGraphStateReadResult,
     HarnessGraphStateReader,
-    HarnessLegacyEventCategory,
-    HarnessLegacyEventEvidence,
-    HarnessLegacyEventReadResult,
-    HarnessLegacyEventReader,
     HarnessPinnedDecisionKernel,
     InMemoryHarnessGraphCheckpointStore,
     graph_history_evidence_ref,
@@ -141,7 +127,6 @@ from framework.harness.control_plane.graph_state import (
     HarnessJoinKind,
     HarnessJoinState,
     HarnessJoinStatus,
-    HarnessLegacyStatusProjection,
     HarnessLoopCounterState,
     HarnessLoopIteration,
     HarnessLoopStatus,
@@ -155,7 +140,7 @@ from framework.harness.control_plane.graph_state import (
     HarnessWaitStatus,
     RunLifecycle,
     RunOutcome,
-    project_public_legacy_status,
+    project_public_graph_status,
 )
 from framework.harness.control_plane.harness import (
     HarnessControlPlane,
@@ -182,8 +167,6 @@ from framework.harness.control_plane.replay_history import (
 from framework.harness.control_plane.state import (
     HarnessRunSpec,
     HarnessRunStatus,
-    HarnessState,
-    HarnessStepState,
     HarnessStepStatus,
 )
 from framework.harness.control_plane.step_lifecycle import (
@@ -206,19 +189,6 @@ from framework.harness.control_plane.transcript import (
     transcript_entry_from_event,
     transcript_entry_from_stored_event,
 )
-from framework.harness.control_plane.transitions import (
-    get_step_state,
-    replace_step_state,
-    transition_run,
-    transition_step,
-)
-from framework.harness.control_plane.transition import (
-    HarnessProjectedState,
-    HarnessStateProjection,
-    HarnessStateProjector,
-    HarnessTransitionCommitted,
-    HarnessTransitionKind,
-)
 
 __all__ = [
     "HARNESS_ADMITTED_GRAPH_ACTIVITY_SCHEMA",
@@ -240,13 +210,10 @@ __all__ = [
     "GateReference",
     "GateRegistration",
     "GraphEvaluation",
-    "HARNESS_LEGACY_EVENT_EVIDENCE_SCHEMA",
     "HARNESS_GRAPH_TERMINAL_FAILURE_RECORD_SCHEMA",
     "HarnessAcceptedGraphObservation",
     "HarnessBudgetSnapshot",
     "HarnessCumulativeBudgetFact",
-    "HarnessActivity",
-    "HarnessActivityResultRecord",
     "HarnessAdmittedGraphActivityAttempt",
     "HarnessCommittedNodeOutputReceipt",
     "HarnessActiveActivityState",
@@ -257,8 +224,6 @@ __all__ = [
     "HarnessCompensationStatus",
     "HarnessControlPlane",
     "HarnessBudget",
-    "HarnessDecision",
-    "HarnessDecisionType",
     "HarnessEvent",
     "HarnessEventLogEntry",
     "HarnessEventType",
@@ -305,11 +270,6 @@ __all__ = [
     "HarnessJoinKind",
     "HarnessJoinState",
     "HarnessJoinStatus",
-    "HarnessLegacyStatusProjection",
-    "HarnessLegacyEventCategory",
-    "HarnessLegacyEventEvidence",
-    "HarnessLegacyEventReadResult",
-    "HarnessLegacyEventReader",
     "HarnessLoopCounterState",
     "HarnessLoopIteration",
     "HarnessLoopStatus",
@@ -333,22 +293,15 @@ __all__ = [
     "HarnessPhase",
     "HarnessPhaseBoundary",
     "HarnessPhaseRecord",
-    "HarnessProjectedState",
     "HarnessReplayActivityResolver",
     "HarnessRunSpec",
     "HarnessRunResult",
     "HarnessRunStatus",
     "HarnessScheduler",
-    "HarnessState",
-    "HarnessStateProjection",
-    "HarnessStateProjector",
-    "HarnessStepState",
     "HarnessStepStatus",
     "HarnessTrace",
     "HarnessTranscript",
     "HarnessTranscriptEntry",
-    "HarnessTransitionCommitted",
-    "HarnessTransitionKind",
     "HarnessValidationError",
     "HarnessWaitRegistration",
     "HarnessWaitStatus",
@@ -362,7 +315,6 @@ __all__ = [
     "RunLifecycle",
     "RunOutcome",
     "ScoreRangeGate",
-    "SecureHarnessActivityStorePort",
     "SkillEvolutionBudgetGate",
     "StepGateObservation",
     "StepLifecycleBindingMode",
@@ -381,17 +333,13 @@ __all__ = [
     "build_harness_history_verifier",
     "event_log_entry_from_harness_event",
     "event_log_entry_from_stored_event",
-    "get_step_state",
     "graph_health_report",
     "graph_history_evidence_ref",
     "quarantine_graph_replay_failure",
     "graph_metric_samples",
     "harness_decision_input_snapshot",
     "harness_decision_kernel",
-    "project_public_legacy_status",
-    "replace_step_state",
-    "transition_run",
-    "transition_step",
+    "project_public_graph_status",
     "transcript_entry_from_event",
     "transcript_entry_from_stored_event",
 ]

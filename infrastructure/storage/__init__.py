@@ -9,6 +9,7 @@ from infrastructure.storage.redis_llm_cache import (
     decode_llm_cache_encryption_key,
     validate_llm_cache_namespace,
 )
+from infrastructure.storage.harness import SQLiteHarnessNodeOutputResource
 
 __all__ = [
     "LLM_CACHE_ENVELOPE_VERSION",
@@ -18,4 +19,5 @@ __all__ = [
     "RedisLLMCache",
     "decode_llm_cache_encryption_key",
     "validate_llm_cache_namespace",
+    "SQLiteHarnessNodeOutputResource",
 ]

@@ -1,12 +1,8 @@
 from __future__ import annotations
 
-from framework.harness.runtime.checkpoint import HarnessCheckpoint, checkpoint_checksum
-from framework.harness.runtime.checkpoint_store import InMemoryHarnessCheckpointStore
 from framework.harness.runtime.context_replay import (
-    CompressionRecordReplayReader,
     ContextCompactionReplayReader,
     ContextCompactionReplayReport,
-    ContextSnapshotReplayReader,
 )
 from framework.harness.runtime.artifact_context import (
     APPROVED_ARTIFACT_LOAD_PLAN_SCHEMA,
@@ -20,20 +16,13 @@ from framework.harness.runtime.artifact_context import (
     ArtifactContextLoadPlanner,
     ArtifactContextProviderPort,
 )
-from framework.harness.runtime.durable_state import HarnessDurableState
 from framework.harness.runtime.activity_executor import (
-    HARNESS_GRAPH_ACTIVITY_EXECUTION_INPUT_SCHEMA,
-    HARNESS_GRAPH_ACTIVITY_FAILURE_EVIDENCE_SCHEMA,
-    HARNESS_GRAPH_ACTIVITY_TASK_CONTEXT_KEY,
-    HARNESS_GRAPH_ACTIVITY_TASK_CONTEXT_SCHEMA,
-    HarnessGraphActivityExecutionCommitPort,
-    HarnessGraphActivityExecutionInput,
-    HarnessGraphActivityExecutionInputResolverPort,
-    HarnessGraphActivityTaskContext,
     HarnessGraphPhysicalActivityExecutionResult,
     HarnessGraphPhysicalActivityExecutor,
 )
-from framework.harness.runtime.replay import HarnessReplayReader, HarnessReplayReport, HarnessTraceExporter
+from framework.harness.runtime.graph_dispatcher import (
+    HarnessGraphPhysicalActivityDispatcher,
+)
 from framework.harness.runtime.result_errors import (
     GraphArtifactResultError,
     GraphArtifactResultErrorCode,
@@ -106,11 +95,9 @@ from framework.harness.runtime.tool_result_adapter import (
 from framework.harness.runtime.subagent_result_adapter import (
     SUBAGENT_HANDOFF_SCHEMA,
     SUBAGENT_MATERIALIZED_BUNDLE_SCHEMA,
-    SUBAGENT_MATERIALIZED_BUNDLE_SCHEMA_V1,
-    SUBAGENT_MATERIALIZED_BUNDLE_SCHEMA_V2,
+    SUBAGENT_MATERIALIZED_BUNDLE_SCHEMA_V3,
     SUBAGENT_NODE_RESULT_SCHEMA,
-    SUBAGENT_NODE_RESULT_SCHEMA_V1,
-    SUBAGENT_NODE_RESULT_SCHEMA_V2,
+    SUBAGENT_NODE_RESULT_SCHEMA_V3,
     HarnessSubAgentActivityResult,
     HarnessSubAgentActivityRuntime,
     HarnessSubAgentMaterializationResult,
@@ -135,14 +122,12 @@ __all__ = [
     "ArtifactRecord",
     "BoundedSummary",
     "CacheRef",
-    "CompressionRecordReplayReader",
     "ContextAssemblyRequest",
     "ContextCompactionReplayReader",
     "ContextCompactionReplayReport",
     "ContextLoadMode",
     "ContextPolicy",
     "ContextPurpose",
-    "ContextSnapshotReplayReader",
     "DEFAULT_GRAPH_ARTIFACT_POLICY_VERSION",
     "GraphArtifactDedupScope",
     "GraphArtifactPersistenceConfig",
@@ -150,19 +135,10 @@ __all__ = [
     "GraphArtifactResultErrorCode",
     "GraphArtifactRetentionSettings",
     "GraphArtifactRolloutMode",
-    "HARNESS_GRAPH_ACTIVITY_EXECUTION_INPUT_SCHEMA",
-    "HARNESS_GRAPH_ACTIVITY_FAILURE_EVIDENCE_SCHEMA",
-    "HARNESS_GRAPH_ACTIVITY_TASK_CONTEXT_KEY",
-    "HARNESS_GRAPH_ACTIVITY_TASK_CONTEXT_SCHEMA",
-    "HarnessCheckpoint",
-    "HarnessDurableState",
     "HarnessGraphResultRuntime",
-    "HarnessGraphActivityExecutionCommitPort",
-    "HarnessGraphActivityExecutionInput",
-    "HarnessGraphActivityExecutionInputResolverPort",
-    "HarnessGraphActivityTaskContext",
     "HarnessGraphPhysicalActivityExecutionResult",
     "HarnessGraphPhysicalActivityExecutor",
+    "HarnessGraphPhysicalActivityDispatcher",
     "HARNESS_BOUND_TOOL_RECEIPT_SCHEMA",
     "HarnessBoundToolSideEffectReceipt",
     "HarnessAdmittedGraphActivityOutputAdapter",
@@ -175,10 +151,6 @@ __all__ = [
     "HarnessSubAgentActivityRuntime",
     "HarnessSubAgentMaterializationResult",
     "HarnessSubAgentResultAdapter",
-    "HarnessReplayReader",
-    "HarnessReplayReport",
-    "HarnessTraceExporter",
-    "InMemoryHarnessCheckpointStore",
     "NodeResultBinding",
     "NodeResultEnvelope",
     "NodeResultRequest",
@@ -205,11 +177,9 @@ __all__ = [
     "RetentionClass",
     "SUBAGENT_HANDOFF_SCHEMA",
     "SUBAGENT_MATERIALIZED_BUNDLE_SCHEMA",
-    "SUBAGENT_MATERIALIZED_BUNDLE_SCHEMA_V1",
-    "SUBAGENT_MATERIALIZED_BUNDLE_SCHEMA_V2",
+    "SUBAGENT_MATERIALIZED_BUNDLE_SCHEMA_V3",
     "SUBAGENT_NODE_RESULT_SCHEMA",
-    "SUBAGENT_NODE_RESULT_SCHEMA_V1",
-    "SUBAGENT_NODE_RESULT_SCHEMA_V2",
+    "SUBAGENT_NODE_RESULT_SCHEMA_V3",
     "TOOL_NODE_RESULT_SCHEMA",
     "TOOL_RESPONSE_DOCUMENT_SCHEMA",
     "TOOL_SIDE_EFFECT_EVIDENCE_SCHEMA",
@@ -219,6 +189,5 @@ __all__ = [
     "subagent_result_attempt_id",
     "verify_harness_tool_side_effect_evidence",
     "verify_subagent_materialized_bundle",
-    "checkpoint_checksum",
     "graph_result_lineage_from_envelope",
 ]

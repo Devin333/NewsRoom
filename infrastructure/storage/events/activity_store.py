@@ -31,7 +31,6 @@ from framework.events.schema.security import (
     REQUIRED_SECURE_PAYLOAD_CAPABILITIES,
     SecurePayloadValidation,
 )
-from framework.harness.control_plane.activity import HarnessActivityResultRecord
 from framework.shared.json import json_loads
 from framework.shared.time import format_datetime, utc_now
 
@@ -40,6 +39,8 @@ SQLiteConnectionFactory = Callable[[], sqlite3.Connection]
 PostgresConnectionFactory = Callable[[], Any]
 
 _SQLITE_SCHEMA = r"""
+DROP TABLE IF EXISTS harness_activity_results;
+
 CREATE TABLE IF NOT EXISTS event_activity_payloads (
     tenant_scope TEXT NOT NULL,
     tenant_id TEXT,
@@ -95,24 +96,6 @@ CREATE TABLE IF NOT EXISTS event_activity_records (
         (status = 'pending' AND completed_at IS NULL)
         OR (status <> 'pending' AND completed_at IS NOT NULL)
     )
-);
-
-CREATE TABLE IF NOT EXISTS harness_activity_results (
-    tenant_scope TEXT NOT NULL,
-    tenant_id TEXT NOT NULL,
-    activity_id TEXT NOT NULL,
-    security_classification TEXT NOT NULL,
-    content_type TEXT NOT NULL,
-    content_checksum TEXT NOT NULL,
-    size_bytes INTEGER NOT NULL,
-    ciphertext BLOB NOT NULL,
-    created_at TEXT NOT NULL,
-    PRIMARY KEY (tenant_scope, activity_id),
-    CHECK (tenant_scope = tenant_id),
-    CHECK (trim(tenant_id) <> ''),
-    CHECK (security_classification IN ('public', 'internal', 'confidential', 'restricted')),
-    CHECK (content_checksum GLOB 'sha256:[0-9a-f]*' AND length(content_checksum) = 71),
-    CHECK (size_bytes >= 0 AND length(ciphertext) > 0)
 );
 
 CREATE TABLE IF NOT EXISTS event_activity_access_audit (
@@ -258,110 +241,6 @@ class SQLiteRecordedActivityStore:
                     raise
                 _validate_payload_row(existing, payload, reference)
         return RecordedActivityPayloadWrite(payload, reference)
-
-    def put_result(
-        self,
-        record: HarnessActivityResultRecord,
-        *,
-        tenant_id: str,
-        classification: SecurityClassification,
-    ) -> PayloadReference:
-        if not isinstance(record, HarnessActivityResultRecord):
-            raise TypeError("record must be HarnessActivityResultRecord")
-        tenant = _required_tenant(tenant_id)
-        classification = SecurityClassification(classification)
-        value = record.to_dict()
-        size = len(canonical_json_bytes(value))
-        reference = _harness_reference(
-            tenant, record.activity.activity_id, record, size
-        )
-        ciphertext = self._cipher.encrypt(value)
-        with self._write() as connection:
-            row = connection.execute(
-                "SELECT * FROM harness_activity_results WHERE tenant_scope = ? "
-                "AND activity_id = ?",
-                (tenant, record.activity.activity_id),
-            ).fetchone()
-            if row is not None:
-                existing = _harness_record_from_row(self._cipher, row)
-                if existing.to_dict() != value:
-                    raise ReplayActivityRecordingConflictError(
-                        "Harness activity result identity was reused with different content"
-                    )
-                _validate_harness_row(row, reference, classification)
-                self._audit_values(
-                    connection,
-                    tenant_id=tenant,
-                    activity_id=record.activity.activity_id,
-                    object_role="record",
-                    operation="read",
-                )
-                return reference
-            connection.execute(
-                "INSERT INTO harness_activity_results (tenant_scope, tenant_id, "
-                "activity_id, security_classification, content_type, content_checksum, "
-                "size_bytes, ciphertext, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                (
-                    tenant,
-                    tenant,
-                    record.activity.activity_id,
-                    classification.value,
-                    reference.content_type,
-                    reference.expected_checksum,
-                    size,
-                    ciphertext,
-                    format_datetime(utc_now()),
-                ),
-            )
-            self._audit_values(
-                connection,
-                tenant_id=tenant,
-                activity_id=record.activity.activity_id,
-                object_role="record",
-                operation="write",
-            )
-        return reference
-
-    def resolve_result(
-        self,
-        reference: PayloadReference,
-        *,
-        tenant_id: str,
-        classification: SecurityClassification,
-    ) -> HarnessActivityResultRecord:
-        tenant = _required_tenant(tenant_id)
-        activity_id = _activity_id_from_reference(
-            reference,
-            tenant,
-            role="harness-result",
-            scheme="secure-harness-activity",
-        )
-        with self._write() as connection:
-            row = connection.execute(
-                "SELECT * FROM harness_activity_results WHERE tenant_scope = ? "
-                "AND activity_id = ?",
-                (tenant, activity_id),
-            ).fetchone()
-            if row is None:
-                raise LookupError("Harness activity result is missing")
-            _validate_harness_row(
-                row,
-                reference,
-                SecurityClassification(classification),
-            )
-            record = _harness_record_from_row(self._cipher, row)
-            self._audit_values(
-                connection,
-                tenant_id=tenant,
-                activity_id=activity_id,
-                object_role="record",
-                operation="read",
-            )
-        if record.activity.activity_id != activity_id:
-            raise EventStoreCorruptionError(
-                "Harness activity result identity conflicts with encrypted content"
-            )
-        return record
 
     def validate_reference(
         self,
@@ -847,113 +726,6 @@ class PostgresRecordedActivityStore:
                 self._audit_payload(cursor, payload, operation="write")
         return RecordedActivityPayloadWrite(payload, reference)
 
-    def put_result(
-        self,
-        record: HarnessActivityResultRecord,
-        *,
-        tenant_id: str,
-        classification: SecurityClassification,
-    ) -> PayloadReference:
-        if not isinstance(record, HarnessActivityResultRecord):
-            raise TypeError("record must be HarnessActivityResultRecord")
-        tenant = _required_tenant(tenant_id)
-        classification = SecurityClassification(classification)
-        value = record.to_dict()
-        size = len(canonical_json_bytes(value))
-        reference = _harness_reference(
-            tenant, record.activity.activity_id, record, size
-        )
-        ciphertext = self._cipher.encrypt(value)
-        with self._transaction() as connection:
-            with self._cursor(connection) as cursor:
-                cursor.execute(
-                    "INSERT INTO harness_activity_results (tenant_id, activity_id, "
-                    "security_classification, content_type, content_checksum, "
-                    "size_bytes, ciphertext) VALUES (%s, %s, %s, %s, %s, %s, %s) "
-                    "ON CONFLICT (tenant_scope, activity_id) DO NOTHING RETURNING *",
-                    (
-                        tenant,
-                        record.activity.activity_id,
-                        classification.value,
-                        reference.content_type,
-                        reference.expected_checksum,
-                        size,
-                        ciphertext,
-                    ),
-                )
-                row = cursor.fetchone()
-                if row is None:
-                    row = self._read_harness_row(
-                        cursor,
-                        record.activity.activity_id,
-                        tenant,
-                    )
-                    if row is None:
-                        raise EventStoreCorruptionError(
-                            "PostgreSQL Harness activity conflict returned no durable row"
-                        )
-                    existing = _harness_record_from_row(self._cipher, row)
-                    if existing.to_dict() != value:
-                        raise ReplayActivityRecordingConflictError(
-                            "Harness activity result identity was reused with different content"
-                        )
-                    _validate_harness_row(row, reference, classification)
-                    self._audit_values(
-                        cursor,
-                        tenant_id=tenant,
-                        activity_id=record.activity.activity_id,
-                        object_role="record",
-                        operation="read",
-                    )
-                    return reference
-                _validate_harness_row(row, reference, classification)
-                self._audit_values(
-                    cursor,
-                    tenant_id=tenant,
-                    activity_id=record.activity.activity_id,
-                    object_role="record",
-                    operation="write",
-                )
-        return reference
-
-    def resolve_result(
-        self,
-        reference: PayloadReference,
-        *,
-        tenant_id: str,
-        classification: SecurityClassification,
-    ) -> HarnessActivityResultRecord:
-        tenant = _required_tenant(tenant_id)
-        activity_id = _activity_id_from_reference(
-            reference,
-            tenant,
-            role="harness-result",
-            scheme="secure-harness-activity",
-        )
-        with self._transaction() as connection:
-            with self._cursor(connection) as cursor:
-                row = self._read_harness_row(cursor, activity_id, tenant)
-                if row is None:
-                    raise LookupError("Harness activity result is missing")
-                _validate_harness_row(
-                    row,
-                    reference,
-                    SecurityClassification(classification),
-                )
-                record = _harness_record_from_row(self._cipher, row)
-                self._audit_values(
-                    cursor,
-                    tenant_id=tenant,
-                    activity_id=activity_id,
-                    object_role="record",
-                    operation="read",
-                )
-        if record.activity.activity_id != activity_id:
-            raise EventStoreCorruptionError(
-                "Harness activity result identity conflicts with encrypted content"
-            )
-        return record
-
     def validate_reference(
         self,
         reference: Mapping[str, Any],
@@ -1270,19 +1042,6 @@ class PostgresRecordedActivityStore:
         )
         return cursor.fetchone()
 
-    def _read_harness_row(
-        self,
-        cursor: Any,
-        activity_id: str,
-        tenant_id: str,
-    ) -> Mapping[str, Any] | None:
-        cursor.execute(
-            "SELECT * FROM harness_activity_results WHERE tenant_scope = %s "
-            "AND activity_id = %s",
-            (tenant_id, activity_id),
-        )
-        return cursor.fetchone()
-
     def _record_write_from_row(
         self,
         cursor: Any,
@@ -1306,21 +1065,6 @@ class PostgresRecordedActivityStore:
         reference: PayloadReference,
         tenant_id: str,
     ) -> Mapping[str, Any] | None:
-        if reference.uri.startswith("secure-harness-activity://"):
-            activity_id = _activity_id_from_reference(
-                reference,
-                tenant_id,
-                role="harness-result",
-                scheme="secure-harness-activity",
-            )
-            cursor.execute(
-                "SELECT tenant_scope, tenant_id, activity_id, "
-                "security_classification, content_type, content_checksum, size_bytes "
-                "FROM harness_activity_results WHERE tenant_scope = %s "
-                "AND activity_id = %s",
-                (tenant_id, activity_id),
-            )
-            return cursor.fetchone()
         if reference.uri.endswith("/record"):
             activity_id = _activity_id_from_reference(
                 reference,
@@ -1516,74 +1260,12 @@ def _encrypted_record(
     return cipher.encrypt(value), len(canonical_json_bytes(value))
 
 
-def _harness_reference(
-    tenant_id: str,
-    activity_id: str,
-    record: HarnessActivityResultRecord,
-    size_bytes: int,
-) -> PayloadReference:
-    return PayloadReference(
-        uri=(
-            f"secure-harness-activity://{quote(tenant_id, safe='')}/"
-            f"{quote(activity_id, safe='')}/harness-result"
-        ),
-        expected_checksum=record.content_checksum,
-        content_type="application/vnd.newsroom.harness-activity-result+json",
-        size_bytes=size_bytes,
-    )
-
-
-def _harness_record_from_row(
-    cipher: _ActivityCipher,
-    row: Mapping[str, Any],
-) -> HarnessActivityResultRecord:
-    record = HarnessActivityResultRecord.from_dict(cipher.decrypt(row["ciphertext"]))
-    if record.content_checksum != row["content_checksum"]:
-        raise EventStoreCorruptionError(
-            "Harness activity result checksum conflicts with encrypted content"
-        )
-    if len(canonical_json_bytes(record.to_dict())) != row["size_bytes"]:
-        raise EventStoreCorruptionError(
-            "Harness activity result size conflicts with encrypted content"
-        )
-    return record
-
-
-def _validate_harness_row(
-    row: Mapping[str, Any],
-    reference: PayloadReference,
-    classification: SecurityClassification,
-) -> None:
-    if (
-        row["content_checksum"] != reference.expected_checksum
-        or row["content_type"] != reference.content_type
-        or row["size_bytes"] != reference.size_bytes
-        or row["security_classification"] != classification.value
-    ):
-        raise EventStoreCorruptionError(
-            "Harness activity result indexes conflict with secure reference"
-        )
-
-
 def _secure_reference_row(
     connection: sqlite3.Connection,
     reference: PayloadReference,
     tenant_id: str,
 ) -> sqlite3.Row | None:
     uri = reference.uri
-    if uri.startswith("secure-harness-activity://"):
-        activity_id = _activity_id_from_reference(
-            reference,
-            tenant_id,
-            role="harness-result",
-            scheme="secure-harness-activity",
-        )
-        return connection.execute(
-            "SELECT tenant_scope, tenant_id, activity_id, security_classification, "
-            "content_type, content_checksum, size_bytes FROM harness_activity_results "
-            "WHERE tenant_scope = ? AND activity_id = ?",
-            (tenant_id, activity_id),
-        ).fetchone()
     if uri.endswith("/record"):
         activity_id = _activity_id_from_reference(
             reference,

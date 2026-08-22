@@ -1,14 +1,16 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+import threading
 from typing import Any
 
 import pytest
 
 from framework.events.canonical import checksum_for
-from framework.harness.control_plane.activity import harness_activity_input_checksum
 from framework.harness.control_plane.errors import HarnessValidationError
+from framework.harness.control_plane.event import HarnessEvent, HarnessEventType
 from framework.harness.control_plane.graph_application import (
+    HarnessGraphActivityCancellationRequest,
     HarnessGraphActivityDispatcherPort,
 )
 from framework.harness.control_plane.graph_runtime import (
@@ -40,16 +42,25 @@ from framework.harness.graph.model import (
 )
 from framework.harness.graph.versioning import (
     HARNESS_CONDITION_POLICY_VERSION,
-    HARNESS_GRAPH_COMPILER_VERSION,
-    NORMALIZED_HARNESS_GRAPH_SCHEMA,
+    HARNESS_GRAPH_ONLY_COMPILER_VERSION,
+    GRAPH_ONLY_NORMALIZED_HARNESS_GRAPH_SCHEMA,
 )
-from framework.harness.runtime.activity_executor import (
+
+
+from framework.harness.control_plane.activity_execution import (
     HARNESS_GRAPH_ACTIVITY_TASK_CONTEXT_KEY,
     HARNESS_GRAPH_ACTIVITY_TASK_CONTEXT_SCHEMA,
     HarnessGraphActivityExecutionInput,
     HarnessGraphActivityTaskContext,
+)
+from framework.harness.runtime.activity_executor import (
     HarnessGraphPhysicalActivityExecutor,
 )
+from framework.harness.runtime.graph_dispatcher import (
+    HarnessGraphPhysicalActivityDispatcher,
+)
+from business.research.graphs import build_paper_analysis_graph_definition
+from framework.harness.graph import HarnessGraphCompiler, graph_activity_input_checksum
 from framework.harness.runtime.node_output import (
     HarnessAdmittedGraphActivityOutputAdapter,
 )
@@ -171,7 +182,7 @@ def test_executor_uses_exact_graph_pair_and_commits_activity_bound_output() -> N
     assert receipt.attempt.outcome.state is AttemptState.SUCCEEDED
     assert receipt.node_output_commit is not None
     assert receipt.node_output_commit.candidate.output_refs == {
-        "report": checksum_for({"value": "candidate"})
+        "report": checksum_for({"report": {"value": "candidate"}})
     }
     assert receipt.worker_result is not None
     assert receipt.worker_result.candidate_result_ref in (
@@ -203,6 +214,199 @@ def test_executor_uses_exact_graph_pair_and_commits_activity_bound_output() -> N
         execution_input.to_dict()
     ) == execution_input
     assert HarnessGraphActivity.from_dict(activity.to_dict()) == activity
+
+
+def test_dispatcher_recovery_requires_current_node_output_commit() -> None:
+    activity, task = _activity_and_task()
+    worker = _Worker()
+    resource = InMemoryHarnessNodeOutputResource()
+    execution_input = _execution_input(activity, task)
+    executor = _executor(
+        execution_input=execution_input,
+        worker=worker,
+        resource=resource,
+        committer=_ResultCommitter(),
+    )
+    recorded = []
+    applied = []
+    existing = HarnessWorkerResult(
+        status=HarnessWorkerStatus.SUCCEEDED,
+        output={"report": {"value": "candidate"}},
+    )
+    dispatcher = HarnessGraphPhysicalActivityDispatcher(
+        executor=executor,
+        graph_resolver=lambda _activity: HarnessGraphCompiler().compile(
+            build_paper_analysis_graph_definition()
+        ).graph,
+        input_resolver=_InputResolver(execution_input),
+        accept=lambda _activity, _input: existing,
+        record_call_marker=lambda _activity, _input: None,
+        record_result=lambda activity, _graph, _worker: recorded.append(activity)
+        or HarnessEvent(
+            event_type=HarnessEventType.GRAPH_WORKER_RESULT_RECORDED,
+            run_id=activity.run_id,
+            node_id=activity.node_id,
+        ),
+        apply_result=lambda activity, worker_result, result: applied.append(
+            (activity, worker_result, result)
+        ),
+    )
+
+    with pytest.raises(HarnessValidationError) as captured:
+        dispatcher.dispatch(activity)
+
+    assert captured.value.code == "graph_physical_result_commit_missing"
+    assert worker.calls == []
+    assert recorded == []
+    assert applied == []
+
+
+def test_dispatcher_recovery_uses_exact_current_commit_and_not_worker_candidate_ref() -> None:
+    activity, task = _activity_and_task()
+    worker = _Worker()
+    resource = InMemoryHarnessNodeOutputResource()
+    execution_input = _execution_input(activity, task)
+    executor = _executor(
+        execution_input=execution_input,
+        worker=worker,
+        resource=resource,
+        committer=_ResultCommitter(),
+    )
+    first = executor.execute(activity, attempt_id="physical-attempt-1")
+    assert first.node_output_commit is not None
+    assert first.worker_result is not None
+    recorded = []
+    applied = []
+    dispatcher = HarnessGraphPhysicalActivityDispatcher(
+        executor=executor,
+        graph_resolver=lambda _activity: HarnessGraphCompiler().compile(
+            build_paper_analysis_graph_definition()
+        ).graph,
+        input_resolver=_InputResolver(execution_input),
+        accept=lambda _activity, _input: first.worker_result,
+        record_call_marker=lambda _activity, _input: None,
+        record_result=lambda activity, _graph, _worker: recorded.append(activity)
+        or HarnessEvent(
+            event_type=HarnessEventType.GRAPH_WORKER_RESULT_RECORDED,
+            run_id=activity.run_id,
+            node_id=activity.node_id,
+        ),
+        apply_result=lambda activity, worker_result, result: applied.append(
+            (activity, worker_result, result)
+        ),
+    )
+
+    dispatcher.dispatch(activity)
+
+    assert len(worker.calls) == 1
+    assert len(recorded) == 1
+    assert len(applied) == 1
+    _, recovered_worker, recovered_result = applied[0]
+    assert recovered_worker == first.worker_result
+    assert recovered_result.payload_ref == first.node_output_commit.candidate.candidate_ref
+    assert recovered_result.payload_ref != first.worker_result.candidate_result_ref
+
+
+def test_dispatcher_consumes_cancellation_requested_before_dispatch() -> None:
+    activity, task = _activity_and_task()
+    execution_input = _execution_input(activity, task)
+    executor = _executor(
+        execution_input=execution_input,
+        worker=_Worker(),
+        resource=InMemoryHarnessNodeOutputResource(),
+        committer=_ResultCommitter(),
+    )
+    observed: dict[str, object] = {}
+
+    def execute(_activity, *, cancel_event=None, **_kwargs):
+        observed["cancel_event"] = cancel_event
+        assert cancel_event is not None and cancel_event.is_set()
+        raise RuntimeError("cancelled before physical start")
+
+    executor.execute = execute
+    dispatcher = _dispatcher_for(executor, execution_input)
+    request = _cancellation_request(activity)
+    dispatcher.request_cancellation(request)
+
+    with pytest.raises(RuntimeError, match="cancelled before physical start"):
+        dispatcher.dispatch(activity)
+
+    assert isinstance(observed["cancel_event"], threading.Event)
+
+
+def test_dispatcher_sets_active_cancellation_event_during_physical_execution() -> None:
+    activity, task = _activity_and_task()
+    execution_input = _execution_input(activity, task)
+    executor = _executor(
+        execution_input=execution_input,
+        worker=_Worker(),
+        resource=InMemoryHarnessNodeOutputResource(),
+        committer=_ResultCommitter(),
+    )
+    started = threading.Event()
+    cancellation_observed = threading.Event()
+    errors: list[BaseException] = []
+
+    def execute(_activity, *, cancel_event=None, **_kwargs):
+        assert cancel_event is not None
+        started.set()
+        if cancel_event.wait(timeout=2):
+            cancellation_observed.set()
+        raise RuntimeError("cooperative cancellation observed")
+
+    executor.execute = execute
+    dispatcher = _dispatcher_for(executor, execution_input)
+    request = _cancellation_request(activity)
+
+    def run_dispatch() -> None:
+        try:
+            dispatcher.dispatch(activity)
+        except BaseException as exc:  # thread assertions are reported below
+            errors.append(exc)
+
+    worker_thread = threading.Thread(target=run_dispatch)
+    worker_thread.start()
+    assert started.wait(timeout=2)
+    dispatcher.request_cancellation(request)
+    worker_thread.join(timeout=2)
+
+    assert not worker_thread.is_alive()
+    assert cancellation_observed.is_set()
+    assert len(errors) == 1
+    assert isinstance(errors[0], RuntimeError)
+
+
+def _dispatcher_for(
+    executor: HarnessGraphPhysicalActivityExecutor,
+    execution_input: HarnessGraphActivityExecutionInput,
+) -> HarnessGraphPhysicalActivityDispatcher:
+    graph = HarnessGraphCompiler().compile(
+        build_paper_analysis_graph_definition()
+    ).graph
+    return HarnessGraphPhysicalActivityDispatcher(
+        executor=executor,
+        graph_resolver=lambda _activity: graph,
+        input_resolver=_InputResolver(execution_input),
+        accept=lambda _activity, _input: None,
+        record_call_marker=lambda _activity, _input: None,
+        record_result=lambda _activity, _graph, _worker: None,
+        apply_result=lambda _activity, _worker, _result: None,
+    )
+
+
+def _cancellation_request(
+    activity: HarnessGraphActivity,
+) -> HarnessGraphActivityCancellationRequest:
+    return HarnessGraphActivityCancellationRequest(
+        run_id=activity.run_id,
+        activity_id=activity.activity_id,
+        node_instance_id=activity.node_instance_id,
+        attempt=activity.attempt,
+        idempotency_key=activity.idempotency_key,
+        fencing_generation=activity.fencing_generation,
+        causal_decision_checksum=checksum_for({"decision": "cancel"}),
+        reason_code="parallel_any_sibling_failed",
+    )
 
 
 def test_deadline_rejection_emits_no_lease_worker_call_or_result() -> None:
@@ -448,13 +652,14 @@ def test_committed_output_reconciles_result_failure_without_worker_reexecution()
 
     assert recovered.recovered_output is True
     assert recovered.attempt is None
-    assert recovered.worker_result is None
+    assert recovered.worker_result is not None
+    assert recovered.worker_result.to_dict() == committed_output.candidate.worker_result
     assert recovered.node_output_commit == committed_output
     assert recovered.graph_result is not None
     assert recovered.graph_result.status is HarnessGraphActivityResultStatus.SUCCEEDED
     assert len(worker.calls) == 1
     assert len(committer.calls) == 2
-    assert committer.calls[1]["worker_result"] is None
+    assert committer.calls[1]["worker_result"] == recovered.worker_result
 
 
 def test_recovery_rejects_commit_outside_declared_output_contract() -> None:
@@ -613,16 +818,16 @@ def _activity_and_task() -> tuple[HarnessGraphActivity, dict[str, Any]]:
     activity = HarnessGraphActivity(
         run_id="run-1",
         graph_ref=HarnessGraphReference(
-            "graph",
-            HarnessContractReference(
-                HarnessContractKind.WORKFLOW,
+            graph_id="test.graph",
+            schema_version=GRAPH_ONLY_NORMALIZED_HARNESS_GRAPH_SCHEMA,
+            compiler_version=HARNESS_GRAPH_ONLY_COMPILER_VERSION,
+            condition_policy_version=HARNESS_CONDITION_POLICY_VERSION,
+            checksum=checksum_for({"graph": "test"}),
+            graph_ref=HarnessContractReference(
+                HarnessContractKind.GRAPH,
                 "test.graph",
                 "1",
             ),
-            NORMALIZED_HARNESS_GRAPH_SCHEMA,
-            HARNESS_GRAPH_COMPILER_VERSION,
-            HARNESS_CONDITION_POLICY_VERSION,
-            checksum_for({"graph": "test"}),
         ),
         node_id="analyze",
         node_instance_id="hni-analyze-1",
@@ -634,7 +839,7 @@ def _activity_and_task() -> tuple[HarnessGraphActivity, dict[str, Any]]:
         worker_ref=_WORKER_REF,
         activity_ref=_ACTIVITY_REF,
         attempt=1,
-        input_ref=harness_activity_input_checksum(task),
+        input_ref=graph_activity_input_checksum(task),
         causal_decision_checksum=checksum_for({"decision": "dispatch"}),
         causal_decision_sequence=3,
         fencing_generation=1,

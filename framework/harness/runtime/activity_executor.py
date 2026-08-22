@@ -1,14 +1,18 @@
 from __future__ import annotations
 
-import math
 import threading
-from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass, field
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Protocol, runtime_checkable
+from typing import Any
 
-from framework.harness.control_plane.activity import (
-    harness_activity_input_checksum,
+from framework.harness.control_plane.activity_execution import (
+    HARNESS_GRAPH_ACTIVITY_FAILURE_EVIDENCE_SCHEMA,
+    HARNESS_GRAPH_ACTIVITY_TASK_CONTEXT_KEY,
+    HarnessGraphActivityExecutionCommitPort,
+    HarnessGraphActivityExecutionInput,
+    HarnessGraphActivityExecutionInputResolverPort,
+    HarnessGraphActivityTaskContext,
 )
 from framework.harness.control_plane.errors import HarnessValidationError
 from framework.harness.control_plane.graph_runtime import (
@@ -22,16 +26,12 @@ from framework.harness.control_plane.node_output import (
     HarnessNodeOutputResourceIdentity,
     HarnessNodeOutputResourcePort,
 )
-from framework.harness.graph.activity import (
-    HarnessLeafActivityKind,
-)
 from framework.harness.graph.bindings import (
     HarnessActivityUsage,
     HarnessRuntimeBindingAuthority,
 )
 from framework.harness.graph.canonical import (
     canonical_checksum,
-    freeze_json,
     mapping_to_dict,
     required_text,
 )
@@ -54,365 +54,6 @@ from framework.shared.attempts import (
     RetryCreditLedger,
 )
 from framework.shared.time import utc_now
-
-
-HARNESS_GRAPH_ACTIVITY_EXECUTION_INPUT_SCHEMA = (
-    "newsroom.harness-graph-activity-execution-input/v2"
-)
-HARNESS_GRAPH_ACTIVITY_TASK_CONTEXT_SCHEMA = (
-    "newsroom.harness-graph-activity-task-context/v1"
-)
-HARNESS_GRAPH_ACTIVITY_FAILURE_EVIDENCE_SCHEMA = (
-    "newsroom.harness-graph-activity-failure-evidence/v1"
-)
-HARNESS_GRAPH_ACTIVITY_TASK_CONTEXT_KEY = "harness_graph_activity"
-
-_RESERVED_TASK_KEYS = frozenset(
-    {
-        HARNESS_GRAPH_ACTIVITY_TASK_CONTEXT_KEY,
-        "harness_activity",
-    }
-)
-
-
-@dataclass(frozen=True, slots=True)
-class HarnessGraphActivityExecutionInput:
-    """Checksum-bound physical input resolved for one durable Graph activity."""
-
-    activity_id: str
-    activity_checksum: str
-    task: Mapping[str, Any]
-    leaf_activity_kind: HarnessLeafActivityKind | str
-    required_usage: HarnessActivityUsage | str
-    graph_checkpoint_ref: str
-    output_keys: tuple[str, ...]
-    timeout_seconds: float | None = None
-    schema_version: str = HARNESS_GRAPH_ACTIVITY_EXECUTION_INPUT_SCHEMA
-    input_ref: str = field(init=False)
-    binding_checksum: str = field(init=False)
-
-    def __post_init__(self) -> None:
-        object.__setattr__(
-            self,
-            "activity_id",
-            required_text(self.activity_id, "activity_execution_input.activity_id"),
-        )
-        object.__setattr__(
-            self,
-            "activity_checksum",
-            _checksum(
-                self.activity_checksum,
-                "activity_execution_input.activity_checksum",
-            ),
-        )
-        if not isinstance(self.task, Mapping):
-            raise HarnessValidationError(
-                "Graph activity execution task must be an object",
-                code="graph_activity_execution_input_invalid",
-            )
-        task = freeze_json(
-            dict(self.task),
-            "$.graph_activity_execution_input.task",
-        )
-        if not isinstance(task, Mapping):  # pragma: no cover - guarded above
-            raise AssertionError("canonical Graph activity task must remain a mapping")
-        reserved = sorted(set(task).intersection(_RESERVED_TASK_KEYS))
-        if reserved:
-            raise HarnessValidationError(
-                "Graph activity task cannot supply Harness-owned activity context",
-                code="graph_activity_task_context_reserved",
-                details={"keys": reserved},
-            )
-        object.__setattr__(self, "task", task)
-        try:
-            leaf_kind = HarnessLeafActivityKind(self.leaf_activity_kind)
-            required_usage = HarnessActivityUsage(self.required_usage)
-        except (TypeError, ValueError) as exc:
-            raise HarnessValidationError(
-                "Graph activity execution binding is unsupported",
-                code="graph_activity_execution_binding_invalid",
-            ) from exc
-        object.__setattr__(self, "leaf_activity_kind", leaf_kind)
-        object.__setattr__(self, "required_usage", required_usage)
-        object.__setattr__(
-            self,
-            "graph_checkpoint_ref",
-            required_text(
-                self.graph_checkpoint_ref,
-                "activity_execution_input.graph_checkpoint_ref",
-            ),
-        )
-        output_keys = _output_keys(self.output_keys)
-        object.__setattr__(self, "output_keys", output_keys)
-        timeout_seconds = self.timeout_seconds
-        if timeout_seconds is not None:
-            if (
-                isinstance(timeout_seconds, bool)
-                or not isinstance(timeout_seconds, int | float)
-                or not math.isfinite(float(timeout_seconds))
-                or float(timeout_seconds) <= 0
-            ):
-                raise HarnessValidationError(
-                    "Graph activity timeout must be finite and positive",
-                    code="graph_activity_execution_timeout_invalid",
-                )
-            timeout_seconds = float(timeout_seconds)
-            object.__setattr__(self, "timeout_seconds", timeout_seconds)
-        if self.schema_version != HARNESS_GRAPH_ACTIVITY_EXECUTION_INPUT_SCHEMA:
-            raise HarnessValidationError(
-                "unsupported Graph activity execution input schema",
-                code="unsupported_graph_activity_execution_input_schema",
-            )
-        input_ref = harness_activity_input_checksum(mapping_to_dict(task))
-        object.__setattr__(self, "input_ref", input_ref)
-        object.__setattr__(
-            self,
-            "binding_checksum",
-            canonical_checksum(self.checksum_projection()),
-        )
-
-    @classmethod
-    def for_activity(
-        cls,
-        activity: HarnessGraphActivity,
-        *,
-        task: Mapping[str, Any],
-        leaf_activity_kind: HarnessLeafActivityKind | str,
-        required_usage: HarnessActivityUsage | str,
-        graph_checkpoint_ref: str,
-        output_keys: tuple[str, ...],
-        timeout_seconds: float | None = None,
-    ) -> HarnessGraphActivityExecutionInput:
-        if not isinstance(activity, HarnessGraphActivity):
-            raise TypeError("activity must be HarnessGraphActivity")
-        value = cls(
-            activity_id=activity.activity_id,
-            activity_checksum=activity.activity_checksum,
-            task=task,
-            leaf_activity_kind=leaf_activity_kind,
-            required_usage=required_usage,
-            graph_checkpoint_ref=graph_checkpoint_ref,
-            output_keys=output_keys,
-            timeout_seconds=timeout_seconds,
-        )
-        value.assert_matches(activity)
-        return value
-
-    def assert_matches(self, activity: HarnessGraphActivity) -> None:
-        if not isinstance(activity, HarnessGraphActivity):
-            raise TypeError("activity must be HarnessGraphActivity")
-        mismatches = tuple(
-            field_name
-            for field_name, expected, actual in (
-                ("activity_id", activity.activity_id, self.activity_id),
-                (
-                    "activity_checksum",
-                    activity.activity_checksum,
-                    self.activity_checksum,
-                ),
-                ("input_ref", activity.input_ref, self.input_ref),
-            )
-            if expected != actual
-        )
-        if mismatches:
-            raise HarnessValidationError(
-                "resolved execution input conflicts with its durable Graph activity",
-                code="graph_activity_execution_input_mismatch",
-                details={"mismatches": list(mismatches)},
-            )
-
-    def checksum_projection(self) -> dict[str, Any]:
-        return {
-            "schema_version": self.schema_version,
-            "activity_id": self.activity_id,
-            "activity_checksum": self.activity_checksum,
-            "task": mapping_to_dict(self.task),
-            "leaf_activity_kind": self.leaf_activity_kind.value,
-            "required_usage": self.required_usage.value,
-            "graph_checkpoint_ref": self.graph_checkpoint_ref,
-            "output_keys": list(self.output_keys),
-            "timeout_seconds": self.timeout_seconds,
-            "input_ref": self.input_ref,
-        }
-
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            **self.checksum_projection(),
-            "binding_checksum": self.binding_checksum,
-        }
-
-    @classmethod
-    def from_dict(
-        cls,
-        value: Mapping[str, Any],
-    ) -> HarnessGraphActivityExecutionInput:
-        expected = {
-            "schema_version",
-            "activity_id",
-            "activity_checksum",
-            "task",
-            "leaf_activity_kind",
-            "required_usage",
-            "graph_checkpoint_ref",
-            "output_keys",
-            "timeout_seconds",
-            "input_ref",
-            "binding_checksum",
-        }
-        if not isinstance(value, Mapping) or set(value) != expected:
-            raise HarnessValidationError(
-                "Graph activity execution input fields are invalid",
-                code="graph_activity_execution_input_invalid",
-            )
-        output_keys = value["output_keys"]
-        if isinstance(output_keys, str | bytes) or not isinstance(
-            output_keys,
-            Sequence,
-        ):
-            raise HarnessValidationError(
-                "Graph activity execution output keys must be an array",
-                code="graph_activity_execution_input_invalid",
-            )
-        restored = cls(
-            activity_id=value["activity_id"],
-            activity_checksum=value["activity_checksum"],
-            task=value["task"],
-            leaf_activity_kind=value["leaf_activity_kind"],
-            required_usage=value["required_usage"],
-            graph_checkpoint_ref=value["graph_checkpoint_ref"],
-            output_keys=tuple(output_keys),
-            timeout_seconds=value["timeout_seconds"],
-            schema_version=value["schema_version"],
-        )
-        if (
-            value["input_ref"] != restored.input_ref
-            or value["binding_checksum"] != restored.binding_checksum
-        ):
-            raise HarnessValidationError(
-                "Graph activity execution input checksum is invalid",
-                code="graph_activity_execution_input_checksum_invalid",
-            )
-        return restored
-
-
-@dataclass(frozen=True, slots=True)
-class HarnessGraphActivityTaskContext:
-    """Harness-owned worker context for one checkpoint-bound Graph activity."""
-
-    activity: HarnessGraphActivity
-    graph_checkpoint_ref: str
-    schema_version: str = HARNESS_GRAPH_ACTIVITY_TASK_CONTEXT_SCHEMA
-    context_checksum: str = field(init=False)
-
-    def __post_init__(self) -> None:
-        if not isinstance(self.activity, HarnessGraphActivity):
-            raise TypeError("activity must be HarnessGraphActivity")
-        object.__setattr__(
-            self,
-            "graph_checkpoint_ref",
-            required_text(
-                self.graph_checkpoint_ref,
-                "graph_activity_task_context.graph_checkpoint_ref",
-            ),
-        )
-        if self.schema_version != HARNESS_GRAPH_ACTIVITY_TASK_CONTEXT_SCHEMA:
-            raise HarnessValidationError(
-                "unsupported Graph activity task context schema",
-                code="unsupported_graph_activity_task_context_schema",
-            )
-        object.__setattr__(
-            self,
-            "context_checksum",
-            canonical_checksum(self.checksum_projection()),
-        )
-
-    @classmethod
-    def for_execution_input(
-        cls,
-        activity: HarnessGraphActivity,
-        execution_input: HarnessGraphActivityExecutionInput,
-    ) -> HarnessGraphActivityTaskContext:
-        if not isinstance(execution_input, HarnessGraphActivityExecutionInput):
-            raise TypeError(
-                "execution_input must be HarnessGraphActivityExecutionInput"
-            )
-        execution_input.assert_matches(activity)
-        return cls(
-            activity=activity,
-            graph_checkpoint_ref=execution_input.graph_checkpoint_ref,
-        )
-
-    def checksum_projection(self) -> dict[str, Any]:
-        return {
-            "schema_version": self.schema_version,
-            "activity": self.activity.to_dict(),
-            "graph_checkpoint_ref": self.graph_checkpoint_ref,
-        }
-
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            **self.checksum_projection(),
-            "context_checksum": self.context_checksum,
-        }
-
-    @classmethod
-    def from_dict(
-        cls,
-        value: Mapping[str, Any],
-    ) -> HarnessGraphActivityTaskContext:
-        expected = {
-            "schema_version",
-            "activity",
-            "graph_checkpoint_ref",
-            "context_checksum",
-        }
-        if not isinstance(value, Mapping) or set(value) != expected:
-            raise HarnessValidationError(
-                "Graph activity task context fields are invalid",
-                code="graph_activity_task_context_invalid",
-            )
-        activity = value["activity"]
-        if not isinstance(activity, Mapping):
-            raise HarnessValidationError(
-                "Graph activity task context activity must be an object",
-                code="graph_activity_task_context_invalid",
-            )
-        context = cls(
-            activity=HarnessGraphActivity.from_dict(activity),
-            graph_checkpoint_ref=value["graph_checkpoint_ref"],
-            schema_version=value["schema_version"],
-        )
-        if value["context_checksum"] != context.context_checksum:
-            raise HarnessValidationError(
-                "Graph activity task context checksum does not match",
-                code="graph_activity_task_context_checksum_invalid",
-            )
-        return context
-
-
-@runtime_checkable
-class HarnessGraphActivityExecutionInputResolverPort(Protocol):
-    def resolve_execution_input(
-        self,
-        activity: HarnessGraphActivity,
-    ) -> HarnessGraphActivityExecutionInput:
-        """Resolve immutable input already bound to the activity input ref."""
-        ...
-
-
-@runtime_checkable
-class HarnessGraphActivityExecutionCommitPort(Protocol):
-    def commit_execution_result(
-        self,
-        *,
-        activity: HarnessGraphActivity,
-        execution_input: HarnessGraphActivityExecutionInput,
-        worker_result: HarnessWorkerResult | None,
-        node_output_commit: HarnessNodeOutputCommit | None,
-        result: HarnessGraphActivityResult,
-    ) -> HarnessGraphActivityResult:
-        """Idempotently commit one activity-bound result and return its fact."""
-        ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -470,7 +111,7 @@ class HarnessGraphPhysicalActivityExecutionResult:
         if self.recovered_output:
             if (
                 self.attempt is not None
-                or self.worker_result is not None
+                or self.worker_result is None
                 or self.node_output_commit is None
                 or self.graph_result is None
             ):
@@ -486,13 +127,13 @@ class HarnessGraphPhysicalActivityExecutionResult:
 
 
 class HarnessGraphPhysicalActivityExecutor:
-    """Inactive Graph-native physical dispatcher for candidate-only leaves.
+    """Graph-native physical dispatcher for candidate-only leaves.
 
     The executor consumes a durable ``HarnessGraphActivity`` and never invokes
     ``HarnessActivityContractBinding.implementation.dispatch``. Exact pair and
     capability admission remain composition-owned through the runtime binding
-    authority. Production composition must not install this executor until its
-    input, node-output, and result ports are durable.
+    authority. Production composition must provide durable input, node-output,
+    and result ports before installing this executor.
     """
 
     def __init__(
@@ -501,7 +142,7 @@ class HarnessGraphPhysicalActivityExecutor:
         binding_authority: HarnessRuntimeBindingAuthority,
         input_resolver: HarnessGraphActivityExecutionInputResolverPort,
         node_output_resource: HarnessNodeOutputResourcePort,
-        result_committer: HarnessGraphActivityExecutionCommitPort,
+        result_committer: HarnessGraphActivityExecutionCommitPort | None,
         supervisor: AttemptSupervisor,
         clock: Callable[[], datetime] = utc_now,
     ) -> None:
@@ -521,9 +162,8 @@ class HarnessGraphPhysicalActivityExecutor:
             raise TypeError(
                 "node_output_resource must implement HarnessNodeOutputResourcePort"
             )
-        if not isinstance(
-            result_committer,
-            HarnessGraphActivityExecutionCommitPort,
+        if result_committer is not None and not isinstance(
+            result_committer, HarnessGraphActivityExecutionCommitPort
         ):
             raise TypeError(
                 "result_committer must implement "
@@ -537,6 +177,7 @@ class HarnessGraphPhysicalActivityExecutor:
         self._input_resolver = input_resolver
         self._node_output_resource = node_output_resource
         self._result_committer = result_committer
+        self._result_committer_bound = False
         self._output_adapter = HarnessAdmittedGraphActivityOutputAdapter(
             resource=node_output_resource,
             supervisor=supervisor,
@@ -547,6 +188,31 @@ class HarnessGraphPhysicalActivityExecutor:
         """Execute one already committed Graph activity descriptor."""
 
         self.execute(activity)
+
+    def bind_result_committer(
+        self,
+        result_committer: HarnessGraphActivityExecutionCommitPort,
+    ) -> None:
+        """Bind the composition-owned durable result sink exactly once."""
+
+        if not isinstance(
+            result_committer,
+            HarnessGraphActivityExecutionCommitPort,
+        ):
+            raise TypeError(
+                "result_committer must implement "
+                "HarnessGraphActivityExecutionCommitPort"
+            )
+        if (
+            self._result_committer is not result_committer
+            and getattr(self, "_result_committer_bound", False)
+        ):
+            raise HarnessValidationError(
+                "Graph physical executor result committer is immutable",
+                code="graph_result_committer_rebind_forbidden",
+            )
+        self._result_committer = result_committer
+        self._result_committer_bound = True
 
     def execute(
         self,
@@ -586,9 +252,25 @@ class HarnessGraphPhysicalActivityExecutor:
                 code="graph_physical_activity_binding_mismatch",
             )
 
+        compensation_handler = None
+        compensation = execution_input.task.get("compensation")
+        if execution_input.required_usage is HarnessActivityUsage.COMPENSATION:
+            handler_ref = _validate_compensation_task(
+                compensation,
+                activity=activity,
+            )
+            compensation_handler = self._binding_authority.resolve_compensation(
+                handler_ref
+            ).implementation
+        elif compensation is not None:
+            raise HarnessValidationError(
+                "compensation payload requires compensation activity usage",
+                code="graph_compensation_usage_mismatch",
+            )
+
         resource_identity = HarnessNodeOutputResourceIdentity.for_activity(activity)
         existing = self._node_output_resource.committed_output(resource_identity)
-        if existing is not None:
+        if existing is not None and existing.activity_id == activity.activity_id:
             return self._recover_committed_output(
                 activity,
                 execution_input,
@@ -598,11 +280,15 @@ class HarnessGraphPhysicalActivityExecutor:
         worker_holder: dict[str, HarnessWorkerResult] = {}
 
         def invoke() -> HarnessNodeOutputCandidate:
-            worker_result = _coerce_worker_result(
-                binding.worker.implementation.execute(
-                    _worker_task(execution_input, activity)
+            physical_task = _worker_task(execution_input, activity)
+            if compensation_handler is None:
+                worker_result = _coerce_worker_result(
+                    binding.worker.implementation.execute(physical_task)
                 )
-            )
+            else:
+                worker_result = _coerce_compensation_result(
+                    compensation_handler.compensate(physical_task)
+                )
             worker_holder["value"] = worker_result
             if worker_result.status is not HarnessWorkerStatus.SUCCEEDED:
                 raise HarnessValidationError(
@@ -628,6 +314,19 @@ class HarnessGraphPhysicalActivityExecutor:
         )
         worker_result = worker_holder.get("value")
         commit = attempt.commit
+        if (
+            worker_result is None
+            and attempt.outcome.started
+            and attempt.outcome.error is not None
+        ):
+            # A worker may fail before returning a typed candidate (for
+            # example, a provider authorization/context guard). Preserve that
+            # deterministic failure as the Graph result evidence instead of
+            # losing the original error behind a missing-result exception.
+            worker_result = HarnessWorkerResult(
+                status=HarnessWorkerStatus.FAILED,
+                error=str(attempt.outcome.error),
+            )
         current_commit = self._node_output_resource.committed_output(
             resource_identity
         )
@@ -702,6 +401,45 @@ class HarnessGraphPhysicalActivityExecutor:
             graph_result=committed_result,
         )
 
+    def recover_committed_output(
+        self,
+        activity: HarnessGraphActivity,
+        *,
+        execution_input: HarnessGraphActivityExecutionInput | None = None,
+    ) -> HarnessGraphPhysicalActivityExecutionResult:
+        """Recover only the exact current durable node-output commit.
+
+        Recovery is deliberately separate from :meth:`execute`: a durable
+        Worker result or candidate reference is not sufficient evidence to
+        reconstruct a Graph result.  The resource is the authority for the
+        current fenced output slot, and the normal result committer still
+        records the idempotent Graph result projection.
+        """
+
+        if not isinstance(activity, HarnessGraphActivity):
+            raise TypeError("activity must be HarnessGraphActivity")
+        if execution_input is None:
+            execution_input = self._input_resolver.resolve_execution_input(activity)
+        if not isinstance(execution_input, HarnessGraphActivityExecutionInput):
+            raise HarnessValidationError(
+                "Graph activity input resolver returned an invalid contract",
+                code="graph_activity_execution_input_invalid",
+            )
+        execution_input.assert_matches(activity)
+        resource_identity = HarnessNodeOutputResourceIdentity.for_activity(activity)
+        commit = self._node_output_resource.committed_output(resource_identity)
+        if commit is None:
+            raise HarnessValidationError(
+                "Graph result recovery requires the current durable node-output commit",
+                code="graph_physical_result_commit_missing",
+                details={"resource_ref": resource_identity.resource_ref},
+            )
+        return self._recover_committed_output(
+            activity,
+            execution_input,
+            commit,
+        )
+
     def _recover_committed_output(
         self,
         activity: HarnessGraphActivity,
@@ -709,11 +447,18 @@ class HarnessGraphPhysicalActivityExecutor:
         commit: HarnessNodeOutputCommit,
     ) -> HarnessGraphPhysicalActivityExecutionResult:
         _assert_output_commit_matches(activity, execution_input, commit)
+        payload = commit.candidate.worker_result
+        if not isinstance(payload, Mapping):
+            raise HarnessValidationError(
+                "committed Graph node output lacks durable Worker evidence",
+                code="graph_physical_result_worker_evidence_missing",
+            )
+        worker_result = HarnessWorkerResult.from_dict(payload)
         result = _successful_activity_result(activity, commit)
         committed_result = self._commit_result(
             activity=activity,
             execution_input=execution_input,
-            worker_result=None,
+            worker_result=worker_result,
             node_output_commit=commit,
             result=result,
         )
@@ -721,7 +466,7 @@ class HarnessGraphPhysicalActivityExecutor:
             activity=activity,
             execution_input=execution_input,
             attempt=None,
-            worker_result=None,
+            worker_result=worker_result,
             node_output_commit=commit,
             graph_result=committed_result,
             recovered_output=True,
@@ -736,6 +481,11 @@ class HarnessGraphPhysicalActivityExecutor:
         node_output_commit: HarnessNodeOutputCommit | None,
         result: HarnessGraphActivityResult,
     ) -> HarnessGraphActivityResult:
+        if self._result_committer is None:
+            raise HarnessValidationError(
+                "Graph physical executor has no durable result committer",
+                code="graph_result_committer_missing",
+            )
         committed = self._result_committer.commit_execution_result(
             activity=activity,
             execution_input=execution_input,
@@ -755,8 +505,18 @@ def _worker_task(
     execution_input: HarnessGraphActivityExecutionInput,
     activity: HarnessGraphActivity,
 ) -> dict[str, Any]:
+    task = mapping_to_dict(execution_input.task)
+    compensation = task.get("compensation")
+    if isinstance(compensation, Mapping):
+        # Compensation handlers receive the durable entry identity as part of
+        # their physical request.  The typed Graph activity context remains the
+        # sole Harness-owned activity descriptor; no legacy ``harness_activity``
+        # alias is ever injected.
+        task.update(dict(compensation))
+        task["attempt"] = activity.attempt
+        task["fencing_generation"] = activity.fencing_generation
     return {
-        **mapping_to_dict(execution_input.task),
+        **task,
         HARNESS_GRAPH_ACTIVITY_TASK_CONTEXT_KEY: (
             HarnessGraphActivityTaskContext.for_execution_input(
                 activity,
@@ -764,6 +524,90 @@ def _worker_task(
             ).to_dict()
         ),
     }
+
+
+def _validate_compensation_task(
+    value: Any,
+    *,
+    activity: HarnessGraphActivity,
+) -> str:
+    expected_fields = {
+        "binding_id",
+        "entry_id",
+        "origin_node_instance_id",
+        "effect_outcome_ref",
+        "effect_commit_sequence",
+        "handler_ref",
+        "activity_ref",
+        "idempotency_key",
+        "tenant_scope_ref",
+        "identity_scope_ref",
+        "subject_scope_ref",
+    }
+    if not isinstance(value, Mapping) or set(value) != expected_fields:
+        raise HarnessValidationError(
+            "compensation execution requires its exact binding payload",
+            code="graph_compensation_binding_invalid",
+            details={
+                "missing": sorted(expected_fields.difference(value or {}))
+                if isinstance(value, Mapping)
+                else sorted(expected_fields),
+                "unknown": sorted(set(value).difference(expected_fields))
+                if isinstance(value, Mapping)
+                else [],
+            },
+        )
+    required_text(value["binding_id"], "compensation.binding_id")
+    _checksum(value["entry_id"], "compensation.entry_id")
+    required_text(
+        value["origin_node_instance_id"],
+        "compensation.origin_node_instance_id",
+    )
+    _checksum(value["effect_outcome_ref"], "compensation.effect_outcome_ref")
+    effect_commit_sequence = value["effect_commit_sequence"]
+    if (
+        isinstance(effect_commit_sequence, bool)
+        or not isinstance(effect_commit_sequence, int)
+        or effect_commit_sequence < 1
+    ):
+        raise HarnessValidationError(
+            "compensation effect commit sequence must be positive",
+            code="graph_compensation_binding_invalid",
+        )
+    handler_ref = required_text(
+        value["handler_ref"],
+        "compensation.handler_ref",
+    )
+    activity_ref = required_text(
+        value["activity_ref"],
+        "compensation.activity_ref",
+    )
+    if activity_ref != activity.activity_ref.exact_ref:
+        raise HarnessValidationError(
+            "compensation task activity reference conflicts with its Graph activity",
+            code="graph_compensation_activity_reference_mismatch",
+            details={
+                "expected": activity.activity_ref.exact_ref,
+                "actual": activity_ref,
+            },
+        )
+    _checksum(value["idempotency_key"], "compensation.idempotency_key")
+    scope_mismatches = tuple(
+        field_name
+        for field_name in (
+            "tenant_scope_ref",
+            "identity_scope_ref",
+            "subject_scope_ref",
+        )
+        if value[field_name] != getattr(activity, field_name)
+    )
+    if scope_mismatches:
+        raise HarnessValidationError(
+            "compensation task scope conflicts with its Graph activity",
+            code="graph_compensation_scope_mismatch",
+            details={"mismatches": list(scope_mismatches)},
+        )
+    return handler_ref
 
 
 def _coerce_worker_result(value: Any) -> HarnessWorkerResult:
@@ -779,22 +623,50 @@ def _coerce_worker_result(value: Any) -> HarnessWorkerResult:
     return HarnessWorkerResult.from_dict(payload)
 
 
+def _coerce_compensation_result(value: Any) -> HarnessWorkerResult:
+    """Normalize an exact compensation handler result at the worker boundary."""
+
+    to_dict = getattr(value, "to_dict", None)
+    payload = to_dict() if callable(to_dict) else value
+    if isinstance(payload, Mapping) and "status" not in payload:
+        result = HarnessWorkerResult(
+            HarnessWorkerStatus.SUCCEEDED,
+            output=dict(payload),
+        )
+    else:
+        result = _coerce_worker_result(payload)
+    if result.effect_intent is not None:
+        raise HarnessValidationError(
+            "compensation handler cannot emit a forward side-effect intent",
+            code="compensation_side_effect_intent_rejected",
+        )
+    return result
+
+
 def _node_output_candidate(
     execution_input: HarnessGraphActivityExecutionInput,
     worker_result: HarnessWorkerResult,
 ) -> HarnessNodeOutputCandidate:
-    if set(worker_result.output) != set(execution_input.output_keys):
+    output_keys = tuple(execution_input.output_keys)
+    if len(output_keys) == 1:
+        projected_outputs = {output_keys[0]: worker_result.output}
+    elif not set(output_keys).issubset(worker_result.output):
         raise HarnessValidationError(
             "Graph worker outputs do not match the physical activity contract",
             code="graph_activity_worker_output_mismatch",
             details={
-                "expected_output_keys": sorted(execution_input.output_keys),
+                "expected_output_keys": sorted(output_keys),
                 "actual_output_keys": sorted(worker_result.output),
             },
         )
+    else:
+        projected_outputs = {
+            output_key: worker_result.output[output_key]
+            for output_key in output_keys
+        }
     output_refs = {
-        output_key: canonical_checksum(worker_result.output[output_key])
-        for output_key in execution_input.output_keys
+        output_key: canonical_checksum(value)
+        for output_key, value in projected_outputs.items()
     }
     evidence_refs = tuple(
         sorted(
@@ -807,6 +679,7 @@ def _node_output_candidate(
     return HarnessNodeOutputCandidate(
         output_refs=output_refs,
         evidence_refs=evidence_refs,
+        worker_result=worker_result.to_dict(),
     )
 
 
@@ -948,24 +821,6 @@ def _assert_result_matches_activity(
         )
 
 
-def _output_keys(values: Any) -> tuple[str, ...]:
-    if isinstance(values, str | bytes) or not isinstance(values, Sequence):
-        raise HarnessValidationError(
-            "Graph candidate activity requires declared output keys",
-            code="graph_activity_execution_output_keys_invalid",
-        )
-    normalized = tuple(
-        required_text(value, "activity_execution_input.output_key")
-        for value in values
-    )
-    if not normalized or len(normalized) != len(set(normalized)):
-        raise HarnessValidationError(
-            "Graph candidate activity requires unique non-empty output keys",
-            code="graph_activity_execution_output_keys_invalid",
-        )
-    return normalized
-
-
 def _checksum(value: Any, field_name: str) -> str:
     if (
         not isinstance(value, str)
@@ -987,14 +842,6 @@ def _checksum(value: Any, field_name: str) -> str:
 
 
 __all__ = [
-    "HARNESS_GRAPH_ACTIVITY_EXECUTION_INPUT_SCHEMA",
-    "HARNESS_GRAPH_ACTIVITY_FAILURE_EVIDENCE_SCHEMA",
-    "HARNESS_GRAPH_ACTIVITY_TASK_CONTEXT_KEY",
-    "HARNESS_GRAPH_ACTIVITY_TASK_CONTEXT_SCHEMA",
-    "HarnessGraphActivityExecutionCommitPort",
-    "HarnessGraphActivityExecutionInput",
-    "HarnessGraphActivityExecutionInputResolverPort",
-    "HarnessGraphActivityTaskContext",
     "HarnessGraphPhysicalActivityExecutionResult",
     "HarnessGraphPhysicalActivityExecutor",
 ]

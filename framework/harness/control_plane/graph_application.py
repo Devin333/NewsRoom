@@ -99,6 +99,9 @@ from framework.harness.graph.model import (
 )
 from framework.harness.graph.dsl import WaitKind
 from framework.harness.graph.validation import HarnessGraphPreflightPolicy
+from framework.harness.graph.versioning import (
+    GRAPH_ONLY_NORMALIZED_HARNESS_GRAPH_SCHEMA,
+)
 from framework.harness.waits.models import (
     HarnessSignalInboxEntry,
     HarnessSignalInboxEntryStatus,
@@ -220,6 +223,13 @@ _BUDGET_CONSUMPTIONS = MappingProxyType(
 class HarnessGraphActivityDispatcherPort(Protocol):
     def dispatch(self, activity: HarnessGraphActivity) -> None:
         """Dispatch one already committed activity descriptor."""
+        ...
+
+
+@runtime_checkable
+class HarnessGraphActivityReconciliationPort(Protocol):
+    def reconcile(self, activity: HarnessGraphActivity) -> bool:
+        """Return whether recovery may redeliver an active descriptor."""
         ...
 
 
@@ -778,16 +788,10 @@ class HarnessGraphDecisionApplier:
             and definition.node_kind is HarnessGraphNodeKind.WAIT
             and definition.wait is not None
         )
-        is_legacy_approval_wait = (
-            observation.observation_type is HarnessGraphObservationType.WAIT_CAUSE
-            and isinstance(definition, HarnessExecutableNode)
-            and _legacy_approval_registration(state, node) is not None
-        )
         if (
             not isinstance(definition, HarnessExecutableNode)
             and not is_merge_result
             and not is_wait_cause
-            and not is_legacy_approval_wait
         ):
             raise HarnessValidationError(
                 "graph observation targets an incompatible node kind",
@@ -816,23 +820,6 @@ class HarnessGraphDecisionApplier:
                 state,
                 node,
                 definition,
-                observation,
-                projection_sequence=projection_sequence,
-            )
-        if is_legacy_approval_wait:
-            expected_contracts = _graph_observation_contracts(
-                observation,
-                definition,
-                graph,
-            )
-            if observation.contract_ref not in expected_contracts:
-                raise HarnessValidationError(
-                    "legacy approval cause does not match its pinned Wait contract",
-                    code="graph_observation_contract_mismatch",
-                )
-            return _apply_legacy_approval_wait_cause(
-                state,
-                node,
                 observation,
                 projection_sequence=projection_sequence,
             )
@@ -983,6 +970,7 @@ class HarnessGraphControlPlaneRuntime:
         *,
         run_spec_checksum: str,
     ) -> HarnessGraphState:
+        _require_graph_only_runtime_graph(graph)
         recovery = self._port.recover_graph(run_spec.run_id)
         if recovery.state is not None:
             self._validate_recovery_identity(
@@ -1325,6 +1313,7 @@ class HarnessGraphControlPlaneRuntime:
         run_spec_checksum: str,
     ) -> HarnessGraphState:
         run_id = required_text(run_id, "run_id")
+        _require_graph_only_runtime_graph(graph)
         while True:
             recovery = self._port.recover_graph(run_id)
             self._validate_recovery_identity(
@@ -1394,15 +1383,36 @@ class HarnessGraphControlPlaneRuntime:
             item.result.activity_id for item in recovery.activity_result_commits
         }
         active_activity_ids = {item.activity_id for item in state.active_activities}
+        # Cancellation intent is durable and must be installed before a
+        # recovery dispatch can create another physical attempt.
+        self._recover_cancellation_requests(recovery)
         for activity in recovery.activities:
+            marked_dispatched = activity.activity_id in recovery.dispatched_activity_ids
             if (
                 activity.activity_id not in active_activity_ids
                 or activity.activity_id in result_activity_ids
-                or activity.activity_id in recovery.dispatched_activity_ids
             ):
                 continue
+            # ``dispatched_activity_ids`` is an audit marker, not a completion
+            # receipt.  A crash can occur after the marker write and before
+            # the Graph result commit, so every active activity without a
+            # result must be reconciled.  Only an in-process physical owner
+            # can suppress a duplicate dispatch while its call is still live.
+            if marked_dispatched:
+                reconcile = (
+                    None
+                    if self._dispatcher is None
+                    else getattr(self._dispatcher, "reconcile", None)
+                )
+                if not callable(reconcile):
+                    # External dispatchers without the optional observer keep
+                    # the durable marker as their in-flight ownership signal.
+                    # The production physical dispatcher implements reconcile
+                    # and therefore enables restart re-dispatch safely.
+                    continue
+                if not reconcile(activity):
+                    continue
             self._dispatch_after_commit(activity)
-        self._recover_cancellation_requests(recovery)
         self._sync_timer_registrations(state)
         return self._port.recover_graph(run_id).state or state
 
@@ -1731,6 +1741,17 @@ class HarnessGraphControlPlaneRuntime:
             )
 
 
+def _require_graph_only_runtime_graph(graph: NormalizedHarnessGraph) -> None:
+    if not isinstance(graph, NormalizedHarnessGraph):
+        raise TypeError("graph must be NormalizedHarnessGraph")
+    if graph.schema_version != GRAPH_ONLY_NORMALIZED_HARNESS_GRAPH_SCHEMA:
+        raise HarnessValidationError(
+            "live Graph runtime accepts only the Graph-only normalized schema",
+            code="legacy_graph_admission_rejected",
+            details={"schema_version": graph.schema_version},
+        )
+
+
 def _validate_graph_decision(
     state: HarnessGraphState,
     graph: NormalizedHarnessGraph,
@@ -1743,6 +1764,7 @@ def _validate_graph_decision(
         raise TypeError("state must be HarnessGraphState")
     if not isinstance(graph, NormalizedHarnessGraph):
         raise TypeError("graph must be NormalizedHarnessGraph")
+    _require_graph_only_runtime_graph(graph)
     if not isinstance(decision, HarnessGraphDecision):
         raise TypeError("decision must be HarnessGraphDecision")
     if state.lifecycle in {RunLifecycle.COMPLETED, RunLifecycle.HALTED}:
@@ -1962,7 +1984,8 @@ def _validate_durable_side_effect_outcome(
             item
             for item in decisions
             if item.origin is expected_origin
-            and item.step_id == definition.step_id
+            and item.node_id == decision.node_id
+            and item.node_instance_id == decision.node_instance_id
             and item.attempt == decision.attempt
             and item.causation_id == pending.prepare_decision_ref
         )
@@ -2028,6 +2051,10 @@ def _validate_durable_side_effect_outcome(
         authorization.status is not HarnessSideEffectDecisionStatus.AUTHORIZED
         or not _is_checksum_ref(authorization_ref)
         or authorization.run_id != state.run_id
+        or authorization.graph_id != state.graph_ref.graph_id
+        or authorization.graph_version != state.graph_ref.identity_version
+        or authorization.graph_ref != state.graph_ref.identity_ref.exact_ref
+        or authorization.graph_checksum != state.graph_ref.checksum
         or str(authorization.handler) != expected_handler_ref
         or authorization.identity_scope_ref != expected_identity_scope
         or authorization.subject_scope_ref != expected_subject_scope
@@ -2087,12 +2114,22 @@ def _validate_durable_side_effect_outcome(
         or outcome.effect_id != authorization.effect_id
         or outcome.decision_ref != authorization_ref
         or outcome.run_id != authorization.run_id
+        or outcome.graph_id != authorization.graph_id
+        or outcome.graph_version != authorization.graph_version
+        or outcome.graph_ref != authorization.graph_ref
+        or outcome.graph_checksum != authorization.graph_checksum
+        or outcome.origin is not authorization.origin
         or outcome.kind != authorization.kind
         or outcome.handler != authorization.handler
         or outcome.idempotency_key != authorization.idempotency_key
         or outcome.identity_scope_ref != authorization.identity_scope_ref
         or outcome.subject_scope_ref != authorization.subject_scope_ref
         or outcome.atomic_group != authorization.atomic_group
+        or outcome.node_id != authorization.node_id
+        or outcome.node_instance_id != authorization.node_instance_id
+        or outcome.activity_id != authorization.activity_id
+        or outcome.attempt != authorization.attempt
+        or outcome.terminal_action != authorization.terminal_action
         or outcome.disposition is not authorization.disposition
         or not _is_checksum_ref(outcome.checksum)
     )
@@ -2105,6 +2142,26 @@ def _validate_durable_side_effect_outcome(
             "graph completion supplied a conflicting side-effect outcome reference",
             code="graph_side_effect_outcome_mismatch",
         )
+
+
+def _expected_side_effect_activity_id(
+    state: HarnessGraphState,
+    pending: HarnessPendingSideEffectState,
+) -> str:
+    """Recover the exact physical activity pinned on the node projection."""
+
+    node = _node_instance(state, pending.node_instance_id)
+    activity_id = node.metadata.get("activity_id")
+    activity_attempt = node.metadata.get("activity_attempt")
+    if (
+        not isinstance(activity_id, str)
+        or not activity_id.strip()
+        or activity_attempt != pending.attempt
+    ):
+        raise EventStoreCorruptionError(
+            "graph side-effect preparation lacks its physical activity identity"
+        )
+    return activity_id.strip()
 
 
 def _validate_durable_side_effect_observation(
@@ -2163,10 +2220,19 @@ def _validate_durable_side_effect_observation(
         else HarnessSideEffectOrigin.CONTROLLER_TERMINAL
     )
     definition = _definition(graph, pending.node_id)
-    expected_step_id = (
-        definition.step_id
-        if isinstance(definition, HarnessExecutableNode)
-        and scope is HarnessPendingSideEffectScope.NODE_INSTANCE
+    expected_activity_id = (
+        _expected_side_effect_activity_id(state, pending)
+        if scope is HarnessPendingSideEffectScope.NODE_INSTANCE
+        else None
+    )
+    expected_node_id = (
+        pending.node_id
+        if scope is HarnessPendingSideEffectScope.NODE_INSTANCE
+        else None
+    )
+    expected_node_instance_id = (
+        pending.node_instance_id
+        if scope is HarnessPendingSideEffectScope.NODE_INSTANCE
         else None
     )
     authorization_mismatch = (
@@ -2175,13 +2241,19 @@ def _validate_durable_side_effect_observation(
         or authorization.causation_id != pending.prepare_decision_ref
         or authorization.command_ordinal != pending.prepare_sequence
         or authorization.run_id != state.run_id
+        or authorization.graph_id != state.graph_ref.graph_id
+        or authorization.graph_version != state.graph_ref.identity_version
+        or authorization.graph_ref != state.graph_ref.identity_ref.exact_ref
+        or authorization.graph_checksum != state.graph_ref.checksum
         or authorization.origin is not expected_origin
         or str(authorization.handler) != pending.handler_ref.exact_ref
         or authorization.identity_scope_ref
         != state.metadata.get("identity_scope_ref")
         or authorization.subject_scope_ref
         != state.metadata.get("subject_scope_ref")
-        or authorization.step_id != expected_step_id
+        or authorization.node_id != expected_node_id
+        or authorization.node_instance_id != expected_node_instance_id
+        or authorization.activity_id != expected_activity_id
         or (
             scope is HarnessPendingSideEffectScope.NODE_INSTANCE
             and authorization.attempt != pending.attempt
@@ -2217,12 +2289,22 @@ def _validate_durable_side_effect_observation(
         or outcome.decision_ref != decision_ref
         or outcome.effect_id != authorization.effect_id
         or outcome.run_id != authorization.run_id
+        or outcome.graph_id != authorization.graph_id
+        or outcome.graph_version != authorization.graph_version
+        or outcome.graph_ref != authorization.graph_ref
+        or outcome.graph_checksum != authorization.graph_checksum
+        or outcome.origin is not authorization.origin
         or outcome.kind != authorization.kind
         or outcome.handler != authorization.handler
         or outcome.idempotency_key != authorization.idempotency_key
         or outcome.identity_scope_ref != authorization.identity_scope_ref
         or outcome.subject_scope_ref != authorization.subject_scope_ref
         or outcome.atomic_group != authorization.atomic_group
+        or outcome.node_id != authorization.node_id
+        or outcome.node_instance_id != authorization.node_instance_id
+        or outcome.activity_id != authorization.activity_id
+        or outcome.attempt != authorization.attempt
+        or outcome.terminal_action != authorization.terminal_action
         or outcome.disposition is not authorization.disposition
         or outcome.disposition.value != observation.payload["disposition"]
         or checksum_for(outcome.effect_id) != observation.payload["effect_ref"]
@@ -2291,10 +2373,19 @@ def _validate_durable_side_effect_failure_observation(
         if pending.scope is HarnessPendingSideEffectScope.NODE_INSTANCE
         else HarnessSideEffectOrigin.CONTROLLER_TERMINAL
     )
-    expected_step_id = (
-        definition.step_id
-        if isinstance(definition, HarnessExecutableNode)
-        and pending.scope is HarnessPendingSideEffectScope.NODE_INSTANCE
+    expected_activity_id = (
+        _expected_side_effect_activity_id(state, pending)
+        if pending.scope is HarnessPendingSideEffectScope.NODE_INSTANCE
+        else None
+    )
+    expected_node_id = (
+        pending.node_id
+        if pending.scope is HarnessPendingSideEffectScope.NODE_INSTANCE
+        else None
+    )
+    expected_node_instance_id = (
+        pending.node_instance_id
+        if pending.scope is HarnessPendingSideEffectScope.NODE_INSTANCE
         else None
     )
     if (
@@ -2303,13 +2394,19 @@ def _validate_durable_side_effect_failure_observation(
         or authorization.causation_id != pending.prepare_decision_ref
         or authorization.command_ordinal != pending.prepare_sequence
         or authorization.run_id != state.run_id
+        or authorization.graph_id != state.graph_ref.graph_id
+        or authorization.graph_version != state.graph_ref.identity_version
+        or authorization.graph_ref != state.graph_ref.identity_ref.exact_ref
+        or authorization.graph_checksum != state.graph_ref.checksum
         or authorization.origin is not expected_origin
         or str(authorization.handler) != pending.handler_ref.exact_ref
         or authorization.identity_scope_ref
         != state.metadata.get("identity_scope_ref")
         or authorization.subject_scope_ref
         != state.metadata.get("subject_scope_ref")
-        or authorization.step_id != expected_step_id
+        or authorization.node_id != expected_node_id
+        or authorization.node_instance_id != expected_node_instance_id
+        or authorization.activity_id != expected_activity_id
         or (
             pending.scope is HarnessPendingSideEffectScope.NODE_INSTANCE
             and authorization.attempt != pending.attempt
@@ -2921,6 +3018,12 @@ def _apply_step_decision(
             identity_scope_ref=state.metadata.get("identity_scope_ref"),
             subject_scope_ref=state.metadata.get("subject_scope_ref"),
         )
+        # Preserve the exact physical activity identity on the node projection.
+        # Side-effect authorization happens after the activity leaves the active
+        # set, so reconstructing it from the definition/step label would lose
+        # retry and loop-instance identity.
+        metadata["activity_id"] = activity.activity_id
+        metadata["activity_attempt"] = activity.attempt
         active_activities = (
             *active_activities,
             HarnessActiveActivityState(
@@ -3123,95 +3226,7 @@ def _apply_step_decision(
         last_event_sequence=projection_sequence,
         projection_checksum=None,
     )
-    if decision_type is HarnessGraphDecisionType.WAIT_NODE and (
-        decision.payload.get("step_transition_type") != "block_step"
-    ):
-        projected = _register_legacy_approval_wait(
-            projected,
-            node_instance_id=node.instance_id,
-            node_id=definition.node_id,
-            attempt=attempt,
-            decision_sequence=decision_sequence,
-            projection_sequence=projection_sequence,
-        )
     return projected, activity
-
-
-def _register_legacy_approval_wait(
-    state: HarnessGraphState,
-    *,
-    node_instance_id: str,
-    node_id: str,
-    attempt: int,
-    decision_sequence: int,
-    projection_sequence: int,
-) -> HarnessGraphState:
-    tenant_scope_ref = state.metadata.get("tenant_scope_ref")
-    if not isinstance(tenant_scope_ref, str):
-        tenant_scope_ref = canonical_checksum(
-            {"scope": "legacy_run_tenant", "run_id": state.run_id}
-        )
-    identity_scope_ref = state.metadata.get("identity_scope_ref")
-    if not isinstance(identity_scope_ref, str):
-        identity_scope_ref = canonical_checksum(
-            {"scope": "legacy_approval_identity", "run_id": state.run_id}
-        )
-    wait_id = f"approval:{node_id}"
-    correlation_ref = canonical_checksum(
-        {
-            "node_instance_id": node_instance_id,
-            "attempt": attempt,
-            "node_id": node_id,
-        }
-    )
-    scope = HarnessWaitScope(
-        wait_id=wait_id,
-        run_id=state.run_id,
-        node_instance_id=node_instance_id,
-        tenant_scope_ref=tenant_scope_ref,
-        identity_scope_ref=identity_scope_ref,
-        signal_schema_ref="approval@1",
-        correlation_ref=correlation_ref,
-    )
-    record = HarnessWaitRegistrationRecord(
-        scope=scope,
-        kind=WaitKind.APPROVAL,
-        registered_sequence=decision_sequence,
-    )
-    registration = HarnessWaitRegistration(
-        wait_id=wait_id,
-        node_instance_id=node_instance_id,
-        kind=WaitKind.APPROVAL,
-        correlation_ref=scope.correlation_ref,
-        tenant_scope_ref=scope.tenant_scope_ref,
-        identity_scope_ref=scope.identity_scope_ref,
-        signal_schema_ref=scope.signal_schema_ref,
-        registered_sequence=decision_sequence,
-        status=HarnessWaitStatus.REGISTERED,
-        last_event_sequence=projection_sequence,
-    )
-    node = _node_instance(state, node_instance_id)
-    metadata = thaw_json(node.metadata)
-    metadata.update(
-        {
-            "wait_registration_ref": record.registration_ref,
-            "wait_scope_ref": scope.scope_ref,
-            "wait_id": wait_id,
-            "wait_attempt": attempt,
-        }
-    )
-    updated_node = replace(node, metadata=metadata)
-    remaining = tuple(
-        item
-        for item in state.wait_registrations
-        if item.node_instance_id != node_instance_id
-    )
-    return replace(
-        state,
-        node_instances=_replace_node(state.node_instances, updated_node),
-        wait_registrations=(*remaining, registration),
-        projection_checksum=None,
-    )
 
 
 def _apply_control_decision(
@@ -3873,139 +3888,6 @@ def _apply_wait_cause_observation(
             for item in state.wait_registrations
         ),
         signal_inbox=tuple(inbox),
-        last_event_sequence=projection_sequence,
-        projection_checksum=None,
-    )
-
-
-def _legacy_approval_registration(
-    state: HarnessGraphState,
-    node: HarnessNodeInstanceState,
-) -> HarnessWaitRegistration | None:
-    registrations = tuple(
-        item
-        for item in state.wait_registrations
-        if item.node_instance_id == node.instance_id
-        and item.kind is WaitKind.APPROVAL
-    )
-    if not registrations:
-        return None
-    return max(
-        registrations,
-        key=lambda item: (item.registered_sequence, item.wait_id),
-    )
-
-
-def _apply_legacy_approval_wait_cause(
-    state: HarnessGraphState,
-    node: HarnessNodeInstanceState,
-    observation: HarnessAcceptedGraphObservation,
-    *,
-    projection_sequence: int,
-) -> HarnessGraphState:
-    payload = thaw_json(observation.payload)
-    if not isinstance(payload, Mapping) or payload.get("cause_kind") != HarnessWaitCauseKind.APPROVAL.value:
-        raise HarnessValidationError(
-            "legacy approval Wait cause must contain an approval record",
-            code="graph_wait_cause_kind_mismatch",
-        )
-    raw_record = payload.get("record")
-    if not isinstance(raw_record, Mapping):
-        raise HarnessValidationError(
-            "legacy approval Wait cause record is malformed",
-            code="invalid_graph_observation_payload",
-        )
-    record = HarnessWaitApprovalEvidenceRecord.from_dict(raw_record)
-    registration = _legacy_approval_registration(state, node)
-    if registration is None:
-        raise HarnessValidationError(
-            "legacy approval Wait registration is missing",
-            code="graph_wait_registration_missing",
-        )
-    if record.scope != HarnessWaitScope(
-        wait_id=registration.wait_id,
-        run_id=state.run_id,
-        node_instance_id=node.instance_id,
-        tenant_scope_ref=registration.tenant_scope_ref,
-        identity_scope_ref=registration.identity_scope_ref,
-        signal_schema_ref=registration.signal_schema_ref,
-        correlation_ref=registration.correlation_ref,
-    ):
-        raise HarnessValidationError(
-            "legacy approval cause does not match its registration scope",
-            code="graph_wait_cause_scope_mismatch",
-        )
-    if record.recorded_sequence != observation.event_sequence:
-        raise HarnessValidationError(
-            "legacy approval cause sequence does not match its stream event",
-            code="graph_wait_cause_sequence_mismatch",
-        )
-    if observation.evidence_ref != record.approval_ref:
-        raise HarnessValidationError(
-            "legacy approval cause evidence is not canonical",
-            code="graph_wait_cause_evidence_mismatch",
-        )
-    if not registration.unresolved:
-        if registration.resolution_event_ref == record.approval_ref:
-            return replace(
-                state,
-                last_event_sequence=projection_sequence,
-                projection_checksum=None,
-            )
-        raise HarnessValidationError(
-            "resolved legacy approval Wait cannot accept another cause",
-            code="graph_wait_already_resolved",
-        )
-    evidence = HarnessAttemptEvidenceReference(
-        record.approval_event_ref,
-        HarnessEvidenceKind.APPROVAL,
-        node.instance_id,
-        node.attempt,
-        observation.event_sequence,
-        contract_ref=observation.contract_ref,
-        payload_ref=observation.payload_ref,
-    )
-    metadata = thaw_json(node.metadata)
-    metadata.update(
-        {
-            "wait_cause_ref": record.approval_ref,
-            "wait_cause_kind": HarnessWaitCauseKind.APPROVAL.value,
-            "wait_resolution_ref": record.approval_ref,
-            "approval_granted": record.approved,
-            "approval_evidence_ref": record.approval_event_ref,
-        }
-    )
-    updated_registration = replace(
-        registration,
-        status=(
-            HarnessWaitStatus.RESUMED
-            if record.approved
-            else HarnessWaitStatus.CANCELLED
-        ),
-        resolution_event_ref=record.approval_ref,
-        last_event_sequence=projection_sequence,
-    )
-    updated_node = replace(
-        node,
-        evidence_refs=(*node.evidence_refs, evidence),
-        last_event_sequence=projection_sequence,
-        metadata=metadata,
-    )
-    return replace(
-        state,
-        lifecycle=(
-            RunLifecycle.RUNNING
-            if state.lifecycle is RunLifecycle.WAITING
-            else state.lifecycle
-        ),
-        node_instances=_replace_node(state.node_instances, updated_node),
-        wait_registrations=tuple(
-            updated_registration
-            if item.node_instance_id == registration.node_instance_id
-            and item.wait_id == registration.wait_id
-            else item
-            for item in state.wait_registrations
-        ),
         last_event_sequence=projection_sequence,
         projection_checksum=None,
     )
