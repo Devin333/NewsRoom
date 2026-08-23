@@ -5,11 +5,13 @@ from dataclasses import replace
 import pytest
 
 from framework.harness.artifacts import GraphTerminalArtifact
+from framework.events.runtime.models import EventPage, StreamSequenceCursor
 from infrastructure.storage.indexing import (
     GraphArtifactBindingEvidenceSource,
     GraphArtifactBindingKind,
     GraphArtifactBindingProjection,
     GraphStorageIndexCandidateBuilder,
+    GraphStorageIndexCandidateMaterializer,
     GraphStorageIndexError,
     GraphStorageIndexErrorCode,
     LocalGraphStorageIndexStore,
@@ -98,6 +100,89 @@ def test_active_builder_rejects_node_binding_not_proven_by_event_history() -> No
         GraphStorageIndexCandidateBuilder().build(request)
 
     assert raised.value.code is GraphStorageIndexErrorCode.CANDIDATE_NOT_QUALIFIED
+
+
+def test_materializer_reads_one_pinned_durable_prefix_before_building(tmp_path) -> None:
+    manifest = _manifest_with_node_binding()
+    events = _events(manifest)
+    reader = _Reader(events)
+
+    candidate = GraphStorageIndexCandidateMaterializer(
+        event_reader=reader,
+        page_size=1,
+    ).materialize(manifest)
+
+    assert candidate.event_high_watermark == 2
+    assert tuple(request.through_sequence for request in reader.requests) == (2, 2)
+    assert all(request.stream_id == f"run:{manifest.run_id}" for request in reader.requests)
+    assert all(request.tenant_id == manifest.tenant_id for request in reader.requests)
+
+
+def test_materializer_rejects_watermark_drift() -> None:
+    manifest = _manifest_with_node_binding()
+    reader = _Reader(_events(manifest), drift_after_first_read=True)
+
+    with pytest.raises(GraphStorageIndexError) as raised:
+        GraphStorageIndexCandidateMaterializer(event_reader=reader).materialize(manifest)
+
+    assert raised.value.code is GraphStorageIndexErrorCode.CANDIDATE_NOT_QUALIFIED
+
+
+class _Reader:
+    def __init__(self, events, *, drift_after_first_read: bool = False):
+        self.events = tuple(events)
+        self.requests = []
+        self._reads = 0
+        self._drift_after_first_read = drift_after_first_read
+
+    def get_event(self, event_id, *, tenant_id=None):
+        return next(
+            (
+                event
+                for event in self.events
+                if event.event_id == event_id and event.tenant_id == tenant_id
+            ),
+            None,
+        )
+
+    def get_stream_high_watermark(self, stream_id, *, tenant_id=None):
+        if self._drift_after_first_read and self._reads > 0:
+            return 3
+        return max(
+            (
+                event.stream_sequence
+                for event in self.events
+                if event.stream_id == stream_id and event.tenant_id == tenant_id
+            ),
+            default=None,
+        )
+
+    def read_stream(self, request):
+        self._reads += 1
+        self.requests.append(request)
+        after = request.cursor.after_sequence if request.cursor is not None else 0
+        matching = tuple(
+            event
+            for event in self.events
+            if event.stream_id == request.stream_id
+            and event.tenant_id == request.tenant_id
+            and after < event.stream_sequence <= (request.through_sequence or 0)
+        )[: request.limit]
+        next_cursor = None
+        if matching and matching[-1].stream_sequence < (request.through_sequence or 0):
+            next_cursor = StreamSequenceCursor(
+                stream_id=request.stream_id,
+                tenant_id=request.tenant_id,
+                after_sequence=matching[-1].stream_sequence,
+                high_watermark=request.through_sequence,
+            )
+        return EventPage(
+            stream_id=request.stream_id,
+            tenant_id=request.tenant_id,
+            events=matching,
+            high_watermark=request.through_sequence,
+            next_cursor=next_cursor,
+        )
 
 
 def _mixed_manifest():

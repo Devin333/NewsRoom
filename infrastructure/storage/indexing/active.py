@@ -16,7 +16,9 @@ from framework.agent.artifacts.paths import (
 )
 from framework.events.canonical import StoredEvent
 from framework.events.errors import EventContractError
+from framework.events.ports import EventReaderPort
 from framework.events.projection import GraphEventContext, graph_event_context
+from framework.events.runtime.models import MAX_PAGE_LIMIT, StreamReadRequest
 from framework.harness.artifacts import (
     GraphTerminalManifestV2,
     graph_terminal_manifest_hash,
@@ -34,6 +36,7 @@ from infrastructure.storage.indexing.contracts import (
     GraphStorageIndexErrorCode,
     GraphStorageIndexIdentity,
     GraphStorageIndexMaterializationRequest,
+    MAX_GRAPH_INDEX_EVENTS,
 )
 
 
@@ -261,6 +264,97 @@ class GraphStorageIndexCandidateBuilder:
         return bindings
 
 
+class GraphStorageIndexCandidateMaterializer:
+    """Read one pinned durable event prefix before building the candidate."""
+
+    def __init__(
+        self,
+        *,
+        event_reader: EventReaderPort,
+        builder: GraphStorageIndexCandidateBuilder | None = None,
+        page_size: int = 100,
+    ) -> None:
+        if not isinstance(event_reader, EventReaderPort):
+            raise TypeError("event_reader must implement EventReaderPort")
+        if isinstance(page_size, bool) or not isinstance(page_size, int):
+            raise TypeError("page_size must be an integer")
+        if page_size < 1 or page_size > MAX_PAGE_LIMIT:
+            raise ValueError(f"page_size must be between 1 and {MAX_PAGE_LIMIT}")
+        self.event_reader = event_reader
+        self.builder = builder or GraphStorageIndexCandidateBuilder()
+        self.page_size = page_size
+
+    def materialize(self, manifest) -> GraphStorageIndexCandidate:
+        from framework.harness.artifacts import GraphTerminalManifestV2
+
+        if not isinstance(manifest, GraphTerminalManifestV2):
+            raise TypeError("manifest must be GraphTerminalManifestV2")
+        events = self._read_events(manifest)
+        request = self.builder.from_manifest(manifest=manifest, events=events)
+        return self.builder.build(request)
+
+    def _read_events(self, manifest) -> tuple[StoredEvent, ...]:
+        stream_id = f"run:{manifest.run_id}"
+        high_watermark = self.event_reader.get_stream_high_watermark(
+            stream_id,
+            tenant_id=manifest.tenant_id,
+        )
+        if high_watermark is None:
+            _reject(
+                GraphStorageIndexErrorCode.CANDIDATE_NOT_QUALIFIED,
+                "Graph index durable event history is empty",
+                field="events",
+            )
+        events: list[StoredEvent] = []
+        cursor = None
+        while True:
+            page = self.event_reader.read_stream(
+                StreamReadRequest(
+                    stream_id=stream_id,
+                    cursor=cursor,
+                    through_sequence=high_watermark,
+                    limit=self.page_size,
+                    tenant_id=manifest.tenant_id,
+                )
+            )
+            if (
+                page.stream_id != stream_id
+                or page.tenant_id != manifest.tenant_id
+                or page.high_watermark != high_watermark
+            ):
+                _reject(
+                    GraphStorageIndexErrorCode.CANDIDATE_NOT_QUALIFIED,
+                    "Graph index event page changed its pinned scope or watermark",
+                    field="events",
+                )
+            if page.next_cursor is not None and not page.events:
+                _reject(
+                    GraphStorageIndexErrorCode.CANDIDATE_NOT_QUALIFIED,
+                    "Graph index event reader returned an empty page with a cursor",
+                    field="events",
+                )
+            events.extend(page.events)
+            if len(events) > MAX_GRAPH_INDEX_EVENTS:
+                _reject(
+                    GraphStorageIndexErrorCode.REQUEST_INVALID,
+                    "Graph index event history exceeds its bound",
+                    field="events",
+                )
+            cursor = page.next_cursor
+            if cursor is None:
+                break
+        if self.event_reader.get_stream_high_watermark(
+            stream_id,
+            tenant_id=manifest.tenant_id,
+        ) != high_watermark:
+            _reject(
+                GraphStorageIndexErrorCode.CANDIDATE_NOT_QUALIFIED,
+                "Graph index durable event history changed during read",
+                field="events",
+            )
+        return tuple(events)
+
+
 def _reject(
     code: GraphStorageIndexErrorCode,
     message: str,
@@ -292,4 +386,7 @@ def _identity_from_manifest(
     )
 
 
-__all__ = ["GraphStorageIndexCandidateBuilder"]
+__all__ = [
+    "GraphStorageIndexCandidateBuilder",
+    "GraphStorageIndexCandidateMaterializer",
+]

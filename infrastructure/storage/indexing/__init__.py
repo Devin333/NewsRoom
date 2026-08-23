@@ -34,6 +34,7 @@ from infrastructure.storage.indexing.inactive import (
 )
 from infrastructure.storage.indexing.active import (
     GraphStorageIndexCandidateBuilder,
+    GraphStorageIndexCandidateMaterializer,
 )
 from infrastructure.storage.indexing.bindings import (
     GRAPH_ARTIFACT_BINDING_PROJECTION_SCHEMA,
@@ -90,6 +91,7 @@ __all__ = [
     "GraphStorageIndexIdentity",
     "InactiveGraphStorageIndexAdapter",
     "GraphStorageIndexCandidateBuilder",
+    "GraphStorageIndexCandidateMaterializer",
     "LocalGraphIndexCandidateStore",
     "GraphStorageIndexSnapshot",
     "GraphStorageIndexStorePort",
