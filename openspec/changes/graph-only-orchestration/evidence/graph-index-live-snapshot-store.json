@@ -6,13 +6,14 @@
     "4.7",
     "4.12"
   ],
-  "status": "storage_owner_read_back_complete_production_cutover_open",
-  "implementation_commit": "026732f1",
+  "status": "binding_projection_and_storage_read_back_complete_production_cutover_open",
+  "implementation_commit": "681cc236",
   "owners": {
     "snapshot": "infrastructure.storage.indexing.local_store.GraphStorageIndexSnapshot",
     "port": "infrastructure.storage.indexing.local_store.GraphStorageIndexStorePort",
     "local_store": "infrastructure.storage.indexing.local_store.LocalGraphStorageIndexStore",
     "identity": "infrastructure.storage.indexing.contracts.GraphStorageIndexIdentity",
+    "binding_projection": "infrastructure.storage.indexing.bindings.GraphArtifactBindingProjection",
     "records": [
       "infrastructure.storage.indexing.contracts.GraphArtifactIndexRecord",
       "infrastructure.storage.indexing.contracts.GraphEventIndexRecord"
@@ -28,6 +29,8 @@
     "strict_json_and_nested_checksum_read_back": true,
     "unsafe_path_and_symlink_fail_closed": true,
     "node_instance_query_requires_exact_identity": true,
+    "artifact_binding_kind_is_explicit": true,
+    "system_artifact_cannot_be_converted_to_node_binding": true,
     "pointer_rollback": false,
     "production_composition_activated": false,
     "research_artifact_node_instance_fabricated": false
@@ -39,7 +42,11 @@
     },
     "candidate_and_boundary_focused": {
       "command": ".\\.venv\\Scripts\\python.exe -m pytest tests/infrastructure/storage/indexing tests/architecture/test_graph_storage_index_boundary.py -q",
-      "result": "22 passed"
+      "result": "27 passed"
+    },
+    "research_binding_focused": {
+      "command": ".\\.venv\\Scripts\\python.exe -m pytest tests/infrastructure/storage/indexing/test_bindings.py tests/infrastructure/research/test_artifact_publication.py -q",
+      "result": "24 passed"
     },
     "compile": {
       "command": ".\\.venv\\Scripts\\python.exe -m scripts.dev compile",
@@ -51,7 +58,7 @@
     }
   },
   "open_gaps": [
-    "Research terminal artifacts still need a typed node_instance_id binding domain.",
+    "Research terminal artifacts now carry a checksum-bound explicit node/system binding projection; the live index writer still needs to consume that projection and prove node bindings against durable event history.",
     "Production composition does not yet construct or invoke the Graph index writer.",
     "The authoritative event reader/history injection, manifest read-back/replay checks, and Graph index authority cutover remain open.",
     "Task 4.12 remains unchecked; this is not a final Graph-only release claim."
