@@ -47,6 +47,7 @@ def test_subagent_adapter_uses_common_materializer_and_graph_runtime() -> None:
     assert "ArtifactManager" not in source
     assert "write_json" not in calls
     assert "write_text" not in calls
+    assert "is_graph_only" not in source
 
 
 def test_subagent_owner_does_not_import_result_runtime() -> None:

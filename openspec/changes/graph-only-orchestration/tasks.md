@@ -93,24 +93,24 @@ TaskPlan result contract 的 Gate A 子切片已由 commit `e7ec9d9c00ec63cd7688
 
 上述 queue/recovery blocker 已由 commit `0ae73855bf647c4f37c36cec958b85e06931ad03`（tree `1ea90ef6ddcaa5b883fd1202fe136b5530a3d4ce`）的后续 Gate A slice 关闭：Graph-only `TaskPlanQueueProjection /v2` 是 strict identity-only generic task，durable `TaskPlanQueueReadback /v2` 只能由构造时注入的 `TaskPlanQueueReadPort` 返回，`TaskPlanRecoveryService` 不再接收 caller-supplied readback 或 bare queue ids。Redis adapter 用只读原子 snapshot 区分 undelivered、PEL pending 和 acknowledged record；pending/acknowledged/scan-incomplete 都 fail closed，DISPATCHED/RUNNING 只输出无执行 authority 的 `await_stale_reclaim` continuation。没有 worker registration、enqueue、lease、reclaim 或 production composition 接线；真实 Redis integration 已加入但本次因 `NEWS_TEST_REDIS_URL` 未设置而 skipped。Graph-only ContextEnvelope、Research/run admission、生产 queue/lease/reclaim installation、Gate B/C 仍开放，因此 2.7/5.4 不勾选、计数继续保持 `29/102`。Artifact subsystem 与 publication authority 完整保留；证据见 `evidence/graph-only-task-plan-queue-recovery-contract.json`。
 
-- [ ] 3.1 将 control plane、scheduler、evaluator、state、checkpoint、durable events、compensation 和 TaskPlan 的 imports 切换到 `framework.harness.graph`
-- [ ] 3.2 将 route table、condition table、activity readiness、quality gate 和 budget context 改为从 pinned Graph 读取
-- [ ] 3.3 保证所有 phase transition 继续记录 durable `PLAN -> EXECUTE -> VERIFY` transcript/event，并绑定 Graph/node-instance identity
+- [x] 3.1 将 control plane、scheduler、evaluator、state、checkpoint、durable events、compensation 和 TaskPlan 的 imports 切换到 `framework.harness.graph`
+- [x] 3.2 将 route table、condition table、activity readiness、quality gate 和 budget context 改为从 pinned Graph 读取
+- [x] 3.3 保证所有 phase transition 继续记录 durable `PLAN -> EXECUTE -> VERIFY` transcript/event，并绑定 Graph/node-instance identity
 - [x] 3.4 将 TaskPlan 限定为冻结 Graph 中显式注册 dynamic stage 的内部计划版本，不允许它修改 outer Graph 或新增未注册 worker
 - [x] 3.5 将 Sequence、Choice、Parallel-All/Any、Join、Bounded-Loop、Wait、approval、timer、signal、compensation 保持为确定性 control nodes
-- [ ] 3.6 将 Function、Tool、Skill、Subagent、AgentLoop 注册为 leaf activity bindings，并让 worker 输出只进入 candidate/evidence channel
-- [ ] 3.7 将 memory write、tool authorization、artifact publication 和 external side effect 都接回 Harness-owned gate/port authority
+- [x] 3.6 将 Function、Tool、Skill、Subagent、AgentLoop 注册为 leaf activity bindings，并让 worker 输出只进入 candidate/evidence channel
+- [x] 3.7 将 memory write、tool authorization、artifact publication 和 external side effect 都接回 Harness-owned gate/port authority
 - [x] 3.8 增加 adversarial tests，证明 worker route suggestion、LLM self-score、queue readiness 和 business service cannot alter Graph decisions
 - [x] 3.9 增加 crash recovery、checkpoint replay、gate version pinning 和 missing terminal evidence 的 Graph-only tests
-- [ ] 3.10 将 `HarnessRunResult`、gate context、Wait/resume、side-effect request 和 inspection/read model 改为直接消费 Graph run/node-instance state，删除 `_graph_compat_state()`、flat `HarnessState` projection、`LEGACY_UNBOUND` 和 synthetic legacy approval identity
-- [ ] 3.11 将 SubAgent production invocation/context/output/transcript/receipt/bundle writer、reader 和 store 固定为 Graph-only v3；把 v1/v2 识别移出 production import，删除 live defaults、`is_graph_only` dual branches 和 `workflow_id` authority
-- [ ] 3.12 将 `BusinessContext`、`TraceContext`、propagation carrier、tool inspection metrics 和所有相关 caller 迁到 versioned Graph identity；旧字段不得作为 nullable alias 保留
-- [ ] 3.13 从 Event schema catalog 删除 Workflow event/operation 的 current registration，删除旧 `Event`/`EventEnvelope` facade 和 production-importable migration application/service/CLI surface；Graph event/read model 成为唯一 live contract
-- [ ] 3.14 将 Memory scope/policy/adapter、Governance budget scope、Worker task/result、Skill run context、LLM structured-output policy 和 observability metadata 统一迁到 Graph run/node/stage identity，并同步 PostgreSQL、Research 和 service caller
-- [ ] 3.15 删除无 production caller 的 flat `HarnessCheckpoint`、checkpoint store、durable state、replay runtime 及 root/ports exports；保留 control-plane Graph checkpoint/replay owner
-- [ ] 3.16 删除 `WorkflowArtifactRef`、`WorkflowArtifactPublisher`、`LocalArtifactPublisher` 及仅服务它们的测试/export；保留 `ArtifactManager` raw storage/integrity/path-safety primitives 和 `framework/harness/artifacts` terminal authority
-- [ ] 3.17 收敛 Graph version registry，只保留 live Graph schemas；删除 `condition_from_legacy_dict`、legacy graph schema current constants 和 preflight flat metadata fallback
-- [ ] 3.18 将 Harness RAG session/spec、context pack 和 Research RAG callers 统一绑定 exact Graph identity，删除 nullable Workflow/session identity fallback，并保留 independently owned RAG session capability
+- [x] 3.10 将 `HarnessRunResult`、gate context、Wait/resume、side-effect request 和 inspection/read model 改为直接消费 Graph run/node-instance state，删除 `_graph_compat_state()`、flat `HarnessState` projection、`LEGACY_UNBOUND` 和 synthetic legacy approval identity
+- [x] 3.11 将 SubAgent production invocation/context/output/transcript/receipt/bundle writer、reader 和 store 固定为 Graph-only v3；把 v1/v2 识别移出 production import，删除 live defaults、`is_graph_only` dual branches 和 `workflow_id` authority
+- [x] 3.12 将 `BusinessContext`、`TraceContext`、propagation carrier、tool inspection metrics 和所有相关 caller 迁到 versioned Graph identity；旧字段不得作为 nullable alias 保留
+- [x] 3.13 从 Event schema catalog 删除 Workflow event/operation 的 current registration，删除旧 `Event`/`EventEnvelope` facade 和 production-importable migration application/service/CLI surface；Graph event/read model 成为唯一 live contract
+- [x] 3.14 将 Memory scope/policy/adapter、Governance budget scope、Worker task/result、Skill run context、LLM structured-output policy 和 observability metadata 统一迁到 Graph run/node/stage identity，并同步 PostgreSQL、Research 和 service caller
+- [x] 3.15 删除无 production caller 的 flat `HarnessCheckpoint`、checkpoint store、durable state、replay runtime 及 root/ports exports；保留 control-plane Graph checkpoint/replay owner
+- [x] 3.16 删除 `WorkflowArtifactRef`、`WorkflowArtifactPublisher`、`LocalArtifactPublisher` 及仅服务它们的测试/export；保留 `ArtifactManager` raw storage/integrity/path-safety primitives 和 `framework/harness/artifacts` terminal authority
+- [x] 3.17 收敛 Graph version registry，只保留 live Graph schemas；删除 `condition_from_legacy_dict`、legacy graph schema current constants 和 preflight flat metadata fallback
+- [x] 3.18 将 Harness RAG session/spec、context pack 和 Research RAG callers 统一绑定 exact Graph identity，删除 nullable Workflow/session identity fallback，并保留 independently owned RAG session capability
 
 ## 4. Domain-neutral 能力迁出旧 runtime
 

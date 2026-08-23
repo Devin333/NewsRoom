@@ -1,0 +1,98 @@
+{
+  "schema": "newsroom.graph-only-prd-02abcde-contract/v1",
+  "captured_at": "2026-08-24",
+  "change": "graph-only-orchestration",
+  "prd_slices": ["02a", "02b", "02c", "02d", "02e"],
+  "task_refs": ["3.1", "3.2", "3.3", "3.4", "3.5", "3.6", "3.7", "3.8", "3.9", "3.10", "3.11", "3.12", "3.13", "3.14", "3.15", "3.16", "3.17", "3.18"],
+  "status": "complete_for_current_scope",
+  "implementation": {
+    "baseline_commit": "953bf7ac",
+    "worktree_state": "dirty_before_evidence_update",
+    "graph_identity": "framework/shared/graph_identity.py",
+    "run_spec_and_admission": "framework/harness/control_plane/state.py + framework/harness/control_plane/harness.py",
+    "graph_control_nodes": "framework/harness/graph + framework/harness/control_plane/graph_evaluator.py + framework/harness/control_plane/scheduler.py",
+    "phase_and_event_contract": "framework/events/graph_phase.py + framework/harness/control_plane/durable_events.py",
+    "side_effect_authority": "framework/harness/side_effects",
+    "recovery_and_replay": "framework/harness/control_plane/graph_checkpoint.py + framework/harness/control_plane/replay_history.py + framework/harness/task_plan/replay.py",
+    "worker_context_boundary": "framework/harness/subagents + framework/harness/context + framework/harness/rag + framework/harness/runtime/subagent_result_adapter.py",
+    "memory_budget_and_observability": "framework/memory + framework/governance/budget + framework/llm + framework/tool/inspection"
+  },
+  "contracts": {
+    "pinned_graph_identity_is_required": true,
+    "route_readiness_gate_and_budget_are_graph_bound": true,
+    "phase_transitions_are_checksum_bound_and_durable": true,
+    "deterministic_control_nodes_are_harness_owned": true,
+    "dynamic_taskplan_is_frozen_graph_stage_only": true,
+    "leaf_workers_emit_candidate_or_evidence_only": true,
+    "side_effect_intent_decision_outcome_use_exact_graph_identity": true,
+    "memory_write_and_publication_require_harness_authority": true,
+    "replay_does_not_call_live_workers_or_side_effects": true,
+    "run_result_wait_resume_and_inspection_consume_graph_state": true,
+    "subagent_production_schema": "newsroom.subagent-invocation/v3",
+    "subagent_activity_identity_validation": "unconditional Graph-only v3 identity matching; no is_graph_only legacy branch",
+    "context_schema": "newsroom.context-envelope/v2",
+    "rag_session_requires_graph_identity": true,
+    "flat_harness_checkpoint_and_workflow_artifact_publishers_have_no_live_symbols": true,
+    "legacy_workflow_identity_is_not_a_live_authority": true,
+    "unknown_graph_schema_or_version_fails_closed": true
+  },
+  "verification": {
+    "compile": {
+      "command": ".\\.venv\\Scripts\\python.exe -m scripts.dev compile",
+      "result": "passed"
+    },
+    "control_plane_and_events": {
+      "command": ".\\.venv\\Scripts\\python.exe -m pytest tests/framework/harness/control_plane tests/framework/events -q",
+      "result": "687 passed"
+    },
+    "graph_taskplan_and_control_nodes": {
+      "command": ".\\.venv\\Scripts\\python.exe -m pytest tests/framework/harness/graph tests/framework/harness/task_plan tests/framework/harness/control_plane -q",
+      "result": "503 passed"
+    },
+    "side_effect_memory_and_authority": {
+      "command": ".\\.venv\\Scripts\\python.exe -m pytest tests/framework/harness/side_effects tests/framework/harness/ports/test_memory_port.py tests/framework/harness/rag/test_rag_session_controller.py tests/framework/harness/rag/test_rag_session_replay.py tests/framework/memory/test_graph_memory_adapter.py tests/framework/memory/test_memory_policy_gate.py tests/framework/memory/test_memory_write_trace.py tests/architecture/test_harness_side_effect_port_boundary.py -q",
+      "result": "39 passed"
+    },
+    "recovery_and_replay": {
+      "command": ".\\.venv\\Scripts\\python.exe -m pytest tests/framework/harness/control_plane/test_graph_checkpoint_replay.py tests/framework/harness/control_plane/test_graph_only_checkpoint_replay.py tests/framework/harness/runtime/test_context_snapshot_replay.py tests/framework/events/test_deterministic_replay_engine.py -q",
+      "result": "54 passed"
+    },
+    "subagent_context_and_shared_contracts": {
+      "command": ".\\.venv\\Scripts\\python.exe -m pytest tests/framework/harness/subagents tests/framework/harness/context tests/framework/agent tests/framework/shared -q",
+      "result": "297 passed"
+    },
+    "framework_regression": {
+      "command": ".\\.venv\\Scripts\\python.exe -m pytest tests/framework/harness tests/framework/events tests/framework/memory tests/framework/governance tests/framework/skills tests/framework/llm tests/framework/rag -q",
+      "result": "2034 passed"
+    },
+    "architecture": {
+      "command": ".\\.venv\\Scripts\\python.exe -m pytest tests/architecture -q",
+      "result": "210 passed, 4 warnings"
+    },
+    "smoke": {
+      "command": ".\\.venv\\Scripts\\python.exe -m scripts.dev smoke",
+      "result": "timed_out_after_180s",
+      "note": "The bounded smoke invocation did not complete; targeted compile, regression, architecture, and strict OpenSpec checks passed."
+    },
+    "strict_openspec_validation": {
+      "command": "openspec validate graph-only-orchestration --strict",
+      "result": "passed"
+    }
+  },
+  "cross_slice_regressions": {
+    "status": "recorded_not_attributed_to_02",
+    "command": ".\\.venv\\Scripts\\python.exe -m pytest tests/framework/tool tests/infrastructure/research -q",
+    "result": "304 passed, 17 failed",
+    "failures": [
+      "one existing MCP timeout termination assertion",
+      "sixteen artifact lifecycle/governance fixtures still construct legacy GraphTerminalManifest while the active store requires GraphTerminalManifestV2"
+    ],
+    "owner": "03 artifact/runtime and tool safety slices",
+    "reason": "The failures occur outside the 02 Harness control-plane, identity, recovery, worker, context, memory, and RAG contracts and are retained as explicit follow-up evidence rather than hidden."
+  },
+  "scope_boundary": {
+    "history_only_legacy_readers": "scripts/graph_only_migration and typed historical schema/quarantine paths",
+    "artifact_primitives_retained": true,
+    "next_slices": "03 artifact/event/index and physical-dispatcher migration"
+  }
+}
