@@ -1,0 +1,59 @@
+{
+  "schema": "newsroom.graph-index-live-snapshot-store-evidence/v1",
+  "captured_at": "2026-08-23",
+  "change": "graph-only-orchestration",
+  "task_refs": [
+    "4.7",
+    "4.12"
+  ],
+  "status": "storage_owner_read_back_complete_production_cutover_open",
+  "implementation_commit": "026732f1",
+  "owners": {
+    "snapshot": "infrastructure.storage.indexing.local_store.GraphStorageIndexSnapshot",
+    "port": "infrastructure.storage.indexing.local_store.GraphStorageIndexStorePort",
+    "local_store": "infrastructure.storage.indexing.local_store.LocalGraphStorageIndexStore",
+    "identity": "infrastructure.storage.indexing.contracts.GraphStorageIndexIdentity",
+    "records": [
+      "infrastructure.storage.indexing.contracts.GraphArtifactIndexRecord",
+      "infrastructure.storage.indexing.contracts.GraphEventIndexRecord"
+    ]
+  },
+  "invariants": {
+    "exact_graph_identity_path": true,
+    "immutable_snapshot_schema": "newsroom.graph-storage-index-snapshot/v1",
+    "atomic_write": true,
+    "exclusive_lock": true,
+    "same_body_idempotency": true,
+    "same_identity_conflict": true,
+    "strict_json_and_nested_checksum_read_back": true,
+    "unsafe_path_and_symlink_fail_closed": true,
+    "node_instance_query_requires_exact_identity": true,
+    "pointer_rollback": false,
+    "production_composition_activated": false,
+    "research_artifact_node_instance_fabricated": false
+  },
+  "verification": {
+    "live_index_focused": {
+      "command": ".\\.venv\\Scripts\\python.exe -m pytest tests/infrastructure/storage/indexing/test_local_graph_index_store.py -q",
+      "result": "4 passed"
+    },
+    "candidate_and_boundary_focused": {
+      "command": ".\\.venv\\Scripts\\python.exe -m pytest tests/infrastructure/storage/indexing tests/architecture/test_graph_storage_index_boundary.py -q",
+      "result": "22 passed"
+    },
+    "compile": {
+      "command": ".\\.venv\\Scripts\\python.exe -m scripts.dev compile",
+      "result": "passed"
+    },
+    "mandatory_smoke": {
+      "command": ".\\.venv\\Scripts\\python.exe -m scripts.dev smoke",
+      "result": "2292 passed, 23 deselected, 22 warnings; AgentLoop succeeded; source validation is_valid=true/error_count=0/warning_count=0"
+    }
+  },
+  "open_gaps": [
+    "Research terminal artifacts still need a typed node_instance_id binding domain.",
+    "Production composition does not yet construct or invoke the Graph index writer.",
+    "The authoritative event reader/history injection, manifest read-back/replay checks, and Graph index authority cutover remain open.",
+    "Task 4.12 remains unchecked; this is not a final Graph-only release claim."
+  ]
+}
