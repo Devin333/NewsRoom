@@ -30,6 +30,12 @@ from infrastructure.storage.indexing.contracts import (
 from infrastructure.storage.indexing.inactive import (
     InactiveGraphStorageIndexAdapter,
 )
+from infrastructure.storage.indexing.bindings import (
+    GRAPH_ARTIFACT_BINDING_PROJECTION_SCHEMA,
+    GraphArtifactBindingEvidenceSource,
+    GraphArtifactBindingKind,
+    GraphArtifactBindingProjection,
+)
 from infrastructure.storage.indexing.local_candidate import (
     DEFAULT_MAX_GRAPH_INDEX_CANDIDATE_BYTES,
     LocalGraphIndexCandidateStore,
@@ -48,6 +54,7 @@ __all__ = [
     "DEFAULT_MAX_GRAPH_INDEX_CANDIDATE_BYTES",
     "DEFAULT_MAX_GRAPH_INDEX_SNAPSHOT_BYTES",
     "GRAPH_ARTIFACT_INDEX_RECORD_SCHEMA",
+    "GRAPH_ARTIFACT_BINDING_PROJECTION_SCHEMA",
     "GRAPH_ARTIFACT_NODE_BINDING_SCHEMA",
     "GRAPH_EVENT_INDEX_RECORD_SCHEMA",
     "GRAPH_STORAGE_INDEX_CANDIDATE_REQUEST_SCHEMA",
@@ -58,6 +65,9 @@ __all__ = [
     "GRAPH_STORAGE_INDEX_STAGE_RECEIPT_SCHEMA",
     "GRAPH_STORAGE_INDEX_SNAPSHOT_SCHEMA",
     "GraphArtifactIndexRecord",
+    "GraphArtifactBindingEvidenceSource",
+    "GraphArtifactBindingKind",
+    "GraphArtifactBindingProjection",
     "GraphArtifactNodeBinding",
     "GraphEventIndexRecord",
     "GraphIndexCandidateStageReceipt",

@@ -66,6 +66,11 @@ from infrastructure.research.artifact_port import (
     FilesystemHarnessArtifactPort,
     is_verified_internal_staged_artifact,
 )
+from infrastructure.storage.indexing import (
+    GraphArtifactBindingEvidenceSource,
+    GraphArtifactBindingKind,
+    GraphArtifactBindingProjection,
+)
 
 
 # Keep the on-disk staging segment compact for Windows path-length limits.  Its
@@ -178,8 +183,16 @@ class ResearchArtifactBundleHandler:
                         "size_bytes": len(content),
                         "content_type": request.media_type,
                         "metadata": dict(request.metadata),
-                        "node_id": intent.step_id,
+                        "node_id": intent.node_id,
+                        "node_instance_id": intent.node_instance_id,
                         "attempt_id": f"attempt-{intent.attempt}",
+                        "graph_artifact_binding": _node_binding_projection(
+                            intent,
+                            authorization,
+                            artifact_id=artifact_type,
+                            content_checksum=f"sha256:{checksum}",
+                            attempt_id=f"attempt-{intent.attempt}",
+                        ),
                         "required_for_replay": True,
                         "required_for_publication": True,
                     }
@@ -301,7 +314,14 @@ class ResearchArtifactBundleHandler:
                     "canonical_path": f"artifacts/{request.artifact_type}.json",
                     "candidate_ref": None,
                     "node_id": "terminal",
+                    "node_instance_id": None,
                     "attempt_id": "terminal-1",
+                    "graph_artifact_binding": _system_binding_projection(
+                        intent,
+                        authorization,
+                        artifact_id=request.artifact_type,
+                        content_checksum=f"sha256:{compute_checksum(content)}",
+                    ),
                     "required_for_replay": True,
                     "required_for_publication": True,
                 }
@@ -1198,6 +1218,7 @@ def _public_member_projection(member: Mapping[str, Any]) -> dict[str, Any]:
         "content_type": member["content_type"],
         "canonical_path": member["canonical_path"],
         "candidate_ref": member.get("candidate_ref"),
+        "graph_artifact_binding": dict(member["graph_artifact_binding"]),
     }
 
 
@@ -1212,6 +1233,23 @@ def _graph_terminal_artifact(
     checksum = str(member["checksum"])
     if not checksum.startswith("sha256:"):
         checksum = f"sha256:{checksum}"
+    binding = GraphArtifactBindingProjection.from_dict(
+        member.get("graph_artifact_binding")
+    )
+    if binding.artifact_id != artifact_type:
+        raise HarnessValidationError(
+            "Research artifact binding changed artifact identity",
+            code="research_artifact_binding_mismatch",
+        )
+    if binding.kind is GraphArtifactBindingKind.NODE and (
+        binding.node_id != member.get("node_id")
+        or binding.node_instance_id != member.get("node_instance_id")
+        or binding.attempt_id != member.get("attempt_id")
+    ):
+        raise HarnessValidationError(
+            "Research node artifact binding changed producer identity",
+            code="research_artifact_binding_mismatch",
+        )
     return GraphTerminalArtifact(
         artifact_key=artifact_type,
         artifact_id=artifact_type,
@@ -1226,6 +1264,7 @@ def _graph_terminal_artifact(
         required_for_publication=bool(member["required_for_publication"]),
         metadata={
             **dict(member.get("metadata") or {}),
+            "graph_artifact_binding": binding.to_dict(),
             "identity_scope_ref": intent.identity_scope_ref,
             "subject_scope_ref": intent.subject_scope_ref,
             "publication_authority_ref": authorization.checksum,
@@ -1274,6 +1313,70 @@ def _coerce_terminal_payloads(
 def _history_cutoff(intent: HarnessSideEffectIntent) -> str | None:
     value = intent.payload.get("history_cutoff")
     return value if isinstance(value, str) and value.strip() else None
+
+
+def _node_binding_projection(
+    intent: HarnessSideEffectIntent,
+    authorization: HarnessSideEffectDecision,
+    *,
+    artifact_id: str,
+    content_checksum: str,
+    attempt_id: str,
+) -> dict[str, Any]:
+    if intent.node_id is None or intent.node_instance_id is None:
+        raise HarnessValidationError(
+            "Research node artifact publication requires a typed Graph node instance",
+            code="research_artifact_node_instance_missing",
+        )
+    evidence_ref = checksum_for(
+        {
+            "source": GraphArtifactBindingEvidenceSource.WORKER_SIDE_EFFECT_INTENT.value,
+            "authority_ref": authorization.checksum,
+            "run_id": intent.run_id,
+            "graph_ref": intent.graph_ref,
+            "graph_checksum": intent.graph_checksum,
+            "artifact_id": artifact_id,
+            "content_checksum": content_checksum,
+            "node_id": intent.node_id,
+            "node_instance_id": intent.node_instance_id,
+            "attempt_id": attempt_id,
+        }
+    )
+    return GraphArtifactBindingProjection.for_node(
+        artifact_id=artifact_id,
+        node_id=intent.node_id,
+        node_instance_id=intent.node_instance_id,
+        attempt_id=attempt_id,
+        evidence_ref=evidence_ref,
+        evidence_source=GraphArtifactBindingEvidenceSource.WORKER_SIDE_EFFECT_INTENT,
+    ).to_dict()
+
+
+def _system_binding_projection(
+    intent: HarnessSideEffectIntent,
+    authorization: HarnessSideEffectDecision,
+    *,
+    artifact_id: str,
+    content_checksum: str,
+) -> dict[str, Any]:
+    evidence_ref = checksum_for(
+        {
+            "source": GraphArtifactBindingEvidenceSource.CONTROLLER_TERMINAL_AUTHORITY.value,
+            "authority_ref": authorization.checksum,
+            "run_id": intent.run_id,
+            "graph_ref": intent.graph_ref,
+            "graph_checksum": intent.graph_checksum,
+            "artifact_id": artifact_id,
+            "content_checksum": content_checksum,
+            "terminal_action": intent.terminal_action,
+            "state_checksum": intent.state_checksum,
+        }
+    )
+    return GraphArtifactBindingProjection.for_system(
+        artifact_id=artifact_id,
+        evidence_ref=evidence_ref,
+        evidence_source=GraphArtifactBindingEvidenceSource.CONTROLLER_TERMINAL_AUTHORITY,
+    ).to_dict()
 
 
 __all__ = [

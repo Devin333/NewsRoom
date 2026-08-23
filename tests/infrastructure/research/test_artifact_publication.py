@@ -32,6 +32,7 @@ from infrastructure.research.artifact_port import (
     FilesystemHarnessArtifactPort,
 )
 from infrastructure.research.artifact_publication import ResearchArtifactBundleHandler
+from infrastructure.storage.indexing import GraphArtifactBindingKind
 
 
 _IDENTITY_SCOPE = checksum_for({"tenant_id": "tenant-a", "user_id": "user-a"})
@@ -70,6 +71,18 @@ def test_prepare_is_hidden_until_controller_terminal_publication(tmp_path: Path)
     assert manifest.publication.publication_authority_ref == terminal_decision.checksum
     assert manifest.publication.terminal_side_effect_outcome_ref == published.checksum
     assert manifest.status.value == "succeeded"
+    prepared_artifacts = {
+        "research-analysis",
+        "research-quality-result",
+    }
+    for artifact in manifest.artifacts:
+        binding = artifact.metadata["graph_artifact_binding"]
+        if artifact.artifact_key in prepared_artifacts:
+            assert binding["kind"] == GraphArtifactBindingKind.NODE.value
+            assert binding["node_instance_id"] == intent.node_instance_id
+        else:
+            assert binding["kind"] == GraphArtifactBindingKind.SYSTEM.value
+            assert binding["node_instance_id"] is None
     port.set_accepted_run_resolver(None)
     with pytest.raises(Exception, match="accepted run disposition"):
         port.read_artifact(f"artifact://{intent.run_id}/research-analysis")
