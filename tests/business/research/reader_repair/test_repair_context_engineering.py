@@ -6,6 +6,7 @@ from framework.harness import HarnessEventType, HarnessValidationError
 from business.research.domain import ReaderIssue
 from business.research.domain.reader_repair import ReaderRepairMemoryQuery
 from business.research.reader_repair import ReaderRepairContextBuilder
+from business.research.graphs.reader_repair import build_reader_repair_context_graph_identity
 from tests.framework.harness.context.runtime_fakes import verified_context_assembler
 
 
@@ -31,8 +32,10 @@ def test_repair_context_pack_writes_context_snapshot_before_subagents() -> None:
 
     result = builder.assemble_for_subagent(
         context_pack=pack,
-        run_id="repair-run-context",
-        step_id="propose_repair_candidate",
+        graph_identity=build_reader_repair_context_graph_identity(
+            run_id="repair-run-context",
+            stage_id="propose_repair_candidate",
+        ),
         subagent_id="reader_repair_proposer",
         role="proposer",
         max_input_tokens=4096,
@@ -72,8 +75,10 @@ def test_repair_protected_context_overflow_fails_closed() -> None:
     with pytest.raises(HarnessValidationError, match="did not authorize"):
         builder.assemble_for_subagent(
             context_pack=pack,
-            run_id="repair-run-context-overflow",
-            step_id="propose_repair_candidate",
+            graph_identity=build_reader_repair_context_graph_identity(
+                run_id="repair-run-context-overflow",
+                stage_id="propose_repair_candidate",
+            ),
             subagent_id="reader_repair_proposer",
             role="proposer",
             max_input_tokens=256,

@@ -13,7 +13,7 @@ def test_budget_fact_event_projects_only_bounded_fact_ref_into_transcript() -> N
     event = HarnessEvent(
         event_type=HarnessEventType.BUDGET_FACT_RECORDED,
         run_id="run-transcript-budget",
-        step_id="step-1",
+        node_id="step-1",
         payload={
             "resolution_status": "verified",
             "operation_id": "operation-1",

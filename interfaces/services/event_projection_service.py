@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import json
-from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
@@ -12,14 +10,23 @@ from framework.agent.artifacts.paths import (
     validate_artifact_path_segment,
 )
 from framework.events.errors import EventContractError, EventStoreUnavailableError
+from framework.events.application import (
+    DurableGraphEventProjectionAdapter,
+    GraphEventProjectionApplicationPort,
+    GraphEventProjectionApplicationRequest,
+    GraphEventProjectionApplicationStatus,
+)
 from framework.events.ports import EventReaderPort
-from framework.events.runtime.models import MAX_PAGE_LIMIT, EventPage, StreamReadRequest
+from framework.events.runtime.models import MAX_PAGE_LIMIT
 from framework.events.schema.catalog import EventSchemaCatalog
 from framework.events.schema.security import EventSecurityProjector
-from framework.workflow.runtime.event_projection import (
-    WorkflowEventProjection,
-    WorkflowEventProjectionExporter,
+from framework.events.projection import GraphEventProjection
+from framework.shared.graph_identity import GraphRunIdentity
+from framework.harness.artifacts import (
+    GraphTerminalManifestV2,
+    GraphTerminalManifestPort,
 )
+from framework.agent.artifacts.stores.errors import ArtifactNotFoundError
 from interfaces.services.event_reader_service import (
     EventAuthorizationContext,
     EventAuthorizerPort,
@@ -50,9 +57,6 @@ class EventProjectionConflictError(EventContractError):
 
 class EventProjectionNotFoundError(LookupError):
     """A run projection is not visible in the authorized tenant scope."""
-
-
-MAX_RUN_MANIFEST_BYTES = 1_048_576
 
 
 @dataclass(frozen=True, slots=True)
@@ -86,7 +90,7 @@ class EventProjectionRebuildResult:
     tenant_id: str | None
     requested_high_watermark: int | None
     durable_high_watermark: int | None
-    projection: WorkflowEventProjection | None = None
+    projection: GraphEventProjection | None = None
     unavailable_reason_class: str | None = None
 
     def __post_init__(self) -> None:
@@ -108,6 +112,8 @@ class EventProjectionRebuildResult:
 
 @dataclass(frozen=True, slots=True)
 class _ManifestProjectionMetadata:
+    path: Path
+    graph_identity: GraphRunIdentity
     high_watermark: Any
     event_count: Any
     checksum: Any
@@ -126,6 +132,9 @@ class EventProjectionService:
         schema_catalog: EventSchemaCatalog,
         security_projector: EventSecurityProjector | None = None,
         page_size: int = 1_000,
+        projection: GraphEventProjectionApplicationPort | None = None,
+        terminal_manifest_reader: GraphTerminalManifestPort | None = None,
+        graph_identity: GraphRunIdentity | None = None,
     ) -> None:
         if reader is None:
             raise ValueError("event reader is required")
@@ -145,6 +154,30 @@ class EventProjectionService:
         self._schema_catalog = schema_catalog
         self._security_projector = security_projector
         self._page_size = page_size
+        self._projection = projection or DurableGraphEventProjectionAdapter(
+            reader=reader,
+            schema_catalog=schema_catalog,
+            security_projector=security_projector,
+            page_size=page_size,
+        )
+        if not isinstance(self._projection, GraphEventProjectionApplicationPort):
+            raise TypeError(
+                "projection must implement GraphEventProjectionApplicationPort"
+            )
+        if not isinstance(
+            terminal_manifest_reader,
+            GraphTerminalManifestPort,
+        ):
+            raise TypeError(
+                "terminal_manifest_reader must implement GraphTerminalManifestPort"
+            )
+        self._terminal_manifest_reader = terminal_manifest_reader
+        if graph_identity is not None and not isinstance(
+            graph_identity,
+            GraphRunIdentity,
+        ):
+            raise TypeError("graph_identity must be GraphRunIdentity")
+        self._default_graph_identity = graph_identity
 
     def rebuild_run_projection(
         self,
@@ -152,9 +185,17 @@ class EventProjectionService:
         *,
         requested_high_watermark: int | None,
         authorization: EventAuthorizationContext,
+        graph_identity: GraphRunIdentity | None = None,
     ) -> EventProjectionRebuildResult:
         safe_run_id, stream_id, target = self._run_scope(run_id)
         requested = _optional_high_watermark(requested_high_watermark)
+        identity = (
+            graph_identity
+            or self._default_graph_identity
+            or self._graph_identity_from_manifest(safe_run_id)
+        )
+        if identity.run_id != safe_run_id:
+            raise EventProjectionConflictError("graph_identity_run_conflict")
         authorize_event_operation(
             self._authorizer,
             authorization,
@@ -164,6 +205,9 @@ class EventProjectionService:
                 "stream_id": stream_id,
                 "requested_high_watermark": requested,
                 "projection_path": f"{safe_run_id}/events.jsonl",
+                "graph_id": identity.graph_id,
+                "graph_version": identity.graph_version,
+                "graph_checksum": identity.graph_checksum,
             },
         )
         try:
@@ -187,20 +231,18 @@ class EventProjectionService:
             raise EventProjectionSourceRangeError(
                 "requested projection high watermark exceeds durable history"
             )
-        exporter = self._exporter(
-            _PinnedPrefixReader(
-                reader=self._reader,
-                stream_id=stream_id,
-                tenant_id=authorization.tenant_id,
-                high_watermark=requested,
-            )
+        effective_requested = (
+            durable_high_watermark if requested is None else requested
+        )
+        application_request = GraphEventProjectionApplicationRequest(
+            graph_identity=identity,
+            target=target,
+            tenant_id=authorization.tenant_id,
+            through_sequence=effective_requested,
         )
         try:
-            projection = exporter.export(
-                stream_id=stream_id,
-                target=target,
-                tenant_id=authorization.tenant_id,
-                through_sequence=requested,
+            application_result = self._projection.project_graph_history(
+                application_request
             )
         except EventStoreUnavailableError as error:
             return EventProjectionRebuildResult(
@@ -208,18 +250,33 @@ class EventProjectionService:
                 path=target,
                 stream_id=stream_id,
                 tenant_id=authorization.tenant_id,
-                requested_high_watermark=requested,
+                requested_high_watermark=effective_requested,
                 durable_high_watermark=durable_high_watermark,
                 unavailable_reason_class=type(error).__name__,
             )
-        if projection.stream_id != stream_id or projection.high_watermark != requested:
+        if (
+            application_result.status
+            is not GraphEventProjectionApplicationStatus.PROJECTED
+            or application_result.projection is None
+        ):
+            reason = (
+                application_result.diagnostic.code.value
+                if application_result.diagnostic is not None
+                else "graph_history_not_projectable"
+            )
+            raise EventProjectionConflictError(reason)
+        projection = application_result.projection
+        if (
+            projection.stream_id != stream_id
+            or projection.high_watermark != effective_requested
+        ):
             raise EventContractError("projection exporter changed the requested source scope")
         return EventProjectionRebuildResult(
             availability=EventServiceAvailability.AVAILABLE,
             path=target,
             stream_id=stream_id,
             tenant_id=authorization.tenant_id,
-            requested_high_watermark=requested,
+            requested_high_watermark=effective_requested,
             durable_high_watermark=durable_high_watermark,
             projection=projection,
         )
@@ -288,12 +345,13 @@ class EventProjectionService:
         )
         return self._projection_status(
             stream_id=stream_id,
-            target=target,
+            target=metadata.path,
             tenant_id=authorization.tenant_id,
             projection_high_watermark=metadata.high_watermark,
             projection_event_count=metadata.event_count,
             projection_checksum=metadata.checksum,
             run_is_active=metadata.run_is_active,
+            graph_identity=metadata.graph_identity,
         )
 
     def _projection_status(
@@ -306,6 +364,7 @@ class EventProjectionService:
         projection_event_count: int | None,
         projection_checksum: str | None,
         run_is_active: bool,
+        graph_identity: GraphRunIdentity | None = None,
     ) -> EventProjectionStatusResult:
         projected = _optional_high_watermark(projection_high_watermark)
         event_count, checksum = _projection_metadata(
@@ -335,14 +394,26 @@ class EventProjectionService:
         if not target.is_file():
             raise EventProjectionConflictError("projection_artifact_missing")
         try:
-            self._exporter(self._reader).verify_existing(
-                stream_id=stream_id,
-                target=target,
-                high_watermark=projected,
+            identity = (
+                graph_identity
+                or self._default_graph_identity
+                or self._graph_identity_from_manifest(target.parent.name)
+            )
+            result = self._projection.verify_graph_history(
+                GraphEventProjectionApplicationRequest(
+                    graph_identity=identity,
+                    target=target,
+                    tenant_id=tenant_id,
+                    through_sequence=projected,
+                ),
                 event_count=event_count,
                 checksum=checksum,
-                tenant_id=tenant_id,
             )
+            if (
+                result.status is not GraphEventProjectionApplicationStatus.PROJECTED
+                or result.projection is None
+            ):
+                raise EventContractError("Graph event projection history is history-only")
         except EventStoreUnavailableError as error:
             return EventProjectionStatusResult(
                 status=EventProjectionStatus.UNAVAILABLE,
@@ -381,90 +452,64 @@ class EventProjectionService:
         stream_id: str,
         tenant_id: str | None,
     ) -> _ManifestProjectionMetadata:
-        manifest_path = resolve_artifact_descendant(
+        try:
+            manifest = self._terminal_manifest_reader.read_terminal_manifest(
+                safe_run_id
+            )
+        except ArtifactNotFoundError as error:
+            raise EventProjectionNotFoundError(
+                "run projection is not available"
+            ) from error
+        except (TypeError, ValueError, OSError) as error:
+            raise EventProjectionConflictError("run_manifest_invalid") from error
+        if not isinstance(manifest, GraphTerminalManifestV2):
+            raise EventProjectionConflictError("run_manifest_invalid")
+        if manifest.run_id != safe_run_id:
+            raise EventProjectionConflictError("run_manifest_identity_conflict")
+        artifact = manifest.artifact("event_projection")
+        if artifact is None:
+            raise EventProjectionNotFoundError("run projection is not available")
+        if artifact.relative_path != "events.jsonl":
+            raise EventProjectionConflictError("projection_path_conflict")
+        projection_path = resolve_artifact_descendant(
             self._artifact_root,
             safe_run_id,
-            "manifest.json",
-            field="run manifest path",
+            artifact.relative_path,
+            field="event projection path",
         )
-        if not manifest_path.exists():
+        metadata = artifact.metadata
+        if (
+            metadata.get("stream_id") != stream_id
+            or metadata.get("tenant_id") != manifest.tenant_id
+            or metadata.get("checksum") != artifact.content_checksum
+            or metadata.get("content_checksum") not in (None, artifact.content_checksum)
+        ):
+            raise EventProjectionConflictError("projection_metadata_conflict")
+        identity = GraphRunIdentity(
+            run_id=manifest.run_id,
+            graph_id=manifest.graph_id,
+            graph_version=manifest.graph_version,
+            graph_ref=f"{manifest.graph_id}@{manifest.graph_version}",
+            graph_checksum=manifest.normalized_graph_checksum,
+        )
+        if metadata.get("graph_identity") not in (None, identity.to_dict()):
+            raise EventProjectionConflictError("projection_graph_identity_conflict")
+        if tenant_id is None or manifest.tenant_id != tenant_id:
             raise EventProjectionNotFoundError("run projection is not available")
-        if not manifest_path.is_file():
-            raise EventProjectionConflictError("run_manifest_not_regular_file")
-        try:
-            if manifest_path.stat().st_size > MAX_RUN_MANIFEST_BYTES:
-                raise EventProjectionConflictError("run_manifest_too_large")
-            raw_manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-        except EventProjectionConflictError:
-            raise
-        except (OSError, UnicodeError, json.JSONDecodeError) as error:
-            raise EventProjectionConflictError("run_manifest_invalid") from error
-        if not isinstance(raw_manifest, Mapping):
-            raise EventProjectionConflictError("run_manifest_invalid")
-        manifest = dict(raw_manifest)
-        if manifest.get("run_id") != safe_run_id:
-            raise EventProjectionConflictError("run_manifest_identity_conflict")
-        raw_projection = manifest.get("event_projection")
-        if not isinstance(raw_projection, Mapping):
-            raise EventProjectionConflictError("projection_metadata_missing")
-        projection = dict(raw_projection)
-        if projection.get("path") != "events.jsonl":
-            raise EventProjectionConflictError("projection_path_conflict")
-        if projection.get("stream_id") != stream_id:
-            raise EventProjectionConflictError("projection_stream_conflict")
-        self._validate_manifest_tenant_scope(
-            manifest=manifest,
-            projection=projection,
-            stream_id=stream_id,
-            tenant_id=tenant_id,
+        status = manifest.status.value
+        _projection_metadata(
+            metadata.get("high_watermark"),
+            metadata.get("event_count"),
+            artifact.content_checksum,
         )
-        _validate_legacy_projection_duplicates(manifest, projection)
-        status = manifest.get("status")
-        if not isinstance(status, str) or not status.strip():
-            raise EventProjectionConflictError("run_manifest_status_missing")
         return _ManifestProjectionMetadata(
-            high_watermark=projection.get("high_watermark"),
-            event_count=projection.get("event_count"),
-            checksum=projection.get("checksum"),
+            path=projection_path,
+            graph_identity=identity,
+            high_watermark=metadata.get("high_watermark"),
+            event_count=metadata.get("event_count"),
+            checksum=artifact.content_checksum,
             run_is_active=_run_is_active(status),
         )
-
-    def _validate_manifest_tenant_scope(
-        self,
-        *,
-        manifest: Mapping[str, Any],
-        projection: Mapping[str, Any],
-        stream_id: str,
-        tenant_id: str | None,
-    ) -> None:
-        declared = [
-            value
-            for container in (manifest, projection)
-            if "tenant_id" in container
-            for value in (container.get("tenant_id"),)
-        ]
-        if not declared:
-            if tenant_id is None:
-                raise EventProjectionNotFoundError("run projection is not available")
-            durable = self._reader.get_stream_high_watermark(
-                stream_id,
-                tenant_id=tenant_id,
-            )
-            if (
-                durable is None
-                or isinstance(durable, bool)
-                or not isinstance(durable, int)
-                or durable < 1
-            ):
-                raise EventProjectionNotFoundError("run projection is not available")
-            return
-        if any(not isinstance(value, str) or not value.strip() for value in declared):
-            raise EventProjectionConflictError("manifest_tenant_scope_invalid")
-        normalized = tuple(str(value).strip() for value in declared)
-        if len(set(normalized)) != 1:
-            raise EventProjectionConflictError("manifest_tenant_scope_conflict")
-        if tenant_id is None or normalized[0] != tenant_id:
-            raise EventProjectionNotFoundError("run projection is not available")
 
     def _run_scope(self, run_id: str) -> tuple[str, str, Path]:
         safe_run_id = validate_artifact_path_segment(run_id, field="run_id")
@@ -476,48 +521,17 @@ class EventProjectionService:
         )
         return safe_run_id, f"run:{safe_run_id}", target
 
-    def _exporter(self, reader: EventReaderPort) -> WorkflowEventProjectionExporter:
-        return WorkflowEventProjectionExporter(
-            reader=reader,
-            schema_catalog=self._schema_catalog,
-            security_projector=self._security_projector,
-            page_size=self._page_size,
+    def _graph_identity_from_manifest(self, run_id: str) -> GraphRunIdentity:
+        manifest = self._terminal_manifest_reader.read_terminal_manifest(run_id)
+        if not isinstance(manifest, GraphTerminalManifestV2):
+            raise EventProjectionConflictError("run_manifest_invalid")
+        return GraphRunIdentity(
+            run_id=manifest.run_id,
+            graph_id=manifest.graph_id,
+            graph_version=manifest.graph_version,
+            graph_ref=f"{manifest.graph_id}@{manifest.graph_version}",
+            graph_checksum=manifest.normalized_graph_checksum,
         )
-
-
-@dataclass(frozen=True, slots=True)
-class _PinnedPrefixReader:
-    reader: EventReaderPort
-    stream_id: str
-    tenant_id: str | None
-    high_watermark: int | None
-
-    def get_event(self, event_id: str, *, tenant_id: str | None = None):
-        if tenant_id != self.tenant_id:
-            raise EventContractError("projection reader crossed the tenant scope")
-        return self.reader.get_event(event_id, tenant_id=tenant_id)
-
-    def get_stream_high_watermark(
-        self,
-        stream_id: str,
-        *,
-        tenant_id: str | None = None,
-    ) -> int | None:
-        self._require_scope(stream_id, tenant_id)
-        return self.high_watermark
-
-    def read_stream(self, request: StreamReadRequest) -> EventPage:
-        self._require_scope(request.stream_id, request.tenant_id)
-        if request.through_sequence != self.high_watermark:
-            raise EventContractError("projection reader changed the pinned high watermark")
-        page = self.reader.read_stream(request)
-        if page.high_watermark != self.high_watermark:
-            raise EventContractError("event reader changed the projection high watermark")
-        return page
-
-    def _require_scope(self, stream_id: str, tenant_id: str | None) -> None:
-        if stream_id != self.stream_id or tenant_id != self.tenant_id:
-            raise EventContractError("projection reader crossed the requested stream scope")
 
 
 def _projection_metadata(
@@ -551,23 +565,6 @@ def _optional_high_watermark(value: Any) -> int | None:
     if isinstance(value, bool) or not isinstance(value, int) or value < 1:
         raise EventProjectionConflictError("projection_high_watermark_invalid")
     return value
-
-
-def _validate_legacy_projection_duplicates(
-    manifest: Mapping[str, Any],
-    projection: Mapping[str, Any],
-) -> None:
-    aliases = {
-        "event_projection_high_watermark": "high_watermark",
-        "event_projection_checksum": "checksum",
-        "event_count": "event_count",
-    }
-    if any(
-        manifest.get(manifest_key) != projection.get(projection_key)
-        for manifest_key, projection_key in aliases.items()
-        if manifest_key in manifest
-    ):
-        raise EventProjectionConflictError("projection_metadata_conflict")
 
 
 def _run_is_active(value: str) -> bool:

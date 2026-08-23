@@ -8,11 +8,11 @@ from business.research.application.graph_result_committer import (
     RESEARCH_NODE_RESULT_POLICIES,
     ResearchGraphResultCommitter,
     ResearchGraphResultRequestFactory,
-    ResearchGraphResultShadowObserver,
 )
-from business.research.workflows.paper_analysis_workflow import (
-    build_dynamic_paper_analysis_workflow_spec,
-    build_paper_analysis_workflow_spec,
+from business.research.graphs import (
+    RESEARCH_PAPER_ANALYSIS_GRAPH_ID,
+    build_dynamic_paper_analysis_graph_definition,
+    build_paper_analysis_graph_definition,
 )
 from framework.events.canonical import checksum_for
 from framework.harness.control_plane.errors import HarnessValidationError
@@ -23,6 +23,9 @@ from framework.harness.control_plane.graph_application import (
 from framework.harness.control_plane.harness import (
     HarnessControlPlane,
     InMemoryHarnessEventPort,
+)
+from framework.harness.control_plane.node_output import (
+    InMemoryHarnessNodeOutputResource,
 )
 from framework.harness.control_plane.state import HarnessRunSpec
 from framework.harness.runtime import (
@@ -35,12 +38,45 @@ from framework.harness.runtime import (
     HarnessGraphResultRuntime,
     RetentionClass,
 )
-from framework.harness.workflow.compiler import HarnessWorkflowGraphCompiler
+from framework.harness.graph.compiler import HarnessGraphCompiler
+from framework.harness.graph import (
+    HarnessContractKind,
+    HarnessContractReference,
+    HarnessGraphDefinition,
+    HarnessGraphLeafBinding,
+    HarnessLeafActivityKind,
+    HarnessWorkerType,
+)
 from framework.harness.graph.dsl import HarnessGraphSpec, StepRef
 from framework.harness.graph.model import HarnessExecutableNode
-from framework.harness.workflow.spec import HarnessWorkflowSpec
 from framework.harness.graph.activity import HarnessStepSpec
+from framework.harness.graph.bindings import (
+    HarnessActivityCapabilities,
+    HarnessActivityContractBinding,
+    HarnessLeafActivityBinding,
+    HarnessRuntimeBindingAuthority,
+    HarnessWorkerBinding,
+)
+from framework.harness.side_effects.fake import (
+    CountingHarnessSideEffectHandler,
+    InMemoryHarnessSideEffectStore,
+)
+from framework.harness.side_effects.models import (
+    HarnessSideEffectDisposition,
+    HarnessTerminalSideEffectPolicy,
+)
+from framework.harness.side_effects.registry import (
+    HarnessSideEffectHandlerBinding,
+    HarnessSideEffectRegistry,
+)
 from framework.harness.workers.result import HarnessWorkerResult
+from framework.harness.runtime.activity_executor import (
+    HarnessGraphPhysicalActivityExecutor,
+)
+from framework.harness.runtime.graph_dispatcher import (
+    HarnessGraphPhysicalActivityDispatcher,
+)
+from framework.shared.attempts import AttemptSupervisor
 from framework.shared.json import stable_json_dumps
 from tests.framework.harness.runtime.test_graph_result_runtime import (
     FailResultProjectionPort,
@@ -159,12 +195,11 @@ def test_research_node_policy_inventory_is_complete_and_trusted(
 
 
 def test_research_node_policy_inventory_matches_compiled_graphs() -> None:
-    compiler = HarnessWorkflowGraphCompiler()
     graphs = tuple(
-        compiler.compile(builder()).graph
+        HarnessGraphCompiler().compile(builder()).graph
         for builder in (
-            build_paper_analysis_workflow_spec,
-            build_dynamic_paper_analysis_workflow_spec,
+            build_paper_analysis_graph_definition,
+            build_dynamic_paper_analysis_graph_definition,
         )
     )
     request_factory = ResearchGraphResultRequestFactory()
@@ -295,157 +330,6 @@ def test_failed_quality_gate_retains_diagnostics_without_publication_refs() -> N
     assert "public_refs" not in lineage.inline_projection
 
 
-def test_shadow_records_policy_evidence_without_writing_or_claiming_lineage() -> None:
-    fixture = _fixture(node_id="build_evidence_pack")
-    shadow_config = GraphArtifactPersistenceConfig(
-        mode=GraphArtifactRolloutMode.SHADOW
-    )
-    observer = ResearchGraphResultShadowObserver(
-        graph_result_runtime=HarnessGraphResultRuntime(
-            HarnessGraphControlPlaneRuntime(fixture.port)
-        ),
-        event_port=fixture.port,
-        config=shadow_config,
-        tenant_id=TENANT_ID,
-        tenant_scope_ref=TENANT_SCOPE_REF,
-    )
-    raw_evidence = "shadow-evidence-" + "x" * 70_000
-
-    result = HarnessControlPlane(
-        event_port=fixture.port,
-        worker_registry={
-            fixture.node_id: lambda _task: HarnessWorkerResult(
-                "succeeded",
-                output={"evidence_pack": {"content": raw_evidence}},
-            )
-        },
-        graph_result_observer=observer,
-    ).run(fixture.run_spec)
-
-    decisions = [
-        event
-        for event in fixture.port.events
-        if event.event_type is HarnessEventType.DECISION_RECORDED
-        and event.payload.get("decision_type") == "evaluate_result_persistence"
-    ]
-    recovery = fixture.port.recover_graph(fixture.run_id)
-    assert result.succeeded is True
-    assert len(decisions) == 1
-    evidence = decisions[0].payload["payload"]
-    assert evidence["rollout_mode"] == "shadow"
-    assert evidence["persistence_mode"] == "artifact"
-    assert evidence["legacy_payload_ref"].startswith("sha256:")
-    assert raw_evidence not in stable_json_dumps(decisions[0].payload)
-    assert fixture.artifact.write_count == 0
-    assert fixture.attempts.put_count == 0
-    assert recovery.activity_result_commits[0].result.result_lineage is None
-
-
-def test_read_only_reuses_existing_research_attempt_without_writes() -> None:
-    worker_result = HarnessWorkerResult(
-        "succeeded",
-        output={"evidence_pack": {"content": "x" * 70_000}},
-    )
-    fixture = _run(node_id="build_evidence_pack", worker_result=worker_result)
-    recovery = fixture.port.recover_graph(fixture.run_id)
-    assert recovery.graph is not None
-    assert recovery.run_spec_checksum is not None
-    activity = recovery.activities[0]
-    first = fixture.envelope
-    before = (
-        fixture.artifact.write_count,
-        fixture.attempts.put_count,
-        len(fixture.catalog.requests),
-    )
-    read_only = ResearchGraphResultCommitter(
-        materializer=_materializer(
-            artifact=fixture.artifact,
-            attempts=fixture.attempts,
-            cache=RecordingCache(),
-            catalog=fixture.catalog,
-            quota=RecordingQuota(),
-            config=GraphArtifactPersistenceConfig(
-                mode=GraphArtifactRolloutMode.READ_ONLY
-            ),
-        ),
-        graph_result_runtime=HarnessGraphResultRuntime(
-            HarnessGraphControlPlaneRuntime(fixture.port)
-        ),
-        config=GraphArtifactPersistenceConfig(
-            mode=GraphArtifactRolloutMode.READ_ONLY
-        ),
-        tenant_id=TENANT_ID,
-        tenant_scope_ref=TENANT_SCOPE_REF,
-    )
-
-    state = read_only.commit_result(
-        activity=activity,
-        graph=recovery.graph,
-        run_spec_checksum=recovery.run_spec_checksum,
-        worker_result=worker_result,
-        occurred_at=first.created_at,
-    )
-
-    assert state.outcome.value == "succeeded"
-    assert fixture.attempts.get(first.binding) == first
-    assert (
-        fixture.artifact.write_count,
-        fixture.attempts.put_count,
-        len(fixture.catalog.requests),
-    ) == before
-
-
-def test_read_only_missing_attempt_fails_before_graph_mutation() -> None:
-    worker_result = HarnessWorkerResult(
-        "succeeded",
-        output={"evidence_pack": {"content": "x" * 70_000}},
-    )
-    fixture = _run(node_id="build_evidence_pack", worker_result=worker_result)
-    recovery = fixture.port.recover_graph(fixture.run_id)
-    assert recovery.graph is not None
-    assert recovery.run_spec_checksum is not None
-    empty_attempts = RecordingAttempts()
-    read_only = ResearchGraphResultCommitter(
-        materializer=_materializer(
-            artifact=fixture.artifact,
-            attempts=empty_attempts,
-            cache=RecordingCache(),
-            catalog=fixture.catalog,
-            quota=RecordingQuota(),
-            config=GraphArtifactPersistenceConfig(
-                mode=GraphArtifactRolloutMode.READ_ONLY
-            ),
-        ),
-        graph_result_runtime=HarnessGraphResultRuntime(
-            HarnessGraphControlPlaneRuntime(fixture.port)
-        ),
-        config=GraphArtifactPersistenceConfig(
-            mode=GraphArtifactRolloutMode.READ_ONLY
-        ),
-        tenant_id=TENANT_ID,
-        tenant_scope_ref=TENANT_SCOPE_REF,
-    )
-    before_commits = recovery.activity_result_commits
-
-    with pytest.raises(GraphArtifactResultError) as captured:
-        read_only.commit_result(
-            activity=recovery.activities[0],
-            graph=recovery.graph,
-            run_spec_checksum=recovery.run_spec_checksum,
-            worker_result=worker_result,
-            occurred_at=fixture.envelope.created_at,
-        )
-
-    assert (
-        captured.value.error_code
-        is GraphArtifactResultErrorCode.RESULT_LEDGER_FAILED
-    )
-    assert empty_attempts.put_count == 0
-    assert fixture.port.recover_graph(fixture.run_id).activity_result_commits == (
-        before_commits
-    )
-
-
 @pytest.mark.parametrize(
     "field_name",
     ("persistence", "persistence_mode", "retention", "retention_class"),
@@ -501,21 +385,23 @@ def test_restart_reuses_recorded_worker_and_materialized_attempt() -> None:
     fixture = _fixture(node_id="analyze_structure", port=port)
     worker_calls = 0
 
-    def worker(_task: dict) -> HarnessWorkerResult:
+    def count_worker() -> None:
         nonlocal worker_calls
         worker_calls += 1
-        return HarnessWorkerResult(
-            "succeeded",
-            output={"structure_candidate": {"summary": "durable"}},
-        )
+    worker_result = HarnessWorkerResult(
+        "succeeded",
+        output={"structure_candidate": {"summary": "durable"}},
+    )
+    authority = _test_runtime_authority(
+        fixture.node_id,
+        worker_result,
+        fixture.side_effect_store,
+    )
+    authority.worker_bindings[0].implementation.on_execute = count_worker
 
     port.fail_result_projection = True
     with pytest.raises(RuntimeError, match="result projection unavailable"):
-        HarnessControlPlane(
-            event_port=fixture.port,
-            worker_registry={fixture.node_id: worker},
-            graph_result_committer=fixture.committer,
-        ).run(fixture.run_spec)
+        _control_plane(fixture, authority).run(fixture.run_spec)
 
     assert worker_calls == 1
     assert fixture.artifact.write_count == 1
@@ -525,11 +411,9 @@ def test_restart_reuses_recorded_worker_and_materialized_attempt() -> None:
     assert len(interrupted.pending_activity_results) == 1
 
     port.fail_result_projection = False
-    recovered = HarnessControlPlane(
-        event_port=fixture.port,
-        worker_registry={fixture.node_id: worker},
-        graph_result_committer=fixture.committer,
-    ).recover_and_run(fixture.run_spec)
+    recovered = _control_plane(fixture, authority).recover_and_run(
+        fixture.run_spec
+    )
 
     assert recovered.succeeded is True
     assert worker_calls == 1
@@ -551,6 +435,8 @@ class _Fixture:
         artifact: RecordingArtifactPort,
         attempts: RecordingAttempts,
         catalog: RecordingCatalog,
+        side_effect_store: InMemoryHarnessSideEffectStore,
+        node_output_resource: InMemoryHarnessNodeOutputResource,
     ) -> None:
         self.node_id = node_id
         self.run_spec = run_spec
@@ -560,6 +446,8 @@ class _Fixture:
         self.artifact = artifact
         self.attempts = attempts
         self.catalog = catalog
+        self.side_effect_store = side_effect_store
+        self.node_output_resource = node_output_resource
 
     @property
     def envelope(self):
@@ -589,10 +477,13 @@ def _execute(
     fixture: _Fixture,
     worker_result: HarnessWorkerResult,
 ):
-    return HarnessControlPlane(
-        event_port=fixture.port,
-        worker_registry={fixture.node_id: lambda _task: worker_result},
-        graph_result_committer=fixture.committer,
+    return _control_plane(
+        fixture,
+        _test_runtime_authority(
+            fixture.node_id,
+            worker_result,
+            fixture.side_effect_store,
+        ),
     ).run(fixture.run_spec)
 
 
@@ -607,6 +498,8 @@ def _fixture(
     artifact = RecordingArtifactPort()
     attempts = RecordingAttempts()
     catalog = RecordingCatalog()
+    side_effect_store = InMemoryHarnessSideEffectStore()
+    node_output_resource = InMemoryHarnessNodeOutputResource()
     config = GraphArtifactPersistenceConfig(
         mode=GraphArtifactRolloutMode.ENFORCE
     )
@@ -635,27 +528,90 @@ def _fixture(
         artifact=artifact,
         attempts=attempts,
         catalog=catalog,
+        side_effect_store=side_effect_store,
+        node_output_resource=node_output_resource,
     )
+
+
+def _control_plane(
+    fixture: _Fixture,
+    authority: HarnessRuntimeBindingAuthority,
+) -> HarnessControlPlane:
+    control_plane = HarnessControlPlane(
+        event_port=fixture.port,
+        runtime_binding_authority=authority,
+        side_effect_store=fixture.side_effect_store,
+        graph_result_committer=fixture.committer,
+    )
+    executor = HarnessGraphPhysicalActivityExecutor(
+        binding_authority=authority,
+        input_resolver=control_plane,
+        node_output_resource=fixture.node_output_resource,
+        result_committer=None,
+        supervisor=AttemptSupervisor(),
+    )
+    dispatcher = HarnessGraphPhysicalActivityDispatcher(
+        executor=executor,
+        graph_resolver=control_plane.graph_for_activity,
+        input_resolver=control_plane,
+        accept=control_plane.accept_graph_activity_for_execution,
+        record_call_marker=control_plane.record_graph_activity_call_marker,
+        record_result=control_plane.record_graph_activity_result_event,
+        apply_result=control_plane.commit_physical_graph_result,
+    )
+    control_plane.install_graph_activity_dispatcher(dispatcher)
+    return control_plane
 
 
 def _run_spec(run_id: str, node_id: str) -> HarnessRunSpec:
     step = HarnessStepSpec(
         node_id,
-        "script",
+        HarnessWorkerType.FUNCTION,
+        output_key=node_id,
         metadata={"step_version": "1", "worker_version": "1"},
+    )
+    graph_spec = HarnessGraphSpec(
+        RESEARCH_PAPER_ANALYSIS_GRAPH_ID,
+        StepRef(node_id),
+        terminal_output_keys=(node_id,),
+    )
+    graph = HarnessGraphDefinition(
+        graph_id=graph_spec.graph_id,
+        graph_version="1",
+        root=graph_spec,
+        activities=(step,),
+        leaf_activity_bindings=(
+            HarnessGraphLeafBinding(
+                node_id,
+                HarnessLeafActivityKind.FUNCTION,
+                HarnessContractReference(
+                    HarnessContractKind.WORKER,
+                    f"research.result.{node_id}",
+                    "1",
+                ),
+                HarnessContractReference(
+                    HarnessContractKind.ACTIVITY,
+                    f"research.result.{node_id}",
+                    "1",
+                ),
+            ),
+        ),
+        task_plan_stage_bindings=(),
+        committed_output_bindings=(),
+        repair_bindings=(),
+        terminal_side_effect_policy=HarnessTerminalSideEffectPolicy(
+            policy_id="research.result.publication",
+            version="1",
+            handler="research.result.publication@1",
+            kind="artifact_publication",
+            requires_approval=False,
+            retry_limit=1,
+            not_required_evidence_ref=checksum_for("research-result-publication"),
+        ),
     )
     return HarnessRunSpec(
         run_id=run_id,
-        workflow=HarnessWorkflowSpec(
-            workflow_id="research.paper_analysis",
-            workflow_version="1",
-            steps=(step,),
-            entry_step_id=node_id,
-            graph=HarnessGraphSpec(
-                graph_id="research.paper_analysis.graph",
-                root=StepRef(node_id),
-            ),
-        ),
+        graph=graph,
         metadata={
             "research_runtime": "single_paper",
             "tenant_scope_ref": TENANT_SCOPE_REF,
@@ -663,4 +619,73 @@ def _run_spec(run_id: str, node_id: str) -> HarnessRunSpec:
             "subject_scope_ref": SUBJECT_SCOPE_REF,
         },
         created_at=NOW,
+    )
+
+
+class _ResultWorker:
+    worker_version = "1"
+    worker_type = HarnessWorkerType.FUNCTION
+
+    def __init__(self, worker_id: str, result: HarnessWorkerResult, on_execute=None) -> None:
+        self.worker_id = worker_id
+        self.result = result
+        self.on_execute = on_execute
+
+    def execute(self, _task: dict) -> HarnessWorkerResult:
+        if self.on_execute is not None:
+            self.on_execute()
+        return self.result
+
+
+class _ResultActivity:
+    capabilities = HarnessActivityCapabilities(stable_idempotency=True)
+
+    def __init__(self, activity_id: str) -> None:
+        self.activity_contract_id = activity_id
+        self.activity_contract_version = "1"
+
+    def dispatch(self, _request: dict) -> object:
+        return None
+
+
+def _test_runtime_authority(
+    node_id: str,
+    worker_result: HarnessWorkerResult,
+    side_effect_store: InMemoryHarnessSideEffectStore,
+) -> HarnessRuntimeBindingAuthority:
+    contract_id = f"research.result.{node_id}"
+    effect_handler = CountingHarnessSideEffectHandler(
+        side_effect_store,
+        disposition=HarnessSideEffectDisposition.ACCEPTED,
+    )
+    return HarnessRuntimeBindingAuthority(
+        workers=(
+            HarnessWorkerBinding(
+                f"{contract_id}@1",
+                HarnessWorkerType.FUNCTION,
+                _ResultWorker(contract_id, worker_result),
+            ),
+        ),
+        activities=(
+            HarnessActivityContractBinding(
+                f"{contract_id}@1",
+                _ResultActivity(contract_id),
+            ),
+        ),
+        leaf_activities=(
+            HarnessLeafActivityBinding(
+                HarnessLeafActivityKind.FUNCTION,
+                f"{contract_id}@1",
+                f"{contract_id}@1",
+            ),
+        ),
+        side_effect_registry=HarnessSideEffectRegistry(
+            (
+                HarnessSideEffectHandlerBinding(
+                    "research.result.publication@1",
+                    "artifact_publication",
+                    effect_handler,
+                ),
+            ),
+        ),
     )

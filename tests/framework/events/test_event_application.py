@@ -10,8 +10,7 @@ from framework.events.application import (
     GraphEventHistoryDiagnosticCode,
     GraphEventProjectionApplicationRequest,
     GraphEventProjectionApplicationStatus,
-    InactiveGraphEventProjectionAdapter,
-    ReadOnlyEventMigrationAssessmentAdapter,
+    DurableGraphEventProjectionAdapter,
 )
 from framework.events.canonical import (
     BusinessContext,
@@ -20,12 +19,13 @@ from framework.events.canonical import (
     StoredEvent,
 )
 from framework.events.errors import EventContractError
-from framework.events.migration import MigrationSourceKind, MigrationSourceRecord
 from framework.events.projection import (
     GRAPH_EVENT_CONTEXT_EXTENSION,
     GRAPH_EVENT_PROJECTION_SCHEMA,
     GraphEventContext,
+    GraphEventExecutionVersion,
     GraphRunIdentity,
+    GraphStageIdentity,
 )
 from framework.events.runtime.models import (
     EventPage,
@@ -39,7 +39,7 @@ _NOW = datetime(2026, 8, 15, 10, 0, tzinfo=UTC)
 _RUN_ID = "run-graph-application"
 
 
-def test_inactive_adapter_projects_one_pinned_graph_history(tmp_path) -> None:
+def test_graph_adapter_projects_one_pinned_graph_history(tmp_path) -> None:
     reader = _Reader([_event(1), _event(2, with_node=True)])
     adapter = _adapter(reader)
     request = _request(tmp_path / "events.graph.jsonl")
@@ -81,28 +81,13 @@ def test_application_request_round_trip_rejects_tampering(tmp_path) -> None:
     assert restored == request
 
 
-@pytest.mark.parametrize(
-    ("workflow_id", "expected_code"),
-    [
-        (
-            None,
-            GraphEventHistoryDiagnosticCode.GRAPH_CONTEXT_MISSING,
-        ),
-        (
-            "legacy-workflow",
-            GraphEventHistoryDiagnosticCode.ORCHESTRATION_ALIAS_PRESENT,
-        ),
-    ],
-)
 def test_legacy_history_returns_typed_diagnostic_without_replacing_target(
     tmp_path,
-    workflow_id: str | None,
-    expected_code: GraphEventHistoryDiagnosticCode,
 ) -> None:
     target = tmp_path / "events.graph.jsonl"
     target.write_bytes(b"previous-qualified-projection\n")
     reader = _Reader(
-        [_event(1, include_context=False, workflow_id=workflow_id)]
+        [_event(1, include_context=False)]
     )
 
     result = _adapter(reader).project_graph_history(_request(target))
@@ -110,7 +95,7 @@ def test_legacy_history_returns_typed_diagnostic_without_replacing_target(
     assert result.status is GraphEventProjectionApplicationStatus.HISTORY_ONLY
     assert result.projection is None
     assert result.diagnostic is not None
-    assert result.diagnostic.code is expected_code
+    assert result.diagnostic.code is GraphEventHistoryDiagnosticCode.GRAPH_CONTEXT_MISSING
     assert result.diagnostic.disposition == "history_only"
     assert result.diagnostic.resumable is False
     assert result.diagnostic.executable is False
@@ -215,28 +200,13 @@ def test_reader_cannot_return_another_tenant_scope(tmp_path) -> None:
 
 
 @pytest.mark.parametrize("page_size", [True, 0, 1_001])
-def test_inactive_adapter_rejects_invalid_page_size(page_size) -> None:
+def test_graph_adapter_rejects_invalid_page_size(page_size) -> None:
     with pytest.raises(ValueError, match="page_size must be between"):
-        InactiveGraphEventProjectionAdapter(
+        DurableGraphEventProjectionAdapter(
             reader=_Reader([]),
             schema_catalog=default_event_schema_catalog(),
             page_size=page_size,
         )
-
-
-def test_read_only_migration_port_returns_typed_quarantine_report() -> None:
-    adapter = ReadOnlyEventMigrationAssessmentAdapter()
-    record = MigrationSourceRecord.issue(
-        MigrationSourceKind.LEGACY_RUN_JSONL,
-        "legacy/events.jsonl:1",
-        "invalid_json",
-    )
-
-    report = adapter.assess_event_migration((record,), fail_fast=True)
-
-    assert report.halted is True
-    assert report.counts["scanned"] == 1
-    assert report.counts["quarantine_total"] == 1
 
 
 class _Reader:
@@ -320,8 +290,8 @@ class _CrossScopeReader(_Reader):
         )
 
 
-def _adapter(reader: _Reader) -> InactiveGraphEventProjectionAdapter:
-    return InactiveGraphEventProjectionAdapter(
+def _adapter(reader: _Reader) -> DurableGraphEventProjectionAdapter:
+    return DurableGraphEventProjectionAdapter(
         reader=reader,
         schema_catalog=default_event_schema_catalog(),
         page_size=1,
@@ -341,9 +311,8 @@ def _identity(*, checksum: str = "sha256:" + "a" * 64) -> GraphRunIdentity:
         run_id=_RUN_ID,
         graph_id="research.paper-analysis",
         graph_version="1",
-        graph_schema_version="newsroom.normalized-harness-graph/v3",
-        compiler_version="3",
-        normalized_graph_checksum=checksum,
+        graph_ref="research.paper-analysis@1",
+        graph_checksum=checksum,
     )
 
 
@@ -353,12 +322,28 @@ def _event(
     with_node: bool = False,
     graph_checksum: str = "sha256:" + "a" * 64,
     include_context: bool = True,
-    workflow_id: str | None = None,
 ) -> StoredEvent:
+    identity = _identity(checksum=graph_checksum)
     context = GraphEventContext(
-        identity=_identity(checksum=graph_checksum),
-        node_id="analyze" if with_node else None,
-        node_instance_id="analyze:1" if with_node else None,
+        identity=identity,
+        execution_version=GraphEventExecutionVersion(
+            graph_schema_version="newsroom.normalized-harness-graph/v3",
+            compiler_version="3",
+            normalized_graph_checksum=graph_checksum,
+        ),
+        stage_identity=(
+            GraphStageIdentity(
+                run_id=_RUN_ID,
+                    graph_id=identity.graph_id,
+                    graph_version=identity.graph_version,
+                    graph_ref=identity.graph_ref,
+                    graph_checksum=identity.graph_checksum,
+                node_id="analyze",
+                node_instance_id="analyze:1",
+            )
+            if with_node
+            else None
+        ),
     )
     extensions = (
         {GRAPH_EVENT_CONTEXT_EXTENSION: context.to_dict()}
@@ -379,7 +364,12 @@ def _event(
         correlation_id=_RUN_ID,
         business_context=BusinessContext(
             run_id=_RUN_ID,
-            workflow_id=workflow_id,
+            graph_id=context.identity.graph_id,
+            graph_version=context.identity.graph_version,
+            graph_ref=f"{context.identity.graph_id}@{context.identity.graph_version}",
+            graph_checksum=context.identity.graph_checksum,
+            stage_id=context.node_id,
+            node_instance_id=context.node_instance_id,
         ),
         producer=ProducerIdentity(
             component="framework.harness.control_plane",

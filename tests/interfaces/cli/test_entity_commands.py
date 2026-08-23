@@ -48,8 +48,8 @@ def test_news_cli_entities_create_list_and_match_reports_json(tmp_path, capsys) 
             str(store_path),
             "--artifact-root",
             str(artifact_root),
-            "--workflow-family",
-            "research",
+            "--graph-id",
+            "research.paper_analysis",
             "--json",
         ]
     )
@@ -60,7 +60,7 @@ def test_news_cli_entities_create_list_and_match_reports_json(tmp_path, capsys) 
     assert match_payload["matches"][0]["report_id"] == "entity-research:final"
 
 
-def test_news_cli_entities_match_reports_accepts_workflow_family(tmp_path, capsys) -> None:
+def test_news_cli_entities_match_reports_accepts_graph_id(tmp_path, capsys) -> None:
     store_path = tmp_path / "entities.json"
     artifact_root = tmp_path / "runs"
 
@@ -99,15 +99,15 @@ def test_news_cli_entities_match_reports_accepts_workflow_family(tmp_path, capsy
             str(store_path),
             "--artifact-root",
             str(artifact_root),
-            "--workflow-family",
-            "research",
+            "--graph-id",
+            "research.paper_analysis",
             "--json",
         ]
     )
     match_payload = json.loads(capsys.readouterr().out)
 
     assert match_code == 0
-    assert match_payload["workflow_family"] == "research"
+    assert match_payload["graph_id"] == "research.paper_analysis"
     assert match_payload["match_count"] == 1
 
 
@@ -183,8 +183,8 @@ def _write_research_report(
         json.dumps(
             {
                 "run_id": run_id,
-                "workflow_id": "research.paper_analysis",
-                "workflow_version": "0.1.0",
+                "graph_id": "research.paper_analysis",
+                "graph_version": "0.1.0",
                 "profile": "research",
                 "status": "succeeded",
                 "finished_at": "2026-05-11T00:00:00Z",

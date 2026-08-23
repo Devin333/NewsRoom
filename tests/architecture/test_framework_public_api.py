@@ -10,11 +10,10 @@ def test_framework_public_api_imports() -> None:
     import framework.llm
     import framework.memory
     import framework.shared
-    import framework.specs
     import framework.tool
-    import framework.workflow
     import framework.workers
 
     assert framework
-    assert framework.RunResult
-    assert framework.WorkflowRunner
+    import framework.harness.graph
+    assert framework
+    assert framework.harness.graph.HarnessGraphDefinition

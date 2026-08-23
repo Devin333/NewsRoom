@@ -11,6 +11,7 @@ from framework.tool.builtin import (
 from framework.tool.models import ToolDefinition, ToolPolicy
 from framework.tool.registry import ToolCatalog, ToolCatalogNamespace, ToolRegistry
 from framework.tool.registry.catalog import build_tool_catalog
+from framework.shared.graph_identity import GraphExecutionIdentity
 from infrastructure.tools.local_json_tools import register_local_json_tools
 from infrastructure.tools.notification_tools import register_notification_tools
 from infrastructure.tools.qdrant_tools import register_qdrant_tools
@@ -24,7 +25,6 @@ _DANGEROUS_TOOL_NAMES = {
     "control.escalate",
     "control.request_human_review",
     "local_json.save",
-    "memory.write",
     "qdrant.upsert",
 }
 _DANGEROUS_TOOL_PREFIXES = (
@@ -40,6 +40,7 @@ def build_builtin_tool_registry(
     *,
     artifact_manager: Any | None = None,
     run_id: str | None = None,
+    execution_identity: GraphExecutionIdentity | None = None,
     local_json_root: str | Path | None = None,
     web_search_provider: WebSearchProvider | None = None,
     vector_store: Any | None = None,
@@ -55,6 +56,7 @@ def build_builtin_tool_registry(
     registry = _build_unfiltered_builtin_tool_registry(
         artifact_manager=artifact_manager,
         run_id=run_id,
+        execution_identity=execution_identity,
         local_json_root=local_json_root,
         web_search_provider=web_search_provider,
         vector_store=vector_store,
@@ -101,6 +103,7 @@ def _build_unfiltered_builtin_tool_registry(
     *,
     artifact_manager: Any | None = None,
     run_id: str | None = None,
+    execution_identity: GraphExecutionIdentity | None = None,
     local_json_root: str | Path | None = None,
     web_search_provider: WebSearchProvider | None = None,
     vector_store: Any | None = None,
@@ -113,15 +116,30 @@ def _build_unfiltered_builtin_tool_registry(
     include_network_tools: bool = True,
 ) -> ToolRegistry:
     registry = ToolRegistry()
-    register_control_tools(registry, approval_store=approval_store, task_queue=task_queue, run_id=run_id)
+    register_control_tools(
+        registry,
+        approval_store=approval_store,
+        task_queue=task_queue,
+        execution_identity=execution_identity,
+        run_id=run_id,
+    )
     if include_network_tools:
         register_web_search_tools(registry, provider=web_search_provider)
-    if artifact_manager is not None and run_id is not None:
-        register_artifact_tools(registry, artifact_manager=artifact_manager, run_id=run_id)
+    if artifact_manager is not None and execution_identity is not None:
+        register_artifact_tools(
+            registry,
+            artifact_manager=artifact_manager,
+            execution_identity=execution_identity,
+        )
     if local_json_root is not None:
         register_local_json_tools(registry, root=local_json_root)
     if vector_store is not None or memory_runtime is not None:
-        register_memory_tools(registry, vector_store=vector_store, memory_runtime=memory_runtime)
+        register_memory_tools(
+            registry,
+            vector_store=vector_store,
+            memory_runtime=memory_runtime,
+            execution_identity=execution_identity,
+        )
     if qdrant_vector_store is not None:
         register_qdrant_tools(
             registry,
@@ -139,7 +157,11 @@ def _filtered_builtin_registry(registry: ToolRegistry, *, dangerous_only: bool) 
         is_dangerous = _is_dangerous_builtin_tool(registered.definition)
         if dangerous_only != is_dangerous:
             continue
-        filtered.register(registered.definition, registered.executor)
+        filtered.register(
+            registered.definition,
+            registered.executor,
+            graph_identity=registered.graph_identity,
+        )
     return filtered
 
 

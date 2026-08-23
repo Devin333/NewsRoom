@@ -5,8 +5,9 @@ from framework.shared.env import load_root_env
 
 load_root_env()
 
-from framework import shared, specs
-from framework.workflow.runtime.run_result import RunResult
-from framework.workflow.runtime.runner import WorkflowRunner
+from framework import shared
 
-__all__ = ["RunResult", "WorkflowRunner", "env", "shared", "specs"]
+# The root package intentionally exposes only cross-cutting primitives. Graph
+# orchestration and Artifact ownership live behind their respective namespaces;
+# Retired orchestration runtime objects are not part of the public API.
+__all__ = ["env", "shared"]

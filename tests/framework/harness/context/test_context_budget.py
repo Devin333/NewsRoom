@@ -21,11 +21,16 @@ from framework.harness import (
     InMemoryHarnessEventPort,
 )
 from framework.events.canonical import checksum_for
+from tests.framework.harness.context.test_context_models import _graph_identity
 
 
 def test_context_budget_gate_detects_over_budget_envelope() -> None:
-    envelope = ContextEnvelope(
+    envelope = ContextEnvelope.for_graph(
         envelope_id="context://over-budget",
+        graph_identity=_graph_identity(),
+        phase="EXECUTE",
+        worker_id="context-worker",
+        worker_type="function",
         budget=ContextBudget(
             max_input_tokens=100,
             max_output_tokens=100,
@@ -39,7 +44,7 @@ def test_context_budget_gate_detects_over_budget_envelope() -> None:
                 segment_id="global-policy",
                 segment_type="global_policy",
                 content_ref="policy://global",
-                summary="Harness controls workflow.",
+                summary="Harness controls Graph execution.",
                 token_estimate=120,
                 provenance_refs=("policy://global",),
                 cache_scope="stable_prefix",
@@ -60,7 +65,10 @@ def test_context_assembler_fails_closed_without_verified_compaction_runtime() ->
     with pytest.raises(HarnessValidationError, match="verified compaction runtime"):
         assembler.assemble(
             {
-                "run_id": "run-budget",
+                "graph_identity": _graph_identity(),
+                "phase": "EXECUTE",
+                "worker_id": "context-worker",
+                "worker_type": "function",
                 "budget": _budget(250),
                 "evidence_memory_tokens": 300,
                 "current_task_tokens": 200,
@@ -79,7 +87,7 @@ class _PhysicalContext:
 
     def materialize(self, snapshot, *, deployment_id):
         counts = {
-            group.group_id: int(group.semantic_metadata.get("legacy_token_estimate", 2))
+            group.group_id: int(group.semantic_metadata.get("token_estimate", 2))
             for group in snapshot.groups
         }
         return ContextPhysicalMaterialization(
@@ -145,7 +153,10 @@ def test_context_assembler_uses_verified_runtime_instead_of_estimated_halving() 
 
     envelope = assembler.assemble(
         {
-            "run_id": "run-verified-budget",
+            "graph_identity": _graph_identity(),
+            "phase": "EXECUTE",
+            "worker_id": "context-worker",
+            "worker_type": "function",
             "current_task_ref": "task://verified-budget",
             "segments": segments,
             "budget": _budget(100),
@@ -173,7 +184,7 @@ def test_context_assembler_builds_a_fresh_runtime_from_the_bound_envelope() -> N
 
     def runtime_factory(envelope, request):
         envelopes.append(envelope.envelope_id)
-        assert request["run_id"] == "run-runtime-factory"
+        assert request["graph_identity"] == _graph_identity()
         return ContextCompactionRuntime(
             materializer=physical,
             admission_verifier=physical,
@@ -189,7 +200,10 @@ def test_context_assembler_builds_a_fresh_runtime_from_the_bound_envelope() -> N
 
     envelope = assembler.assemble(
         {
-            "run_id": "run-runtime-factory",
+            "graph_identity": _graph_identity(),
+            "phase": "EXECUTE",
+            "worker_id": "context-worker",
+            "worker_type": "function",
             "current_task_ref": "task://runtime-factory",
             "budget": _budget(1_000),
         }
@@ -201,7 +215,7 @@ def test_context_assembler_builds_a_fresh_runtime_from_the_bound_envelope() -> N
     )
 
 
-def test_physical_admission_cannot_be_bypassed_by_legacy_estimate() -> None:
+def test_physical_admission_cannot_be_bypassed_by_estimate() -> None:
     physical = _PhysicalContext(max_input_tokens=30)
     artifacts = FakeArtifactPort()
     assembler = ContextAssembler(
@@ -218,7 +232,10 @@ def test_physical_admission_cannot_be_bypassed_by_legacy_estimate() -> None:
     with pytest.raises(HarnessValidationError, match="did not authorize"):
         assembler.assemble(
             {
-                "run_id": "run-physical-reject",
+                "graph_identity": _graph_identity(),
+                "phase": "EXECUTE",
+                "worker_id": "context-worker",
+                "worker_type": "function",
                 "current_task_ref": "task://physical-reject",
                 "budget": _budget(4096),
             }
@@ -239,7 +256,7 @@ def _budget(max_input_tokens: int) -> ContextBudget:
 def _segments_with_reconstructable_run_state() -> tuple[ContextSegment, ...]:
     types = (
         "global_policy",
-        "workflow",
+        "graph",
         "worker_contract",
         "run_state",
         "evidence_memory",

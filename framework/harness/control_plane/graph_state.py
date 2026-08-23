@@ -34,9 +34,7 @@ from framework.harness.graph.versioning import (
     GRAPH_ONLY_HARNESS_GRAPH_STATE_SCHEMA,
     GRAPH_ONLY_NORMALIZED_HARNESS_GRAPH_SCHEMA,
     HARNESS_GRAPH_RUNTIME_VERSION,
-    HARNESS_GRAPH_STATE_SCHEMA,
 )
-from framework.harness.workflow.versioning import LEGACY_STATE_SCHEMA
 
 
 _CHECKSUM_PATTERN = re.compile(r"^sha256:[0-9a-f]{64}$")
@@ -1753,7 +1751,7 @@ class HarnessGraphState:
     terminal_reason_code: str | None = None
     terminal_evidence_ref: str | None = None
     metadata: Mapping[str, Any] = field(default_factory=dict)
-    schema_version: str = HARNESS_GRAPH_STATE_SCHEMA
+    schema_version: str = GRAPH_ONLY_HARNESS_GRAPH_STATE_SCHEMA
     runtime_version: str = HARNESS_GRAPH_RUNTIME_VERSION
     projection_checksum: str | None = None
 
@@ -1891,20 +1889,9 @@ class HarnessGraphState:
                     "Wait registration belongs to an unknown node instance",
                     code="cross_node_wait_rejected",
                 )
-            is_legacy_approval_wait = (
-                node.node_kind is HarnessGraphNodeKind.EXECUTABLE
-                and wait.kind is WaitKind.APPROVAL
-                and (
-                    node.step_status is HarnessStepStatus.WAITING_APPROVAL
-                    or not wait.unresolved
-                )
-            )
-            if (
-                node.node_kind is not HarnessGraphNodeKind.WAIT
-                and not is_legacy_approval_wait
-            ):
+            if node.node_kind is not HarnessGraphNodeKind.WAIT:
                 raise HarnessValidationError(
-                    "Wait registration requires a Wait or legacy approval node instance",
+                    "Wait registration requires a Wait node instance",
                     code="wait_node_kind_mismatch",
                 )
             if wait.unresolved and not node.is_waiting:
@@ -2043,11 +2030,13 @@ class HarnessGraphState:
                         code="join_branch_scope_mismatch",
                         details={"branch_id": branch_id},
                     )
-                if node.last_event_sequence > join.last_event_sequence:
-                    raise HarnessValidationError(
-                        "join state cannot precede branch terminal evidence",
-                        code="graph_state_sequence_regression",
-                    )
+                # A branch can receive later durable evidence (for example a
+                # side-effect outcome) after the Join recorded its terminal
+                # branch evidence.  ``node.last_event_sequence`` is therefore
+                # not the branch-terminal sequence and cannot be compared to
+                # the Join cursor.  The branch decision checksum in
+                # ``terminal_event_refs`` remains the authoritative ordering
+                # evidence during replay.
             if join.winner_branch_id is not None:
                 winner_instance_id = join.completed_branch_instances[
                     join.winner_branch_id
@@ -2219,18 +2208,9 @@ class HarnessGraphState:
                     "WAITING lifecycle cannot have ready or running work",
                     code="invalid_waiting_run_projection",
                 )
-            has_legacy_approval_wait = any(
-                item.node_kind is HarnessGraphNodeKind.EXECUTABLE
-                and item.status is HarnessNodeInstanceStatus.WAITING
-                and item.step_status is HarnessStepStatus.WAITING_APPROVAL
-                for item in nodes
-            )
-            if (
-                not any(item.unresolved for item in waits)
-                and not has_legacy_approval_wait
-            ):
+            if not any(item.unresolved for item in waits):
                 raise HarnessValidationError(
-                    "WAITING lifecycle requires an unresolved Wait or approval node",
+                    "WAITING lifecycle requires an unresolved Wait node",
                     code="invalid_waiting_run_projection",
                 )
         if lifecycle is RunLifecycle.COMPLETED:
@@ -2300,29 +2280,17 @@ class HarnessGraphState:
                     "pending terminal side effect does not match its graph projection",
                     code="pending_side_effect_identity_mismatch",
                 )
-        expected_state_schema = (
-            GRAPH_ONLY_HARNESS_GRAPH_STATE_SCHEMA
-            if self.graph_ref.schema_version
-            == GRAPH_ONLY_NORMALIZED_HARNESS_GRAPH_SCHEMA
-            else HARNESS_GRAPH_STATE_SCHEMA
-        )
-        if self.schema_version not in {
-            HARNESS_GRAPH_STATE_SCHEMA,
-            GRAPH_ONLY_HARNESS_GRAPH_STATE_SCHEMA,
-        }:
+        if self.graph_ref.schema_version != GRAPH_ONLY_NORMALIZED_HARNESS_GRAPH_SCHEMA:
             raise HarnessValidationError(
-                "unsupported graph state schema",
+                "Graph state requires an exact Graph v2 reference",
+                code="graph_state_graph_schema_mismatch",
+                details={"graph_schema_version": self.graph_ref.schema_version},
+            )
+        if self.schema_version != GRAPH_ONLY_HARNESS_GRAPH_STATE_SCHEMA:
+            raise HarnessValidationError(
+                "Graph state requires the exact v2 state schema",
                 code="unsupported_graph_state_schema",
                 details={"schema_version": str(self.schema_version)},
-            )
-        if self.schema_version != expected_state_schema:
-            raise HarnessValidationError(
-                "graph state schema does not match its normalized Graph reference",
-                code="graph_state_schema_mismatch",
-                details={
-                    "schema_version": str(self.schema_version),
-                    "expected_schema_version": expected_state_schema,
-                },
             )
         if self.runtime_version != HARNESS_GRAPH_RUNTIME_VERSION:
             raise HarnessValidationError(
@@ -2400,12 +2368,7 @@ class HarnessGraphState:
             budgets=budgets,
             last_event_sequence=0,
             metadata={} if metadata is None else metadata,
-            schema_version=(
-                GRAPH_ONLY_HARNESS_GRAPH_STATE_SCHEMA
-                if graph_ref.schema_version
-                == GRAPH_ONLY_NORMALIZED_HARNESS_GRAPH_SCHEMA
-                else HARNESS_GRAPH_STATE_SCHEMA
-            ),
+            schema_version=GRAPH_ONLY_HARNESS_GRAPH_STATE_SCHEMA,
         )
 
     @property
@@ -2546,99 +2509,7 @@ class HarnessGraphState:
         )
 
 
-@dataclass(frozen=True, slots=True)
-class HarnessLegacyStatusProjection:
-    source_status: HarnessRunStatus | str
-    resumable_blocked: bool = False
-    indeterminate_evidence_ref: str | None = None
-    source_schema: str = LEGACY_STATE_SCHEMA
-    lifecycle: RunLifecycle = field(init=False)
-    outcome: RunOutcome = field(init=False)
-
-    def __post_init__(self) -> None:
-        source_status = HarnessRunStatus(self.source_status)
-        if not isinstance(self.resumable_blocked, bool):
-            raise HarnessValidationError(
-                "resumable_blocked must be boolean",
-                code="invalid_legacy_status_projection",
-            )
-        evidence_ref = optional_text(
-            self.indeterminate_evidence_ref,
-            "legacy_status.indeterminate_evidence_ref",
-        )
-        if evidence_ref is not None:
-            evidence_ref = _checksum(
-                evidence_ref,
-                "legacy_status.indeterminate_evidence_ref",
-            )
-        if self.resumable_blocked and source_status is not HarnessRunStatus.BLOCKED:
-            raise HarnessValidationError(
-                "resumable_blocked is valid only for BLOCKED legacy status",
-                code="invalid_legacy_status_projection",
-            )
-        if evidence_ref is not None and source_status is not HarnessRunStatus.HALTED:
-            raise HarnessValidationError(
-                "indeterminate evidence is valid only for HALTED legacy status",
-                code="invalid_legacy_status_projection",
-            )
-        if self.source_schema != LEGACY_STATE_SCHEMA:
-            raise HarnessValidationError(
-                "legacy status reader requires the exact v1 state schema",
-                code="unsupported_legacy_state_schema",
-                details={"source_schema": str(self.source_schema)},
-            )
-        lifecycle, outcome = _map_v1_status(
-            source_status,
-            resumable_blocked=self.resumable_blocked,
-            indeterminate=bool(evidence_ref),
-        )
-        object.__setattr__(self, "source_status", source_status)
-        object.__setattr__(self, "indeterminate_evidence_ref", evidence_ref)
-        object.__setattr__(self, "lifecycle", lifecycle)
-        object.__setattr__(self, "outcome", outcome)
-
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "source_schema": self.source_schema,
-            "source_status": self.source_status.value,
-            "resumable_blocked": self.resumable_blocked,
-            "indeterminate_evidence_ref": self.indeterminate_evidence_ref,
-            "lifecycle": self.lifecycle.value,
-            "outcome": self.outcome.value,
-        }
-
-    @classmethod
-    def from_dict(cls, value: Mapping[str, Any]) -> "HarnessLegacyStatusProjection":
-        _exact_keys(
-            value,
-            {
-                "source_schema",
-                "source_status",
-                "resumable_blocked",
-                "indeterminate_evidence_ref",
-                "lifecycle",
-                "outcome",
-            },
-            "legacy status projection",
-        )
-        projection = cls(
-            source_schema=value["source_schema"],
-            source_status=value["source_status"],
-            resumable_blocked=value["resumable_blocked"],
-            indeterminate_evidence_ref=value["indeterminate_evidence_ref"],
-        )
-        if (
-            value["lifecycle"] != projection.lifecycle.value
-            or value["outcome"] != projection.outcome.value
-        ):
-            raise HarnessValidationError(
-                "legacy status projection does not match the fixed v1 mapping",
-                code="legacy_status_projection_mismatch",
-            )
-        return projection
-
-
-def project_public_legacy_status(
+def project_public_graph_status(
     lifecycle: RunLifecycle | str,
     outcome: RunOutcome | str,
     *,
@@ -2650,12 +2521,12 @@ def project_public_legacy_status(
     if not isinstance(waiting_for_approval, bool):
         raise HarnessValidationError(
             "waiting_for_approval must be boolean",
-            code="invalid_legacy_status_projection",
+            code="invalid_graph_status_projection",
         )
     if waiting_for_approval and resolved_lifecycle is not RunLifecycle.WAITING:
         raise HarnessValidationError(
             "waiting_for_approval is valid only for WAITING lifecycle",
-            code="invalid_legacy_status_projection",
+            code="invalid_graph_status_projection",
         )
     if resolved_lifecycle is RunLifecycle.CREATED:
         return HarnessRunStatus.CREATED
@@ -2843,46 +2714,6 @@ def _validate_compensation_node_binding(
                 "terminal compensation outcome is not bound to node evidence",
                 code="compensation_outcome_evidence_mismatch",
             )
-
-
-def _map_v1_status(
-    status: HarnessRunStatus,
-    *,
-    resumable_blocked: bool,
-    indeterminate: bool,
-) -> tuple[RunLifecycle, RunOutcome]:
-    if status is HarnessRunStatus.CREATED:
-        return RunLifecycle.CREATED, RunOutcome.NONE
-    if status in {
-        HarnessRunStatus.RUNNING,
-        HarnessRunStatus.PLANNING,
-        HarnessRunStatus.EXECUTING,
-        HarnessRunStatus.VERIFYING,
-        HarnessRunStatus.REPLANNING,
-    }:
-        return RunLifecycle.RUNNING, RunOutcome.NONE
-    if status is HarnessRunStatus.WAITING_APPROVAL or (
-        status is HarnessRunStatus.BLOCKED and resumable_blocked
-    ):
-        return RunLifecycle.WAITING, RunOutcome.NONE
-    if status is HarnessRunStatus.SUCCEEDED:
-        return RunLifecycle.COMPLETED, RunOutcome.SUCCEEDED
-    if status is HarnessRunStatus.FAILED:
-        return RunLifecycle.COMPLETED, RunOutcome.FAILED
-    if status is HarnessRunStatus.CANCELLED:
-        return RunLifecycle.COMPLETED, RunOutcome.CANCELLED
-    if status is HarnessRunStatus.HALTED:
-        return (
-            RunLifecycle.HALTED,
-            RunOutcome.INDETERMINATE if indeterminate else RunOutcome.NONE,
-        )
-    if status is HarnessRunStatus.BLOCKED:
-        return RunLifecycle.HALTED, RunOutcome.NONE
-    raise HarnessValidationError(
-        "unsupported v1 run status",
-        code="invalid_legacy_status_projection",
-        details={"status": status.value},
-    )
 
 
 def _validate_lifecycle_outcome(
@@ -3074,7 +2905,6 @@ __all__ = [
     "HarnessJoinKind",
     "HarnessJoinState",
     "HarnessJoinStatus",
-    "HarnessLegacyStatusProjection",
     "HarnessLoopCounterState",
     "HarnessLoopIteration",
     "HarnessLoopStatus",
@@ -3088,5 +2918,5 @@ __all__ = [
     "HarnessWaitStatus",
     "RunLifecycle",
     "RunOutcome",
-    "project_public_legacy_status",
+    "project_public_graph_status",
 ]

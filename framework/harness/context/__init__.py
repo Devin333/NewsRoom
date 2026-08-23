@@ -3,7 +3,6 @@ from __future__ import annotations
 from framework.harness.context.assembler import ContextAssembler
 from framework.harness.context.budget import ContextBudgetEstimator, ContextBudgetUsage
 from framework.harness.context.cache import ContextCachePolicyBuilder
-from framework.harness.context.compatibility import context_payload
 from framework.harness.context.compression import ContextCompressor
 from framework.harness.context.compaction_models import (
     REVERSIBLE_CONTEXT_ACTIONS,
@@ -226,5 +225,4 @@ __all__ = [
     "FakeContextGateSuite",
     "FakeContextRuntime",
     "FakeContextSnapshotStore",
-    "context_payload",
 ]

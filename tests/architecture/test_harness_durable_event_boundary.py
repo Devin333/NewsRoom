@@ -97,15 +97,15 @@ def test_control_plane_has_no_implicit_memory_fallback_or_subscriber_routing() -
     assert isinstance(event_port_assignments[0].value, ast.Name)
     assert event_port_assignments[0].value.id == "event_port"
 
-    process_graph_activity = next(
+    control_plane = next(
         node
-        for node in ast.walk(tree)
-        if isinstance(node, ast.FunctionDef)
-        and node.name == "_process_graph_activity"
+        for node in tree.body
+        if isinstance(node, ast.ClassDef)
+        and node.name == "HarnessControlPlane"
     )
     direct_worker_calls = [
         node
-        for node in ast.walk(process_graph_activity)
+        for node in ast.walk(control_plane)
         if isinstance(node, ast.Call)
         and (
             isinstance(node.func, ast.Name)
@@ -114,13 +114,13 @@ def test_control_plane_has_no_implicit_memory_fallback_or_subscriber_routing() -
             and node.func.attr in {"execute", "generate", "run_skill", "run_subagent"}
         )
     ]
-    assert direct_worker_calls
+    assert direct_worker_calls == []
     called_attributes = {
         node.func.attr
-        for node in ast.walk(process_graph_activity)
+        for node in ast.walk(control_plane)
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
     }
-    assert called_attributes.isdisjoint({"deliver", "dispatch", "publish", "subscribe"})
+    assert called_attributes.isdisjoint({"deliver", "publish", "subscribe"})
 
 
 def test_control_plane_has_one_graph_execution_path() -> None:

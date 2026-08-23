@@ -246,4 +246,10 @@ def _run_loop(
         skill_selection_policy=SkillSelectionPolicy(
             exposure_policy=SkillExposurePolicy()
         ),
-    ).run(agent, {"topic": "extract entities"}, [], run_id="agent-run-1")
+    ).run(
+        agent,
+        {"topic": "extract entities"},
+        [],
+        run_id="agent-run-1",
+        standalone=True,
+    )

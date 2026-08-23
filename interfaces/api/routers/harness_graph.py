@@ -23,7 +23,7 @@ HarnessGraphCall = Callable[[HarnessGraphApplicationService], object]
 def create_router(services: ApiServices, helpers: ApiRouteHelpers) -> APIRouter:
     router = APIRouter()
 
-    @router.get("/api/v1/runs/{run_id}/graph")
+    @router.get("/api/v2/graph-runs/{run_id}/graph")
     def inspect_graph(
         request: Request,
         run_id: str = Path(min_length=1, max_length=_MAX_ID_LENGTH),
@@ -39,7 +39,7 @@ def create_router(services: ApiServices, helpers: ApiRouteHelpers) -> APIRouter:
             ),
         )
 
-    @router.get("/api/v1/runs/{run_id}/graph/health")
+    @router.get("/api/v2/graph-runs/{run_id}/graph/health")
     def inspect_graph_health(
         request: Request,
         run_id: str = Path(min_length=1, max_length=_MAX_ID_LENGTH),

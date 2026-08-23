@@ -48,7 +48,8 @@ class EntityReportMatch:
     run_id: str
     title: str | None
     finished_at: str
-    workflow_id: str | None
+    graph_id: str | None
+    graph_version: str | None
     matched_aliases: list[str]
     match_count: int
     quality_score: float | None
@@ -59,7 +60,8 @@ class EntityReportMatch:
             "run_id": self.run_id,
             "title": self.title,
             "finished_at": self.finished_at,
-            "workflow_id": self.workflow_id,
+            "graph_id": self.graph_id,
+            "graph_version": self.graph_version,
             "matched_aliases": list(self.matched_aliases),
             "match_count": self.match_count,
             "quality_score": self.quality_score,
@@ -71,15 +73,15 @@ class EntityReportMatchResult:
     entity: TrackedEntity
     matches: list[EntityReportMatch]
     limit: int
-    workflow_id: str | None
-    workflow_family: str | None = None
+    graph_id: str | None
+    graph_ids: tuple[str, ...] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "entity": self.entity.to_dict(),
             "limit": self.limit,
-            "workflow_id": self.workflow_id,
-            "workflow_family": self.workflow_family,
+            "graph_id": self.graph_id,
+            "graph_ids": list(self.graph_ids) if self.graph_ids is not None else None,
             "match_count": len(self.matches),
             "matches": [match.to_dict() for match in self.matches],
         }
@@ -139,8 +141,8 @@ class EntityTrackingApplicationService:
         *,
         artifact_root: str | Path = ".newsroom/runs",
         limit: int = 20,
-        workflow_id: str | None = None,
-        workflow_family: str | None = None,
+        graph_id: str | None = None,
+        graph_ids: tuple[str, ...] | None = None,
     ) -> EntityReportMatchResult:
         if limit <= 0:
             raise ValueError("limit must be greater than zero")
@@ -148,8 +150,8 @@ class EntityTrackingApplicationService:
         report_service = self.report_service_factory(artifact_root=artifact_root)
         candidate_set = report_service.list_reports(
             limit=max(limit * 5, limit),
-            workflow_id=workflow_id,
-            workflow_family=workflow_family,
+            graph_id=graph_id,
+            graph_ids=graph_ids,
         )
         matches: list[EntityReportMatch] = []
         for candidate in candidate_set.reports:
@@ -163,8 +165,8 @@ class EntityTrackingApplicationService:
             entity=entity,
             matches=matches,
             limit=limit,
-            workflow_id=workflow_id,
-            workflow_family=workflow_family,
+            graph_id=graph_id,
+            graph_ids=graph_ids,
         )
 
 
@@ -186,7 +188,8 @@ def _match_report(entity: TrackedEntity, candidate: Any, detail: Any) -> EntityR
         run_id=candidate.run_id,
         title=candidate.title,
         finished_at=candidate.finished_at,
-        workflow_id=getattr(candidate, "workflow_id", None),
+        graph_id=getattr(candidate, "graph_id", None),
+        graph_version=getattr(candidate, "graph_version", None),
         matched_aliases=matched_aliases,
         match_count=match_count,
         quality_score=candidate.quality_score,

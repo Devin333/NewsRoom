@@ -87,7 +87,7 @@ def test_router_managed_agent_call_is_settled_once() -> None:
         llm_client=_BoundRouterClient(router),
         tool_executor=ToolExecutor(ToolRegistry()),
         global_budget_tracker=tracker,
-    ).run(agent, {"topic": "budget"}, [], run_id="run-agent-budget")
+    ).run(agent, {"topic": "budget"}, [], run_id="run-agent-budget", standalone=True)
 
     assert first.success is True
     assert provider.call_count == 1
@@ -98,7 +98,7 @@ def test_router_managed_agent_call_is_settled_once() -> None:
         llm_client=_BoundRouterClient(router),
         tool_executor=ToolExecutor(ToolRegistry()),
         global_budget_tracker=tracker,
-    ).run(agent, {"topic": "budget"}, [], run_id="run-agent-budget")
+    ).run(agent, {"topic": "budget"}, [], run_id="run-agent-budget", standalone=True)
 
     assert second.success is False
     assert second.to_dict()["termination_reason"] == "global_budget_exceeded"

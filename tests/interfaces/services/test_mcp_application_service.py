@@ -13,12 +13,12 @@ from interfaces.services.approval_service import ApprovalApplicationService
 from interfaces.services.artifact_service import ArtifactInspectionService
 from interfaces.services.mcp_service import MCPApplicationService
 from interfaces.services.report_service import ReportApplicationService
-from interfaces.services.run_inspection_service import RunInspectionService
+from interfaces.services.run_inspection_service import GraphRunInspectionService
 from tests.fixtures.graph_runs import (
     rewrite_graph_terminal_manifest,
     write_graph_terminal_run,
 )
-from tests.fixtures.workflow_runs import rewrite_manifest, write_canonical_terminal_run
+from tests.fixtures.graph_runs import rewrite_graph_terminal_manifest, write_graph_terminal_run
 
 
 def test_mcp_catalog_lists_research_tools_without_calling_factories() -> None:
@@ -32,7 +32,7 @@ def test_mcp_catalog_lists_research_tools_without_calling_factories() -> None:
         memory_service_factory=_raising_factory,
         diagnostic_service_factory=_raising_factory,
         approval_service_factory=_raising_factory,
-        run_inspection_service_factory=_raising_factory,
+        graph_run_inspection_service_factory=_raising_factory,
         artifact_service_factory=_raising_factory,
         storage_service_factory=_raising_factory,
         research_service_factory=_raising_factory,
@@ -82,7 +82,7 @@ def test_mcp_capability_manifest_describes_research_permissions() -> None:
         memory_service_factory=_raising_factory,
         diagnostic_service_factory=_raising_factory,
         approval_service_factory=_raising_factory,
-        run_inspection_service_factory=_raising_factory,
+        graph_run_inspection_service_factory=_raising_factory,
         artifact_service_factory=_raising_factory,
         storage_service_factory=_raising_factory,
         research_service_factory=_raising_factory,
@@ -347,7 +347,7 @@ def test_mcp_unknown_tool_resource_and_prompt_exceptions_are_sanitized() -> None
     secret = "postgresql://operator:password@db.internal/news"
     service = MCPApplicationService(
         report_service_factory=lambda: _ExplodingMCPService(secret),
-        run_inspection_service_factory=lambda: _ExplodingMCPService(secret),
+        graph_run_inspection_service_factory=lambda: _ExplodingMCPService(secret),
     )
 
     results = [
@@ -369,21 +369,20 @@ def test_mcp_unknown_tool_resource_and_prompt_exceptions_are_sanitized() -> None
 
 
 def test_mcp_artifact_path_failures_preserve_typed_failure_envelopes(tmp_path) -> None:
-    workflow_fixture = write_canonical_terminal_run(
+    workflow_fixture = write_graph_terminal_run(
         tmp_path,
         "run-workflow-unsafe",
     )
     graph_fixture = write_graph_terminal_run(tmp_path, "run-graph-unsafe")
     (tmp_path / "outside.txt").write_text("artifact-secret", encoding="utf-8")
-    workflow_manifest = dict(workflow_fixture.manifest)
-    workflow_manifest["artifacts"] = dict(workflow_fixture.manifest["artifacts"])
-    workflow_manifest["artifacts"]["output"] = "../outside.txt"
-    rewrite_manifest(workflow_fixture, workflow_manifest)
+    workflow_manifest = workflow_fixture.manifest.to_dict()
+    workflow_manifest["artifacts"][0]["relative_path"] = "../outside.txt"
+    rewrite_graph_terminal_manifest(workflow_fixture, workflow_manifest)
     graph_manifest = graph_fixture.manifest.to_dict()
     graph_manifest["artifacts"][0]["relative_path"] = "../outside.txt"
     rewrite_graph_terminal_manifest(graph_fixture, graph_manifest)
     service = MCPApplicationService(
-        run_inspection_service_factory=lambda: RunInspectionService(tmp_path),
+        graph_run_inspection_service_factory=lambda: GraphRunInspectionService(tmp_path),
         artifact_service_factory=lambda: ArtifactInspectionService(tmp_path),
     )
 
@@ -422,7 +421,7 @@ def test_mcp_integrity_failures_preserve_typed_failure_envelopes(error_type) -> 
     error = error_type("artifact integrity verification failed")
     failing_service = _ArtifactIntegrityFailureService(error)
     service = MCPApplicationService(
-        run_inspection_service_factory=lambda: failing_service,
+        graph_run_inspection_service_factory=lambda: failing_service,
         artifact_service_factory=lambda: failing_service,
     )
 
@@ -440,14 +439,14 @@ def test_mcp_integrity_failures_preserve_typed_failure_envelopes(error_type) -> 
 
 
 def test_mcp_real_filesystem_integrity_failures_preserve_typed_envelopes(tmp_path) -> None:
-    workflow_fixture = write_canonical_terminal_run(tmp_path, "run-replay")
+    workflow_fixture = write_graph_terminal_run(tmp_path, "run-replay")
     graph_fixture = write_graph_terminal_run(
         tmp_path,
         "run-artifact",
         files={"output": ("output.json", {"token": "fixture-secret-token"})},
     )
     service = MCPApplicationService(
-        run_inspection_service_factory=lambda: RunInspectionService(tmp_path),
+        graph_run_inspection_service_factory=lambda: GraphRunInspectionService(tmp_path),
         artifact_service_factory=lambda: ArtifactInspectionService(tmp_path),
     )
     workflow_fixture.artifact_path("output").write_text(
@@ -673,7 +672,8 @@ def _write_report_run(root, run_id: str, title: str, body: str) -> None:
         json.dumps(
             {
                 "run_id": run_id,
-                "workflow_id": "research-paper-analysis",
+                "graph_id": "research.paper-analysis",
+                "graph_version": "1.0.0",
                 "status": "succeeded",
                 "finished_at": "2026-05-11T00:00:00Z",
                 "quality_score": 0.9,

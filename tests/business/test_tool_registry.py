@@ -5,6 +5,7 @@ from business.tools import (
 from framework.agent.artifacts import ArtifactManager
 from framework.tool import ToolCall, ToolExecutor, ToolPolicy, ToolStatus, build_tool_catalog
 from infrastructure.tools import WebSearchResult
+from framework.shared.graph_identity import GraphExecutionIdentity
 
 
 def test_business_tool_registry_includes_safe_business_tools() -> None:
@@ -29,6 +30,7 @@ def test_business_dangerous_registry_includes_risky_business_tools(tmp_path) -> 
     registry = build_business_dangerous_tool_registry(
         artifact_manager=artifact_manager,
         run_id="run-tools",
+        execution_identity=_identity("run-tools"),
         local_json_root=tmp_path / "local-json",
         vector_store=object(),
         memory_ingestion_service=object(),
@@ -48,7 +50,6 @@ def test_business_dangerous_registry_includes_risky_business_tools(tmp_path) -> 
         "arxiv.search_papers",
         "github.fetch_releases",
         "local_json.save",
-        "memory.index",
         "notification.rss_publish",
         "notification.webhook",
         "postgres.save_report",
@@ -60,6 +61,20 @@ def test_business_dangerous_registry_includes_risky_business_tools(tmp_path) -> 
     }.issubset(names)
     assert "report.validate" not in names
     assert "quality.duplicate_check" not in names
+
+
+def _identity(run_id: str) -> GraphExecutionIdentity:
+    return GraphExecutionIdentity(
+        run_id=run_id,
+        graph_id="graph.test",
+        graph_version="v1",
+        graph_ref="graph.test@v1",
+        graph_checksum="sha256:" + "0" * 64,
+        node_id="node.tools",
+        node_instance_id="instance.tools",
+        activity_id="activity.tools",
+        attempt=1,
+    )
 
 
 def test_business_dangerous_registry_has_one_web_search_owner_and_forwards_provider() -> None:

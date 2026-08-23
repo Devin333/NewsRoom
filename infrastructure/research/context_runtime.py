@@ -82,7 +82,7 @@ class ResearchContextPhysicalMaterializer:
             metadata={
                 "component": "research_context_artifact",
                 "run_id": snapshot.run_id,
-                "step_id": snapshot.step_id,
+                "stage_id": snapshot.stage_id,
             },
         )
         prepared = self._request_preparer.prepare(request, self._profile)
@@ -116,14 +116,27 @@ class ResearchContextPhysicalMaterializer:
         )
 
     def _message(self, group: ContextGroup) -> dict[str, str]:
-        segment_id = group.semantic_metadata.get("legacy_segment_id")
+        segment_id = group.semantic_metadata.get("segment_id")
         segment = self._segments.get(segment_id) if isinstance(segment_id, str) else None
+        segment_payload = segment.to_dict() if segment is not None else None
+        if segment_payload is not None:
+            # The semantic envelope records the approved artifact projection,
+            # but the physical request is ref-only. Sending the projection a
+            # second time both defeats durable artifact loading and lets a
+            # large summary consume the provider admission budget twice.
+            metadata = dict(segment_payload.get("metadata", {}))
+            metadata.pop("artifact_context", None)
+            metadata.pop("artifact_context_loaded_tokens", None)
+            segment_payload = {
+                **segment_payload,
+                "metadata": metadata,
+            }
         payload = {
             "group_id": group.group_id,
             "group_kind": group.group_kind.value,
             "member_refs": [member.content_ref for member in group.members],
             "source_refs": list(group.source_refs),
-            "segment": segment.to_dict() if segment is not None else None,
+            "segment": segment_payload,
         }
         return {
             "role": _message_role(group),
@@ -231,7 +244,7 @@ def _resolve_profile(
 def _message_role(group: ContextGroup) -> str:
     if group.group_kind in {
         ContextGroupKind.SYSTEM_INSTRUCTION,
-        ContextGroupKind.WORKFLOW_CONTRACT,
+        ContextGroupKind.GRAPH_CONTRACT,
         ContextGroupKind.OUTPUT_CONTRACT,
     }:
         return "system"

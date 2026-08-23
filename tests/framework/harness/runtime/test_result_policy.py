@@ -89,7 +89,7 @@ def _request(
 def test_default_config_matches_prd_and_round_trips() -> None:
     config = GraphArtifactPersistenceConfig()
 
-    assert config.mode is GraphArtifactRolloutMode.SHADOW
+    assert config.mode is GraphArtifactRolloutMode.ENFORCE
     assert config.inline_max_bytes == 32 * 1024
     assert config.summary_max_bytes == 8 * 1024
     assert config.max_artifact_bytes == 512 * 1024 * 1024
@@ -98,6 +98,14 @@ def test_default_config_matches_prd_and_round_trips() -> None:
     assert config.max_materialized_bytes_per_class == 20 * 1024 * 1024 * 1024
     assert config.quota_alert_threshold_basis_points == 8_000
     assert GraphArtifactPersistenceConfig.from_dict(config.to_dict()) == config
+
+
+@pytest.mark.parametrize("mode", ("legacy", "shadow", "read_only"))
+def test_config_rejects_retired_rollout_modes(mode: str) -> None:
+    with pytest.raises(GraphArtifactResultError) as exc_info:
+        GraphArtifactPersistenceConfig(mode=mode)
+
+    assert exc_info.value.error_code is GraphArtifactResultErrorCode.RESULT_SCHEMA_INVALID
 
 
 @pytest.mark.parametrize(

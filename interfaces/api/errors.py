@@ -9,7 +9,6 @@ class ApiErrorCode(str, Enum):
     UNAUTHORIZED = "unauthorized"
     FORBIDDEN = "forbidden"
     NOT_FOUND = "not_found"
-    WORKFLOW_NOT_FOUND = "workflow_not_found"
     REPORT_NOT_FOUND = "report_not_found"
     RUN_NOT_FOUND = "run_not_found"
     RATE_LIMITED = "rate_limited"

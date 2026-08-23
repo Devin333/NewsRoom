@@ -277,7 +277,7 @@ def test_summary_candidate_requires_supported_claims_and_rejects_authority() -> 
 def test_semantic_snapshot_identity_is_immutable_and_round_trips() -> None:
     snapshot = ContextSemanticSnapshot(
         run_id="run-1",
-        step_id="step-1",
+        stage_id="step-1",
         task_binding_ref="task://current",
         groups=(_group(),),
         policy_revision="policy-v1",

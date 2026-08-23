@@ -1034,7 +1034,6 @@ def test_graph_definition_rejects_leaf_contract_kind_mismatch() -> None:
     (
         HarnessWorkerType.SCRIPT,
         HarnessWorkerType.MCP,
-        HarnessWorkerType.ARTIFACT,
         HarnessWorkerType.QUALITY_GATE,
     ),
 )

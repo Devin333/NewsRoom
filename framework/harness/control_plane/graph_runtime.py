@@ -46,7 +46,6 @@ from framework.harness.graph.versioning import (
     GRAPH_ONLY_HARNESS_GRAPH_STATE_SCHEMA,
     GRAPH_ONLY_NORMALIZED_HARNESS_GRAPH_SCHEMA,
     HARNESS_GRAPH_RUNTIME_VERSION,
-    HARNESS_GRAPH_STATE_SCHEMA,
 )
 from framework.shared.time import ensure_utc, format_datetime
 
@@ -1820,12 +1819,9 @@ def initial_graph_state(
             ),
         )
     )
-    identity_metadata_key = (
-        "graph_ref" if graph.graph_ref is not None else "workflow_ref"
-    )
     metadata: dict[str, Any] = {
         "run_spec_checksum": run_spec_ref,
-        identity_metadata_key: graph.identity_ref.exact_ref,
+        "graph_ref": graph.identity_ref.exact_ref,
         "graph_runtime_version": HARNESS_GRAPH_RUNTIME_VERSION,
     }
     runtime_scopes = {} if runtime_scope_metadata is None else runtime_scope_metadata
@@ -1867,12 +1863,7 @@ def initial_graph_state(
         budgets=counters,
         last_event_sequence=event_sequence,
         metadata=metadata,
-        schema_version=(
-            GRAPH_ONLY_HARNESS_GRAPH_STATE_SCHEMA
-            if graph.schema_version
-            == GRAPH_ONLY_NORMALIZED_HARNESS_GRAPH_SCHEMA
-            else HARNESS_GRAPH_STATE_SCHEMA
-        ),
+        schema_version=GRAPH_ONLY_HARNESS_GRAPH_STATE_SCHEMA,
     )
 
 

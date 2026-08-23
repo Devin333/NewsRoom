@@ -20,14 +20,14 @@ _RAW_SOURCE_TYPES = {
 _REPORT_TYPES = {"report", "report_json", "report_markdown", "blocked_report"}
 _EVIDENCE_TYPES = {"evidence", "evidence_bundle", "evidence_scores", "evidence_source_map"}
 _MEMORY_TYPES = {"memory_document", "memory_documents", "report_sections", "evidence_items"}
-_EVENT_TYPES = {"events", "workflow_events", "quality_events", "source_events"}
+_EVENT_TYPES = {"events", "durable_events", "quality_events", "source_events"}
 _CONVERSATION_TYPES = {
     "agent_conversation",
     "agent_conversations",
     "agent_conversation_messages",
     "agent_conversation_state",
 }
-_MANIFEST_TYPES = {"manifest", "workflow_spec", "request", "pause"}
+_MANIFEST_TYPES = {"manifest", "graph_spec", "request", "pause"}
 _LLM_TYPE_PARTS = ("llm", "model", "prompt", "completion")
 
 

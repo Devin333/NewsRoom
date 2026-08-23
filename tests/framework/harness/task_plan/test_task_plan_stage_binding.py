@@ -19,8 +19,6 @@ from framework.harness.task_plan import (
     DEFAULT_TASK_PLAN_SCHEMA_REGISTRY,
     GRAPH_ONLY_TASK_PLAN_STAGE_BINDING_SCHEMA,
     GRAPH_ONLY_VALIDATED_TASK_PLAN_SCHEMA,
-    TASK_PLAN_STAGE_BINDING_SCHEMA,
-    VALIDATED_TASK_PLAN_SCHEMA,
     TaskPlanContractKind,
     TaskPlanStageBinding,
     TaskPlanValidationContext,
@@ -30,7 +28,7 @@ from tests.fixtures.task_plan import build_task_plan_stage_binding
 
 def _binding(**overrides) -> TaskPlanStageBinding:
     values = {
-        "workflow_id": "binding-workflow",
+        "graph_id": "binding-graph",
         "stage_id": "dynamic-stage",
         "policy_ref": "binding-policy@1",
         "required_output_roles": ("analysis.result",),
@@ -50,18 +48,15 @@ def _graph_only_binding() -> TaskPlanStageBinding:
 def test_stage_binding_derives_all_authority_from_the_frozen_graph() -> None:
     binding = _binding()
 
-    assert binding.schema_version == TASK_PLAN_STAGE_BINDING_SCHEMA
-    assert binding.workflow_id == binding.graph.workflow_id
+    assert binding.schema_version == GRAPH_ONLY_TASK_PLAN_STAGE_BINDING_SCHEMA
     assert binding.graph_checksum == binding.graph.checksum
     assert binding.stage_id == "dynamic-stage"
     assert binding.policy_ref == "binding-policy@1"
     assert binding.required_output_roles == ("analysis.result",)
     assert binding.worker_ref.endswith("@1")
-    assert binding.activity_ref.endswith("@v1")
+    assert binding.activity_ref.endswith("@1")
     assert binding.to_dict()["binding_checksum"] == binding.binding_checksum
-    assert binding.binding_checksum == (
-        "sha256:ef6e4bc73aba05b91dc49e0075d784af664368788aa3075c4a4028a10a8a6a81"
-    )
+    assert not hasattr(binding, "workflow_id")
 
     rebuilt = TaskPlanStageBinding(binding.graph, binding.stage_id)
     assert rebuilt.binding_checksum == binding.binding_checksum
@@ -90,49 +85,33 @@ def test_graph_only_stage_binding_uses_only_exact_graph_identity() -> None:
         graph=binding.graph,
     ) == binding
 
-    with pytest.raises(HarnessValidationError) as error:
-        _ = binding.workflow_id
-
-    assert error.value.code == "legacy_task_plan_identity_forbidden"
+    assert not hasattr(binding, "workflow_id")
 
 
-def test_stage_binding_registry_keeps_v1_writer_and_admits_v2_contract() -> None:
+def test_stage_binding_registry_is_graph_only() -> None:
     registration = next(
         item
         for item in DEFAULT_TASK_PLAN_SCHEMA_REGISTRY.registrations
         if item.contract_kind is TaskPlanContractKind.STAGE_BINDING
     )
 
-    assert registration.writer_schema == TASK_PLAN_STAGE_BINDING_SCHEMA
-    assert set(registration.readable_schemas) == {
-        TASK_PLAN_STAGE_BINDING_SCHEMA,
-        GRAPH_ONLY_TASK_PLAN_STAGE_BINDING_SCHEMA,
-    }
+    assert registration.writer_schema == GRAPH_ONLY_TASK_PLAN_STAGE_BINDING_SCHEMA
+    assert registration.readable_schemas == (GRAPH_ONLY_TASK_PLAN_STAGE_BINDING_SCHEMA,)
     assert set(registration.executable_schemas) == {
-        TASK_PLAN_STAGE_BINDING_SCHEMA,
         GRAPH_ONLY_TASK_PLAN_STAGE_BINDING_SCHEMA,
     }
 
 
 def test_stage_binding_rejects_schema_identity_mixing() -> None:
-    legacy = _binding()
     graph_only = _graph_only_binding()
-
-    with pytest.raises(HarnessValidationError) as legacy_error:
-        TaskPlanStageBinding(
-            legacy.graph,
-            legacy.stage_id,
-            schema_version=GRAPH_ONLY_TASK_PLAN_STAGE_BINDING_SCHEMA,
-        )
-    assert legacy_error.value.code == "task_plan_stage_binding_schema_mismatch"
 
     with pytest.raises(HarnessValidationError) as graph_error:
         TaskPlanStageBinding(
             graph_only.graph,
             graph_only.stage_id,
-            schema_version=TASK_PLAN_STAGE_BINDING_SCHEMA,
+            schema_version="newsroom.harness-task-plan-stage/v1",
         )
-    assert graph_error.value.code == "task_plan_stage_binding_schema_mismatch"
+    assert graph_error.value.code == "unsupported_task_plan_schema"
 
 
 def test_graph_only_stage_binding_rejects_legacy_plan_schema() -> None:
@@ -143,7 +122,7 @@ def test_graph_only_stage_binding_rejects_legacy_plan_schema() -> None:
         task_plan_stage_bindings=(
             replace(
                 stage_binding,
-                task_plan_schema=VALIDATED_TASK_PLAN_SCHEMA,
+                task_plan_schema="newsroom.harness-task-plan/v1",
             ),
         ),
         definition_checksum=None,
@@ -153,7 +132,7 @@ def test_graph_only_stage_binding_rejects_legacy_plan_schema() -> None:
     with pytest.raises(HarnessValidationError) as error:
         TaskPlanStageBinding(graph, RESEARCH_DYNAMIC_STAGE_ID)
 
-    assert error.value.code == "dynamic_task_plan_schema_identity_mismatch"
+    assert error.value.code == "dynamic_task_plan_schema_missing_or_inexact"
 
 
 def test_graph_only_stage_binding_rejects_legacy_event_schema() -> None:
@@ -264,22 +243,22 @@ def test_validation_context_has_no_caller_dynamic_stage_attestation() -> None:
 @pytest.mark.parametrize(
     ("overrides", "code"),
     (
-        (
-            {"metadata_overrides": {"dynamic_stage": False}},
-            "dynamic_task_plan_stage_marker_missing",
-        ),
-        (
-            {"worker_type": HarnessWorkerType.LLM},
-            "dynamic_task_plan_worker_type_mismatch",
-        ),
-        (
-            {"metadata_overrides": {"task_plan_support": {}}},
-            "dynamic_task_plan_support_incomplete",
-        ),
-        (
-            {"metadata_overrides": {"task_plan_schema": "task-plan@latest"}},
-            "dynamic_task_plan_schema_missing_or_inexact",
-        ),
+            (
+                {"metadata_overrides": {"dynamic_stage": False}},
+                "graph_task_plan_authority_metadata_forbidden",
+            ),
+            (
+                {"worker_type": HarnessWorkerType.LLM},
+                "graph_unsupported_leaf_worker_type",
+            ),
+            (
+                {"metadata_overrides": {"task_plan_support": {}}},
+                "graph_task_plan_authority_metadata_forbidden",
+            ),
+            (
+                {"metadata_overrides": {"task_plan_schema": "task-plan@latest"}},
+                "graph_task_plan_authority_metadata_forbidden",
+            ),
     ),
 )
 def test_stage_binding_rejects_unregistered_or_inexact_stage_declarations(

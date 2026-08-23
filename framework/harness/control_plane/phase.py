@@ -25,7 +25,7 @@ class HarnessPhaseBoundary(StrEnum):
 @dataclass(frozen=True)
 class HarnessPhaseRecord:
     phase: HarnessPhase | str
-    step_id: str
+    node_id: str
     boundary: HarnessPhaseBoundary | str = HarnessPhaseBoundary.EXIT
     input_refs: tuple[str, ...] = ()
     output_refs: tuple[str, ...] = ()
@@ -36,9 +36,9 @@ class HarnessPhaseRecord:
     def __post_init__(self) -> None:
         object.__setattr__(self, "phase", HarnessPhase(self.phase))
         object.__setattr__(self, "boundary", HarnessPhaseBoundary(self.boundary))
-        if not str(self.step_id).strip():
-            raise HarnessValidationError("step_id is required")
-        object.__setattr__(self, "step_id", str(self.step_id))
+        if not str(self.node_id).strip():
+            raise HarnessValidationError("node_id is required")
+        object.__setattr__(self, "node_id", str(self.node_id))
         object.__setattr__(self, "input_refs", tuple(str(ref) for ref in self.input_refs))
         object.__setattr__(self, "output_refs", tuple(str(ref) for ref in self.output_refs))
         object.__setattr__(self, "gate_results", tuple(dict(result) for result in self.gate_results))
@@ -52,7 +52,7 @@ class HarnessPhaseRecord:
         return {
             "phase": self.phase.value,
             "boundary": self.boundary.value,
-            "step_id": self.step_id,
+            "node_id": self.node_id,
             "input_refs": list(self.input_refs),
             "output_refs": list(self.output_refs),
             "gate_results": to_jsonable(list(self.gate_results)),

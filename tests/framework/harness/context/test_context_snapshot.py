@@ -12,7 +12,6 @@ from framework.harness import (
     ContextGraphIdentity,
     ContextReplayGate,
     ContextSnapshot,
-    ContextSnapshotReplayReader,
     ContextSnapshotStore,
     ContextTaskExecutionIdentity,
     HarnessValidationError,
@@ -74,7 +73,14 @@ def _graph_envelope(*, graph_id: str = "context.graph") -> ContextEnvelope:
 
 def test_context_snapshot_supports_replay_from_refs() -> None:
     assembler = ContextAssembler()
-    envelope = assembler.assemble({"run_id": "run-replay", "step_id": "verify"})
+    envelope = assembler.assemble(
+        {
+            "graph_identity": _graph_envelope().graph_identity,
+            "phase": "VERIFY",
+            "worker_id": "context-worker",
+            "worker_type": "function",
+        }
+    )
     snapshot = assembler.snapshot_store.load(envelope.snapshot_ref or "")
     replayed = assembler.snapshot_store.replay(envelope.snapshot_ref or "")
 
@@ -86,8 +92,19 @@ def test_context_snapshot_supports_replay_from_refs() -> None:
 
 def test_context_replay_rejects_checksum_mismatch() -> None:
     assembler = ContextAssembler()
-    envelope = assembler.assemble({"run_id": "run-replay", "step_id": "verify"})
-    assembler.snapshot_store.envelopes[envelope.envelope_id] = replace(envelope, token_estimate=envelope.token_estimate + 1)
+    envelope = assembler.assemble(
+        {
+            "graph_identity": _graph_envelope().graph_identity,
+            "phase": "VERIFY",
+            "worker_id": "context-worker",
+            "worker_type": "function",
+        }
+    )
+    assembler.snapshot_store.envelopes[envelope.envelope_id] = replace(
+        envelope,
+        token_estimate=envelope.token_estimate + 1,
+        checksum=None,
+    )
 
     with pytest.raises(HarnessValidationError):
         assembler.snapshot_store.replay(envelope.snapshot_ref or "")
@@ -101,11 +118,6 @@ def test_graph_context_snapshot_store_binds_identity_and_never_downgrades() -> N
     assert snapshot.is_graph_only is True
     assert snapshot.envelope_checksum == envelope.checksum
     assert store.replay(snapshot.snapshot_id) == envelope
-
-    with pytest.raises(HarnessValidationError) as error:
-        ContextSnapshotReplayReader().replay_snapshot(snapshot)
-    assert error.value.code == "context_snapshot_v2_replay_unavailable"
-
 
 def test_graph_context_snapshot_store_rejects_cross_graph_replay() -> None:
     store = ContextSnapshotStore()
@@ -121,47 +133,12 @@ def test_graph_context_snapshot_store_rejects_cross_graph_replay() -> None:
     assert error.value.code == "context_snapshot_replay_identity_mismatch"
 
 
-@pytest.mark.parametrize("forged_schema", ("legacy", "graph"))
-def test_context_snapshot_store_rejects_schema_downgrade_replay(
-    forged_schema: str,
-) -> None:
+def test_context_snapshot_reader_rejects_legacy_schema() -> None:
     store = ContextSnapshotStore()
-
-    if forged_schema == "legacy":
-        envelope, snapshot = store.save_bound(_graph_envelope())
-        store.snapshots[snapshot.snapshot_id] = replace(
-            snapshot,
-            schema_version=None,
-            graph_identity=None,
-            task_execution_identity=None,
-            envelope_checksum=None,
-        )
-    else:
-        legacy_envelope = ContextEnvelope(
-            envelope_id="context://legacy/snapshot",
-            run_id="run-legacy-snapshot",
-            workflow_id="legacy.workflow",
-            step_id="legacy-stage",
-            phase="EXECUTE",
-            worker_id="legacy-worker",
-            worker_type="task_plan",
-        )
-        envelope, snapshot = store.save_bound(legacy_envelope)
-        graph_envelope = replace(
-            _graph_envelope(),
-            envelope_id=envelope.envelope_id,
-            checksum=None,
-        ).bind_snapshot_ref(snapshot.snapshot_id)
-        store.snapshots[snapshot.snapshot_id] = ContextSnapshot.for_graph_envelope(
-            snapshot_id=snapshot.snapshot_id,
-            envelope=graph_envelope,
-            refs=("artifact://legacy-context",),
-            segment_refs=(),
-            assembled_prompt_ref=None,
-            cache_key="context-cache://graph-forgery",
-        )
-
+    _, snapshot = store.save_bound(_graph_envelope())
+    payload = snapshot.to_dict()
+    payload.pop("schema_version")
     with pytest.raises(HarnessValidationError) as error:
-        store.replay(snapshot.snapshot_id)
+        ContextSnapshot.from_dict(payload)
 
-    assert error.value.code == "context_snapshot_replay_identity_mismatch"
+    assert error.value.code == "context_snapshot_schema_unsupported"

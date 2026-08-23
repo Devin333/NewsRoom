@@ -13,7 +13,7 @@ STABLE_TOOLS = {
     "news.report.list",
     "news.report.get",
     "news.report.search",
-    "news.memory.search",
+    "news.memory.recall",
     "news.source.health",
     "news.worker.status",
     "news.queue.status",

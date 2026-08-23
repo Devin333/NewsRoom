@@ -125,7 +125,7 @@ def build_reader_repair_committed_result(
         "producer_node_id": receipt.resource.node_id,
         "producer_output_key": receipt.output_key,
         "graph_id": receipt.resource.graph_ref.graph_id,
-        "graph_version": receipt.resource.graph_ref.workflow_ref.version,
+        "graph_version": receipt.resource.graph_ref.identity_version,
     }
     receipt_mismatches = sorted(
         key

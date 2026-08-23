@@ -93,6 +93,7 @@ class GraphTerminalManifestContext:
     graph_schema_version: str
     compiler_version: str
     normalized_graph_checksum: str
+    execution_versions: GraphExecutionVersionManifest
     started_at: datetime
     terminal_node_ids: tuple[str, ...]
 
@@ -121,6 +122,42 @@ class GraphTerminalManifestContext:
                 "context.normalized_graph_checksum",
             ),
         )
+        if not isinstance(self.execution_versions, GraphExecutionVersionManifest):
+            raise TypeError("context.execution_versions must be GraphExecutionVersionManifest")
+        self.execution_versions.verify_integrity()
+        version_pairs = (
+            ("graph_id", self.graph_id, self.execution_versions.graph_id),
+            ("graph_version", self.graph_version, self.execution_versions.graph_version),
+            (
+                "graph_schema_version",
+                self.graph_schema_version,
+                self.execution_versions.normalized_graph_schema_version,
+            ),
+            (
+                "compiler_version",
+                self.compiler_version,
+                self.execution_versions.compiler_version,
+            ),
+            (
+                "normalized_graph_checksum",
+                self.normalized_graph_checksum,
+                self.execution_versions.normalized_graph_checksum,
+            ),
+        )
+        mismatch = next(
+            (
+                field_name
+                for field_name, context_value, execution_value in version_pairs
+                if context_value != execution_value
+            ),
+            None,
+        )
+        if mismatch is not None:
+            raise GraphTerminalManifestError(
+                GraphTerminalManifestErrorCode.EXECUTION_VERSION_MISMATCH,
+                "Graph terminal manifest context does not match execution versions",
+                field=f"context.{mismatch}",
+            )
         object.__setattr__(
             self,
             "started_at",
@@ -136,6 +173,12 @@ class GraphTerminalManifestContext:
                 allow_empty=False,
             ),
         )
+        if self.terminal_node_ids != self.execution_versions.terminal_node_ids:
+            raise GraphTerminalManifestError(
+                GraphTerminalManifestErrorCode.EXECUTION_VERSION_MISMATCH,
+                "Graph terminal manifest context terminal nodes do not match execution versions",
+                field="context.terminal_node_ids",
+            )
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -145,6 +188,7 @@ class GraphTerminalManifestContext:
             "graph_schema_version": self.graph_schema_version,
             "compiler_version": self.compiler_version,
             "normalized_graph_checksum": self.normalized_graph_checksum,
+            "execution_versions": self.execution_versions.to_dict(),
             "started_at": format_datetime(self.started_at),
             "terminal_node_ids": list(self.terminal_node_ids),
         }
@@ -161,6 +205,7 @@ class GraphTerminalManifestContext:
                     "graph_schema_version",
                     "compiler_version",
                     "normalized_graph_checksum",
+                    "execution_versions",
                     "started_at",
                     "terminal_node_ids",
                 }
@@ -171,6 +216,15 @@ class GraphTerminalManifestContext:
             payload["started_at"],
             "context.started_at",
         )
+        execution_versions = payload["execution_versions"]
+        if not isinstance(execution_versions, Mapping):
+            raise _schema_error("context.execution_versions")
+        try:
+            payload["execution_versions"] = GraphExecutionVersionManifest.from_dict(
+                execution_versions
+            )
+        except (TypeError, ValueError, HarnessValidationError) as exc:
+            raise _schema_error("context.execution_versions") from exc
         return cls(**payload)
 
 
@@ -670,12 +724,7 @@ class GraphTerminalManifest:
 
 @dataclass(frozen=True, slots=True)
 class GraphTerminalManifestV2:
-    """Inactive Graph-only terminal manifest with exact execution lineage.
-
-    The live Artifact ports intentionally continue to accept only
-    ``GraphTerminalManifest`` v1. This separate type prevents the Gate A reader
-    and builder from becoming a production writer through structural typing.
-    """
+    """Production Graph terminal manifest with exact execution lineage."""
 
     terminal: GraphTerminalManifest
     execution_versions: GraphExecutionVersionManifest
@@ -775,6 +824,48 @@ class GraphTerminalManifestV2:
         return self.terminal.terminal_node_ids
 
     @property
+    def tenant_id(self) -> str:
+        return self.terminal.tenant_id
+
+    @property
+    def graph_schema_version(self) -> str:
+        return self.terminal.graph_schema_version
+
+    @property
+    def compiler_version(self) -> str:
+        return self.terminal.compiler_version
+
+    @property
+    def status(self) -> GraphTerminalStatus:
+        return self.terminal.status
+
+    @property
+    def started_at(self) -> datetime:
+        return self.terminal.started_at
+
+    @property
+    def completed_at(self) -> datetime:
+        return self.terminal.completed_at
+
+    @property
+    def terminal_state_ref(self) -> str:
+        return self.terminal.terminal_state_ref
+
+    @property
+    def checkpoint_ref(self) -> str:
+        return self.terminal.checkpoint_ref
+
+    @property
+    def gate_evidence_refs(self) -> tuple[str, ...]:
+        return self.terminal.gate_evidence_refs
+
+    def with_artifact(self, artifact: GraphTerminalArtifact) -> Self:
+        return replace(self, terminal=self.terminal.with_artifact(artifact), manifest_hash=None)
+
+    def without_artifact(self, artifact_key: str) -> Self:
+        return replace(self, terminal=self.terminal.without_artifact(artifact_key), manifest_hash=None)
+
+    @property
     def artifacts(self) -> tuple[GraphTerminalArtifact, ...]:
         return self.terminal.artifacts
 
@@ -800,9 +891,9 @@ class GraphTerminalManifestV2:
         value: Mapping[str, Any],
         *,
         expected_run_id: str | None = None,
-        expected_graph: NormalizedHarnessGraph,
+        expected_graph: NormalizedHarnessGraph | None = None,
     ) -> Self:
-        if not isinstance(expected_graph, NormalizedHarnessGraph):
+        if expected_graph is not None and not isinstance(expected_graph, NormalizedHarnessGraph):
             raise TypeError("expected_graph must be NormalizedHarnessGraph")
         payload = _exact_keys(
             value,
@@ -858,19 +949,20 @@ class GraphTerminalManifestV2:
             execution_versions=execution_versions,
             manifest_hash=supplied_hash,
         )
-        try:
-            expected_versions = GraphExecutionVersionManifest.from_normalized_graph(
-                expected_graph
-            )
-        except HarnessValidationError as exc:
-            raise _schema_error("expected_graph") from exc
-        if parsed.execution_versions != expected_versions:
-            raise GraphTerminalManifestError(
-                GraphTerminalManifestErrorCode.EXECUTION_VERSION_MISMATCH,
-                "Graph terminal manifest execution versions do not match the pinned "
-                "Graph",
-                field="execution_versions",
-            )
+        if expected_graph is not None:
+            try:
+                expected_versions = GraphExecutionVersionManifest.from_normalized_graph(
+                    expected_graph
+                )
+            except HarnessValidationError as exc:
+                raise _schema_error("expected_graph") from exc
+            if parsed.execution_versions != expected_versions:
+                raise GraphTerminalManifestError(
+                    GraphTerminalManifestErrorCode.EXECUTION_VERSION_MISMATCH,
+                    "Graph terminal manifest execution versions do not match the pinned "
+                    "Graph",
+                    field="execution_versions",
+                )
         return parsed
 
 
@@ -920,8 +1012,8 @@ class GraphTerminalManifestCommitRequest:
         self,
         *,
         artifacts: tuple[GraphTerminalArtifact, ...],
-    ) -> GraphTerminalManifest:
-        return GraphTerminalManifest(
+    ) -> GraphTerminalManifestV2:
+        terminal = GraphTerminalManifest(
             tenant_id=self.context.tenant_id,
             run_id=self.run_id,
             graph_id=self.context.graph_id,
@@ -942,38 +1034,48 @@ class GraphTerminalManifestCommitRequest:
             artifacts=artifacts,
             publication=None,
         )
+        return GraphTerminalManifestV2(
+            terminal=terminal,
+            execution_versions=self.context.execution_versions,
+        )
 
 
 def parse_graph_terminal_manifest(
     value: Mapping[str, Any],
     *,
     expected_run_id: str,
-) -> GraphTerminalManifest:
+) -> GraphTerminalManifestV2:
     expected = _identifier(expected_run_id, "expected_run_id")
     if not isinstance(value, Mapping):
         raise _schema_error("manifest")
     schema = value.get("schema_version")
-    if isinstance(schema, str) and schema.startswith("newsroom.workflow_run_manifest."):
+    if isinstance(schema, str) and (
+        schema.startswith("newsroom.workflow_run_manifest.")
+        or schema == GRAPH_TERMINAL_MANIFEST_SCHEMA
+    ):
         raise GraphTerminalManifestHistoryError(
             GraphManifestHistoryDiagnostic(
                 run_id=expected,
                 observed_schema=schema,
             )
         )
-    if schema != GRAPH_TERMINAL_MANIFEST_SCHEMA:
+    if schema != GRAPH_TERMINAL_MANIFEST_V2_SCHEMA:
         raise GraphTerminalManifestError(
             GraphTerminalManifestErrorCode.SCHEMA_UNSUPPORTED,
             f"unsupported Graph terminal manifest schema: {schema}",
             field="schema_version",
         )
-    return GraphTerminalManifest.from_dict(value, expected_run_id=expected)
+    return GraphTerminalManifestV2.from_dict(
+        value,
+        expected_run_id=expected,
+    )
 
 
 def build_graph_terminal_manifest_v2(
     manifest: GraphTerminalManifest,
     graph: NormalizedHarnessGraph,
 ) -> GraphTerminalManifestV2:
-    """Build inactive v2 evidence from one frozen Graph and v1 terminal record."""
+    """Build a production v2 manifest from one frozen Graph and terminal record."""
 
     if not isinstance(manifest, GraphTerminalManifest):
         raise TypeError("manifest must be GraphTerminalManifest")
@@ -992,11 +1094,7 @@ def parse_graph_terminal_manifest_v2(
     expected_run_id: str,
     expected_graph: NormalizedHarnessGraph,
 ) -> GraphTerminalManifestV2:
-    """Read v2 evidence only with the externally pinned Graph as a witness.
-
-    The ordinary live parser intentionally remains v1-only until the production
-    manifest writer/reader cutover is qualified by Gate B.
-    """
+    """Read a v2 manifest and verify it against a pinned Graph."""
 
     expected = _identifier(expected_run_id, "expected_run_id")
     if not isinstance(expected_graph, NormalizedHarnessGraph):
@@ -1017,12 +1115,15 @@ def parse_graph_terminal_manifest_v2(
 
 
 def graph_terminal_manifest_hash(
-    value: GraphTerminalManifest | Mapping[str, Any],
+    value: GraphTerminalManifestV2 | Mapping[str, Any],
 ) -> str:
     manifest = (
         value
-        if isinstance(value, GraphTerminalManifest)
-        else GraphTerminalManifest.from_dict(value)
+        if isinstance(value, GraphTerminalManifestV2)
+        else parse_graph_terminal_manifest(
+            value,
+            expected_run_id=str(value.get("run_id", "")),
+        )
     )
     return checksum_for(manifest.content_projection())
 
@@ -1039,21 +1140,21 @@ class GraphArtifactContentPort(Protocol):
 class GraphTerminalManifestPort(Protocol):
     """Atomic owner port for canonical Graph terminal manifest authority."""
 
-    def read_terminal_manifest(self, run_id: str) -> GraphTerminalManifest:
+    def read_terminal_manifest(self, run_id: str) -> GraphTerminalManifestV2:
         ...
 
     def write_terminal_manifest(
         self,
-        manifest: GraphTerminalManifest,
-    ) -> GraphTerminalManifest:
+        manifest: GraphTerminalManifestV2,
+    ) -> GraphTerminalManifestV2:
         ...
 
     def replace_terminal_manifest(
         self,
-        manifest: GraphTerminalManifest,
+        manifest: GraphTerminalManifestV2,
         *,
         expected_manifest_hash: str,
-    ) -> GraphTerminalManifest:
+    ) -> GraphTerminalManifestV2:
         ...
 
 
@@ -1064,7 +1165,7 @@ class GraphTerminalManifestRecorderPort(Protocol):
     def commit_unpublished_terminal_manifest(
         self,
         request: GraphTerminalManifestCommitRequest,
-    ) -> GraphTerminalManifest:
+    ) -> GraphTerminalManifestV2:
         ...
 
 
@@ -1136,13 +1237,13 @@ class GraphArtifactStrictContentReader:
 
     def read(
         self,
-        manifest: GraphTerminalManifest,
+        manifest: GraphTerminalManifestV2,
         artifact_key: str,
         *,
         redact: bool = True,
     ) -> GraphArtifactContentRecord:
-        if not isinstance(manifest, GraphTerminalManifest):
-            raise TypeError("manifest must be GraphTerminalManifest")
+        if not isinstance(manifest, GraphTerminalManifestV2):
+            raise TypeError("manifest must GraphTerminalManifestV2")
         artifact = manifest.artifact(artifact_key)
         if artifact is None:
             raise GraphTerminalManifestError(

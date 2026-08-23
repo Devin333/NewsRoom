@@ -23,11 +23,15 @@ from framework.harness import ArtifactWriteRequest
 from framework.harness.artifacts import (
     GraphTerminalArtifact,
     GraphTerminalManifest,
+    GraphTerminalManifestV2,
     GraphTerminalManifestCommitRequest,
     GraphTerminalManifestContext,
     GraphTerminalManifestError,
     GraphTerminalManifestErrorCode,
 )
+from framework.harness.graph import HarnessGraphCompiler
+from framework.harness.graph.execution_versions import GraphExecutionVersionManifest
+from business.research.graphs import build_paper_analysis_graph_definition
 from framework.shared.json import stable_json_dumps
 from infrastructure.research.artifact_port import (
     ArtifactPublicationVisibilityError,
@@ -302,6 +306,7 @@ def test_graph_terminal_manifest_tamper_is_detected(tmp_path) -> None:
 
 def test_unpublished_terminal_commit_is_failure_only_and_restart_safe(tmp_path) -> None:
     port = FilesystemHarnessArtifactPort(tmp_path)
+    execution_versions = _execution_versions()
     with port.bind_run("run-1"):
         port.write_artifact(_context_request({"status": "gate-failed"}))
 
@@ -309,13 +314,18 @@ def test_unpublished_terminal_commit_is_failure_only_and_restart_safe(tmp_path) 
         GraphTerminalManifestCommitRequest(
             context=GraphTerminalManifestContext(
                 tenant_id="tenant-1",
-                graph_id="research-test-graph",
-                graph_version="1.0.0",
-                graph_schema_version="1.0.0",
-                compiler_version="1.0.0",
-                normalized_graph_checksum=checksum_for({"graph": "run-1"}),
+                graph_id=execution_versions.graph_id,
+                graph_version=execution_versions.graph_version,
+                graph_schema_version=(
+                    execution_versions.normalized_graph_schema_version
+                ),
+                compiler_version=execution_versions.compiler_version,
+                normalized_graph_checksum=(
+                    execution_versions.normalized_graph_checksum
+                ),
+                execution_versions=execution_versions,
                 started_at=_NOW,
-                terminal_node_ids=("publish",),
+                terminal_node_ids=execution_versions.terminal_node_ids,
             ),
             run_id="run-1",
             status="failed",
@@ -644,26 +654,41 @@ def _graph_request(payload, *, identity: str = "b" * 64) -> ArtifactWriteRequest
 def _commit_terminal_manifest(
     port: FilesystemHarnessArtifactPort,
     run_id: str,
-) -> GraphTerminalManifest:
+) -> GraphTerminalManifestV2:
+    execution_versions = _execution_versions()
     return port.write_terminal_manifest(
-        GraphTerminalManifest(
-            tenant_id="tenant-1",
-            run_id=run_id,
-            graph_id="research-test-graph",
-            graph_version="1.0.0",
-            graph_schema_version="1.0.0",
-            compiler_version="1.0.0",
-            normalized_graph_checksum=checksum_for({"graph": run_id}),
-            status="succeeded",
-            started_at=_NOW,
-            completed_at=_NOW + timedelta(seconds=1),
-            terminal_state_ref=checksum_for({"state": run_id}),
-            checkpoint_ref=f"graph-state://{run_id}/terminal",
-            terminal_node_ids=("publish",),
-            gate_evidence_refs=(checksum_for({"gate": run_id}),),
-            artifacts=port.list_staged_artifacts(run_id),
+        GraphTerminalManifestV2(
+            execution_versions=execution_versions,
+            terminal=GraphTerminalManifest(
+                tenant_id="tenant-1",
+                run_id=run_id,
+                graph_id=execution_versions.graph_id,
+                graph_version=execution_versions.graph_version,
+                graph_schema_version=(
+                    execution_versions.normalized_graph_schema_version
+                ),
+                compiler_version=execution_versions.compiler_version,
+                normalized_graph_checksum=(
+                    execution_versions.normalized_graph_checksum
+                ),
+                status="succeeded",
+                started_at=_NOW,
+                completed_at=_NOW + timedelta(seconds=1),
+                terminal_state_ref=checksum_for({"state": run_id}),
+                checkpoint_ref=f"graph-state://{run_id}/terminal",
+                terminal_node_ids=execution_versions.terminal_node_ids,
+                gate_evidence_refs=(checksum_for({"gate": run_id}),),
+                artifacts=port.list_staged_artifacts(run_id),
+            ),
         )
     )
+
+
+def _execution_versions() -> GraphExecutionVersionManifest:
+    graph = HarnessGraphCompiler().compile(
+        build_paper_analysis_graph_definition()
+    ).graph
+    return GraphExecutionVersionManifest.from_normalized_graph(graph)
 
 
 def _research_persistence_records(caplog):

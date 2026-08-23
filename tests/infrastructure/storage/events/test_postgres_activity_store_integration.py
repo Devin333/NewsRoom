@@ -25,8 +25,6 @@ from framework.events.runtime.activities import (
     ReplayActivityStatus,
 )
 from framework.events.schema.security import SecurityClassification
-from framework.harness import HarnessActivity, HarnessWorkerResult
-from framework.harness.control_plane.activity import HarnessActivityResultRecord
 
 
 ACCEPTED_AT = datetime(2026, 7, 16, 8, 0, tzinfo=UTC)
@@ -260,77 +258,6 @@ def test_real_postgres_rejects_cross_tenant_and_detects_tampering(
         store.get_record(write.recorded_ref, tenant_id=tenant_id)
 
 
-def test_real_postgres_implements_secure_harness_result_contract(
-    postgres_dsn: str,
-    scope: str,
-) -> None:
-    from infrastructure.storage.events.activity_store import (
-        PostgresRecordedActivityStore,
-    )
-
-    tenant_id = f"{scope}:tenant"
-    store = PostgresRecordedActivityStore(
-        postgres_dsn,
-        encryption_key=Fernet.generate_key(),
-    )
-    activity = HarnessActivity.for_worker_call(
-        run_id=f"{scope}:run",
-        step_id="collect",
-        attempt=1,
-        activity_type="llm",
-        inputs={"prompt": "postgres-harness-input"},
-    )
-    record = HarnessActivityResultRecord(
-        activity=activity,
-        result=HarnessWorkerResult(
-            status="succeeded",
-            output={"answer": "postgres-harness-output"},
-        ),
-        accepted_at=ACCEPTED_AT,
-        started_at=STARTED_AT,
-        completed_at=COMPLETED_AT,
-    )
-
-    reference = store.put_result(
-        record,
-        tenant_id=tenant_id,
-        classification=SecurityClassification.CONFIDENTIAL,
-    )
-
-    assert store.validate_reference(
-        reference.to_dict(),
-        tenant_id=tenant_id,
-        classification=SecurityClassification.CONFIDENTIAL,
-    ).complete
-    assert (
-        store.resolve_result(
-            reference,
-            tenant_id=tenant_id,
-            classification=SecurityClassification.CONFIDENTIAL,
-        )
-        == record
-    )
-    assert (
-        store.put_result(
-            record,
-            tenant_id=tenant_id,
-            classification=SecurityClassification.CONFIDENTIAL,
-        )
-        == reference
-    )
-    ciphertexts = _ciphertexts(postgres_dsn, activity.activity_id, tenant_id)
-    assert len(ciphertexts) == 1
-    assert b"postgres-harness-input" not in ciphertexts[0]
-    assert b"postgres-harness-output" not in ciphertexts[0]
-    assert {
-        (entry["object_role"], entry["operation"])
-        for entry in store.access_audit(
-            activity.activity_id,
-            tenant_id=tenant_id,
-        )
-    } >= {("record", "write"), ("record", "read")}
-
-
 @pytest.mark.parametrize(
     ("sqlstate", "expected_error"),
     [
@@ -414,7 +341,6 @@ def _ciphertexts(dsn: str, activity_id: str, tenant_id: str) -> tuple[bytes, ...
             for table in (
                 "event_activity_payloads",
                 "event_activity_records",
-                "harness_activity_results",
             ):
                 cursor.execute(
                     f"SELECT ciphertext FROM {table} "
@@ -434,7 +360,6 @@ def _cleanup(dsn: str, scope: str) -> None:
                 "event_activity_access_audit",
                 "event_activity_records",
                 "event_activity_payloads",
-                "harness_activity_results",
             ):
                 cursor.execute(
                     f"DELETE FROM {table} WHERE activity_id LIKE %s",

@@ -63,4 +63,4 @@ def _run_agent_with_responses(
     return AgentLoop(
         llm_client=FakeLLMClient(responses),
         tool_executor=ToolExecutor(registry),
-    ).run(agent, {"topic": "x"}, [], run_id="run-termination")
+    ).run(agent, {"topic": "x"}, [], run_id="run-termination", standalone=True)

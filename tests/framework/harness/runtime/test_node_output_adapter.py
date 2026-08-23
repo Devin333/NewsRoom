@@ -31,9 +31,11 @@ from framework.harness.graph.model import (
 from framework.harness.side_effects.models import HarnessTerminalSideEffectPolicy
 from framework.harness.graph.versioning import (
     HARNESS_CONDITION_POLICY_VERSION,
-    HARNESS_GRAPH_COMPILER_VERSION,
-    NORMALIZED_HARNESS_GRAPH_SCHEMA,
+    HARNESS_GRAPH_ONLY_COMPILER_VERSION,
+    GRAPH_ONLY_NORMALIZED_HARNESS_GRAPH_SCHEMA,
 )
+
+
 from framework.shared.attempts import (
     AdmissionResult,
     AttemptContext,
@@ -266,7 +268,7 @@ def test_committed_output_resolver_fails_closed_without_commit_or_exact_payload(
     assert mismatched.value.code == "graph_committed_node_output_payload_mismatch"
 
 
-def test_committed_output_resolver_preserves_first_commit_after_late_attempt() -> None:
+def test_committed_output_resolver_rejects_receipt_superseded_by_authorized_retry() -> None:
     resource = InMemoryHarnessNodeOutputResource()
     definition = _definition()
     resolver = HarnessCommittedNodeOutputInputResolver(resource=resource)
@@ -290,29 +292,35 @@ def test_committed_output_resolver_preserves_first_commit_after_late_attempt() -
         payload=first_payload,
     )
     second_activity = _activity(fencing_generation=2)
+    second_payload = {"reader_payload": "second"}
     late_result = adapter.run(
-        lambda: _payload_candidate(
-            {"reader_payload": "second"},
-            "second",
-        ),
+        lambda: _payload_candidate(second_payload, "second"),
         activity=second_activity,
         timeout_seconds=None,
         attempt_id="physical-attempt-2",
     )
 
-    restored = resolver.verify(
-        first_receipt,
+    with pytest.raises(HarnessValidationError) as superseded:
+        resolver.verify(
+            first_receipt,
+            definition=definition,
+            binding_id="analyze-report-commit",
+            payload=first_payload,
+        )
+    current_receipt = resolver.resolve(
         definition=definition,
         binding_id="analyze-report-commit",
-        payload=first_payload,
+        producer_activity=second_activity,
+        payload=second_payload,
     )
 
-    assert late_result.outcome.state is AttemptState.FAILED
-    assert late_result.commit is None
-    assert restored == first_receipt
+    assert superseded.value.code == "graph_committed_node_output_commit_mismatch"
+    assert late_result.outcome.state is AttemptState.SUCCEEDED
+    assert late_result.commit is not None
+    assert current_receipt.commit == late_result.commit
     assert (
-        resource.committed_output(first_receipt.resource)
-        == first_receipt.commit
+        resource.committed_output(current_receipt.resource)
+        == current_receipt.commit
     )
 
 
@@ -392,10 +400,10 @@ def _definition() -> HarnessGraphDefinition:
         ),
     )
     return HarnessGraphDefinition(
-        graph_id="graph",
+        graph_id="research",
         graph_version="2",
         root=HarnessGraphSpec(
-            graph_id="graph",
+            graph_id="research",
             root=Sequence((StepRef("analyze"), StepRef("publish"))),
             terminal_output_keys=("published",),
         ),
@@ -453,12 +461,12 @@ def _definition() -> HarnessGraphDefinition:
 
 def _graph_ref() -> HarnessGraphReference:
     return HarnessGraphReference(
-        "graph",
-        _ref(HarnessContractKind.WORKFLOW, "research", version="2"),
-        NORMALIZED_HARNESS_GRAPH_SCHEMA,
-        HARNESS_GRAPH_COMPILER_VERSION,
-        HARNESS_CONDITION_POLICY_VERSION,
-        _sha("graph"),
+        graph_id="research",
+        schema_version=GRAPH_ONLY_NORMALIZED_HARNESS_GRAPH_SCHEMA,
+        compiler_version=HARNESS_GRAPH_ONLY_COMPILER_VERSION,
+        condition_policy_version=HARNESS_CONDITION_POLICY_VERSION,
+        checksum=_sha("graph"),
+        graph_ref=_ref(HarnessContractKind.GRAPH, "research", version="2"),
     )
 
 

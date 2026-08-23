@@ -2,6 +2,7 @@ from datetime import UTC, datetime
 
 from infrastructure.storage.lineage import LineageRef
 from infrastructure.storage.postgres import PostgresLineageStore
+from framework.shared.graph_identity import GraphRunIdentity
 
 
 class FakeCursor:
@@ -55,6 +56,23 @@ def test_postgres_lineage_store_upserts_ref() -> None:
     assert params[1] == "run-1"
     assert params[8] == '{"source": "test"}'
     assert connection.commits == 1
+    assert "graph_identity" in sql
+
+
+def test_postgres_lineage_store_round_trips_graph_identity() -> None:
+    identity = GraphRunIdentity(
+        run_id="run-1",
+        graph_id="research.paper-analysis",
+        graph_version="v2",
+        graph_ref="research.paper-analysis@v2",
+        graph_checksum="sha256:" + "0" * 64,
+    )
+    connection = FakeConnection(rows=[_row(graph_identity=identity)])
+    store = PostgresLineageStore("postgresql://example", connection_factory=lambda: connection)
+
+    restored = store.list_by_run("run-1")
+
+    assert restored[0].graph_identity == identity
 
 
 def test_postgres_lineage_store_lists_upstream_and_downstream() -> None:
@@ -87,7 +105,7 @@ def _ref() -> LineageRef:
     )
 
 
-def _row():
+def _row(*, graph_identity: GraphRunIdentity | None = None):
     ref = _ref()
     return (
         ref.lineage_id,
@@ -99,4 +117,5 @@ def _row():
         ref.relation_type,
         "2026-05-11T01:00:00Z",
         '{"source": "test"}',
+        graph_identity.to_dict() if graph_identity else {},
     )

@@ -14,13 +14,12 @@ from framework.agent.artifacts import (
 from framework.events.errors import EventStoreUnavailableError
 from interfaces.cli.commands.dispatch import CommandHandler, call_handler
 from interfaces.services.artifact_service import ArtifactInspectionService
-from interfaces.services.run_inspection_factory import run_inspection_service_from_env
+from interfaces.services.run_inspection_factory import graph_run_inspection_service_from_env
 from interfaces.services.run_event_sse import run_events_sse_frames
-from interfaces.services.run_operation_service import RunOperationApplicationService
 
 
 def register(subparsers: argparse._SubParsersAction) -> None:
-    runs_parser = subparsers.add_parser("runs", help="Inspect workflow run history")
+    runs_parser = subparsers.add_parser("runs", help="Inspect Graph run history")
     runs_subparsers = runs_parser.add_subparsers(dest="runs_command", required=True)
 
     list_parser = runs_subparsers.add_parser("list", help="List local runs")
@@ -41,7 +40,11 @@ def register(subparsers: argparse._SubParsersAction) -> None:
     events_parser.add_argument("--limit", type=int, default=None, help="Maximum events")
     events_parser.add_argument("--offset", type=int, default=0, help="Legacy pagination position")
     events_parser.add_argument("--event-type", default=None, help="Filter by event type")
-    events_parser.add_argument("--step-id", default=None, help="Filter by workflow step")
+    events_parser.add_argument(
+        "--node-instance-id",
+        default=None,
+        help="Filter by exact Graph node instance",
+    )
     events_parser.add_argument(
         "--sequence-cursor",
         default=None,
@@ -80,7 +83,7 @@ def register(subparsers: argparse._SubParsersAction) -> None:
     catalog_health_parser.add_argument("--json", action="store_true", help="Print machine-readable JSON")
     catalog_health_parser.set_defaults(handler=run_catalog_health)
 
-    compare_parser = runs_subparsers.add_parser("compare", help="Compare two workflow runs")
+    compare_parser = runs_subparsers.add_parser("compare", help="Compare two Graph runs")
     compare_parser.add_argument("base_run_id", help="Base run id")
     compare_parser.add_argument("target_run_id", help="Target run id")
     _add_artifact_root_argument(compare_parser)
@@ -93,25 +96,6 @@ def register(subparsers: argparse._SubParsersAction) -> None:
     artifacts_parser.add_argument("--json", action="store_true", help="Print machine-readable JSON")
     artifacts_parser.set_defaults(handler=run_artifacts)
 
-    cancel_parser = runs_subparsers.add_parser("cancel", help="Request cancellation for a run")
-    cancel_parser.add_argument("run_id", help="Run id")
-    cancel_parser.add_argument("--reason", required=True, help="Reason for cancellation")
-    cancel_parser.add_argument("--actor-id", default=None, help="Optional actor id")
-    _add_artifact_root_argument(cancel_parser)
-    cancel_parser.add_argument("--json", action="store_true", help="Print machine-readable JSON")
-    cancel_parser.set_defaults(handler=cancel_run)
-
-    rerun_parser = runs_subparsers.add_parser(
-        "rerun-from-step",
-        help="Request a rerun starting from one workflow step",
-    )
-    rerun_parser.add_argument("run_id", help="Run id")
-    rerun_parser.add_argument("step_id", help="Step id")
-    rerun_parser.add_argument("--actor-id", default=None, help="Optional actor id")
-    _add_artifact_root_argument(rerun_parser)
-    rerun_parser.add_argument("--json", action="store_true", help="Print machine-readable JSON")
-    rerun_parser.set_defaults(handler=rerun_from_step)
-
 
 def list_runs(args: argparse.Namespace) -> int:
     result = _run_inspection_service(args.artifact_root).list_runs(limit=args.limit)
@@ -121,7 +105,10 @@ def list_runs(args: argparse.Namespace) -> int:
     else:
         print(f"run_count={payload['run_count']}")
         for run in payload["runs"]:
-            print(f"- {run['run_id']} status={run['status']} profile={run['profile']}")
+            print(
+                f"- {run['run_id']} status={run['status']} "
+                f"graph={run.get('graph_id')}@{run.get('graph_version')}"
+            )
             print(f"  started_at={run['started_at']} manifest={run['manifest_path']}")
     return 0
 
@@ -141,8 +128,8 @@ def show_run(args: argparse.Namespace) -> int:
         manifest = payload["manifest"]
         print(f"run_id={payload['run_id']}")
         print(f"status={manifest.get('status')}")
-        print(f"workflow_id={manifest.get('workflow_id')}")
-        print(f"profile={manifest.get('profile')}")
+        print(f"graph_id={manifest.get('graph_id')}")
+        print(f"graph_version={manifest.get('graph_version')}")
         print(f"manifest_path={payload['manifest_path']}")
     return 0
 
@@ -154,8 +141,8 @@ def run_events(args: argparse.Namespace) -> int:
             event_kwargs["offset"] = args.offset
         if args.event_type is not None:
             event_kwargs["event_type"] = args.event_type
-        if args.step_id is not None:
-            event_kwargs["step_id"] = args.step_id
+        if args.node_instance_id is not None:
+            event_kwargs["node_instance_id"] = args.node_instance_id
         if args.sequence_cursor is not None:
             event_kwargs["sequence_cursor"] = args.sequence_cursor
         result = _run_inspection_service(args.artifact_root).get_run_events(
@@ -216,7 +203,7 @@ def replay_run(args: argparse.Namespace) -> int:
                 f"- {artifact['artifact_key']} path={artifact['relative_path']} "
                 f"type={artifact['content_type']} size={artifact['size_bytes']}"
             )
-            if artifact["read_error"]:
+            if artifact.get("read_error"):
                 line = f"{line} error={artifact['read_error']}"
             print(line)
     return 0
@@ -312,10 +299,11 @@ def compare_runs(args: argparse.Namespace) -> int:
         comparison = payload["comparison"]
         print(f"base_run_id={payload['base_run_id']}")
         print(f"target_run_id={payload['target_run_id']}")
-        print(f"same_workflow={str(comparison.get('same_workflow')).lower()}")
-        print(f"status_changed={str(comparison.get('status_changed')).lower()}")
-        print(f"workflow_version_changed={str(comparison.get('workflow_version_changed')).lower()}")
-        print(f"has_behavioral_change={str(comparison.get('has_behavioral_change')).lower()}")
+        print(f"same_graph={str(comparison.get('same_graph')).lower()}")
+        print(f"base_status={comparison.get('base_status')}")
+        print(f"target_status={comparison.get('target_status')}")
+        print(f"base_manifest_hash={comparison.get('base_manifest_hash')}")
+        print(f"target_manifest_hash={comparison.get('target_manifest_hash')}")
     return 0
 
 
@@ -344,66 +332,12 @@ def run_artifacts(args: argparse.Namespace) -> int:
     return 0
 
 
-def cancel_run(args: argparse.Namespace) -> int:
-    try:
-        result = _run_operation_service(args.artifact_root).cancel_run(
-            args.run_id,
-            reason=args.reason,
-            actor_id=args.actor_id,
-        )
-    except _TYPED_ARTIFACT_ERRORS as exc:
-        return _print_typed_artifact_error(exc)
-    except FileNotFoundError as exc:
-        print(str(exc))
-        return 3
-    except ValueError as exc:
-        print(str(exc))
-        return 2
-    return print_run_operation_result(result.to_dict(), json_output=args.json)
-
-
-def rerun_from_step(args: argparse.Namespace) -> int:
-    try:
-        result = _run_operation_service(args.artifact_root).rerun_from_step(
-            args.run_id,
-            step_id=args.step_id,
-            actor_id=args.actor_id,
-        )
-    except _TYPED_ARTIFACT_ERRORS as exc:
-        return _print_typed_artifact_error(exc)
-    except FileNotFoundError as exc:
-        print(str(exc))
-        return 3
-    except ValueError as exc:
-        print(str(exc))
-        return 2
-    return print_run_operation_result(result.to_dict(), json_output=args.json)
-
-
-def print_run_operation_result(payload: dict[str, Any], *, json_output: bool) -> int:
-    if json_output:
-        print(json.dumps(payload, ensure_ascii=False, sort_keys=True))
-    else:
-        print(f"operation_id={payload['operation_id']}")
-        print(f"operation_type={payload['operation_type']}")
-        print(f"status={payload['status']}")
-        print(f"run_id={payload['run_id']}")
-        if payload.get("new_run_id"):
-            print(f"new_run_id={payload['new_run_id']}")
-        print(f"message={payload['message']}")
-    return 0 if payload.get("status") in {"accepted", "applied"} else 1
-
-
 def _run_inspection_service(artifact_root: str):
-    return run_inspection_service_from_env(artifact_root=artifact_root)
+    return graph_run_inspection_service_from_env(artifact_root=artifact_root)
 
 
 def _artifact_service(artifact_root: str):
     return ArtifactInspectionService(artifact_root=artifact_root)
-
-
-def _run_operation_service(artifact_root: str):
-    return RunOperationApplicationService(artifact_root=artifact_root)
 
 
 def _add_artifact_root_argument(parser: argparse.ArgumentParser) -> None:
@@ -442,13 +376,10 @@ __all__ = [
     "CommandHandler",
     "add_runs_commands",
     "call_handler",
-    "cancel_run",
     "compare_runs",
     "list_runs",
-    "print_run_operation_result",
     "register",
     "replay_run",
-    "rerun_from_step",
     "run_artifacts",
     "run_catalog_health",
     "run_diagnostics",

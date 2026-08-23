@@ -278,7 +278,8 @@ class ReportSummaryRecord:
     report_json_path: str | None = None
     report_markdown_path: str | None = None
     citation_coverage_score: float | None = None
-    workflow_id: str | None = None
+    graph_id: str | None = None
+    graph_version: str | None = None
     profile: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
@@ -290,7 +291,8 @@ class ReportSummaryRecord:
             "title": self.title,
             "quality_score": self.quality_score,
             "citation_coverage_score": self.citation_coverage_score,
-            "workflow_id": self.workflow_id,
+            "graph_id": self.graph_id,
+            "graph_version": self.graph_version,
             "profile": self.profile,
             "manifest_path": _path_or_none(self.manifest_path),
             "report_json_path": _path_or_none(self.report_json_path),

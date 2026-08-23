@@ -13,6 +13,7 @@ from framework.harness.side_effects.models import (
     HarnessSideEffectDecision,
     HarnessSideEffectIntent,
     HarnessSideEffectOrigin,
+    HarnessSideEffectOutcome,
 )
 
 
@@ -118,6 +119,32 @@ def test_authorization_cannot_drop_worker_physical_identity() -> None:
             intent,
             replace(decision, node_instance_id="publish:other", checksum=None),
         )
+
+
+def test_active_side_effect_wires_do_not_emit_step_id() -> None:
+    intent = _intent("publish:1")
+    decision = _decision(intent)
+    store = InMemoryHarnessSideEffectStore()
+    store.put_decision(decision)
+    outcome = CountingHarnessSideEffectHandler(store).commit(
+        intent,
+        decision,
+    )
+
+    assert "step_id" not in intent.to_dict()
+    assert "step_id" not in decision.to_dict()
+    assert "step_id" not in outcome.to_dict()
+
+
+@pytest.mark.parametrize("factory", [
+    HarnessSideEffectIntent.from_dict,
+    HarnessSideEffectDecision.from_dict,
+    HarnessSideEffectOutcome.from_dict,
+])
+def test_active_side_effect_readers_reject_legacy_step_id(factory) -> None:
+    payload = {"step_id": None}
+    with pytest.raises(HarnessValidationError, match="retired step_id"):
+        factory(payload)
 
 
 def test_same_effect_id_different_node_instances_have_independent_attempt_fences() -> None:

@@ -8,12 +8,6 @@ from infrastructure.storage.events.factory import (
     event_store_from_env,
 )
 from infrastructure.storage.events.activity_store import SQLiteRecordedActivityStore
-from infrastructure.storage.events.migration_reports import (
-    JsonMigrationBackfillReportStore,
-    MigrationReportStoreError,
-    read_migration_shadow_report,
-    write_migration_shadow_report,
-)
 from infrastructure.storage.events.replay_checkpoints import SQLiteReplayCheckpointStore
 from infrastructure.storage.events.sqlite import SQLiteEventStore, SQLiteEventUnitOfWork
 
@@ -56,8 +50,6 @@ def __getattr__(name: str) -> Any:
 
 __all__ = [
     "DurableEventStorage",
-    "JsonMigrationBackfillReportStore",
-    "MigrationReportStoreError",
     "PostgresDurableEventStore",
     "PostgresEventUnitOfWork",
     "PostgresReplayCheckpointStore",
@@ -68,6 +60,4 @@ __all__ = [
     "SQLiteRecordedActivityStore",
     "durable_event_storage_from_env",
     "event_store_from_env",
-    "read_migration_shadow_report",
-    "write_migration_shadow_report",
 ]

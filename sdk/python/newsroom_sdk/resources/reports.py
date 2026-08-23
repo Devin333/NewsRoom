@@ -14,16 +14,16 @@ class ReportsResource:
     def list(
         self,
         limit: int = 20,
-        workflow_id: str | None = None,
-        workflow_family: str | None = None,
+        graph_id: str | None = None,
+        graph_ids: list[str] | None = None,
     ) -> JsonDict:
         return self.transport.request(
             "GET",
             "/api/v1/reports",
             params={
                 "limit": limit,
-                "workflow_id": workflow_id,
-                "workflow_family": workflow_family,
+                "graph_id": graph_id,
+                "graph_ids": graph_ids,
             },
         )
 

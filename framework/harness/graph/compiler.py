@@ -104,9 +104,9 @@ class HarnessGraphCompileResult:
 class HarnessGraphCompiler:
     """Pure compiler for explicit Graph definitions.
 
-    This compiler has no Workflow declaration, legacy reader, registry default,
-    or runtime admission fallback. Production admission remains a separate Gate B
-    action until the durable authority prerequisites are qualified.
+    This compiler has no retired orchestration declaration, legacy reader, registry default,
+    or runtime admission fallback. Its output is the only production admission
+    input accepted by the Harness control plane.
     """
 
     compiler_version = HARNESS_GRAPH_ONLY_COMPILER_VERSION
@@ -809,9 +809,6 @@ class _CompilerContext:
             ),
             definition_schema_version=self.definition.schema_version,
             definition_checksum=self.definition.definition_checksum,
-            workflow_id=None,
-            workflow_version=None,
-            workflow_ref=None,
             nodes=tuple(self.nodes),
             edges=tuple(self.edges),
             entry_node_ids=fragment.entry_node_ids,

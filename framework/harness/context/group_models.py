@@ -24,7 +24,7 @@ CONTEXT_GROUP_MEMBER_SCHEMA_REVISION = "newsroom.context-group-member/v1"
 
 class ContextGroupKind(StrEnum):
     SYSTEM_INSTRUCTION = "system_instruction"
-    WORKFLOW_CONTRACT = "workflow_contract"
+    GRAPH_CONTRACT = "graph_contract"
     CURRENT_TASK = "current_task"
     OUTPUT_CONTRACT = "output_contract"
     RUN_STATE = "run_state"
@@ -49,7 +49,7 @@ class ContextGroupMemberKind(StrEnum):
 class ContextProtectionReason(StrEnum):
     GLOBAL_POLICY = "global_policy"
     SAFETY_CONSTRAINT = "safety_constraint"
-    WORKFLOW_CONTRACT = "workflow_contract"
+    GRAPH_CONTRACT = "graph_contract"
     CURRENT_TASK = "current_task"
     OUTPUT_CONTRACT = "output_contract"
     PENDING_TOOL_TRANSACTION = "pending_tool_transaction"

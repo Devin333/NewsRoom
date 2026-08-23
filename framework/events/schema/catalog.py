@@ -41,8 +41,12 @@ EventUpcaster = Callable[[Mapping[str, Any]], Mapping[str, Any]]
 
 _BUSINESS_CONTEXT_FIELDS = (
     "run_id",
-    "workflow_id",
-    "step_id",
+    "graph_id",
+    "graph_version",
+    "graph_ref",
+    "graph_checksum",
+    "execution_identity",
+    "stage_id",
     "task_id",
     "agent_id",
     "tool_call_id",
@@ -52,9 +56,8 @@ _BUSINESS_CONTEXT_FIELDS = (
 # TaskPlan uses the same durable event stream as the rest of Harness.  The
 # payload schema is intentionally reference-based; worker prompts and private
 # result bodies stay in their dedicated stores.
-TASK_PLAN_EVENT_SCHEMA_V1 = "newsroom.harness-task-plan-event/v1"
 TASK_PLAN_EVENT_SCHEMA_V2 = "newsroom.harness-task-plan-event/v2"
-TASK_PLAN_EVENT_SCHEMA = TASK_PLAN_EVENT_SCHEMA_V1
+TASK_PLAN_EVENT_SCHEMA = TASK_PLAN_EVENT_SCHEMA_V2
 TASK_PLAN_EVENT_TYPES = (
     "PLAN_CANDIDATE_BUILT",
     "PLAN_CANDIDATE_REJECTED",
@@ -338,8 +341,8 @@ class EventSchemaCatalog:
     ) -> dict[str, Any]:
         """Return the detached canonical payload accepted for publication.
 
-        Workflow compatibility inputs may repeat fields that are authoritative
-        in ``BusinessContext``. Equal duplicates are removed before schema
+        Graph event inputs may repeat fields that are authoritative in
+        ``BusinessContext``. Equal duplicates are removed before schema
         validation; a conflicting or payload-only value fails with the typed
         context error instead of silently choosing one authority.
         """
@@ -563,67 +566,6 @@ class EventSchemaCatalog:
         )
 
 
-WORKFLOW_EVENT_TYPES = (
-    "workflow_started",
-    "workflow_resumed",
-    "checkpoint_restored",
-    "checkpoint_created",
-    "edge_evaluated",
-    "edge_traversed",
-    "edge_rejected",
-    "human_review_decision_received",
-    "human_review_requested",
-    "human_review_paused",
-    "human_review_approved",
-    "human_review_rejected",
-    "human_review_needs_changes",
-    "agent_llm_stream_event",
-    "memory_recall",
-    "memory_write",
-    "memory_consolidate",
-    "workflow_succeeded",
-    "workflow_blocked",
-    "workflow_budget_exceeded",
-    "workflow_failed",
-    "workflow_timeout_exceeded",
-    "workflow_cancelled",
-    "workflow_loop_limit_exceeded",
-    "workflow_paused",
-    "workflow_transition_committed",
-    "step_started",
-    "step_succeeded",
-    "step_skipped",
-    "step_paused",
-    "step_blocked",
-    "step_failed",
-    "step_retry_scheduled",
-    "step_timeout",
-    "policy_violation",
-    "runtime_safety_violation",
-    "runner_capability_violation",
-)
-
-LEGACY_WORKFLOW_EVENT_ALIASES = (
-    # Legacy typed aliases retained for the bounded migration release.
-    "workflow_finished",
-    "step_finished",
-    "tool_called",
-    "agent_iteration",
-    "memory_recalled",
-    "memory_written",
-    "worker_task_started",
-    "worker_task_finished",
-)
-
-WORKFLOW_EVENT_ALIASES = WORKFLOW_EVENT_TYPES + LEGACY_WORKFLOW_EVENT_ALIASES
-
-WORKFLOW_OPERATION_EVENT_TYPES = (
-    "run_operation_requested",
-    "run_operation_applied",
-    "run_operation_rejected",
-    "run_operation_failed",
-)
-
 ATTEMPT_EVENT_DATA_SCHEMA = "newsroom.attempt-event/v1"
 ATTEMPT_EVENT_TYPES = (
     "attempt_admission_rejected",
@@ -631,14 +573,16 @@ ATTEMPT_EVENT_TYPES = (
     "attempt_terminal",
 )
 
-HARNESS_EVENT_ALIASES = (
+HARNESS_GRAPH_EVENT_DATA_SCHEMA = "newsroom.harness-graph-event/v1"
+HARNESS_GRAPH_EVENT_ALIASES = (
     "run_created",
     "run_state_changed",
     "step_state_changed",
     "phase_recorded",
+    "graph_phase_transition_recorded",
     "decision_recorded",
-    "worker_called",
-    "worker_result_recorded",
+    "graph_worker_called",
+    "graph_worker_result_recorded",
     "budget_fact_recorded",
     "gate_evaluated",
     "checkpoint_created",
@@ -649,8 +593,6 @@ HARNESS_EVENT_ALIASES = (
     "context_compaction_rejected",
 )
 
-HARNESS_TRANSITION_EVENT_TYPE = "harness_transition_committed"
-HARNESS_TRANSITION_DATA_SCHEMA = "newsroom.harness-transition/v1"
 HARNESS_GRAPH_COMMIT_DATA_SCHEMA = "newsroom.harness-graph-control-commit/v1"
 HARNESS_GRAPH_PROJECTION_RECORD_DATA_SCHEMA = (
     "newsroom.harness-graph-projection-record/v2"
@@ -698,28 +640,6 @@ def default_event_schema_catalog(
                 authoritative_context_fields=("run_id",),
             )
         )
-    for event_type in WORKFLOW_EVENT_ALIASES:
-        catalog.register(
-            EventSchemaRegistration(
-                event_type=event_type,
-                data_schema="newsroom.workflow-event/v1",
-                json_schema=_workflow_payload_schema(event_type),
-                sensitivity_policy=_workflow_sensitivity_policy(event_type),
-                current=True,
-                authoritative_context_fields=_BUSINESS_CONTEXT_FIELDS,
-            )
-        )
-    for event_type in WORKFLOW_OPERATION_EVENT_TYPES:
-        catalog.register(
-            EventSchemaRegistration(
-                event_type=event_type,
-                data_schema="newsroom.workflow-operation/v1",
-                json_schema=_workflow_operation_payload_schema(event_type),
-                sensitivity_policy=_workflow_operation_sensitivity_policy(),
-                current=True,
-                authoritative_context_fields=_BUSINESS_CONTEXT_FIELDS,
-            )
-        )
     for event_type in ATTEMPT_EVENT_TYPES:
         catalog.register(
             EventSchemaRegistration(
@@ -731,28 +651,16 @@ def default_event_schema_catalog(
                 authoritative_context_fields=_BUSINESS_CONTEXT_FIELDS,
             )
         )
-    for event_type in HARNESS_EVENT_ALIASES:
+    for event_type in HARNESS_GRAPH_EVENT_ALIASES:
         catalog.register(
             EventSchemaRegistration(
                 event_type=event_type,
-                data_schema="newsroom.harness-event/v1",
+                data_schema=HARNESS_GRAPH_EVENT_DATA_SCHEMA,
                 json_schema=_harness_payload_schema(event_type),
                 sensitivity_policy=_harness_sensitivity_policy(event_type),
-                # `checkpoint_created` is a legacy name shared with Workflow.
-                # The producer adapter must pass its explicit data schema; the
-                # Workflow alias remains the default during migration.
-                current=event_type not in WORKFLOW_EVENT_ALIASES,
+                current=True,
             )
         )
-    catalog.register(
-        EventSchemaRegistration(
-            event_type=HARNESS_TRANSITION_EVENT_TYPE,
-            data_schema=HARNESS_TRANSITION_DATA_SCHEMA,
-            json_schema=_harness_transition_payload_schema(),
-            sensitivity_policy=SensitivityPolicy(),
-            current=True,
-        )
-    )
     for event_type in HARNESS_GRAPH_COMMIT_EVENT_TYPES:
         catalog.register(
             EventSchemaRegistration(
@@ -786,22 +694,18 @@ def default_event_schema_catalog(
             )
         )
     for event_type in TASK_PLAN_EVENT_TYPES:
-        for data_schema in (
-            TASK_PLAN_EVENT_SCHEMA_V1,
-            TASK_PLAN_EVENT_SCHEMA_V2,
-        ):
-            catalog.register(
-                EventSchemaRegistration(
-                    event_type=event_type,
-                    data_schema=data_schema,
-                    json_schema=_task_plan_event_payload_schema(
-                        event_type,
-                        data_schema=data_schema,
-                    ),
-                    sensitivity_policy=SensitivityPolicy(),
-                    current=data_schema == TASK_PLAN_EVENT_SCHEMA_V1,
-                )
+        catalog.register(
+            EventSchemaRegistration(
+                event_type=event_type,
+                data_schema=TASK_PLAN_EVENT_SCHEMA_V2,
+                json_schema=_task_plan_event_payload_schema(
+                    event_type,
+                    data_schema=TASK_PLAN_EVENT_SCHEMA_V2,
+                ),
+                sensitivity_policy=SensitivityPolicy(),
+                current=True,
             )
+        )
     return catalog
 
 
@@ -837,7 +741,7 @@ def _budget_event_payload_schema() -> dict[str, Any]:
             "run_id": {"type": "string", "minLength": 1, "maxLength": 512},
             "scope_id": {"type": "string", "minLength": 1, "maxLength": 512},
             "scope_type": {
-                "enum": ["run", "workflow", "agent_loop", "subagent", "operation"]
+                "enum": ["run", "graph", "agent_loop", "subagent", "operation"]
             },
             "parent_scope_id": {
                 "type": ["string", "null"],
@@ -847,6 +751,54 @@ def _budget_event_payload_schema() -> dict[str, Any]:
                 "type": "string",
                 "minLength": 1,
                 "maxLength": 512,
+            },
+            "execution_identity": {
+                "anyOf": [
+                    {
+                        "type": "object",
+                        "additionalProperties": False,
+                        "required": [
+                            "run_id",
+                            "graph_id",
+                            "graph_version",
+                            "graph_ref",
+                            "graph_checksum",
+                        ],
+                        "properties": {
+                            "run_id": {"type": "string", "minLength": 1, "maxLength": 512},
+                            "graph_id": {"type": "string", "minLength": 1, "maxLength": 512},
+                            "graph_version": {"type": "string", "minLength": 1, "maxLength": 512},
+                            "graph_ref": {"type": "string", "minLength": 1, "maxLength": 1025},
+                            "graph_checksum": {"type": "string", "pattern": r"^sha256:[0-9a-f]{64}$"},
+                        },
+                    },
+                    {
+                        "type": "object",
+                        "additionalProperties": False,
+                        "required": [
+                            "run_id",
+                            "graph_id",
+                            "graph_version",
+                            "graph_ref",
+                            "graph_checksum",
+                            "node_id",
+                            "node_instance_id",
+                            "activity_id",
+                            "attempt",
+                        ],
+                        "properties": {
+                            "run_id": {"type": "string", "minLength": 1, "maxLength": 512},
+                            "graph_id": {"type": "string", "minLength": 1, "maxLength": 512},
+                            "graph_version": {"type": "string", "minLength": 1, "maxLength": 512},
+                            "graph_ref": {"type": "string", "minLength": 1, "maxLength": 1025},
+                            "graph_checksum": {"type": "string", "pattern": r"^sha256:[0-9a-f]{64}$"},
+                            "node_id": {"type": "string", "minLength": 1, "maxLength": 512},
+                            "node_instance_id": {"type": "string", "minLength": 1, "maxLength": 512},
+                            "activity_id": {"type": "string", "minLength": 1, "maxLength": 512},
+                            "attempt": {"type": "integer", "minimum": 1},
+                        },
+                    },
+                ]
             },
         },
     }
@@ -994,21 +946,6 @@ _NULLABLE_POSITIVE_NUMBER = {
     "anyOf": [_POSITIVE_NUMBER, {"type": "null"}],
 }
 _BOOLEAN = {"type": "boolean"}
-_WORKFLOW_TIMEOUT_POLICY_SOURCE = {
-    "enum": [
-        "policies.timeout_policy.timeout_seconds",
-        "policies.resource_policy.max_runtime_seconds",
-    ]
-}
-_WORKFLOW_OPERATION_TYPE = {
-    "enum": [
-        "cancel_run",
-        "rerun_from_step",
-        "resume_with_patch",
-        "skip_step",
-        "mark_blocked_resolved",
-    ]
-}
 _CHECKSUM_TEXT = {
     "type": "string",
     "pattern": "^sha256:[0-9a-f]{64}$",
@@ -1128,26 +1065,18 @@ def _task_plan_event_payload_schema(
         "stage_identity_schema",
         "stage_identity_checksum",
     ]
-    identity_required = (
-        graph_identity_required
-        if data_schema == TASK_PLAN_EVENT_SCHEMA_V2
-        else ["workflow_id"]
-    )
-    identity_properties = (
-        {
-            "graph_id": _TEXT,
-            "graph_version": _TEXT,
-            "graph_ref": _TEXT,
-            "graph_schema_version": _TEXT,
-            "compiler_version": _TEXT,
-            "condition_policy_version": _TEXT,
-            "stage_binding_checksum": _CHECKSUM_TEXT,
-            "stage_identity_schema": _TEXT,
-            "stage_identity_checksum": _CHECKSUM_TEXT,
-        }
-        if data_schema == TASK_PLAN_EVENT_SCHEMA_V2
-        else {"workflow_id": _TEXT}
-    )
+    identity_required = graph_identity_required
+    identity_properties = {
+        "graph_id": _TEXT,
+        "graph_version": _TEXT,
+        "graph_ref": _TEXT,
+        "graph_schema_version": _TEXT,
+        "compiler_version": _TEXT,
+        "condition_policy_version": _TEXT,
+        "stage_binding_checksum": _CHECKSUM_TEXT,
+        "stage_identity_schema": _TEXT,
+        "stage_identity_checksum": _CHECKSUM_TEXT,
+    }
     return {
         "type": "object",
         "additionalProperties": False,
@@ -1439,176 +1368,6 @@ _HARNESS_STEP_METADATA = {
     "additionalProperties": False,
 }
 
-_HARNESS_TRANSITION_KINDS = (
-    "initialize",
-    "run_start",
-    "plan_entry",
-    "plan_exit",
-    "execute_entry",
-    "execute_exit",
-    "verify_entry",
-    "verify_exit",
-    "replan_entry",
-    "replan_exit",
-    "retry",
-    "route_to_repair",
-    "route_to_step",
-    "wait_for_approval",
-    "approval_resume",
-    "approval_cancel",
-    "worker_result_committed",
-    "step_success",
-    "budget_exhaustion",
-    "halt",
-    "failure",
-    "success",
-    "cancel",
-    "wait",
-)
-_HARNESS_TRANSITION_STEP_METADATA = {
-    "type": "object",
-    "maxProperties": 16,
-    "properties": {
-        "approval_granted": _BOOLEAN,
-        "rerouted": _BOOLEAN,
-        "activity_attempt": _POSITIVE_INTEGER,
-        "activity_id": _TEXT,
-        "activity_type": _TEXT,
-        "activity_contract_version": _TEXT,
-        "activity_idempotency_key": _TEXT,
-        "activity_input_checksum": _CHECKSUM_TEXT,
-        "activity_identity_scope_ref": _CHECKSUM_TEXT,
-        "activity_worker_version": _TEXT,
-        "activity_result_event_id": _TEXT,
-        "worker_result_ref": _TEXT,
-        "worker_status": {
-            "enum": ["succeeded", "failed", "blocked", "waiting_approval"]
-        },
-        "omitted_metadata_ref": _CHECKSUM_TEXT,
-        "omitted_metadata_count": _NONNEGATIVE_INTEGER,
-    },
-    "additionalProperties": False,
-}
-_HARNESS_TRANSITION_STEP_STATE = {
-    "type": "object",
-    "maxProperties": 10,
-    "properties": {
-        "step_id": _TEXT,
-        "status": {
-            "enum": [
-                "pending",
-                "planning",
-                "plan_verified",
-                "running",
-                "verifying",
-                "retrying",
-                "replanning",
-                "succeeded",
-                "failed",
-                "skipped",
-                "waiting_approval",
-                "halted",
-            ]
-        },
-        "attempts": _NONNEGATIVE_INTEGER,
-        "replans": _NONNEGATIVE_INTEGER,
-        "has_output_ref": _BOOLEAN,
-        "output_ref_checksum": _CHECKSUM_TEXT,
-        "error_ref": _CHECKSUM_TEXT,
-        "metadata": _HARNESS_TRANSITION_STEP_METADATA,
-        "updated_at": _TEXT,
-    },
-    "required": [
-        "step_id",
-        "status",
-        "attempts",
-        "replans",
-        "has_output_ref",
-        "metadata",
-        "updated_at",
-    ],
-    "additionalProperties": False,
-}
-_HARNESS_TRANSITION_STATE_METADATA = {
-    "type": "object",
-    "maxProperties": 24,
-    "properties": {
-        "repair_from_step_id": _TEXT,
-        "evolution_epochs_used": _NONNEGATIVE_INTEGER,
-        "candidates_used": _NONNEGATIVE_INTEGER,
-        "patch_operations_used": _NONNEGATIVE_INTEGER,
-        "eval_cases_used": _NONNEGATIVE_INTEGER,
-        "sandbox_runs_used": _NONNEGATIVE_INTEGER,
-        "outputs_ref": _CHECKSUM_TEXT,
-        "outputs_count": _NONNEGATIVE_INTEGER,
-        "plan_keys_ref": _CHECKSUM_TEXT,
-        "plan_keys_count": _NONNEGATIVE_INTEGER,
-        "claims_ref": _CHECKSUM_TEXT,
-        "claims_count": _NONNEGATIVE_INTEGER,
-        "questions_ref": _CHECKSUM_TEXT,
-        "questions_count": _NONNEGATIVE_INTEGER,
-        "terminal_reason_ref": _CHECKSUM_TEXT,
-        "omitted_metadata_ref": _CHECKSUM_TEXT,
-        "omitted_metadata_count": _NONNEGATIVE_INTEGER,
-    },
-    "additionalProperties": False,
-}
-_HARNESS_TRANSITION_STATE = {
-    "type": "object",
-    "maxProperties": 14,
-    "properties": {
-        "schema": {"const": "newsroom.harness-state-projection/v1"},
-        "run_spec_checksum": _CHECKSUM_TEXT,
-        "workflow_id": _TEXT,
-        "workflow_checksum": _CHECKSUM_TEXT,
-        "workflow_version": _TEXT,
-        "status": {
-            "enum": [
-                "created",
-                "running",
-                "planning",
-                "executing",
-                "verifying",
-                "replanning",
-                "waiting_approval",
-                "succeeded",
-                "failed",
-                "halted",
-                "cancelled",
-                "blocked",
-            ]
-        },
-        "step_states": {
-            "type": "array",
-            "items": _HARNESS_TRANSITION_STEP_STATE,
-            "maxItems": 1024,
-        },
-        "current_step_id": _NULLABLE_TEXT,
-        "turn_count": _NONNEGATIVE_INTEGER,
-        "replan_count": _NONNEGATIVE_INTEGER,
-        "worker_call_count": _NONNEGATIVE_INTEGER,
-        "metadata": _HARNESS_TRANSITION_STATE_METADATA,
-        "updated_at": _TEXT,
-    },
-    "required": [
-        "schema",
-        "run_spec_checksum",
-        "workflow_id",
-        "workflow_checksum",
-        "workflow_version",
-        "status",
-        "step_states",
-        "current_step_id",
-        "turn_count",
-        "replan_count",
-        "worker_call_count",
-        "metadata",
-        "updated_at",
-    ],
-    "additionalProperties": False,
-}
-
-
 def _payload_schema(
     *,
     properties: Mapping[str, Any] | None = None,
@@ -1768,422 +1527,6 @@ def _attempt_payload_schema(event_type: str) -> dict[str, Any]:
     raise EventSchemaError(f"Attempt event schema is not defined: {event_type}")
 
 
-def _workflow_payload_schema(event_type: str) -> dict[str, Any]:
-    if event_type == "workflow_started":
-        return _payload_schema(
-            properties={
-                "workflow_id": _TEXT,
-                "workflow_version": _TEXT,
-                "profile": _TEXT,
-                "run_id": _TEXT,
-                "topic": _TEXT,
-            },
-            any_of=(
-                {"required": ["workflow_version", "profile"]},
-                {"required": ["run_id"]},
-            ),
-        )
-    if event_type == "workflow_resumed":
-        return _payload_schema(
-            properties={
-                "workflow_id": _TEXT,
-                "workflow_version": _TEXT,
-                "profile": _TEXT,
-                "checkpoint_id": _TEXT,
-                "resume_metadata": _OBJECT,
-            },
-            required=("workflow_version", "profile", "checkpoint_id"),
-        )
-    if event_type in {"checkpoint_restored", "checkpoint_created"}:
-        return _payload_schema(
-            properties={
-                "checkpoint_id": _TEXT,
-                "current_step_ids": _ARRAY_OF_TEXT,
-                "path": _ARRAY_OF_TEXT,
-            },
-            required=("checkpoint_id",),
-        )
-    if event_type in {"edge_evaluated", "edge_traversed", "edge_rejected"}:
-        return _payload_schema(
-            properties={
-                "edge_id": _TEXT,
-                "source_step_id": _TEXT,
-                "target_step_id": _TEXT,
-                "condition": _TEXT,
-                "matched": _BOOLEAN,
-                "condition_expr": _NULLABLE_TEXT,
-            },
-            required=(
-                "edge_id",
-                "source_step_id",
-                "target_step_id",
-                "condition",
-                "matched",
-            ),
-        )
-    if event_type in {
-        "human_review_decision_received",
-        "human_review_approved",
-        "human_review_rejected",
-        "human_review_needs_changes",
-    }:
-        return _payload_schema(
-            properties={
-                "decision": _TEXT,
-                "actor_id": _NULLABLE_TEXT,
-                "approval_id": _NULLABLE_TEXT,
-                "request_id": _NULLABLE_TEXT,
-            },
-            required=("decision",),
-        )
-    if event_type == "human_review_requested":
-        return _payload_schema(
-            properties={
-                "step_id": _TEXT,
-                "request_id": _TEXT,
-                "checkpoint_id": _TEXT,
-            },
-            required=("checkpoint_id",),
-        )
-    if event_type == "human_review_paused":
-        return _payload_schema(
-            properties={"step_id": _TEXT, "outcome": _OBJECT},
-            required=("outcome",),
-        )
-    if event_type == "agent_llm_stream_event":
-        return _payload_schema(
-            properties={
-                "step_id": _TEXT,
-                "agent_id": _NULLABLE_TEXT,
-                "iteration": {"type": ["integer", "null"], "minimum": 0},
-                "sequence": {"type": ["integer", "null"], "minimum": 0},
-                "stream_event_type": _NULLABLE_TEXT,
-                "text_delta_chars": {"type": ["integer", "null"], "minimum": 0},
-                "stream_event_ref": _CHECKSUM_TEXT,
-            },
-            required=("stream_event_ref",),
-        )
-    if event_type == "memory_recall":
-        return _payload_schema(
-            properties={
-                "step_id": _TEXT,
-                "status": _TEXT,
-                "operation": {"const": "recall"},
-                "result_count": _NONNEGATIVE_INTEGER,
-                "memory_ids": _ARRAY_OF_TEXT,
-                "context_token_estimate": _NONNEGATIVE_INTEGER,
-            },
-            required=(
-                "status",
-                "operation",
-                "result_count",
-                "memory_ids",
-                "context_token_estimate",
-            ),
-        )
-    if event_type == "memory_write":
-        return _payload_schema(
-            properties={
-                "step_id": _TEXT,
-                "status": _TEXT,
-                "operation": {"const": "write"},
-                "accepted_count": _NONNEGATIVE_INTEGER,
-                "written_count": _NONNEGATIVE_INTEGER,
-                "skipped_count": _NONNEGATIVE_INTEGER,
-                "memory_ids": _ARRAY_OF_TEXT,
-            },
-            required=(
-                "status",
-                "operation",
-                "accepted_count",
-                "written_count",
-                "skipped_count",
-                "memory_ids",
-            ),
-        )
-    if event_type == "memory_consolidate":
-        return _payload_schema(
-            properties={
-                "step_id": _TEXT,
-                "status": _TEXT,
-                "operation": {"const": "consolidate"},
-                "consolidated_count": _NONNEGATIVE_INTEGER,
-                "skipped_count": _NONNEGATIVE_INTEGER,
-                "memory_ids": _ARRAY_OF_TEXT,
-                "source_memory_ids": _ARRAY_OF_TEXT,
-            },
-            required=(
-                "status",
-                "operation",
-                "consolidated_count",
-                "skipped_count",
-                "memory_ids",
-                "source_memory_ids",
-            ),
-        )
-    if event_type == "workflow_succeeded":
-        return _payload_schema(properties={"path": _ARRAY_OF_TEXT}, required=("path",))
-    if event_type in {"workflow_blocked", "workflow_budget_exceeded", "workflow_failed"}:
-        return _payload_schema(
-            properties={
-                "path": _ARRAY_OF_TEXT,
-                "error": {"type": ["object", "null"]},
-            },
-            required=("path", "error"),
-        )
-    if event_type == "workflow_timeout_exceeded":
-        return _payload_schema(
-            properties={
-                "run_id": _TEXT,
-                "workflow_id": _TEXT,
-                "step_id": _TEXT,
-                "pending_step_id": _TEXT,
-                "timeout_seconds": _POSITIVE_NUMBER,
-                "elapsed_seconds": _NONNEGATIVE_NUMBER,
-                "policy_source": _WORKFLOW_TIMEOUT_POLICY_SOURCE,
-            },
-            required=("timeout_seconds", "elapsed_seconds", "policy_source"),
-        )
-    if event_type == "workflow_cancelled":
-        return _payload_schema(properties={"run_id": _TEXT})
-    if event_type == "workflow_loop_limit_exceeded":
-        return _payload_schema(
-            properties={
-                "step_id": _TEXT,
-                "max_step_visits": _POSITIVE_INTEGER,
-                "visit_count": _POSITIVE_INTEGER,
-            },
-            required=("max_step_visits", "visit_count"),
-        )
-    if event_type == "workflow_paused":
-        return _payload_schema(
-            properties={"reason": _TEXT, "step_id": _TEXT},
-            required=("reason",),
-        )
-    if event_type == "workflow_transition_committed":
-        return _payload_schema(
-            properties={
-                "transition_type": {
-                    "enum": ["pause", "request_human_review"],
-                },
-                "previous_status": _TEXT,
-                "next_status": _TEXT,
-                "reason": _TEXT,
-                "checkpoint_step_id": _TEXT,
-                "checkpoint_id": _TEXT,
-                "human_review_request_id": _NULLABLE_TEXT,
-                "compatibility_event_types": _ARRAY_OF_TEXT,
-            },
-            required=(
-                "transition_type",
-                "previous_status",
-                "next_status",
-                "reason",
-                "checkpoint_step_id",
-                "checkpoint_id",
-                "compatibility_event_types",
-            ),
-        )
-    if event_type == "step_started":
-        return _payload_schema(
-            properties={
-                "step_id": _TEXT,
-                "step_type": _TEXT,
-                "attempt": _POSITIVE_INTEGER,
-                "max_attempts": _POSITIVE_INTEGER,
-            },
-            required=("step_type", "attempt", "max_attempts"),
-        )
-    if event_type in {"step_succeeded", "step_skipped"}:
-        return _payload_schema(
-            properties={"step_id": _TEXT, "outputs": _ARRAY_OF_TEXT},
-            required=("outputs",),
-        )
-    if event_type in {"step_paused", "step_blocked", "step_failed"}:
-        return _payload_schema(
-            properties={"step_id": _TEXT, "outcome": _OBJECT},
-            required=("outcome",),
-        )
-    if event_type == "step_retry_scheduled":
-        return _payload_schema(
-            properties={
-                "step_id": _TEXT,
-                "attempt": _POSITIVE_INTEGER,
-                "next_attempt": _POSITIVE_INTEGER,
-                "max_attempts": _POSITIVE_INTEGER,
-                "error_type": _NULLABLE_TEXT,
-                "error_message": _NULLABLE_TEXT,
-                "delay_seconds": {"type": "number", "minimum": 0},
-            },
-            required=("attempt", "next_attempt", "max_attempts", "delay_seconds"),
-        )
-    if event_type == "step_timeout":
-        return _payload_schema(
-            properties={
-                "step_id": _TEXT,
-                "attempt": _POSITIVE_INTEGER,
-                "max_attempts": _POSITIVE_INTEGER,
-                # Bounded legacy producer field. New producers record both the
-                # configured and effective timeout explicitly below.
-                "timeout_seconds": _NULLABLE_POSITIVE_NUMBER,
-                "configured_timeout_seconds": _NULLABLE_POSITIVE_NUMBER,
-                "effective_timeout_seconds": _NULLABLE_POSITIVE_NUMBER,
-                "cancellation_source": {
-                    "enum": [
-                        "step_deadline",
-                        "parent_attempt",
-                        "root_hard_deadline",
-                    ]
-                },
-                "on_timeout": {"enum": ["fail", "retry"]},
-                "termination_confirmed": {"type": ["boolean", "null"]},
-                "indeterminate": _BOOLEAN,
-            },
-            required=("attempt", "max_attempts", "on_timeout"),
-            any_of=(
-                {"required": ["timeout_seconds"]},
-                {
-                    "required": [
-                        "effective_timeout_seconds",
-                        "cancellation_source",
-                        "termination_confirmed",
-                        "indeterminate",
-                    ],
-                    "properties": {
-                        "termination_confirmed": {"type": "boolean"},
-                    },
-                },
-            ),
-        )
-    if event_type == "policy_violation":
-        return _payload_schema(
-            properties={
-                "step_id": _TEXT,
-                "code": _TEXT,
-                "message": _TEXT,
-                "policy": _TEXT,
-                "limit": _NONNEGATIVE_NUMBER,
-                "actual": _NONNEGATIVE_NUMBER,
-                "metadata": _OBJECT,
-                "resource_estimate": _OBJECT,
-                "item_count": _NONNEGATIVE_INTEGER,
-                "max_items": _NONNEGATIVE_INTEGER,
-            },
-            required=(
-                "code",
-                "message",
-                "policy",
-                "limit",
-                "actual",
-                "metadata",
-                "resource_estimate",
-            ),
-        )
-    if event_type == "runtime_safety_violation":
-        return _payload_schema(
-            properties={
-                "step_id": _TEXT,
-                "step_type": _TEXT,
-                "policy": _TEXT,
-                "code": _TEXT,
-                "message": _TEXT,
-                "metadata": _OBJECT,
-            },
-            required=("step_type", "policy", "code", "message", "metadata"),
-        )
-    if event_type == "runner_capability_violation":
-        return _payload_schema(
-            properties={
-                "step_id": _TEXT,
-                "step_type": _TEXT,
-                "implementation": _NULLABLE_TEXT,
-                "runner_id": _TEXT,
-                "capability": {"enum": ["timeout", "retry", "resume"]},
-                "message": _TEXT,
-            },
-            required=("message",),
-            any_of=(
-                {"required": ["step_type"]},
-                {"required": ["runner_id", "capability"]},
-            ),
-        )
-    if event_type in {"step_finished", "worker_task_started", "worker_task_finished"}:
-        return _payload_schema(
-            properties={"step_id": _TEXT},
-            additional_properties=True,
-        )
-    if event_type in {
-        "workflow_finished",
-        "tool_called",
-        "agent_iteration",
-        "memory_recalled",
-        "memory_written",
-    }:
-        return _payload_schema(additional_properties=True, min_properties=1)
-    raise EventSchemaError(f"workflow event schema is not defined: {event_type}")
-
-
-def _workflow_operation_payload_schema(event_type: str) -> dict[str, Any]:
-    if event_type not in WORKFLOW_OPERATION_EVENT_TYPES:
-        raise EventSchemaError(
-            f"workflow operation event schema is not defined: {event_type}"
-        )
-    return _payload_schema(
-        properties={
-            "run_id": _TEXT,
-            "operation_id": _TEXT,
-            "operation_type": _WORKFLOW_OPERATION_TYPE,
-            "actor_id": _NULLABLE_TEXT,
-            "actor_type": _NULLABLE_TEXT,
-            "reason": _NULLABLE_TEXT,
-            "details": _OBJECT,
-        },
-        required=("operation_id", "operation_type", "details"),
-    )
-
-
-def _harness_transition_payload_schema() -> dict[str, Any]:
-    return _payload_schema(
-        properties={
-            "transition_id": _TEXT,
-            "from_version": _NONNEGATIVE_INTEGER,
-            "state_version": _POSITIVE_INTEGER,
-            "expected_last_sequence": _NONNEGATIVE_INTEGER,
-            "transition_kind": {"enum": list(_HARNESS_TRANSITION_KINDS)},
-            "state": _HARNESS_TRANSITION_STATE,
-            "before_state_checksum": _CHECKSUM_TEXT,
-            "after_state_checksum": _CHECKSUM_TEXT,
-            "decision_ref": _CHECKSUM_TEXT,
-            "gate_ref": _CHECKSUM_TEXT,
-            "budget_ref": _CHECKSUM_TEXT,
-            "activity_result_ref": _CHECKSUM_TEXT,
-            "activity_result_event_id": _TEXT,
-            "activity_id": _TEXT,
-            "idempotency_key": _TEXT,
-            "workflow_version": _TEXT,
-            "workflow_checksum": _CHECKSUM_TEXT,
-            "reducer_version": _TEXT,
-            "policy_version": _TEXT,
-            "schema_version": {"const": HARNESS_TRANSITION_DATA_SCHEMA},
-        },
-        required=(
-            "transition_id",
-            "from_version",
-            "state_version",
-            "expected_last_sequence",
-            "transition_kind",
-            "state",
-            "before_state_checksum",
-            "after_state_checksum",
-            "workflow_version",
-            "workflow_checksum",
-            "reducer_version",
-            "policy_version",
-            "schema_version",
-        ),
-    )
-
-
 def _harness_payload_schema(event_type: str) -> dict[str, Any]:
     if event_type == "run_created":
         return _payload_schema(
@@ -2216,7 +1559,7 @@ def _harness_payload_schema(event_type: str) -> dict[str, Any]:
         return _payload_schema(
             properties={
                 "projection_schema": {"const": "harness-safe-summary/v1"},
-                "step_id": _TEXT,
+                "node_id": _TEXT,
                 "status": {
                     "enum": [
                         "pending",
@@ -2244,9 +1587,45 @@ def _harness_payload_schema(event_type: str) -> dict[str, Any]:
             },
             required=("status", "attempts", "replans", "metadata"),
             any_of=(
-                {"required": ["step_id", "updated_at"]},
+                {"required": ["node_id", "updated_at"]},
                 {"required": ["projection_schema"]},
             ),
+        )
+    if event_type == "graph_phase_transition_recorded":
+        return _payload_schema(
+            properties={
+                "graph_phase_transition": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "required": [
+                        "schema",
+                        "context",
+                        "phase",
+                        "boundary",
+                        "attempt",
+                        "event_sequence",
+                        "gate_evidence_refs",
+                        "occurred_at",
+                        "record_checksum",
+                    ],
+                    "properties": {
+                        "schema": {"const": "newsroom.harness-graph-phase-transition/v1"},
+                        "context": {"type": "object"},
+                        "phase": {"enum": ["plan", "execute", "verify", "replan", "halt"]},
+                        "boundary": {"enum": ["entry", "exit"]},
+                        "attempt": {"type": "integer", "minimum": 0},
+                        "event_sequence": {"type": "integer", "minimum": 1},
+                        "gate_evidence_refs": {
+                            "type": "array",
+                            "items": _CHECKSUM_TEXT,
+                            "uniqueItems": True,
+                        },
+                        "occurred_at": _TEXT,
+                        "record_checksum": _CHECKSUM_TEXT,
+                    },
+                }
+            },
+            required=("graph_phase_transition",),
         )
     if event_type == "phase_recorded":
         return _payload_schema(
@@ -2254,7 +1633,7 @@ def _harness_payload_schema(event_type: str) -> dict[str, Any]:
                 "projection_schema": {"const": "harness-safe-summary/v1"},
                 "phase": {"enum": ["plan", "execute", "verify", "replan", "halt"]},
                 "boundary": {"enum": ["entry", "exit"]},
-                "step_id": _TEXT,
+                "node_id": _TEXT,
                 "input_refs": _ARRAY_OF_TEXT,
                 "output_refs": _ARRAY_OF_TEXT,
                 "input_ref_checksums": _ARRAY_OF_CHECKSUMS,
@@ -2267,7 +1646,7 @@ def _harness_payload_schema(event_type: str) -> dict[str, Any]:
                 "to_phase": _TEXT,
             },
             any_of=(
-                {"required": ["phase", "step_id", "gate_results", "occurred_at"]},
+                {"required": ["phase", "node_id", "gate_results", "occurred_at"]},
                 {
                     "required": [
                         "projection_schema",
@@ -2308,8 +1687,8 @@ def _harness_payload_schema(event_type: str) -> dict[str, Any]:
                     ]
                 },
                 "run_id": _TEXT,
-                "step_id": _NULLABLE_TEXT,
-                "target_step_id": _NULLABLE_TEXT,
+                "node_id": _NULLABLE_TEXT,
+                "target_node_id": _NULLABLE_TEXT,
                 "reason": _NULLABLE_TEXT,
                 "reason_ref": _CHECKSUM_TEXT,
                 "payload": _OBJECT,
@@ -2323,14 +1702,18 @@ def _harness_payload_schema(event_type: str) -> dict[str, Any]:
                 {"required": ["projection_schema", "decision_payload"]},
             ),
         )
-    if event_type == "worker_called":
+    if event_type == "graph_worker_called":
         return _payload_schema(
             properties={
                 "projection_schema": {"const": "harness-safe-summary/v1"},
                 "run_id": _TEXT,
-                "step_id": _TEXT,
+                "node_id": _TEXT,
                 "worker_type": {
                     "enum": [
+                        "function",
+                        "tool",
+                        "agent_loop",
+                        "task_plan",
                         "llm",
                         "skill",
                         "skill_evolution",
@@ -2339,7 +1722,6 @@ def _harness_payload_schema(event_type: str) -> dict[str, Any]:
                         "memory",
                         "mcp",
                         "quality_gate",
-                        "artifact",
                         "script",
                     ]
                 },
@@ -2348,15 +1730,21 @@ def _harness_payload_schema(event_type: str) -> dict[str, Any]:
                 "idempotency_key": _TEXT,
                 "activity_attempt": _POSITIVE_INTEGER,
                 "activity_contract_version": _TEXT,
+                "activity_checksum": _CHECKSUM_TEXT,
+                "graph_ref": _OBJECT,
+                "step_ref": _OBJECT,
+                "worker_ref": _OBJECT,
+                "activity_ref": _OBJECT,
+                "input_ref": _CHECKSUM_TEXT,
+                "activity_input_ref": _CHECKSUM_TEXT,
                 "inputs": _OBJECT,
                 "metadata": _OBJECT,
-                "input_ref": _CHECKSUM_TEXT,
                 "input_count": _NONNEGATIVE_INTEGER,
                 "metadata_ref": _CHECKSUM_TEXT,
             },
             required=("worker_type",),
             any_of=(
-                {"required": ["run_id", "step_id", "inputs", "metadata"]},
+                {"required": ["run_id", "node_id", "inputs", "metadata"]},
                 {
                     "required": [
                         "projection_schema",
@@ -2371,7 +1759,7 @@ def _harness_payload_schema(event_type: str) -> dict[str, Any]:
                 },
             ),
         )
-    if event_type == "worker_result_recorded":
+    if event_type == "graph_worker_result_recorded":
         return _payload_schema(
             properties={
                 "projection_schema": {"const": "harness-safe-summary/v1"},
@@ -2653,95 +2041,6 @@ def _context_compaction_payload_schema(event_type: str) -> dict[str, Any]:
     raise EventSchemaError(f"Context compaction event schema is not defined: {event_type}")
 
 
-def _workflow_sensitivity_policy(event_type: str) -> SensitivityPolicy:
-    if event_type == "workflow_resumed":
-        return SensitivityPolicy(
-            field_rules={"/resume_metadata": FieldDisposition.SENSITIVE},
-            redact_sensitive=True,
-        )
-    if event_type in {
-        "edge_evaluated",
-        "edge_traversed",
-        "edge_rejected",
-    }:
-        return SensitivityPolicy(
-            field_rules={
-                "/condition": FieldDisposition.SENSITIVE,
-                "/condition_expr": FieldDisposition.SENSITIVE,
-            },
-            redact_sensitive=True,
-        )
-    if event_type in {
-        "human_review_decision_received",
-        "human_review_approved",
-        "human_review_rejected",
-        "human_review_needs_changes",
-    }:
-        return SensitivityPolicy(
-            field_rules={
-                "/actor_id": FieldDisposition.SENSITIVE,
-                "/approval_id": FieldDisposition.SENSITIVE,
-            },
-            redact_sensitive=True,
-        )
-    if event_type in {"workflow_blocked", "workflow_budget_exceeded", "workflow_failed"}:
-        return SensitivityPolicy(
-            field_rules={"/error": FieldDisposition.SENSITIVE},
-            redact_sensitive=True,
-        )
-    if event_type in {"step_paused", "step_blocked", "step_failed"}:
-        return SensitivityPolicy(
-            field_rules={
-                "/outcome/error_message": FieldDisposition.SENSITIVE,
-                "/outcome/error_details": FieldDisposition.SENSITIVE,
-            },
-            redact_sensitive=True,
-        )
-    if event_type == "step_retry_scheduled":
-        return SensitivityPolicy(
-            field_rules={"/error_message": FieldDisposition.SENSITIVE},
-            redact_sensitive=True,
-        )
-    if event_type == "policy_violation":
-        return SensitivityPolicy(
-            field_rules={
-                "/message": FieldDisposition.SENSITIVE,
-                "/metadata": FieldDisposition.SENSITIVE,
-                "/resource_estimate/input_keys": FieldDisposition.SENSITIVE,
-            },
-            redact_sensitive=True,
-        )
-    if event_type == "runtime_safety_violation":
-        return SensitivityPolicy(
-            field_rules={
-                "/message": FieldDisposition.SENSITIVE,
-                "/metadata": FieldDisposition.SENSITIVE,
-            },
-            redact_sensitive=True,
-        )
-    if event_type == "runner_capability_violation":
-        return SensitivityPolicy(
-            field_rules={
-                "/implementation": FieldDisposition.SENSITIVE,
-                "/message": FieldDisposition.SENSITIVE,
-            },
-            redact_sensitive=True,
-        )
-    return SensitivityPolicy()
-
-
-def _workflow_operation_sensitivity_policy() -> SensitivityPolicy:
-    return SensitivityPolicy(
-        field_rules={
-            "/actor_id": FieldDisposition.SENSITIVE,
-            "/reason": FieldDisposition.SENSITIVE,
-            "/details": FieldDisposition.SENSITIVE,
-        },
-        whole_document_reference=WholeDocumentReferenceDisposition.SECURE_REQUIRED,
-        redact_sensitive=True,
-    )
-
-
 def _harness_sensitivity_policy(event_type: str) -> SensitivityPolicy:
     if event_type == "phase_recorded":
         return SensitivityPolicy(
@@ -2768,7 +2067,7 @@ def _harness_sensitivity_policy(event_type: str) -> SensitivityPolicy:
             ),
             redact_sensitive=True,
         )
-    if event_type == "worker_called":
+    if event_type == "graph_worker_called":
         return SensitivityPolicy(
             field_rules={
                 "/inputs": FieldDisposition.REFERENCE_ONLY,
@@ -2778,7 +2077,7 @@ def _harness_sensitivity_policy(event_type: str) -> SensitivityPolicy:
                 WholeDocumentReferenceDisposition.SECURE_REQUIRED
             ),
         )
-    if event_type == "worker_result_recorded":
+    if event_type == "graph_worker_result_recorded":
         return SensitivityPolicy(
             field_rules={
                 "/output": FieldDisposition.REFERENCE_ONLY,

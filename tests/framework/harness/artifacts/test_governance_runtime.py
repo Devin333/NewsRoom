@@ -295,38 +295,6 @@ def test_gc_runtime_marks_changed_catalog_plan_stale_without_physical_write(
     assert catalog.get(registered.entry.entry_id) == registered.entry
 
 
-def test_read_only_runtime_plans_without_writes_and_rejects_gc_apply(tmp_path) -> None:
-    runtime, _, store, lifecycle, registered = _runtime_bundle(
-        tmp_path,
-        mode=GraphArtifactRolloutMode.READ_ONLY,
-    )
-
-    plan = runtime.plan_gc(tenant_id="tenant-1", observed_at=NOW)
-
-    assert plan.decisions[0].action is not ArtifactCatalogGcAction.DELETE_CANDIDATE
-    assert store.usage_watermark(tenant_id="tenant-1") == 0
-    assert store.list_gc_operations(
-        tenant_id="tenant-1",
-        include_completed=True,
-    ) == ()
-    with pytest.raises(GraphArtifactResultError) as prepare:
-        runtime.prepare_gc(tenant_id="tenant-1", observed_at=NOW)
-    assert prepare.value.error_code is (
-        GraphArtifactResultErrorCode.LIFECYCLE_AUTHORIZATION_INVALID
-    )
-    with pytest.raises(GraphArtifactResultError) as apply:
-        runtime.apply_gc(
-            tenant_id="tenant-1",
-            plan_checksum=plan.plan_checksum,
-            confirmed=True,
-        )
-    assert apply.value.error_code is (
-        GraphArtifactResultErrorCode.LIFECYCLE_AUTHORIZATION_INVALID
-    )
-    assert lifecycle.quarantine_calls == 0
-    assert registered.reference is not None
-
-
 def test_cost_report_reuses_inputs_and_preserves_open_closed_and_late_revisions(
     tmp_path,
 ) -> None:

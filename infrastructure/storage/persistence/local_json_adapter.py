@@ -17,9 +17,9 @@ from infrastructure.storage.records import (
     SourceItemRecord,
 )
 from infrastructure.storage.persistence.records import (
+    GraphRunRecord,
     ReportRecord,
     RunPersistenceBatch,
-    WorkflowRunRecord,
 )
 
 
@@ -38,15 +38,15 @@ class LocalJsonPersistenceAdapter:
         self,
         *,
         limit: int = 20,
-        workflow_id: str | None = None,
-        workflow_ids: tuple[str, ...] | None = None,
+        graph_id: str | None = None,
+        graph_ids: tuple[str, ...] | None = None,
     ) -> list[ReportSummaryRecord]:
         return [
             _coerce_report_summary_record(record)
             for record in self.local_json.list_reports(
                 limit=limit,
-                workflow_id=workflow_id,
-                workflow_ids=workflow_ids,
+                graph_id=graph_id,
+                graph_ids=graph_ids,
             )
         ]
 
@@ -57,19 +57,19 @@ class LocalJsonPersistenceAdapter:
         ]
 
     def migrate(self) -> None:
-        (self.artifact_root / "_records" / "workflow_runs").mkdir(parents=True, exist_ok=True)
+        (self.artifact_root / "_records" / "graph_runs").mkdir(parents=True, exist_ok=True)
         (self.artifact_root / "_records" / "reports").mkdir(parents=True, exist_ok=True)
         (self.artifact_root / "_records" / "source_items").mkdir(parents=True, exist_ok=True)
         (self.artifact_root / "_records" / "evidence_items").mkdir(parents=True, exist_ok=True)
         (self.artifact_root / "_records" / "claims").mkdir(parents=True, exist_ok=True)
         (self.artifact_root / "_records" / "quality_results").mkdir(parents=True, exist_ok=True)
 
-    def save_workflow_run(self, record: WorkflowRunRecord) -> None:
+    def save_graph_run(self, record: GraphRunRecord) -> None:
         self.migrate()
         _write_record_json(
             self.artifact_root
             / "_records"
-            / "workflow_runs"
+            / "graph_runs"
             / f"{_safe_record_name(record.run_id)}.json",
             record.to_dict(),
         )
@@ -126,7 +126,7 @@ class LocalJsonPersistenceAdapter:
         )
 
     def save_run_records(self, batch: RunPersistenceBatch) -> None:
-        self.save_workflow_run(batch.workflow_run)
+        self.save_graph_run(batch.graph_run)
         if batch.report is not None:
             self.save_report(batch.report)
         for source_item in batch.source_items:
@@ -185,7 +185,8 @@ def _coerce_report_summary_record(record: Any) -> ReportSummaryRecord:
         title=payload.get("title"),
         quality_score=_optional_float(payload.get("quality_score")),
         citation_coverage_score=_optional_float(payload.get("citation_coverage_score")),
-        workflow_id=payload.get("workflow_id"),
+        graph_id=payload.get("graph_id"),
+        graph_version=payload.get("graph_version"),
         profile=payload.get("profile"),
         manifest_path=payload.get("manifest_path"),
         report_json_path=payload.get("report_json_path"),

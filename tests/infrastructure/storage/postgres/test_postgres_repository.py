@@ -5,10 +5,10 @@ import pytest
 from business.foundation.models.source import SourceError, SourceHealth, SourceHealthStatus
 from infrastructure.storage.postgres import PostgresRepository
 from infrastructure.storage.records import ClaimRecord, EvidenceItemRecord, QualityResultRecord, SourceItemRecord
-from infrastructure.storage.persistence import ReportRecord, RunPersistenceBatch, WorkflowRunRecord
+from infrastructure.storage.persistence import GraphRunRecord, ReportRecord, RunPersistenceBatch
 
 
-RESEARCH_WORKFLOW_ID = "research-paper-analysis"
+RESEARCH_GRAPH_ID = "research.paper-analysis"
 
 
 class FakeCursor:
@@ -57,20 +57,20 @@ def test_postgres_repository_runs_migrations() -> None:
 
     repository.migrate()
 
-    assert "CREATE TABLE IF NOT EXISTS workflow_runs" in connection.calls[0][0]
+    assert "CREATE TABLE IF NOT EXISTS graph_runs" in connection.calls[0][0]
     assert "citation_coverage_score" in connection.calls[0][0]
     assert connection.commits == 1
 
 
-def test_postgres_repository_saves_workflow_run() -> None:
+def test_postgres_repository_saves_graph_run() -> None:
     connection = FakeConnection()
     repository = PostgresRepository("postgresql://example", connection_factory=lambda: connection)
 
-    repository.save_workflow_run(
-        WorkflowRunRecord(
+    repository.save_graph_run(
+        GraphRunRecord(
             run_id="run-1",
-            workflow_id="daily",
-            workflow_version="1",
+            graph_id="daily.graph",
+            graph_version="1",
             status="succeeded",
             profile="live-offline",
             metrics={"quality_score": 1.0},
@@ -78,7 +78,7 @@ def test_postgres_repository_saves_workflow_run() -> None:
     )
 
     sql, params = connection.calls[0]
-    assert "INSERT INTO workflow_runs" in sql
+    assert "INSERT INTO graph_runs" in sql
     assert params[0] == "run-1"
     assert params[9] == '{"quality_score": 1.0}'
 
@@ -200,10 +200,10 @@ def test_postgres_repository_saves_run_records_in_one_transaction() -> None:
 
     repository.save_run_records(
         RunPersistenceBatch(
-            workflow_run=WorkflowRunRecord(
+            graph_run=GraphRunRecord(
                 run_id="run-1",
-                workflow_id="daily",
-                workflow_version="1",
+                graph_id="daily.graph",
+                graph_version="1",
                 status="succeeded",
                 profile="live-offline",
             ),
@@ -253,7 +253,7 @@ def test_postgres_repository_saves_run_records_in_one_transaction() -> None:
 
     executed_sql = "\n".join(sql for sql, _ in connection.calls)
     assert connection.commits == 1
-    assert "INSERT INTO workflow_runs" in executed_sql
+    assert "INSERT INTO graph_runs" in executed_sql
     assert "INSERT INTO reports" in executed_sql
     assert "INSERT INTO source_items" in executed_sql
     assert "INSERT INTO evidence_items" in executed_sql
@@ -511,6 +511,8 @@ def test_postgres_repository_gets_report_by_id() -> None:
                 0.8,
                 ".newsroom/runs/run-1/manifest.json",
                 "2026-05-11T01:00:00Z",
+                RESEARCH_GRAPH_ID,
+                "2",
             )
         ]
     )
@@ -546,6 +548,8 @@ def test_postgres_repository_searches_reports() -> None:
                 0.8,
                 ".newsroom/runs/run-1/manifest.json",
                 "2026-05-11T01:00:00Z",
+                RESEARCH_GRAPH_ID,
+                "2",
             )
         ]
     )
@@ -561,7 +565,7 @@ def test_postgres_repository_searches_reports() -> None:
     assert records[0].citation_coverage_score == 0.8
 
 
-def test_postgres_repository_lists_reports_with_workflow_filter() -> None:
+def test_postgres_repository_lists_reports_with_graph_filter() -> None:
     connection = FakeConnection(
         rows=[
             (
@@ -573,20 +577,22 @@ def test_postgres_repository_lists_reports_with_workflow_filter() -> None:
                 0.8,
                 ".newsroom/runs/run-1/manifest.json",
                 "2026-05-11T01:00:00Z",
-                RESEARCH_WORKFLOW_ID,
+                RESEARCH_GRAPH_ID,
+                "2",
             )
         ]
     )
     repository = PostgresRepository("postgresql://example", connection_factory=lambda: connection)
 
-    records = repository.list_reports(limit=5, workflow_id=RESEARCH_WORKFLOW_ID)
+    records = repository.list_reports(limit=5, graph_id=RESEARCH_GRAPH_ID)
 
     sql, params = connection.calls[0]
-    assert "LEFT JOIN workflow_runs" in sql
-    assert "wr.workflow_id = %s" in sql
-    assert params == (RESEARCH_WORKFLOW_ID, 5)
+    assert "LEFT JOIN graph_runs" in sql
+    assert "gr.graph_id = %s" in sql
+    assert params == (RESEARCH_GRAPH_ID, 5)
     assert records[0].report_id == "report-1"
-    assert records[0].workflow_id == RESEARCH_WORKFLOW_ID
+    assert records[0].graph_id == RESEARCH_GRAPH_ID
+    assert records[0].graph_version == "2"
 
 
 def test_postgres_repository_lists_final_state_records_by_run() -> None:

@@ -2,9 +2,9 @@ from __future__ import annotations
 
 from infrastructure.storage.persistence.local_json_adapter import LocalJsonPersistenceAdapter
 from infrastructure.storage.persistence.records import (
+    GraphRunRecord,
     ReportRecord,
     RunPersistenceBatch,
-    WorkflowRunRecord,
 )
 from infrastructure.storage.persistence.repository import (
     PersistenceRepository,
@@ -26,8 +26,8 @@ from infrastructure.storage.persistence.repository import (
     run_persistence_input_from_result,
     source_item_records_from_result,
     source_item_records_from_input,
-    workflow_run_record_from_result,
-    workflow_run_record_from_input,
+    graph_run_record_from_result,
+    graph_run_record_from_input,
 )
 
 
@@ -37,7 +37,7 @@ __all__ = [
     "ReportRecord",
     "RunPersistenceInput",
     "RunPersistenceBatch",
-    "WorkflowRunRecord",
+    "GraphRunRecord",
     "claim_records_from_result",
     "claim_records_from_input",
     "evidence_item_records_from_result",
@@ -55,6 +55,6 @@ __all__ = [
     "run_persistence_input_from_result",
     "source_item_records_from_result",
     "source_item_records_from_input",
-    "workflow_run_record_from_result",
-    "workflow_run_record_from_input",
+    "graph_run_record_from_result",
+    "graph_run_record_from_input",
 ]

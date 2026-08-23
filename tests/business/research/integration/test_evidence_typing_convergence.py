@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 from framework.harness import BoundedRAGSessionController, RAGBudget, RAGSessionStatus
 
 from business.research.document.models import PaperChunk
+from business.research.graphs import build_paper_analysis_context_graph_identity
 from business.research.rag.models import ResearchRetrievalGoal
 from business.research.rag.retrieval.paper_retriever import RetrievalResult
 from business.research.rag.retrieval_port import PaperChunkRetrievalPort
@@ -29,9 +30,10 @@ def test_method_only_evidence_does_not_satisfy_required_experiment_type() -> Non
     paper_retriever = _MethodOnlyRetriever()
     retrieval = PaperChunkRetrievalPort(paper_retriever, default_section_index=1)  # type: ignore[arg-type]
     spec = ResearchRAGPolicyBuilder().build_session_spec(
-        run_id="run-evidence-convergence",
-        workflow_id="workflow-evidence-convergence",
-        step_id="step-build-context",
+        graph_identity=build_paper_analysis_context_graph_identity(
+            run_id="run-evidence-convergence",
+            stage_id="run_research_rag",
+        ),
         session_id="session-evidence-convergence",
         goal=ResearchRetrievalGoal(
             goal_id="goal-evidence-convergence",

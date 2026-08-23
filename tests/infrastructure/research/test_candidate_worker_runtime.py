@@ -30,6 +30,7 @@ from tests.business.research.fakes import (
     FakeResearchLLMWorker,
     FakeResearchRAGRuntime,
     FakeResearchSourceProvider,
+    in_memory_node_output_resource_factory,
 )
 
 
@@ -99,6 +100,7 @@ def test_structured_candidate_worker_runs_through_deterministic_research_gates(
         rag_runtime=FakeResearchRAGRuntime(),
         artifact_port=FakeArtifactPort(),
         event_port_factory=lambda run_id: InMemoryHarnessEventPort(),
+        node_output_resource_factory=in_memory_node_output_resource_factory,
     )
 
     result = AnalyzePaperUseCase(runtime).analyze(
@@ -120,7 +122,7 @@ def test_structured_candidate_worker_runs_through_deterministic_research_gates(
         event.to_dict()
         for event in result.trace.events
         if event.event_type.value == "gate_evaluated"
-        and event.step_id
+        and event.node_id
         in {"analyze_structure", "analyze_contribution", "analyze_experiments"}
     ]
     assert gate_events

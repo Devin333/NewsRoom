@@ -349,7 +349,7 @@ def _add_storage_backup_arguments(parser: argparse.ArgumentParser) -> None:
 
 def _add_storage_lineage_base_arguments(parser: argparse.ArgumentParser) -> None:
     _add_artifact_root_argument(parser, help_text="Directory where run artifacts are stored")
-    parser.add_argument("--run-id", required=True, help="Workflow run id")
+    parser.add_argument("--run-id", required=True, help="Graph run id")
 
 
 def _add_storage_retention_arguments(parser: argparse.ArgumentParser) -> None:

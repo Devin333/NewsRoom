@@ -338,11 +338,14 @@ class EventReaderService:
         through_sequence: int | None = None,
         event_types: frozenset[str] = frozenset(),
         data_schemas: frozenset[str] = frozenset(),
-        step_id: str | None = None,
+        node_instance_id: str | None = None,
     ) -> EventStreamReadResult:
         safe_run_id = validate_artifact_path_segment(run_id, field="run_id")
         stream_id = f"run:{safe_run_id}"
-        normalized_step_id = _optional_text(step_id, "step_id")
+        normalized_node_instance_id = _optional_text(
+            node_instance_id,
+            "node_instance_id",
+        )
         initial_request = StreamReadRequest(
             stream_id=stream_id,
             cursor=cursor,
@@ -363,14 +366,14 @@ class EventReaderService:
                 "through_sequence": initial_request.through_sequence,
                 "event_types": sorted(initial_request.event_types),
                 "data_schemas": sorted(initial_request.data_schemas),
-                "step_id": normalized_step_id,
+                "node_instance_id": normalized_node_instance_id,
             },
         )
-        if normalized_step_id is None:
+        if normalized_node_instance_id is None:
             return self._read_page(initial_request)
-        return self._read_step_page(
+        return self._read_node_instance_page(
             initial_request,
-            step_id=normalized_step_id,
+            node_instance_id=normalized_node_instance_id,
             result_limit=limit,
         )
 
@@ -485,11 +488,11 @@ class EventReaderService:
             high_watermark=high_watermark,
         )
 
-    def _read_step_page(
+    def _read_node_instance_page(
         self,
         request: StreamReadRequest,
         *,
-        step_id: str,
+        node_instance_id: str,
         result_limit: int,
     ) -> EventStreamReadResult:
         collected: list[StoredEvent] = []
@@ -506,7 +509,7 @@ class EventReaderService:
             if fixed_high_watermark is None:
                 fixed_high_watermark = raw.high_watermark
             for event in raw.events:
-                if event.business_context.step_id != step_id:
+                if event.business_context.node_instance_id != node_instance_id:
                     continue
                 collected.append(event)
                 if len(collected) == result_limit:

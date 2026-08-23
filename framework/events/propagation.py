@@ -18,6 +18,7 @@ from framework.events.trace import (
     new_span_id,
     new_trace_id,
 )
+from framework.shared.graph_identity import GraphExecutionIdentity
 
 
 TRACEPARENT_HEADER = "traceparent"
@@ -124,13 +125,11 @@ class W3CSpanContext:
     def to_trace_context(
         self,
         *,
-        run_id: str,
-        workflow_id: str | None = None,
+        execution_identity: GraphExecutionIdentity,
         metadata: Mapping[str, Any] | None = None,
     ) -> TraceContext:
         return TraceContext.root(
-            run_id=run_id,
-            workflow_id=workflow_id,
+            execution_identity=execution_identity,
             trace_id=self.trace_id,
             span_id=self.span_id,
             metadata=metadata,
@@ -302,20 +301,17 @@ class W3CTracePropagator:
         self,
         carrier: Mapping[str, Any],
         *,
-        run_id: str,
-        workflow_id: str | None = None,
+        execution_identity: GraphExecutionIdentity,
         metadata: Mapping[str, Any] | None = None,
     ) -> ExtractedTraceContext:
         extracted = self.extract_span(carrier)
         context = extracted.context.to_trace_context(
-            run_id=run_id,
-            workflow_id=workflow_id,
+            execution_identity=execution_identity,
             metadata=metadata,
         )
         remote_context = (
             extracted.remote_context.to_trace_context(
-                run_id=run_id,
-                workflow_id=workflow_id,
+                execution_identity=execution_identity,
                 metadata=metadata,
             )
             if extracted.remote_context is not None
@@ -503,8 +499,7 @@ class OpenTelemetryTraceAdapter:
         self,
         native_context: Any,
         *,
-        run_id: str,
-        workflow_id: str | None = None,
+        execution_identity: GraphExecutionIdentity,
         metadata: Mapping[str, Any] | None = None,
     ) -> TraceContext | None:
         if native_context is None or not bool(getattr(native_context, "is_valid", False)):
@@ -518,8 +513,7 @@ class OpenTelemetryTraceAdapter:
         if native_state is not None and hasattr(native_state, "to_header"):
             tracestate = str(native_state.to_header() or "") or None
         return TraceContext.root(
-            run_id=run_id,
-            workflow_id=workflow_id,
+            execution_identity=execution_identity,
             trace_id=f"{trace_id:032x}",
             span_id=f"{span_id:016x}",
             metadata=metadata,

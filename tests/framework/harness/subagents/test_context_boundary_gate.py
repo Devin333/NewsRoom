@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from framework.harness import ContextEnvelope, FakeSubAgentRuntime, SubAgentContextBoundaryGate, fake_subagent_spec
+from framework.harness import FakeSubAgentRuntime, SubAgentContextBoundaryGate, fake_subagent_spec
 
 
 class UnsafeEnvelope:
@@ -17,7 +17,7 @@ def test_context_boundary_gate_rejects_sibling_private_notes() -> None:
 
 def test_fake_runtime_child_does_not_receive_parent_raw_messages() -> None:
     runtime = FakeSubAgentRuntime(fake_subagent_spec())
-    invocation = runtime.build_invocation(context=ContextEnvelope(envelope_id="context://safe"))
+    invocation = runtime.build_invocation()
     result = runtime.invoke(invocation)
 
     assert result.status == "succeeded"

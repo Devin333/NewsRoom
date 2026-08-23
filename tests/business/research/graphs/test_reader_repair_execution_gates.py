@@ -18,9 +18,9 @@ from framework.harness import (
 )
 from framework.harness.graph import HarnessContractKind, HarnessContractReference
 from framework.harness.graph.versioning import (
+    GRAPH_ONLY_NORMALIZED_HARNESS_GRAPH_SCHEMA,
     HARNESS_CONDITION_POLICY_VERSION,
-    HARNESS_GRAPH_COMPILER_VERSION,
-    NORMALIZED_HARNESS_GRAPH_SCHEMA,
+    HARNESS_GRAPH_ONLY_COMPILER_VERSION,
 )
 
 from business.research.domain import (
@@ -566,13 +566,13 @@ def _receipt(
 ) -> HarnessCommittedNodeOutputReceipt:
     graph_ref = HarnessGraphReference(
         graph_id=READER_REPAIR_GRAPH_ID,
-        workflow_ref=HarnessContractReference(
-            HarnessContractKind.WORKFLOW,
+        graph_ref=HarnessContractReference(
+            HarnessContractKind.GRAPH,
             READER_REPAIR_GRAPH_ID,
             READER_REPAIR_GRAPH_VERSION,
         ),
-        schema_version=NORMALIZED_HARNESS_GRAPH_SCHEMA,
-        compiler_version=HARNESS_GRAPH_COMPILER_VERSION,
+        schema_version=GRAPH_ONLY_NORMALIZED_HARNESS_GRAPH_SCHEMA,
+        compiler_version=HARNESS_GRAPH_ONLY_COMPILER_VERSION,
         condition_policy_version=HARNESS_CONDITION_POLICY_VERSION,
         checksum=checksum_for({"graph": READER_REPAIR_GRAPH_ID, "version": "2"}),
     )

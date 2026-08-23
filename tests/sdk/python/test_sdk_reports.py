@@ -22,24 +22,24 @@ def test_reports_resource_paths() -> None:
     ]
     assert request_func.calls[1]["params"] == {
         "limit": 5,
-        "workflow_id": None,
-        "workflow_family": None,
+        "graph_id": None,
+        "graph_ids": None,
     }
     assert request_func.calls[4]["params"] == {"q": "agent", "limit": 2}
 
 
-def test_reports_resource_accepts_workflow_family() -> None:
+def test_reports_resource_accepts_graph_id() -> None:
     request_func = _Recorder()
     client = NewsRoomClient("https://news.example", request_func=request_func)
 
-    assert client.reports.list(limit=5, workflow_family="research")["ok"] is True
+    assert client.reports.list(limit=5, graph_id="research.paper_analysis")["ok"] is True
 
     assert request_func.calls[0]["method"] == "GET"
     assert request_func.calls[0]["path"] == "/api/v1/reports"
     assert request_func.calls[0]["params"] == {
         "limit": 5,
-        "workflow_id": None,
-        "workflow_family": "research",
+        "graph_id": "research.paper_analysis",
+        "graph_ids": None,
     }
 
 

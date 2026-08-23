@@ -291,6 +291,7 @@ class HarnessSideEffectIntent:
     def from_dict(cls, value: Mapping[str, Any]) -> HarnessSideEffectIntent:
         if not isinstance(value, Mapping):
             raise HarnessValidationError("side-effect intent must be an object")
+        _reject_legacy_step_id(value, "side-effect intent")
         return cls(
             effect_id=value.get("effect_id"),
             kind=value.get("kind"),
@@ -357,7 +358,7 @@ class HarnessSideEffectIntent:
         }
 
     def to_dict(self) -> dict[str, Any]:
-        return {**self._checksum_payload(), "step_id": self.step_id, "checksum": self.checksum}
+        return {**self._checksum_payload(), "checksum": self.checksum}
 
 
 @dataclass(frozen=True, slots=True)
@@ -563,6 +564,7 @@ class HarnessSideEffectDecision:
     def from_dict(cls, value: Mapping[str, Any]) -> HarnessSideEffectDecision:
         if not isinstance(value, Mapping):
             raise HarnessValidationError("side-effect decision must be an object")
+        _reject_legacy_step_id(value, "side-effect decision")
         return cls(
             decision_id=value.get("decision_id"),
             intent_ref=value.get("intent_ref"),
@@ -647,7 +649,7 @@ class HarnessSideEffectDecision:
         }
 
     def to_dict(self) -> dict[str, Any]:
-        return {**self._checksum_payload(), "step_id": self.step_id, "checksum": self.checksum}
+        return {**self._checksum_payload(), "checksum": self.checksum}
 
 
 HarnessSideEffectAuthorization = HarnessSideEffectDecision
@@ -1149,6 +1151,7 @@ class HarnessSideEffectOutcome:
     def from_dict(cls, value: Mapping[str, Any]) -> HarnessSideEffectOutcome:
         if not isinstance(value, Mapping):
             raise HarnessValidationError("side-effect outcome must be an object")
+        _reject_legacy_step_id(value, "side-effect outcome")
         return cls(
             outcome_id=value.get("outcome_id"),
             effect_id=value.get("effect_id"),
@@ -1226,7 +1229,7 @@ class HarnessSideEffectOutcome:
         return payload
 
     def to_dict(self) -> dict[str, Any]:
-        return {**self._checksum_payload(), "step_id": self.step_id, "checksum": self.checksum}
+        return {**self._checksum_payload(), "checksum": self.checksum}
 
 
 @dataclass(frozen=True, slots=True)
@@ -1644,6 +1647,20 @@ def _positive_int(value: Any, field_name: str) -> int:
     if isinstance(value, bool) or not isinstance(value, int) or value < 1:
         raise HarnessValidationError(f"{field_name} must be a positive integer")
     return value
+
+
+def _reject_legacy_step_id(value: Mapping[str, Any], label: str) -> None:
+    """Reject the retired step-based authority on active Graph wires.
+
+    Presence is rejected even when the value is ``null`` so a legacy payload
+    cannot silently round-trip through the v2 reader.
+    """
+    if "step_id" in value:
+        raise HarnessValidationError(
+            f"{label} contains retired step_id authority",
+            code="legacy_step_identity_not_supported",
+            details={"code": "legacy_step_identity_not_supported"},
+        )
 
 
 def _checksum(value: Any, field_name: str) -> str:

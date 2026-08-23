@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from business.research.application import paper_rag_session
 from business.research.application.paper_rag_session import PaperRAGSession
+from business.research.graphs import build_paper_analysis_context_graph_identity
 from business.research.rag.models import ResearchRetrievalGoal
 from framework.harness.context.assembler import ContextAssembler
 from framework.harness.rag.context_pack_assembler import RAGContextPackAssembler
@@ -70,9 +71,7 @@ def test_paper_rag_session_passes_retrieval_policy_to_inner_retriever(monkeypatc
             allowed_source_refs=["paper://p1"],
             allowed_memory_namespaces=["research"],
         ),
-        run_id="run-1",
-        workflow_id="workflow-1",
-        step_id="step-1",
+        graph_identity=build_paper_analysis_context_graph_identity(run_id="run-1", stage_id="run_research_rag"),
         session_id="session-1",
         current_section_index=3,
     )
@@ -99,9 +98,7 @@ def test_paper_rag_session_wires_optional_worker_planner(monkeypatch):
             allowed_source_refs=["paper://p1"],
             allowed_memory_namespaces=["research"],
         ),
-        run_id="run-1",
-        workflow_id="workflow-1",
-        step_id="step-1",
+        graph_identity=build_paper_analysis_context_graph_identity(run_id="run-1", stage_id="run_research_rag"),
         session_id="session-1",
     )
 
@@ -130,9 +127,7 @@ def test_paper_rag_session_wires_optional_answer_worker_and_generation_policy(mo
             allowed_source_refs=["paper://p1"],
             allowed_memory_namespaces=["research"],
         ),
-        run_id="run-1",
-        workflow_id="workflow-1",
-        step_id="step-1",
+        graph_identity=build_paper_analysis_context_graph_identity(run_id="run-1", stage_id="run_research_rag"),
         session_id="session-1",
     )
 
@@ -156,9 +151,7 @@ def test_paper_rag_session_wires_optional_relevance_scorer_and_policy_thresholds
             allowed_source_refs=["paper://p1"],
             allowed_memory_namespaces=["research"],
         ),
-        run_id="run-1",
-        workflow_id="workflow-1",
-        step_id="step-1",
+        graph_identity=build_paper_analysis_context_graph_identity(run_id="run-1", stage_id="run_research_rag"),
         session_id="session-1",
     )
 
@@ -187,9 +180,7 @@ def test_paper_rag_session_wires_optional_memory_port(monkeypatch):
             allowed_source_refs=["paper://p1"],
             allowed_memory_namespaces=["research"],
         ),
-        run_id="run-1",
-        workflow_id="workflow-1",
-        step_id="step-1",
+        graph_identity=build_paper_analysis_context_graph_identity(run_id="run-1", stage_id="run_research_rag"),
         session_id="session-1",
     )
 
@@ -218,9 +209,7 @@ def test_paper_rag_session_builds_run_scoped_context_assembler(monkeypatch):
             allowed_source_refs=["paper://p1"],
             allowed_memory_namespaces=["research"],
         ),
-        run_id="run-context",
-        workflow_id="workflow-context",
-        step_id="step-context",
+        graph_identity=build_paper_analysis_context_graph_identity(run_id="run-context", stage_id="run_research_rag"),
         session_id="session-context",
     )
 
@@ -237,9 +226,7 @@ def test_paper_rag_session_run_spec_preserves_supplied_contract_identity(monkeyp
     monkeypatch.setattr(paper_rag_session, "BoundedRAGSessionController", _FakeController)
     supplied_spec = RAGSessionSpec(
         session_id="session-supplied",
-        run_id="run-supplied",
-        workflow_id="workflow-supplied",
-        step_id="step-supplied",
+        graph_identity=build_paper_analysis_context_graph_identity(run_id="run-supplied", stage_id="run_research_rag"),
         goal=RetrievalGoal(
             goal_id="goal-supplied",
             question="Which evidence is supported?",
@@ -296,9 +283,7 @@ def test_paper_rag_session_propagates_tenant_scope_to_session_spec(monkeypatch):
                 "memory_namespace": "research:tenant:tenant-a:user:user-1",
             },
         ),
-        run_id="run-1",
-        workflow_id="workflow-1",
-        step_id="step-1",
+        graph_identity=build_paper_analysis_context_graph_identity(run_id="run-1", stage_id="run_research_rag"),
         session_id="session-1",
     )
 

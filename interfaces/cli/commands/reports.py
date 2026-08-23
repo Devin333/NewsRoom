@@ -22,8 +22,13 @@ def register(subparsers: argparse._SubParsersAction) -> None:
 
     reports_list_parser = reports_subparsers.add_parser("list", help="List persisted reports")
     reports_list_parser.add_argument("--limit", type=int, default=20, help="Maximum reports")
-    reports_list_parser.add_argument("--workflow-id", default=None, help="Optional workflow id filter")
-    reports_list_parser.add_argument("--workflow-family", default=None, help="Optional workflow family filter")
+    reports_list_parser.add_argument("--graph-id", default=None, help="Optional Graph id filter")
+    reports_list_parser.add_argument(
+        "--graph-ids",
+        nargs="+",
+        default=None,
+        help="Optional Graph id filters",
+    )
     _add_artifact_root_argument(reports_list_parser)
     reports_list_parser.add_argument("--json", action="store_true", help="Print machine-readable JSON")
     reports_list_parser.set_defaults(handler=list_reports_from_cli)
@@ -137,8 +142,8 @@ def list_reports(
     try:
         result = report_service_factory(artifact_root=args.artifact_root).list_reports(
             limit=args.limit,
-            workflow_id=args.workflow_id,
-            workflow_family=args.workflow_family,
+            graph_id=args.graph_id,
+            graph_ids=tuple(args.graph_ids) if args.graph_ids is not None else None,
         )
     except ValueError as exc:
         print(str(exc))
@@ -150,7 +155,7 @@ def list_reports(
         print(f"report_count={payload['report_count']}")
         for report in payload["reports"]:
             print(
-                f"- {report['run_id']} workflow={report.get('workflow_id')} "
+                f"- {report['run_id']} graph={report.get('graph_id')}@{report.get('graph_version')} "
                 f"title={report['title']} finished_at={report['finished_at']}"
             )
     return 0

@@ -67,7 +67,7 @@ _TASK_PLAN_SUPPORT_FIELDS = frozenset(
 )
 _TYPED_LEAF_WORKER_TYPES = frozenset(
     HarnessWorkerType(kind.value) for kind in HarnessLeafActivityKind
-)
+) - {HarnessWorkerType.TASK_PLAN}
 _GRAPH_DEFINITION_WORKER_TYPES = _TYPED_LEAF_WORKER_TYPES | {
     HarnessWorkerType.TASK_PLAN,
 }
@@ -553,6 +553,22 @@ class HarnessGraphDefinition:
     @property
     def activity_ids(self) -> tuple[str, ...]:
         return tuple(activity.step_id for activity in self.activities)
+
+    @property
+    def entry_activity_id(self) -> str:
+        """Return the deterministic first executable activity in the Graph."""
+
+        activity_id = _first_activity_id(self.root.root)
+        if activity_id is not None:
+            return activity_id
+        # A Graph containing only control nodes is invalid for execution, but
+        # retaining a deterministic error here keeps state hydration strict.
+        if self.activities:
+            return self.activities[0].step_id
+        raise HarnessValidationError(
+            "Graph definition has no executable activities",
+            code="graph_entry_activity_missing",
+        )
 
     def activity(self, activity_id: str) -> HarnessStepSpec | None:
         normalized = _identifier(activity_id, "activity_id")
@@ -1899,6 +1915,36 @@ def _exact_mapping(
             },
         )
     return dict(value)
+
+
+def _first_activity_id(expression: HarnessGraphExpression) -> str | None:
+    """Walk the declarative root without introducing a routing decision."""
+
+    if isinstance(expression, StepRef):
+        return expression.step_id
+    if isinstance(expression, GraphSequence):
+        for child in expression.children:
+            activity_id = _first_activity_id(child)
+            if activity_id is not None:
+                return activity_id
+        return None
+    if isinstance(expression, Choice):
+        for branch in sorted(expression.branches, key=lambda item: (item.priority, item.branch_id)):
+            activity_id = _first_activity_id(branch.child)
+            if activity_id is not None:
+                return activity_id
+        return None
+    if isinstance(expression, (ParallelAll, ParallelAny)):
+        for branch in sorted(expression.branches, key=lambda item: item.branch_id):
+            activity_id = _first_activity_id(branch.child)
+            if activity_id is not None:
+                return activity_id
+        return None
+    if isinstance(expression, BoundedLoop):
+        return _first_activity_id(expression.body)
+    if isinstance(expression, Wait):
+        return None
+    return None
 
 
 __all__ = [

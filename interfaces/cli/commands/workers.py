@@ -211,7 +211,7 @@ def run_once(args: argparse.Namespace) -> int:
             print(f"message_id={payload['message_id']}")
             print(f"reclaimed={str(payload.get('reclaimed')).lower()}")
             print(f"success={str(payload['success']).lower()}")
-            print(f"workflow_run_id={payload['workflow_run_id']}")
+            print(f"graph_identity={payload['graph_identity']}")
             if payload["error_message"]:
                 print(f"error={payload['error_message']}")
     return 0 if result.success is not False else 1

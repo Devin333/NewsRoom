@@ -19,6 +19,7 @@ from framework.harness.task_plan.queue import (
     TaskPlanQueueReadback,
 )
 from framework.harness.task_plan.replay import TaskPlanReplayReducer, TaskPlanReplayReport
+from framework.harness.task_plan.schema import GRAPH_ONLY_VALIDATED_TASK_PLAN_SCHEMA
 from framework.harness.task_plan.scheduler import materialize_queue_task
 from framework.harness.task_plan.store import TaskPlanEvent, TaskResultRecord
 
@@ -52,6 +53,11 @@ class TaskPlanRecovery:
         graph_active = {
             item.task_instance_id: item for item in self.report.active_task_instances
         }
+        if not self.report.projection.is_graph_only:
+            raise HarnessValidationError(
+                "live TaskPlan recovery requires a Graph-only projection",
+                code="legacy_task_plan_live_recovery_forbidden",
+            )
         queue_items = tuple(self.missing_queue_projections)
         queue_instance_ids: list[str] = []
         for item in queue_items:
@@ -60,24 +66,23 @@ class TaskPlanRecovery:
                     "TaskPlan recovery queue projection must remain identity-only",
                     code="task_plan_recovery_queue_payload_rejected",
                 )
-            if self.report.projection.is_graph_only:
-                projection = TaskPlanQueueProjection.from_task(item)
-                instance = graph_active.get(projection.task_instance_id)
-                state = graph_states.get(instance.task_id) if instance else None
-                if (
-                    instance is None
-                    or state is None
-                    or state.status is not TaskLifecycle.READY
-                    or not projection.matches_instance(instance)
-                    or not projection.task_instance.matches_plan_projection_identity(
-                        self.report.projection
-                    )
-                ):
-                    raise HarnessValidationError(
-                        "TaskPlan recovery queue projection has mismatched Graph identity",
-                        code="task_plan_queue_projection_identity_mismatch",
-                    )
-                queue_instance_ids.append(projection.task_instance_id)
+            projection = TaskPlanQueueProjection.from_task(item)
+            instance = graph_active.get(projection.task_instance_id)
+            state = graph_states.get(instance.task_id) if instance else None
+            if (
+                instance is None
+                or state is None
+                or state.status is not TaskLifecycle.READY
+                or not projection.matches_instance(instance)
+                or not projection.task_instance.matches_plan_projection_identity(
+                    self.report.projection
+                )
+            ):
+                raise HarnessValidationError(
+                    "TaskPlan recovery queue projection has mismatched Graph identity",
+                    code="task_plan_queue_projection_identity_mismatch",
+                )
+            queue_instance_ids.append(projection.task_instance_id)
         if len(queue_instance_ids) != len(set(queue_instance_ids)):
             raise HarnessValidationError(
                 "TaskPlan recovery contains duplicate queue projections",
@@ -88,11 +93,6 @@ class TaskPlanRecovery:
         if any(not isinstance(item, TaskPlanQueueReadback) for item in readbacks):
             raise TypeError(
                 "confirmed_queue_readbacks must contain TaskPlanQueueReadback values"
-            )
-        if readbacks and not self.report.projection.is_graph_only:
-            raise HarnessValidationError(
-                "legacy recovery cannot consume Graph-only queue read-back evidence",
-                code="task_plan_queue_readback_identity_mismatch",
             )
         for readback in readbacks:
             instance = graph_active.get(readback.task_instance_id)
@@ -132,20 +132,19 @@ class TaskPlanRecovery:
                 "TaskPlan recovery contains duplicate reclaim continuations",
                 code="task_plan_reclaim_identity_mismatch",
             )
-        if self.report.projection.is_graph_only:
-            for instance in awaiting:
-                expected = graph_active.get(instance.task_instance_id)
-                state = graph_states.get(instance.task_id)
-                if (
-                    expected != instance
-                    or state is None
-                    or state.status
-                    not in {TaskLifecycle.DISPATCHED, TaskLifecycle.RUNNING}
-                ):
-                    raise HarnessValidationError(
-                        "TaskPlan reclaim continuation has mismatched Graph identity",
-                        code="task_plan_reclaim_identity_mismatch",
-                    )
+        for instance in awaiting:
+            expected = graph_active.get(instance.task_instance_id)
+            state = graph_states.get(instance.task_id)
+            if (
+                expected != instance
+                or state is None
+                or state.status
+                not in {TaskLifecycle.DISPATCHED, TaskLifecycle.RUNNING}
+            ):
+                raise HarnessValidationError(
+                    "TaskPlan reclaim continuation has mismatched Graph identity",
+                    code="task_plan_reclaim_identity_mismatch",
+                )
         object.__setattr__(
             self,
             "awaiting_reclaim",
@@ -160,13 +159,8 @@ class TaskPlanRecovery:
                 "reclaim_continuations must contain "
                 "TaskPlanQueueReclaimContinuation values"
             )
-        if continuations and not self.report.projection.is_graph_only:
-            raise HarnessValidationError(
-                "legacy recovery cannot consume Graph-only reclaim continuations",
-                code="task_plan_reclaim_identity_mismatch",
-            )
         continuation_ids = [item.task_instance_id for item in continuations]
-        if self.report.projection.is_graph_only and (
+        if (
             len(continuation_ids) != len(set(continuation_ids))
             or set(continuation_ids) != set(awaiting_ids)
         ):
@@ -175,7 +169,7 @@ class TaskPlanRecovery:
                 code="task_plan_reclaim_identity_mismatch",
             )
         awaiting_by_id = {item.task_instance_id: item for item in awaiting}
-        if self.report.projection.is_graph_only and any(
+        if any(
             not continuation.matches_instance(
                 awaiting_by_id[continuation.task_instance_id]
             )
@@ -213,21 +207,20 @@ class TaskPlanRecovery:
                 item.result_checksum for item in self.pending_terminal_results
             ],
         }
-        if self.report.projection.is_graph_only:
-            payload.update(
-                {
-                    "missing_queue_projection_checksums": [
-                        TaskPlanQueueProjection.from_task(item).projection_checksum
-                        for item in self.missing_queue_projections
-                    ],
-                    "confirmed_queue_readbacks": [
-                        item.to_dict() for item in self.confirmed_queue_readbacks
-                    ],
-                    "reclaim_continuations": [
-                        item.to_dict() for item in self.reclaim_continuations
-                    ],
-                }
-            )
+        payload.update(
+            {
+                "missing_queue_projection_checksums": [
+                    TaskPlanQueueProjection.from_task(item).projection_checksum
+                    for item in self.missing_queue_projections
+                ],
+                "confirmed_queue_readbacks": [
+                    item.to_dict() for item in self.confirmed_queue_readbacks
+                ],
+                "reclaim_continuations": [
+                    item.to_dict() for item in self.reclaim_continuations
+                ],
+            }
+        )
         return payload
 
     def to_dict(self) -> dict[str, Any]:
@@ -273,22 +266,24 @@ class TaskPlanRecoveryService:
         first_plan = plan_history[0]
         if not isinstance(first_plan, ValidatedTaskPlan):
             raise TypeError("plans must contain ValidatedTaskPlan values")
+        if first_plan.schema_version != GRAPH_ONLY_VALIDATED_TASK_PLAN_SCHEMA:
+            raise HarnessValidationError(
+                "live TaskPlan recovery requires Graph-only plan history",
+                code="legacy_task_plan_live_recovery_forbidden",
+            )
         queue_name = identifier(queue_name, "queue_name")
         queue_reader = self._queue_reader
-        if first_plan.is_graph_only and queue_reader is None:
+        if queue_reader is None:
             raise HarnessValidationError(
                 "Graph-only TaskPlan recovery requires durable queue read authority",
                 code="graph_task_plan_queue_read_port_unavailable",
             )
         queued_id_values = tuple(queued_instance_ids)
-        if first_plan.is_graph_only and queued_id_values:
+        if queued_id_values:
             raise HarnessValidationError(
                 "Graph-only TaskPlan recovery requires exact durable queue read-back evidence",
                 code="graph_task_plan_queue_readback_required",
             )
-        queued = {
-            identifier(item, "queued_instance_ids") for item in queued_id_values
-        }
         checkpoint_verified = False
         recovered_from_sequence = 0
         if checkpoint is not None:
@@ -316,6 +311,11 @@ class TaskPlanRecoveryService:
             require_terminal_events=False,
             apply_unterminated_results=False,
         )
+        if not report.projection.is_graph_only:
+            raise HarnessValidationError(
+                "live TaskPlan recovery replay produced a legacy projection",
+                code="legacy_task_plan_live_recovery_forbidden",
+            )
         failure_sequences = tuple(
             event.sequence for event in recorded_events if event.event_type == "TASK_FAILED"
         )
@@ -357,45 +357,41 @@ class TaskPlanRecoveryService:
         active_instances = {
             item.task_instance_id: item for item in report.active_task_instances
         }
-        readbacks: tuple[TaskPlanQueueReadback, ...] = ()
-        if first_plan.is_graph_only:
-            ready_instance_ids = tuple(
-                sorted(
-                    instance.task_instance_id
-                    for instance in report.active_task_instances
-                    if states[instance.task_id].status is TaskLifecycle.READY
-                )
+        ready_instance_ids = tuple(
+            sorted(
+                instance.task_instance_id
+                for instance in report.active_task_instances
+                if states[instance.task_id].status is TaskLifecycle.READY
             )
-            if queue_reader is None:
-                raise AssertionError("Graph-only queue reader was not admitted")
-            raw_readbacks = queue_reader.read_task_plan_queue(
-                queue_name=queue_name,
-                task_instance_ids=ready_instance_ids,
+        )
+        raw_readbacks = queue_reader.read_task_plan_queue(
+            queue_name=queue_name,
+            task_instance_ids=ready_instance_ids,
+        )
+        if raw_readbacks is None:
+            raise TypeError(
+                "TaskPlanQueueReadPort must return TaskPlanQueueReadback values"
             )
-            if raw_readbacks is None:
-                raise TypeError(
-                    "TaskPlanQueueReadPort must return TaskPlanQueueReadback values"
-                )
-            readbacks = tuple(
-                TaskPlanQueueReadback.from_dict(item)
-                if isinstance(item, Mapping)
-                else item
-                for item in raw_readbacks
+        readbacks = tuple(
+            TaskPlanQueueReadback.from_dict(item)
+            if isinstance(item, Mapping)
+            else item
+            for item in raw_readbacks
+        )
+        if any(not isinstance(item, TaskPlanQueueReadback) for item in readbacks):
+            raise TypeError(
+                "TaskPlanQueueReadPort must return TaskPlanQueueReadback values"
             )
-            if any(not isinstance(item, TaskPlanQueueReadback) for item in readbacks):
-                raise TypeError(
-                    "TaskPlanQueueReadPort must return TaskPlanQueueReadback values"
-                )
-            readback_instance_ids = [item.task_instance_id for item in readbacks]
-            readback_message_ids = [item.message_id for item in readbacks]
-            if (
-                len(readback_instance_ids) != len(set(readback_instance_ids))
-                or len(readback_message_ids) != len(set(readback_message_ids))
-            ):
-                raise HarnessValidationError(
-                    "TaskPlan recovery contains conflicting queue read-back evidence",
-                    code="task_plan_queue_readback_conflict",
-                )
+        readback_instance_ids = [item.task_instance_id for item in readbacks]
+        readback_message_ids = [item.message_id for item in readbacks]
+        if (
+            len(readback_instance_ids) != len(set(readback_instance_ids))
+            or len(readback_message_ids) != len(set(readback_message_ids))
+        ):
+            raise HarnessValidationError(
+                "TaskPlan recovery contains conflicting queue read-back evidence",
+                code="task_plan_queue_readback_conflict",
+            )
         for readback in readbacks:
             instance = active_instances.get(readback.task_instance_id)
             state = states.get(instance.task_id) if instance is not None else None
@@ -411,8 +407,7 @@ class TaskPlanRecoveryService:
                     code="task_plan_queue_readback_identity_mismatch",
                     details={"task_instance_id": readback.task_instance_id},
                 )
-        if first_plan.is_graph_only:
-            queued = set(readback_instance_ids)
+        queued = set(readback_instance_ids)
         pending_result_instances = {
             item.task_instance_id for item in report.pending_terminal_results
         }
@@ -428,23 +423,17 @@ class TaskPlanRecoveryService:
                     missing_queue.append(
                         materialize_queue_task(
                             instance,
-                            workflow_id=(
-                                None
-                                if first_plan.is_graph_only
-                                else plan_history[0].workflow_id
-                            ),
                             queue_name=queue_name,
                         )
                     )
             elif state.status in {TaskLifecycle.DISPATCHED, TaskLifecycle.RUNNING}:
                 awaiting_reclaim.append(instance)
-                if first_plan.is_graph_only:
-                    reclaim_continuations.append(
-                        TaskPlanQueueReclaimContinuation.for_instance(
-                            instance,
-                            queue_name=queue_name,
-                        )
+                reclaim_continuations.append(
+                    TaskPlanQueueReclaimContinuation.for_instance(
+                        instance,
+                        queue_name=queue_name,
                     )
+                )
         return TaskPlanRecovery(
             report=report,
             checkpoint_verified=checkpoint_verified,

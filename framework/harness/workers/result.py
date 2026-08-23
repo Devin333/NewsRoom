@@ -91,7 +91,7 @@ FORBIDDEN_WORKER_RESULT_KEYS = frozenset(
         "routing_decision",
         "retry",
         "replan",
-        "halt_workflow",
+        "halt_graph",
         "complete_run",
         "quality_passed",
         "quality_score",

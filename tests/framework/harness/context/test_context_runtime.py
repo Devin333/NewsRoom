@@ -51,7 +51,7 @@ def _source(policy: ContextCompactionPolicy, *, reconstructable: bool = True):
     base = ContextGroupMaterializer().materialize(
         ContextMaterializationRequest(
             run_id="run-context-runtime",
-            step_id="step-context",
+            stage_id="step-context",
             task_binding_ref="task://context-runtime",
             policy_revision=policy.policy_revision,
             physical_profile_revision="profile-runtime-v1",
@@ -79,7 +79,7 @@ def _source(policy: ContextCompactionPolicy, *, reconstructable: bool = True):
     )
     return ContextSemanticSnapshot(
         run_id=base.run_id,
-        step_id=base.step_id,
+        stage_id=base.stage_id,
         task_binding_ref=base.task_binding_ref,
         groups=(*base.groups, extra),
         policy_revision=base.policy_revision,

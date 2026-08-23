@@ -15,12 +15,12 @@ from interfaces.models import (
     ApprovalView,
     MemorySearchResponse,
     PageRequest,
-    RunDetail,
+    GraphRunDetail,
     RunEventView,
     RunEventsApiResponse,
     RunEventsData,
-    RunListItem,
-    RunOperationRequest,
+    GraphRunListItem,
+    GraphRunCancellationRequest,
     RunResponse,
     ScheduleView,
     SourceHealthView,
@@ -29,7 +29,7 @@ from interfaces.models import (
 
 OPENAPI_TAGS = [
     {"name": "health", "description": "Health and diagnostics endpoints."},
-    {"name": "runs", "description": "Workflow run creation and inspection."},
+    {"name": "runs", "description": "Graph run creation and inspection."},
     {"name": "reports", "description": "Report catalog, detail, search, and actions."},
     {"name": "projects", "description": "Projects product module, rankings, tools, cases, lab, collections, and watchlist."},
     {"name": "research", "description": "Research paper analysis, reader payload, Q&A, and Harness trace endpoints."},
@@ -49,12 +49,12 @@ CONTRACT_MODELS = (
     ApprovalView,
     MemorySearchResponse,
     PageRequest,
-    RunDetail,
+    GraphRunDetail,
     RunEventView,
     RunEventsApiResponse,
     RunEventsData,
-    RunListItem,
-    RunOperationRequest,
+    GraphRunListItem,
+    GraphRunCancellationRequest,
     RunResponse,
     ScheduleView,
     SourceHealthView,
@@ -136,7 +136,7 @@ def _path_part_name(part: str) -> str:
 
 def _route_path_parts(path: str) -> list[str]:
     parts = [part for part in path.strip("/").split("/") if part]
-    if parts[:2] == ["api", "v1"]:
+    if len(parts) >= 2 and parts[0] == "api" and parts[1].startswith("v"):
         return parts[2:]
     return parts
 
@@ -200,10 +200,12 @@ def _tag_for_path(path: str) -> str:
         return "health"
     if path.startswith("/api/v1/admin"):
         return "admin"
+    if path.startswith("/api/v2/graph-runs"):
+        return "runs"
     if path.startswith("/api/v1/artifacts"):
         return "storage"
     parts = [part for part in path.strip("/").split("/") if part]
-    if len(parts) >= 3 and parts[0] == "api" and parts[1] == "v1":
+    if len(parts) >= 3 and parts[0] == "api" and parts[1].startswith("v"):
         tag = parts[2]
         if tag == "queues":
             return "workers"
@@ -218,7 +220,9 @@ def _tag_names() -> set[str]:
 
 
 def _is_json_api_route(route: APIRoute) -> bool:
-    if route.path in {"/api/v1/runs/{run_id}/progress", "/api/v1/runs/{run_id}/events/stream"}:
+    if route.path in {
+        "/api/v2/graph-runs/{run_id}/events/stream",
+    }:
         return False
     return True
 
@@ -247,6 +251,15 @@ def _ensure_api_response_references(schema: dict[str, Any]) -> None:
         for operation in operations.values():
             if not isinstance(operation, dict):
                 continue
+            if path.endswith("/events/stream"):
+                response_content = (
+                    operation.setdefault("responses", {})
+                    .setdefault("200", {"description": "Successful Response"})
+                    .setdefault("content", {})
+                )
+                response_content.pop("application/json", None)
+                response_content.setdefault("text/event-stream", {})
+                continue
             content = (
                 operation.setdefault("responses", {})
                 .setdefault("200", {"description": "Successful Response"})
@@ -254,11 +267,7 @@ def _ensure_api_response_references(schema: dict[str, Any]) -> None:
             )
             if "text/event-stream" in content:
                 continue
-            response_schema = (
-                "RunEventsApiResponse"
-                if path == "/api/v1/runs/{run_id}/events"
-                else "ApiResponse"
-            )
+            response_schema = "RunEventsApiResponse" if path.endswith("/events") else "ApiResponse"
             content["application/json"] = {
                 "schema": {"$ref": f"#/components/schemas/{response_schema}"}
             }

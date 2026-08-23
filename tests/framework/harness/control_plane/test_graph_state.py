@@ -14,7 +14,6 @@ from framework.harness.control_plane.graph_state import (
     HarnessGraphBudgetState,
     HarnessGraphState,
     HarnessJoinState,
-    HarnessLegacyStatusProjection,
     HarnessLoopCounterState,
     HarnessLoopIteration,
     HarnessNodeInstanceIdentity,
@@ -22,7 +21,7 @@ from framework.harness.control_plane.graph_state import (
     HarnessWaitRegistration,
     RunLifecycle,
     RunOutcome,
-    project_public_legacy_status,
+    project_public_graph_status,
 )
 from framework.harness.control_plane.state import HarnessRunStatus
 from framework.harness.graph.canonical import canonical_checksum
@@ -33,8 +32,8 @@ from framework.harness.graph.model import (
 from framework.harness.graph.reference import HarnessGraphReference
 from framework.harness.graph.versioning import (
     HARNESS_CONDITION_POLICY_VERSION,
-    HARNESS_GRAPH_COMPILER_VERSION,
-    NORMALIZED_HARNESS_GRAPH_SCHEMA,
+    HARNESS_GRAPH_ONLY_COMPILER_VERSION,
+    GRAPH_ONLY_NORMALIZED_HARNESS_GRAPH_SCHEMA,
 )
 
 
@@ -615,7 +614,7 @@ def test_control_node_rejects_executable_attempt_evidence(
 
 @pytest.mark.parametrize(
     "reference_case",
-    ("attempt_evidence", "effect_outcome", "compensation_outcome", "legacy"),
+    ("attempt_evidence", "effect_outcome", "compensation_outcome"),
 )
 def test_durable_evidence_fields_require_canonical_sha256_references(
     reference_case: str,
@@ -655,12 +654,6 @@ def test_durable_evidence_fields_require_canonical_sha256_references(
                 outcome_ref="plain-text",
                 last_event_sequence=2,
             )
-        else:
-            HarnessLegacyStatusProjection(
-                "halted",
-                indeterminate_evidence_ref="plain-text",
-            )
-
     assert captured.value.code == "invalid_graph_checksum_reference"
 
 
@@ -696,14 +689,15 @@ def test_activity_and_wait_bindings_reject_wrong_node_kinds() -> None:
             ),
         )
 
-    legacy_approval = _minimal_state(
-        nodes=(executable_waiting,),
-        waits=(_wait_registration(executable_waiting.instance_id, sequence=1),),
-    )
+    with pytest.raises(HarnessValidationError) as approval_error:
+        _minimal_state(
+            nodes=(executable_waiting,),
+            waits=(_wait_registration(executable_waiting.instance_id, sequence=1),),
+        )
 
     assert activity_error.value.code == "activity_node_kind_mismatch"
     assert wait_error.value.code == "wait_node_kind_mismatch"
-    assert legacy_approval.wait_registrations[0].kind.value == "approval"
+    assert approval_error.value.code == "wait_node_kind_mismatch"
 
 
 def test_active_activity_attempt_is_unique_and_sequence_bound_to_node() -> None:
@@ -1186,29 +1180,6 @@ def test_identity_and_graph_state_reject_cross_scope_or_duplicate_nodes() -> Non
     assert ordinal_error.value.code == "duplicate_node_activation_ordinal"
 
 
-def test_legacy_projection_rejects_schema_tampering_and_irrelevant_flags() -> None:
-    with pytest.raises(HarnessValidationError) as schema_error:
-        HarnessLegacyStatusProjection("running", source_schema="unknown/v1")
-    with pytest.raises(HarnessValidationError) as resumable_error:
-        HarnessLegacyStatusProjection("running", resumable_blocked=True)
-    with pytest.raises(HarnessValidationError) as approval_error:
-        project_public_legacy_status(
-            "running",
-            "none",
-            waiting_for_approval=True,
-        )
-
-    payload = HarnessLegacyStatusProjection("succeeded").to_dict()
-    payload["outcome"] = "failed"
-    with pytest.raises(HarnessValidationError) as tampered:
-        HarnessLegacyStatusProjection.from_dict(payload)
-
-    assert schema_error.value.code == "unsupported_legacy_state_schema"
-    assert resumable_error.value.code == "invalid_legacy_status_projection"
-    assert approval_error.value.code == "invalid_legacy_status_projection"
-    assert tampered.value.code == "legacy_status_projection_mismatch"
-
-
 def test_projection_checksum_covers_nested_future_decision_leaves() -> None:
     state = _full_graph_state()
     projection = state.checksum_projection()
@@ -1247,91 +1218,34 @@ def test_projection_checksum_covers_nested_future_decision_leaves() -> None:
         target[field_name] = original
 
 
-@pytest.mark.parametrize(
-    ("status", "resumable", "lifecycle", "outcome"),
-    (
-        ("created", False, "created", "none"),
-        ("running", False, "running", "none"),
-        ("planning", False, "running", "none"),
-        ("executing", False, "running", "none"),
-        ("verifying", False, "running", "none"),
-        ("replanning", False, "running", "none"),
-        ("waiting_approval", False, "waiting", "none"),
-        ("blocked", True, "waiting", "none"),
-        ("blocked", False, "halted", "none"),
-        ("succeeded", False, "completed", "succeeded"),
-        ("failed", False, "completed", "failed"),
-        ("cancelled", False, "completed", "cancelled"),
-        ("halted", False, "halted", "none"),
-    ),
-)
-def test_v1_status_reader_uses_fixed_lifecycle_outcome_mapping(
-    status: str,
-    resumable: bool,
-    lifecycle: str,
-    outcome: str,
-) -> None:
-    projection = HarnessLegacyStatusProjection(status, resumable_blocked=resumable)
-
-    assert projection.lifecycle.value == lifecycle
-    assert projection.outcome.value == outcome
-    assert HarnessLegacyStatusProjection.from_dict(projection.to_dict()) == projection
-
-
 def test_halted_indeterminate_requires_durable_evidence_and_projects_as_halted() -> (
     None
 ):
-    projection = HarnessLegacyStatusProjection(
-        "halted",
-        indeterminate_evidence_ref=_sha("uncertain-termination"),
+    state = _minimal_state(
+        nodes=(),
+        lifecycle=RunLifecycle.HALTED,
+        outcome=RunOutcome.INDETERMINATE,
+        terminal_evidence_ref=_sha("uncertain-termination"),
+        terminal_reason_code="test_halt",
     )
 
-    assert projection.lifecycle is RunLifecycle.HALTED
-    assert projection.outcome is RunOutcome.INDETERMINATE
+    assert state.lifecycle is RunLifecycle.HALTED
+    assert state.outcome is RunOutcome.INDETERMINATE
     assert (
-        project_public_legacy_status(
-            projection.lifecycle,
-            projection.outcome,
+        project_public_graph_status(
+            state.lifecycle,
+            state.outcome,
         )
         is HarnessRunStatus.HALTED
     )
     with pytest.raises(HarnessValidationError) as invalid_evidence:
-        HarnessLegacyStatusProjection(
-            "failed",
-            indeterminate_evidence_ref=_sha("not-halted"),
+        _minimal_state(
+            nodes=(),
+            lifecycle=RunLifecycle.COMPLETED,
+            outcome=RunOutcome.INDETERMINATE,
+            terminal_evidence_ref=_sha("not-halted"),
         )
-    assert invalid_evidence.value.code == "invalid_legacy_status_projection"
-
-
-@pytest.mark.parametrize(
-    ("lifecycle", "outcome", "approval", "expected"),
-    (
-        ("created", "none", False, HarnessRunStatus.CREATED),
-        ("running", "none", False, HarnessRunStatus.RUNNING),
-        ("waiting", "none", False, HarnessRunStatus.BLOCKED),
-        ("waiting", "none", True, HarnessRunStatus.WAITING_APPROVAL),
-        ("completed", "succeeded", False, HarnessRunStatus.SUCCEEDED),
-        ("completed", "compensated", False, HarnessRunStatus.SUCCEEDED),
-        ("completed", "failed", False, HarnessRunStatus.FAILED),
-        ("completed", "compensation_failed", False, HarnessRunStatus.FAILED),
-        ("completed", "cancelled", False, HarnessRunStatus.CANCELLED),
-        ("halted", "indeterminate", False, HarnessRunStatus.HALTED),
-    ),
-)
-def test_v2_public_legacy_status_projection_is_bounded(
-    lifecycle: str,
-    outcome: str,
-    approval: bool,
-    expected: HarnessRunStatus,
-) -> None:
-    assert (
-        project_public_legacy_status(
-            lifecycle,
-            outcome,
-            waiting_for_approval=approval,
-        )
-        is expected
-    )
+    assert invalid_evidence.value.code == "invalid_run_lifecycle_outcome"
 
 
 def test_lifecycle_and_outcome_are_independent_but_compatible() -> None:
@@ -1730,12 +1644,12 @@ def _identity(
 
 def _graph_ref() -> HarnessGraphReference:
     return HarnessGraphReference(
-        "workflow-graph",
-        _ref(HarnessContractKind.WORKFLOW, "research", "2"),
-        NORMALIZED_HARNESS_GRAPH_SCHEMA,
-        HARNESS_GRAPH_COMPILER_VERSION,
-        HARNESS_CONDITION_POLICY_VERSION,
-        _sha("graph"),
+        graph_id="research",
+        schema_version=GRAPH_ONLY_NORMALIZED_HARNESS_GRAPH_SCHEMA,
+        compiler_version=HARNESS_GRAPH_ONLY_COMPILER_VERSION,
+        condition_policy_version=HARNESS_CONDITION_POLICY_VERSION,
+        checksum=_sha("graph"),
+        graph_ref=_ref(HarnessContractKind.GRAPH, "research", "2"),
     )
 
 

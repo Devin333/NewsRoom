@@ -24,13 +24,7 @@ from framework.harness.task_plan import (
     GRAPH_ONLY_TASK_PLAN_STAGE_IDENTITY_SCHEMA,
     GRAPH_ONLY_VALIDATED_TASK_PLAN_SCHEMA,
     InMemoryTaskPlanStore,
-    PLAN_CANDIDATE_SCHEMA,
-    TASK_INSTANCE_SCHEMA,
-    TASK_PLAN_PROJECTION_SCHEMA,
-    TASK_PROJECTION_SCHEMA,
-    TASK_PLAN_STAGE_IDENTITY_SCHEMA,
     TASK_PLAN_EVENT_SCHEMA_V2,
-    VALIDATED_TASK_PLAN_SCHEMA,
     PlanBuildRequest,
     TaskPlanContractKind,
     TaskCapabilityRegistry,
@@ -40,17 +34,6 @@ from framework.harness.task_plan import (
     TaskPlanStageRunner,
     TaskPlanValidationContext,
 )
-from tests.fixtures.task_plan import build_task_plan_stage_binding
-
-
-def _legacy_binding() -> TaskPlanStageBinding:
-    return build_task_plan_stage_binding(
-        workflow_id="research.paper_analysis.dynamic",
-        stage_id=RESEARCH_DYNAMIC_STAGE_ID,
-        policy_ref=RESEARCH_DYNAMIC_POLICY_REF,
-        required_output_roles=RESEARCH_DYNAMIC_OUTPUT_ROLES,
-        input_keys=RESEARCH_DYNAMIC_INPUT_REFS,
-    )
 
 
 def _graph_only_binding(*, graph_version: str | None = None) -> TaskPlanStageBinding:
@@ -74,93 +57,46 @@ def _request(binding: TaskPlanStageBinding) -> PlanBuildRequest:
     )
 
 
-def test_stage_identity_registry_keeps_v1_writer_and_admits_v2() -> None:
+def test_stage_identity_registry_uses_v2_writer_and_keeps_v1_read_only() -> None:
     registration = next(
         item
         for item in DEFAULT_TASK_PLAN_SCHEMA_REGISTRY.registrations
         if item.contract_kind is TaskPlanContractKind.STAGE_IDENTITY
     )
 
-    assert registration.writer_schema == TASK_PLAN_STAGE_IDENTITY_SCHEMA
-    assert set(registration.readable_schemas) == {
-        TASK_PLAN_STAGE_IDENTITY_SCHEMA,
+    assert registration.writer_schema == GRAPH_ONLY_TASK_PLAN_STAGE_IDENTITY_SCHEMA
+    assert registration.readable_schemas == (GRAPH_ONLY_TASK_PLAN_STAGE_IDENTITY_SCHEMA,)
+    assert registration.executable_schemas == (
         GRAPH_ONLY_TASK_PLAN_STAGE_IDENTITY_SCHEMA,
-    }
-    assert set(registration.executable_schemas) == set(
-        registration.readable_schemas
     )
 
 
-def test_graph_task_plan_registries_keep_v1_writers_and_admit_v2() -> None:
+def test_graph_task_plan_registries_expose_only_v2_contracts() -> None:
     registrations = {
         item.contract_kind: item
         for item in DEFAULT_TASK_PLAN_SCHEMA_REGISTRY.registrations
     }
 
     candidate = registrations[TaskPlanContractKind.PLAN_CANDIDATE]
-    assert candidate.writer_schema == PLAN_CANDIDATE_SCHEMA
-    assert set(candidate.readable_schemas) == {
-        PLAN_CANDIDATE_SCHEMA,
-        GRAPH_ONLY_PLAN_CANDIDATE_SCHEMA,
-    }
-    assert set(candidate.executable_schemas) == set(candidate.readable_schemas)
+    assert candidate.writer_schema == GRAPH_ONLY_PLAN_CANDIDATE_SCHEMA
+    assert candidate.readable_schemas == (GRAPH_ONLY_PLAN_CANDIDATE_SCHEMA,)
+    assert candidate.executable_schemas == (GRAPH_ONLY_PLAN_CANDIDATE_SCHEMA,)
 
     plan = registrations[TaskPlanContractKind.VALIDATED_PLAN]
-    assert plan.writer_schema == VALIDATED_TASK_PLAN_SCHEMA
-    assert set(plan.readable_schemas) == {
-        VALIDATED_TASK_PLAN_SCHEMA,
-        GRAPH_ONLY_VALIDATED_TASK_PLAN_SCHEMA,
-    }
-    assert set(plan.executable_schemas) == set(plan.readable_schemas)
+    assert plan.writer_schema == GRAPH_ONLY_VALIDATED_TASK_PLAN_SCHEMA
+    assert plan.readable_schemas == (GRAPH_ONLY_VALIDATED_TASK_PLAN_SCHEMA,)
+    assert plan.executable_schemas == (GRAPH_ONLY_VALIDATED_TASK_PLAN_SCHEMA,)
 
     expected_runtime_contracts = {
-        TaskPlanContractKind.TASK_INSTANCE: (
-            TASK_INSTANCE_SCHEMA,
-            GRAPH_ONLY_TASK_INSTANCE_SCHEMA,
-        ),
-        TaskPlanContractKind.TASK_PROJECTION: (
-            TASK_PROJECTION_SCHEMA,
-            GRAPH_ONLY_TASK_PROJECTION_SCHEMA,
-        ),
-        TaskPlanContractKind.PLAN_PROJECTION: (
-            TASK_PLAN_PROJECTION_SCHEMA,
-            GRAPH_ONLY_TASK_PLAN_PROJECTION_SCHEMA,
-        ),
+        TaskPlanContractKind.TASK_INSTANCE: GRAPH_ONLY_TASK_INSTANCE_SCHEMA,
+        TaskPlanContractKind.TASK_PROJECTION: GRAPH_ONLY_TASK_PROJECTION_SCHEMA,
+        TaskPlanContractKind.PLAN_PROJECTION: GRAPH_ONLY_TASK_PLAN_PROJECTION_SCHEMA,
     }
-    for contract_kind, (legacy_schema, graph_schema) in expected_runtime_contracts.items():
+    for contract_kind, graph_schema in expected_runtime_contracts.items():
         registration = registrations[contract_kind]
-        assert registration.writer_schema == legacy_schema
-        assert set(registration.readable_schemas) == {legacy_schema, graph_schema}
-        assert set(registration.executable_schemas) == set(
-            registration.readable_schemas
-        )
-
-
-def test_legacy_stage_identity_round_trips_without_changing_request_wire() -> None:
-    binding = _legacy_binding()
-    identity = TaskPlanStageIdentity("research-run", binding)
-    request = _request(binding)
-
-    assert identity.schema_version == TASK_PLAN_STAGE_IDENTITY_SCHEMA
-    assert identity.workflow_id == "research.paper_analysis.dynamic"
-    assert identity.workflow_ref == "research.paper_analysis.dynamic@1"
-    assert TaskPlanStageIdentity.from_dict(
-        identity.to_dict(),
-        stage_binding=binding,
-    ) == identity
-    assert request.to_dict() == {
-        "run_id": "research-run",
-        "workflow_id": "research.paper_analysis.dynamic",
-        "stage_id": RESEARCH_DYNAMIC_STAGE_ID,
-        "graph_checksum": binding.graph_checksum,
-        "stage_binding_ref": binding.binding_checksum,
-        "context_refs": {
-            "document": "document",
-            "evidence_pack": "evidence_pack",
-        },
-        "policy_ref": RESEARCH_DYNAMIC_POLICY_REF,
-        "budget": {},
-    }
+        assert registration.writer_schema == graph_schema
+        assert registration.readable_schemas == (graph_schema,)
+        assert registration.executable_schemas == (graph_schema,)
 
 
 def test_graph_only_stage_identity_and_plan_request_have_no_workflow_alias() -> None:
@@ -187,10 +123,7 @@ def test_graph_only_stage_identity_and_plan_request_have_no_workflow_alias() -> 
         stage_binding=binding,
     ) == identity
 
-    with pytest.raises(HarnessValidationError) as error:
-        _ = identity.workflow_id
-
-    assert error.value.code == "legacy_task_plan_identity_forbidden"
+    assert not hasattr(identity, "workflow_id")
 
 
 def test_graph_only_contexts_share_the_frozen_stage_identity() -> None:
@@ -216,9 +149,7 @@ def test_graph_only_contexts_share_the_frozen_stage_identity() -> None:
     assert stage_request.graph_ref == validation_context.graph_ref
 
     for context in (validation_context, stage_request):
-        with pytest.raises(HarnessValidationError) as error:
-            _ = context.workflow_id
-        assert error.value.code == "legacy_task_plan_identity_forbidden"
+        assert not hasattr(context, "workflow_id")
 
 
 def test_graph_only_preplan_failure_records_v2_halt_without_workflow_alias() -> None:
@@ -249,7 +180,7 @@ def test_graph_only_preplan_failure_records_v2_halt_without_workflow_alias() -> 
     assert events[0].event_type == "TASK_PLAN_HALTED"
     assert events[0].schema_version == TASK_PLAN_EVENT_SCHEMA_V2
     assert events[0].is_graph_only is True
-    assert events[0].workflow_id is None
+    assert not hasattr(events[0], "workflow_id")
     assert "workflow_id" not in events[0].to_dict()
 
 
@@ -288,10 +219,10 @@ def test_stage_identity_rejects_schema_binding_mixing() -> None:
         TaskPlanStageIdentity(
             "research-run",
             binding,
-            schema_version=TASK_PLAN_STAGE_IDENTITY_SCHEMA,
+            schema_version="newsroom.harness-task-plan-stage-identity/v1",
         )
 
-    assert error.value.code == "task_plan_stage_identity_schema_mismatch"
+    assert error.value.code == "unsupported_task_plan_schema"
 
     with pytest.raises(HarnessValidationError) as empty_error:
         TaskPlanStageIdentity(

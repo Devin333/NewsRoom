@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import threading
 import time
+from contextvars import ContextVar
 
 import pytest
 
@@ -58,6 +59,34 @@ class _RecordingAttemptSink:
         self.events.append(("terminal", outcome.state))
         if self.fail_terminal:
             raise OSError("event store unavailable")
+
+
+def test_supervised_attempt_propagates_caller_context_without_leaking_mutations() -> None:
+    run_binding: ContextVar[str | None] = ContextVar(
+        "attempt_test_run_binding",
+        default=None,
+    )
+    token = run_binding.set("run-1")
+
+    def invoke() -> str | None:
+        assert run_binding.get() == "run-1"
+        run_binding.set("worker-local")
+        return run_binding.get()
+
+    try:
+        outcome = AttemptSupervisor().run(
+            invoke,
+            timeout_seconds=1.0,
+            idempotency_key="context:run-1",
+        )
+
+        assert outcome.state is AttemptState.SUCCEEDED
+        assert outcome.value == "worker-local"
+        assert run_binding.get() == "run-1"
+    finally:
+        run_binding.reset(token)
+
+    assert run_binding.get() is None
 
 
 def test_non_cooperative_attempts_are_admitted_by_a_hard_capacity_limit() -> None:
@@ -258,7 +287,7 @@ def test_parent_executable_deadline_does_not_deduct_completion_reserve_twice() -
         attempt_id="parent-attempt",
         idempotency_key="root:step:parent",
         operation_id="root:step:parent",
-        operation_kind="workflow_step",
+        operation_kind="graph_step",
         deadline=5.0,
         completion_reserve_seconds=1.0,
         clock=lambda: 0.0,

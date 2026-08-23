@@ -1,8 +1,5 @@
 from __future__ import annotations
 
-import json
-from pathlib import Path
-
 import pytest
 
 from framework.harness.control_plane.errors import HarnessValidationError
@@ -19,24 +16,9 @@ from framework.harness.graph.model import (
     NormalizedHarnessGraph,
 )
 from framework.harness.graph.versioning import (
-    HARNESS_GRAPH_DSL_SCHEMA,
-    HARNESS_GRAPH_EVENT_SCHEMAS,
-    HARNESS_GRAPH_INSPECTION_SCHEMA,
-    HARNESS_GRAPH_RUNTIME_VERSION,
-    NORMALIZED_HARNESS_GRAPH_SCHEMA,
-)
-from framework.harness.workflow.versioning import (
-    DEFAULT_HARNESS_GRAPH_SCHEMA_REGISTRY,
-    LEGACY_STATE_SCHEMA,
-    HarnessGraphContractKind,
-)
-
-
-_SCHEMA_REGISTRY_FIXTURE = (
-    Path(__file__).resolve().parents[3]
-    / "fixtures"
-    / "harness"
-    / "schema_version_registry_v2.json"
+    GRAPH_ONLY_NORMALIZED_HARNESS_GRAPH_SCHEMA,
+    HARNESS_CONDITION_POLICY_VERSION,
+    HARNESS_GRAPH_DEFINITION_SCHEMA,
 )
 
 
@@ -61,7 +43,7 @@ def test_normalized_graph_round_trip_and_checksum_are_stable_under_input_permuta
     assert graph.checksum == permuted.checksum
     assert graph.to_dict() == permuted.to_dict()
     assert NormalizedHarnessGraph.from_dict(graph.to_dict()) == graph
-    assert graph.to_dict()["schema_version"] == NORMALIZED_HARNESS_GRAPH_SCHEMA
+    assert graph.to_dict()["schema_version"] == GRAPH_ONLY_NORMALIZED_HARNESS_GRAPH_SCHEMA
 
 
 def test_exact_contract_versions_participate_in_graph_checksum() -> None:
@@ -98,15 +80,18 @@ def test_supplied_checksum_mismatch_and_simulated_collision_fail_closed() -> Non
     with pytest.raises(HarnessValidationError) as captured:
         NormalizedHarnessGraph(
             graph_id=first.graph_id,
-            workflow_id=first.workflow_id,
-            workflow_version=first.workflow_version,
-            workflow_ref=first.workflow_ref,
+            graph_version=first.graph_version,
+            graph_ref=first.graph_ref,
+            definition_schema_version=first.definition_schema_version,
+            definition_checksum=first.definition_checksum,
             nodes=first.nodes,
             edges=first.edges,
             entry_node_ids=first.entry_node_ids,
             terminal_node_ids=first.terminal_node_ids,
             input_keys=first.input_keys,
             terminal_output_keys=first.terminal_output_keys,
+            terminal_policy_ref=first.terminal_policy_ref,
+            terminal_policy=first.terminal_policy,
             checksum="sha256:" + "0" * 64,
         )
     assert captured.value.code == "graph_checksum_mismatch"
@@ -127,7 +112,7 @@ def test_supplied_checksum_mismatch_and_simulated_collision_fail_closed() -> Non
     assert captured.value.code == "graph_checksum_collision"
 
 
-def test_legacy_normalized_graph_shape_is_verified_before_bounded_upcast() -> None:
+def test_legacy_normalized_graph_shape_is_rejected_by_live_reader() -> None:
     graph = _graph(
         nodes=(
             _executable("collect", 0, worker_version="1"),
@@ -136,19 +121,10 @@ def test_legacy_normalized_graph_shape_is_verified_before_bounded_upcast() -> No
         edges=(_edge(),),
     )
     payload = graph.to_dict()
-    payload.pop("input_keys")
-    payload.pop("terminal_output_keys")
-    payload.pop("terminal_policy")
-    payload["checksum"] = canonical_checksum(
-        {key: value for key, value in payload.items() if key != "checksum"}
-    )
-
-    restored = NormalizedHarnessGraph.from_dict(payload)
-
-    assert restored.input_keys == ()
-    assert restored.terminal_output_keys == ()
-    assert restored.terminal_policy is None
-    assert restored.checksum != payload["checksum"]
+    payload["schema_version"] = "newsroom.harness-normalized-graph/v1"
+    with pytest.raises(HarnessValidationError) as captured:
+        NormalizedHarnessGraph.from_dict(payload)
+    assert captured.value.code == "legacy_graph_schema_forbidden"
 
 
 def test_terminal_policy_handler_and_inherited_gates_participate_in_checksum() -> None:
@@ -165,64 +141,12 @@ def test_terminal_policy_handler_and_inherited_gates_participate_in_checksum() -
     assert NormalizedHarnessGraph.from_dict(base.to_dict()) == base
 
 
-def test_schema_registry_reads_legacy_but_never_executes_it() -> None:
-    registry = DEFAULT_HARNESS_GRAPH_SCHEMA_REGISTRY
-
-    state_registration = registry.require_readable(
-        HarnessGraphContractKind.GRAPH_STATE,
-        LEGACY_STATE_SCHEMA,
-    )
-    assert LEGACY_STATE_SCHEMA in state_registration.legacy_upcast_sources
-    with pytest.raises(HarnessValidationError) as captured:
-        registry.require_executable(
-            HarnessGraphContractKind.GRAPH_STATE, LEGACY_STATE_SCHEMA
-        )
-    assert captured.value.code == "graph_schema_not_executable"
-
-    graph_registration = registry.require_executable(
-        HarnessGraphContractKind.NORMALIZED_GRAPH,
-        NORMALIZED_HARNESS_GRAPH_SCHEMA,
-    )
-    assert graph_registration.writer_schema == NORMALIZED_HARNESS_GRAPH_SCHEMA
-    assert registry.to_dict()["runtime_version"] == HARNESS_GRAPH_RUNTIME_VERSION
-    assert (
-        registry.registration_for("graph_dsl").writer_schema == HARNESS_GRAPH_DSL_SCHEMA
-    )
-
-
-def test_code_schema_registry_matches_locked_contract_fixture() -> None:
-    evidence = json.loads(_SCHEMA_REGISTRY_FIXTURE.read_text(encoding="utf-8"))
-
-    assert evidence["runtime_generation"] == HARNESS_GRAPH_RUNTIME_VERSION
-    assert evidence["contract_schemas"] == {
-        "graph_dsl": HARNESS_GRAPH_DSL_SCHEMA,
-        "normalized_graph": NORMALIZED_HARNESS_GRAPH_SCHEMA,
-        "graph_state": DEFAULT_HARNESS_GRAPH_SCHEMA_REGISTRY.registration_for(
-            "graph_state"
-        ).writer_schema,
-        "graph_decision": DEFAULT_HARNESS_GRAPH_SCHEMA_REGISTRY.registration_for(
-            "graph_decision"
-        ).writer_schema,
-        "graph_checkpoint": DEFAULT_HARNESS_GRAPH_SCHEMA_REGISTRY.registration_for(
-            "graph_checkpoint"
-        ).writer_schema,
-        "graph_inspection": HARNESS_GRAPH_INSPECTION_SCHEMA,
-    }
-    assert {
-        item["event_type"]: item["data_schema"] for item in evidence["graph_events"]
-    } == dict(HARNESS_GRAPH_EVENT_SCHEMAS)
-    assert DEFAULT_HARNESS_GRAPH_SCHEMA_REGISTRY.registration_for(
-        "graph_event"
-    ).writer_schemas == tuple(HARNESS_GRAPH_EVENT_SCHEMAS.values())
-
-
 def test_unknown_schema_and_inexact_reference_fail_closed() -> None:
     with pytest.raises(HarnessValidationError) as captured:
-        DEFAULT_HARNESS_GRAPH_SCHEMA_REGISTRY.require_readable(
-            HarnessGraphContractKind.NORMALIZED_GRAPH,
-            "newsroom.normalized-harness-graph/v999",
+        NormalizedHarnessGraph.from_dict(
+            {"schema_version": "newsroom.harness-normalized-graph/v999"}
         )
-    assert captured.value.code == "unsupported_graph_schema"
+    assert captured.value.code == "legacy_graph_schema_forbidden"
 
     with pytest.raises(HarnessValidationError):
         _ref(HarnessContractKind.WORKER, "worker", "default")
@@ -231,13 +155,16 @@ def test_unknown_schema_and_inexact_reference_fail_closed() -> None:
 def _graph(*, nodes, edges) -> NormalizedHarnessGraph:
     return NormalizedHarnessGraph(
         graph_id="research-graph",
-        workflow_id="research",
-        workflow_version="1",
-        workflow_ref=_ref(HarnessContractKind.WORKFLOW, "research", "1"),
+        graph_version="1",
+        graph_ref=_ref(HarnessContractKind.GRAPH, "research-graph", "1"),
+        definition_schema_version=HARNESS_GRAPH_DEFINITION_SCHEMA,
+        definition_checksum="sha256:" + "b" * 64,
         nodes=tuple(nodes),
         edges=tuple(edges),
         entry_node_ids=("collect",),
         terminal_node_ids=("finish",),
+        terminal_policy_ref=_ref(HarnessContractKind.TERMINAL_POLICY, "publication", "4"),
+        terminal_policy=_terminal_policy(),
     )
 
 
@@ -246,9 +173,10 @@ def _graph_with_terminal_policy(
 ) -> NormalizedHarnessGraph:
     return NormalizedHarnessGraph(
         graph_id="research-terminal-graph",
-        workflow_id="research",
-        workflow_version="1",
-        workflow_ref=_ref(HarnessContractKind.WORKFLOW, "research", "1"),
+        graph_version="1",
+        graph_ref=_ref(HarnessContractKind.GRAPH, "research-terminal-graph", "1"),
+        definition_schema_version=HARNESS_GRAPH_DEFINITION_SCHEMA,
+        definition_checksum="sha256:" + "c" * 64,
         nodes=(
             _executable("collect", 0, worker_version="1"),
             HarnessControlNode("finish", "terminal", 1),

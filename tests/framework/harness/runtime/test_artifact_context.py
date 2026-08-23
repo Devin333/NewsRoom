@@ -44,6 +44,7 @@ from framework.harness.runtime.result_canonical import (
 )
 from framework.shared.json import stable_json_dumps
 from framework.harness.graph.canonical import thaw_json
+from tests.framework.harness.context.test_context_models import _graph_identity
 from infrastructure.storage.artifacts import LocalJsonArtifactCatalog
 
 
@@ -727,8 +728,10 @@ def test_context_assembler_accepts_only_provider_projection(tmp_path) -> None:
 
     envelope = assembler.assemble(
         {
-            "run_id": "run-1",
-            "step_id": "consumer-node",
+            "graph_identity": _graph_identity(),
+            "phase": "EXECUTE",
+            "worker_id": "context-worker",
+            "worker_type": "function",
             "artifact_refs": (),
             "metadata": {},
         }

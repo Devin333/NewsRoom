@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 from framework.harness import BoundedRAGSessionController, RAGBudget, RAGSessionStatus
 
 from business.research.document.models import PaperChunk
+from business.research.graphs import build_paper_analysis_context_graph_identity
 from business.research.rag.models import ResearchRetrievalGoal
 from business.research.rag.retrieval_port import PaperChunkRetrievalPort
 from business.research.rag.retrieval.paper_retriever import RetrievalResult
@@ -36,9 +37,10 @@ def test_paper_rag_runs_through_harness_kernel_retriever_to_context_pack() -> No
     paper_retriever = _PaperRetriever()
     retrieval = PaperChunkRetrievalPort(paper_retriever, default_section_index=2)  # type: ignore[arg-type]
     spec = ResearchRAGPolicyBuilder().build_session_spec(
-        run_id="run-paper-rag-kernel",
-        workflow_id="workflow-paper-rag-kernel",
-        step_id="step-build-context",
+        graph_identity=build_paper_analysis_context_graph_identity(
+            run_id="run-paper-rag-kernel",
+            stage_id="run_research_rag",
+        ),
         session_id="session-paper-rag-kernel",
         goal=ResearchRetrievalGoal(
             goal_id="goal-paper-rag-kernel",

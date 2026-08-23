@@ -1130,7 +1130,7 @@ def test_delivery_batch_and_retry_use_origin_links_and_scoped_children() -> None
 def test_delivery_records_attempt_dead_letter_lease_and_backlog_metrics() -> None:
     subscription = replace(
         _subscription(),
-        consumer_id="workflow-consumer",
+        consumer_id="graph-consumer",
     )
     first = _claim(_event(1), subscription, attempt_count=2)
     first = replace(
@@ -1177,18 +1177,18 @@ def test_delivery_records_attempt_dead_letter_lease_and_backlog_metrics() -> Non
         (
             "event_delivery_attempt_total",
             1,
-            {"consumer": "workflow", "outcome": "ack"},
+            {"consumer": "graph", "outcome": "ack"},
         ),
-        ("event_lease_recovery_total", 1, {"consumer": "workflow"}),
+        ("event_lease_recovery_total", 1, {"consumer": "graph"}),
         (
             "event_delivery_attempt_total",
             1,
-            {"consumer": "workflow", "outcome": "dead_letter"},
+            {"consumer": "graph", "outcome": "dead_letter"},
         ),
         (
             "event_dead_letter_total",
             1,
-            {"consumer": "workflow", "reason_class": "permanent"},
+            {"consumer": "graph", "reason_class": "permanent"},
         ),
     ]
     backlog = [
@@ -1197,12 +1197,12 @@ def test_delivery_records_attempt_dead_letter_lease_and_backlog_metrics() -> Non
         if item[0].startswith("event_delivery_")
     ]
     assert backlog == [
-        ("event_delivery_pending", 3.0, {"consumer": "workflow"}),
-        ("event_delivery_lag", 3.0, {"consumer": "workflow"}),
+        ("event_delivery_pending", 3.0, {"consumer": "graph"}),
+        ("event_delivery_lag", 3.0, {"consumer": "graph"}),
         (
             "event_delivery_oldest_age_seconds",
             15.0,
-            {"consumer": "workflow"},
+            {"consumer": "graph"},
         ),
     ]
 
@@ -1825,7 +1825,7 @@ def test_requeue_requires_out_of_order_contract_and_matching_dead_letter() -> No
     runtime.register(unsafe, unsafe_consumer)
     with pytest.raises(
         EventConsumerIdempotencyError,
-        match="new subscription version.*compensation workflow",
+        match="new subscription version.*compensation operation",
     ):
         runtime.requeue_dead_letter(unsafe.key, action)
 

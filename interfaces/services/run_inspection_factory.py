@@ -7,6 +7,10 @@ from typing import Protocol
 
 from framework.events.ports import EventStorePort
 from framework.events.schema import EventSchemaCatalog
+from framework.events.application import DurableGraphEventProjectionAdapter
+from infrastructure.storage.artifacts.graph_terminal import (
+    FilesystemGraphTerminalArtifactStore,
+)
 from interfaces.services.event_projection_service import EventProjectionService
 from interfaces.services.event_reader_service import (
     EventAuthorizationContext,
@@ -15,10 +19,10 @@ from interfaces.services.event_reader_service import (
     EventPermission,
     EventReaderService,
 )
-from interfaces.services.run_inspection_service import RunInspectionService
+from interfaces.services.run_inspection_service import GraphRunInspectionService
 
 
-class RunInspectionEventAuthorizer:
+class GraphRunInspectionEventAuthorizer:
     """Fixed-scope service authorizer for online run-event reads."""
 
     def __init__(self, authorization: EventAuthorizationContext) -> None:
@@ -57,7 +61,7 @@ class DurableEventInspectionStorage(Protocol):
     schema_catalog: EventSchemaCatalog
 
 
-def build_run_inspection_service(
+def build_graph_run_inspection_service(
     *,
     artifact_root: str | Path,
     event_storage: DurableEventInspectionStorage,
@@ -65,7 +69,7 @@ def build_run_inspection_service(
     principal_id: str = "newsroom-run-inspection",
     authentication_evidence_ref: str = "authn://service/run-inspection",
     allow_stale_projection: bool = True,
-) -> RunInspectionService:
+) -> GraphRunInspectionService:
     """Compose application services from an already selected storage bundle."""
 
     reader, projection, authorization, schema_catalog = _build_event_services(
@@ -75,7 +79,7 @@ def build_run_inspection_service(
         principal_id=principal_id,
         authentication_evidence_ref=authentication_evidence_ref,
     )
-    return RunInspectionService(
+    return GraphRunInspectionService(
         artifact_root,
         event_reader_service=reader,
         event_projection_service=projection,
@@ -106,23 +110,29 @@ def _build_event_services(
         tenant_id=tenant_id,
         authentication_evidence_ref=authentication_evidence_ref,
     )
-    authorizer = RunInspectionEventAuthorizer(authorization)
+    authorizer = GraphRunInspectionEventAuthorizer(authorization)
     reader = EventReaderService(event_storage.event_store, authorizer=authorizer)
+    terminal_store = FilesystemGraphTerminalArtifactStore(resolved_root)
     projection = EventProjectionService(
         reader=event_storage.event_store,
         authorizer=authorizer,
         artifact_root=resolved_root,
         schema_catalog=event_storage.schema_catalog,
+        projection=DurableGraphEventProjectionAdapter(
+            reader=event_storage.event_store,
+            schema_catalog=event_storage.schema_catalog,
+        ),
+        terminal_manifest_reader=terminal_store,
     )
     return reader, projection, authorization, event_storage.schema_catalog
 
 
-def run_inspection_service_from_env(
+def graph_run_inspection_service_from_env(
     artifact_root: str | Path | None = None,
     *,
     env: Mapping[str, str] | None = None,
     allow_stale_projection: bool = True,
-) -> RunInspectionService:
+) -> GraphRunInspectionService:
     """Select durable storage once, then compose the application services."""
 
     from infrastructure.storage.events.factory import durable_event_storage_from_env
@@ -144,7 +154,7 @@ def run_inspection_service_from_env(
             authentication_evidence_ref="authn://service/run-inspection",
         )
 
-    return RunInspectionService(
+    return GraphRunInspectionService(
         resolved_root,
         event_services_factory=compose_event_services,
         allow_stale_projection=allow_stale_projection,
@@ -152,7 +162,7 @@ def run_inspection_service_from_env(
 
 
 __all__ = [
-    "RunInspectionEventAuthorizer",
-    "build_run_inspection_service",
-    "run_inspection_service_from_env",
+    "GraphRunInspectionEventAuthorizer",
+    "build_graph_run_inspection_service",
+    "graph_run_inspection_service_from_env",
 ]

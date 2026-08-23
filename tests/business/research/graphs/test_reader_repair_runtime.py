@@ -74,7 +74,7 @@ def test_reader_repair_runtime_bundle_closes_graph_v2_exactly_without_activation
     assert manifest["graph_id"] == "research.reader_repair.graph"
     assert manifest["graph_version"] == "2"
     assert manifest["graph_definition_checksum"] == (
-        "sha256:fadbddd1dfb4e0880745f23e0be136a449ae23cd92d2b855c43be17f1a5d9307"
+        "sha256:bd153862378d4803fb7f1fde46d547ac7ff70d2a5b146cfd3cf8136eae9aa149"
     )
     assert set(manifest["workers"]) == set(workers)
     assert set(manifest["activities"]) == set(activities)

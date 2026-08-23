@@ -76,8 +76,8 @@ class PaperSourceLineageGateAdapter(DeterministicGate):
             return failure
         assert lineage is not None
 
-        expected_paper_id = str(context.state.run_spec.inputs.get("paper_id") or "")
-        expected_source_ref = str(context.state.run_spec.inputs.get("source_ref") or "")
+        expected_paper_id = str(context.run_spec.inputs.get("paper_id") or "")
+        expected_source_ref = str(context.run_spec.inputs.get("source_ref") or "")
         failures: list[GateResult] = []
         if paper.paper_id != expected_paper_id:
             failures.append(
@@ -709,7 +709,7 @@ class ResearchPaperCardGateAdapter(DeterministicGate):
                         "expected_paper_id": expected_paper_id,
                         "actual_paper_id": card.paper_id,
                         "requested_source_ref": str(
-                            context.state.run_spec.inputs.get("source_ref") or ""
+                            context.run_spec.inputs.get("source_ref") or ""
                         ),
                         "verified_source_ref": paper.source_url,
                         "actual_source_ref": card.source_url,
@@ -751,7 +751,7 @@ def build_paper_analysis_gate_registry() -> DeterministicGateRegistry:
 
 
 def _expected_paper_id(context: GateContext) -> str:
-    return str(context.state.run_spec.inputs.get("paper_id") or "")
+    return str(context.run_spec.inputs.get("paper_id") or "")
 
 
 def _prior_model_from_state(
@@ -762,8 +762,7 @@ def _prior_model_from_state(
     model_type: type[BaseModel],
     gate_name: str,
 ) -> tuple[BaseModel | None, HarnessGateResult | None]:
-    outputs = context.state.metadata.get("outputs")
-    prior_output = outputs.get(state_output_key) if isinstance(outputs, Mapping) else None
+    prior_output = context.outputs.get(state_output_key)
     if not isinstance(prior_output, Mapping):
         return None, _invalid_input(
             gate_name,

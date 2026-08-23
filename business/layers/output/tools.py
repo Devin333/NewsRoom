@@ -6,6 +6,7 @@ from typing import Any
 from framework.agent.artifacts import ArtifactManager
 from framework.tool.models import ToolDefinition
 from framework.tool.registry import ToolRegistry
+from framework.shared.graph_identity import GraphExecutionIdentity
 from business.layers.output.records import OutputReport, OutputReportRecord, render_output_report_markdown
 
 
@@ -14,9 +15,15 @@ def register_report_tools(
     *,
     artifact_manager: ArtifactManager | None = None,
     run_id: str | None = None,
+    execution_identity: GraphExecutionIdentity | None = None,
     persistence_repository: Any | None = None,
     report_service: Any | None = None,
 ) -> None:
+    if execution_identity is not None and not isinstance(
+        execution_identity,
+        GraphExecutionIdentity,
+    ):
+        raise TypeError("execution_identity must be GraphExecutionIdentity")
     registry.register(
         ToolDefinition(
             name="report.render_markdown",
@@ -78,7 +85,10 @@ def register_report_tools(
         ),
         lambda args: _validate_report(args["report"]),
     )
-    if artifact_manager is not None and run_id is not None:
+    if artifact_manager is not None and execution_identity is not None:
+        if run_id is not None and run_id != execution_identity.run_id:
+            raise ValueError("run_id must match execution_identity.run_id")
+        bound_run_id = execution_identity.run_id
         registry.register(
             ToolDefinition(
                 name="report.export",
@@ -100,18 +110,20 @@ def register_report_tools(
             lambda args: _export_report(
                 args,
                 artifact_manager=artifact_manager,
-                run_id=run_id,
+                run_id=bound_run_id,
             ),
+            graph_identity=execution_identity,
         )
-    if persistence_repository is not None:
+    if persistence_repository is not None and execution_identity is not None:
+        if run_id is not None and run_id != execution_identity.run_id:
+            raise ValueError("run_id must match execution_identity.run_id")
         registry.register(
             ToolDefinition(
                 name="report.publish",
                 description="Publish an output report payload to the configured persistence repository.",
                 input_schema={
-                    "required": ["run_id", "report"],
+                    "required": ["report"],
                     "properties": {
-                        "run_id": {"type": "string"},
                         "report": {"type": "object"},
                         "report_id": {"type": "string"},
                         "status": {"type": "string"},
@@ -131,7 +143,9 @@ def register_report_tools(
             lambda args: _publish_report(
                 args,
                 persistence_repository=persistence_repository,
+                execution_identity=execution_identity,
             ),
+            graph_identity=execution_identity,
         )
 
 
@@ -193,8 +207,14 @@ def _publish_report(
     args: dict[str, Any],
     *,
     persistence_repository: Any,
+    execution_identity: GraphExecutionIdentity,
 ) -> dict[str, Any]:
-    run_id = _required_text(args.get("run_id"), "run_id")
+    if not isinstance(execution_identity, GraphExecutionIdentity):
+        raise TypeError("execution_identity must be GraphExecutionIdentity")
+    supplied_run_id = args.get("run_id")
+    if supplied_run_id is not None and _required_text(supplied_run_id, "run_id") != execution_identity.run_id:
+        raise ValueError("run_id must match execution_identity.run_id")
+    run_id = execution_identity.run_id
     report = _final_report(args["report"])
     status = _optional_text(args.get("status")) or "final"
     report_id = _optional_text(args.get("report_id")) or f"{run_id}:{status}"

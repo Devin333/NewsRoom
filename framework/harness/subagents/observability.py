@@ -50,7 +50,6 @@ class SubAgentTranscriptObservation:
     invocation_id: str | None = None
     parent_run_id: str | None = None
     child_run_id: str | None = None
-    workflow_id: str | None = None
     stage_id: str | None = None
     task_id: str | None = None
     task_instance_id: str | None = None
@@ -74,7 +73,6 @@ class SubAgentTranscriptObservation:
             "invocation_id",
             "parent_run_id",
             "child_run_id",
-            "workflow_id",
             "stage_id",
             "task_id",
             "task_instance_id",
@@ -158,7 +156,6 @@ class SubAgentTranscriptObservation:
             invocation_id=identity.invocation_id,
             parent_run_id=identity.parent_run_id,
             child_run_id=identity.child_run_id,
-            workflow_id=identity.workflow_id,
             stage_id=identity.stage_id,
             task_id=identity.task_id,
             task_instance_id=identity.task_instance_id,
@@ -179,7 +176,6 @@ class SubAgentTranscriptObservation:
             "invocation_id": self.invocation_id,
             "parent_run_id": self.parent_run_id,
             "child_run_id": self.child_run_id,
-            "workflow_id": self.workflow_id,
             "stage_id": self.stage_id,
             "task_id": self.task_id,
             "task_instance_id": self.task_instance_id,

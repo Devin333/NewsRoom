@@ -348,9 +348,7 @@ def test_require_existing_returns_matching_attempt_without_any_write() -> None:
         catalog=catalog,
         quota=quota,
         cache=cache,
-        config=GraphArtifactPersistenceConfig(
-            mode=GraphArtifactRolloutMode.READ_ONLY
-        ),
+        config=GraphArtifactPersistenceConfig(),
     )
 
     assert read_only.require_existing(request) == first
@@ -368,9 +366,7 @@ def test_require_existing_fails_closed_for_missing_or_conflicting_attempt() -> N
     materializer = _materializer(
         attempts=attempts,
         artifact=artifact,
-        config=GraphArtifactPersistenceConfig(
-            mode=GraphArtifactRolloutMode.READ_ONLY
-        ),
+        config=GraphArtifactPersistenceConfig(),
     )
     request = _request(required_for_replay=True)
 

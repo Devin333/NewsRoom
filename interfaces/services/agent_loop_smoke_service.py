@@ -27,12 +27,10 @@ from framework.harness.artifacts import (
     GraphResultArtifactReadPort,
     GraphTerminalArtifact,
     GraphTerminalManifest,
+    GraphTerminalManifestV2,
     GraphTerminalManifestPort,
     GraphTerminalStatus,
     RunBoundArtifactPort,
-)
-from framework.harness.control_plane.activity import (
-    harness_activity_input_checksum,
 )
 from framework.harness.control_plane.errors import HarnessValidationError
 from framework.harness.control_plane.gates import HarnessGateResult
@@ -42,6 +40,7 @@ from framework.harness.control_plane.graph_runtime import (
     HarnessGraphActivityResultStatus,
     graph_reference,
 )
+from framework.harness.graph import GraphExecutionVersionManifest
 from framework.harness.control_plane.graph_state import (
     HarnessNodeInstanceIdentity,
 )
@@ -57,6 +56,7 @@ from framework.harness.graph import (
     HarnessLeafActivityKind,
     HarnessWorkerType,
     NormalizedHarnessGraph,
+    graph_activity_input_checksum,
 )
 from framework.harness.graph.reference import HarnessGraphReference
 from framework.harness.graph.bindings import HarnessActivityUsage
@@ -67,8 +67,8 @@ from framework.harness.graph.validation.registry import (
     HarnessGraphRegistrySnapshot,
     graph_contract_references,
 )
+from framework.harness.control_plane.activity_execution import HarnessGraphActivityExecutionInput
 from framework.harness.runtime import (
-    HarnessGraphActivityExecutionInput,
     HarnessGraphPhysicalActivityExecutionResult,
     HarnessGraphPhysicalActivityExecutor,
 )
@@ -109,9 +109,9 @@ AGENT_LOOP_SMOKE_EVENT_TYPES = (
     "agent_completed",
 )
 
-_WORKFLOW_REF = HarnessContractReference(
-    HarnessContractKind.WORKFLOW,
-    "test-agent-loop",
+_GRAPH_REF = HarnessContractReference(
+    HarnessContractKind.GRAPH,
+    AGENT_LOOP_SMOKE_GRAPH_ID,
     AGENT_LOOP_SMOKE_GRAPH_VERSION,
 )
 _STEP_REF = HarnessContractReference(
@@ -284,7 +284,7 @@ class AgentLoopGraphSmokeVerifyGate:
             failures.append("token_usage_invalid")
         if event_types != AGENT_LOOP_SMOKE_EVENT_TYPES:
             failures.append("event_sequence_invalid")
-        if not requested_tools_valid or requested_tools != ["memory.search"]:
+        if not requested_tools_valid or requested_tools != ["memory.recall"]:
             failures.append("tool_policy_evidence_invalid")
         if activity_output is not None:
             projected_metrics = activity_output.result.get("metrics")
@@ -305,7 +305,9 @@ class AgentLoopGraphSmokeVerifyGate:
             expected_output_ref = (
                 None
                 if activity_output is None
-                else checksum_for(activity_output.to_dict())
+                else checksum_for(
+                    {AGENT_LOOP_SMOKE_RESULT_KEY: activity_output.to_dict()}
+                )
             )
             if expected_output_ref is None or commit.candidate.output_refs.get(
                 AGENT_LOOP_SMOKE_RESULT_KEY
@@ -500,11 +502,11 @@ class AgentLoopGraphSmokeApplicationService:
                 "outcome_artifact_ref": outcome_ref.ref,
             }
         )
-        manifest = GraphTerminalManifest(
+        terminal = GraphTerminalManifest(
             tenant_id="local-smoke",
             run_id=resolved_run_id,
             graph_id=graph.graph_id,
-            graph_version=graph.workflow_version,
+            graph_version=graph.identity_version,
             graph_schema_version=graph.schema_version,
             compiler_version=graph.compiler_version,
             normalized_graph_checksum=graph.checksum or "",
@@ -520,6 +522,12 @@ class AgentLoopGraphSmokeApplicationService:
             gate_evidence_refs=(verify_evidence_ref,),
             artifacts=staged,
             publication=None,
+        )
+        manifest = GraphTerminalManifestV2(
+            terminal=terminal,
+            execution_versions=GraphExecutionVersionManifest.from_normalized_graph(
+                graph
+            ),
         )
         committed_manifest = self._artifact_port.write_terminal_manifest(manifest)
         if committed_manifest != manifest:
@@ -631,9 +639,16 @@ class AgentLoopGraphSmokeApplicationService:
 def build_test_agent_loop_graph() -> NormalizedHarnessGraph:
     return NormalizedHarnessGraph(
         graph_id=AGENT_LOOP_SMOKE_GRAPH_ID,
-        workflow_id=_WORKFLOW_REF.contract_id,
-        workflow_version=_WORKFLOW_REF.version,
-        workflow_ref=_WORKFLOW_REF,
+        graph_version=_GRAPH_REF.version,
+        graph_ref=_GRAPH_REF,
+        definition_schema_version="newsroom.harness-graph-definition/v6",
+        definition_checksum=checksum_for(
+            {
+                "graph_id": AGENT_LOOP_SMOKE_GRAPH_ID,
+                "graph_version": AGENT_LOOP_SMOKE_GRAPH_VERSION,
+                "fixture": "offline",
+            }
+        ),
         nodes=(
             HarnessExecutableNode(
                 node_id=AGENT_LOOP_SMOKE_NODE_ID,
@@ -657,6 +672,34 @@ def build_test_agent_loop_graph() -> NormalizedHarnessGraph:
         terminal_node_ids=(AGENT_LOOP_SMOKE_NODE_ID,),
         input_keys=("topic",),
         terminal_output_keys=(AGENT_LOOP_SMOKE_RESULT_KEY,),
+        terminal_policy_ref=HarnessContractReference(
+            HarnessContractKind.TERMINAL_POLICY,
+            "test-agent-loop.terminal",
+            "1",
+        ),
+        terminal_policy=_smoke_terminal_policy(),
+    )
+
+
+def _smoke_terminal_policy():
+    from framework.harness.side_effects.models import (
+        HarnessSideEffectHandlerReference,
+        HarnessTerminalSideEffectPolicy,
+    )
+
+    return HarnessTerminalSideEffectPolicy(
+        policy_id="test-agent-loop.terminal",
+        version="1",
+        handler=HarnessSideEffectHandlerReference(
+            handler_id="test-agent-loop.terminal-handler",
+            version="1",
+        ),
+        kind="test-agent-loop-terminal",
+        requires_approval=False,
+        retry_limit=1,
+        not_required_evidence_ref=checksum_for(
+            {"fixture": "test-agent-loop", "evidence": "not-required"}
+        ),
     )
 
 
@@ -732,7 +775,7 @@ def _activity(
         worker_ref=_WORKER_REF,
         activity_ref=_ACTIVITY_REF,
         attempt=1,
-        input_ref=harness_activity_input_checksum(dict(raw_task)),
+        input_ref=graph_activity_input_checksum(dict(raw_task)),
         causal_decision_checksum=checksum_for(
             {
                 "run_id": run_id,
@@ -758,7 +801,7 @@ def _agent_spec(topic: str) -> AgentSpec:
         instructions="Use allowed tools only and return JSON actions.",
         input_keys=["topic"],
         output_key="analysis_result",
-        allowed_tools=["memory.search"],
+        allowed_tools=["memory.recall"],
         memory_enabled=False,
     )
 
@@ -769,7 +812,7 @@ def _fake_llm(topic: str) -> FakeLLMClient:
             json.dumps(
                 {
                     "action_type": "tool_call",
-                    "tool_name": "memory.search",
+                    "tool_name": "memory.recall",
                     "tool_args": {"query": topic},
                 },
                 sort_keys=True,
@@ -789,7 +832,7 @@ def _fake_llm(topic: str) -> FakeLLMClient:
                             "summary": (
                                 "Deterministic AgentLoop analysis for " + topic + "."
                             ),
-                            "tool_used": "memory.search",
+                            "tool_used": "memory.recall",
                             "confidence": "high",
                         }
                     },
@@ -804,7 +847,7 @@ def _fake_tool_registry() -> ToolRegistry:
     registry = ToolRegistry()
     registry.register(
         ToolDefinition(
-            name="memory.search",
+            name="memory.recall",
             description="Local deterministic memory fixture.",
             input_schema={
                 "type": "object",
@@ -991,7 +1034,7 @@ def _checkpoint_ref(
 
 def _graph_ref_text(graph_ref: HarnessGraphReference) -> str:
     return (
-        f"{graph_ref.graph_id}@{graph_ref.workflow_ref.version}#"
+        f"{graph_ref.graph_id}@{graph_ref.identity_version}#"
         f"{graph_ref.checksum}"
     )
 

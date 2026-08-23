@@ -4,7 +4,6 @@ from pathlib import Path
 from typing import Any
 
 from business.layers.analysis.tools import register_quality_tools
-from business.layers.output.memory_tools import register_memory_index_tools
 from business.layers.output.postgres_tools import register_postgres_tools
 from business.layers.output.tools import register_report_tools
 from business.layers.signal.connector_tools import register_arxiv_tools, register_github_tools
@@ -14,6 +13,7 @@ from framework.memory import MemoryRuntime
 from framework.tool import (
     ToolRegistry,
 )
+from framework.shared.graph_identity import GraphExecutionIdentity
 from infrastructure.tools import (
     build_builtin_dangerous_tool_registry,
     build_builtin_tool_registry,
@@ -26,6 +26,7 @@ def build_business_tool_registry(
     *,
     artifact_manager: ArtifactManager | None = None,
     run_id: str | None = None,
+    execution_identity: GraphExecutionIdentity | None = None,
     local_json_root: str | Path | None = None,
     source_registry: Any | None = None,
     source_fetch_text: FetchText | None = None,
@@ -55,6 +56,7 @@ def build_business_tool_registry(
     registry = build_builtin_tool_registry(
         artifact_manager=artifact_manager,
         run_id=run_id,
+        execution_identity=execution_identity,
         local_json_root=local_json_root,
         vector_store=vector_store,
         memory_runtime=memory_runtime,
@@ -71,6 +73,7 @@ def build_business_tool_registry(
         registry,
         artifact_manager=artifact_manager,
         run_id=run_id,
+        execution_identity=execution_identity,
         source_registry=source_registry,
         source_fetch_text=source_fetch_text,
         source_fetch_policy=source_fetch_policy,
@@ -108,6 +111,7 @@ def build_business_dangerous_tool_registry(**kwargs: Any) -> ToolRegistry:
     registry = build_builtin_dangerous_tool_registry(
         artifact_manager=options.get("artifact_manager"),
         run_id=options.get("run_id"),
+        execution_identity=options.get("execution_identity"),
         local_json_root=options.get("local_json_root"),
         vector_store=options.get("vector_store"),
         memory_runtime=options.get("memory_runtime"),
@@ -123,6 +127,7 @@ def build_business_dangerous_tool_registry(**kwargs: Any) -> ToolRegistry:
         registry,
         artifact_manager=options.get("artifact_manager"),
         run_id=options.get("run_id"),
+        execution_identity=options.get("execution_identity"),
         source_registry=options.get("source_registry"),
         source_fetch_text=options.get("source_fetch_text"),
         source_fetch_policy=options.get("source_fetch_policy"),
@@ -148,6 +153,7 @@ def register_business_tools(
     *,
     artifact_manager: ArtifactManager | None = None,
     run_id: str | None = None,
+    execution_identity: GraphExecutionIdentity | None = None,
     source_registry: Any | None = None,
     source_fetch_text: FetchText | None = None,
     source_fetch_policy: Any | None = None,
@@ -179,12 +185,12 @@ def register_business_tools(
         registry,
         artifact_manager=artifact_manager,
         run_id=run_id,
+        execution_identity=execution_identity,
         persistence_repository=persistence_repository,
         report_service=report_service,
     )
     register_quality_tools(registry)
-    if memory_ingestion_service is not None:
-        register_memory_index_tools(registry, ingestion_service=memory_ingestion_service)
+    # Memory writes require Harness candidates and terminal-side-effect policy.
     if include_network_tools:
         register_arxiv_tools(registry, connector=arxiv_connector or default_arxiv_connector())
         register_github_tools(registry, connector=github_connector or default_github_connector())
@@ -202,7 +208,11 @@ def _filter_business_registry(registry: ToolRegistry, *, dangerous_only: bool) -
         is_dangerous = _is_dangerous_business_tool(registered.definition)
         if dangerous_only != is_dangerous:
             continue
-        filtered.register(registered.definition, registered.executor)
+        filtered.register(
+            registered.definition,
+            registered.executor,
+            graph_identity=registered.graph_identity,
+        )
     return filtered
 
 
@@ -217,8 +227,6 @@ def _is_dangerous_business_tool(definition) -> bool:
         "control.escalate",
         "control.request_human_review",
         "local_json.save",
-        "memory.index",
-        "memory.write",
         "qdrant.upsert",
         "report.export",
         "report.publish",

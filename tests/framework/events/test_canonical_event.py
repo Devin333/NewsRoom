@@ -32,13 +32,20 @@ OBSERVED_AT = datetime(2026, 7, 15, 1, 0, 1, tzinfo=UTC)
 def _candidate(**overrides: object) -> EventCandidate:
     values: dict[str, object] = {
         "event_id": "evt-canonical-1",
-        "event_type": "workflow_started",
-        "data_schema": "newsroom.workflow-event/v1",
-        "source": "framework.workflow",
+        "event_type": "graph_node_verified",
+        "data_schema": "newsroom.graph-node-verified/v1",
+        "source": "framework.harness.graph",
         "occurred_at": OCCURRED_AT,
         "stream_id": "run:run-1",
-        "business_context": BusinessContext(run_id="run-1", workflow_id="wf-1"),
-        "producer": ProducerIdentity(component="workflow-runtime", version="1"),
+        "business_context": BusinessContext(
+            run_id="run-1",
+            graph_id="research.graph",
+            graph_version="1",
+            graph_ref="research.graph@1",
+            graph_checksum="sha256:" + "a" * 64,
+            stage_id="verify",
+        ),
+        "producer": ProducerIdentity(component="harness-graph-runtime", version="1"),
         "trace": TraceBlock(
             trace_id="1" * 32,
             span_id="2" * 16,
@@ -142,7 +149,7 @@ def test_canonical_reader_rejects_unknown_unchecksummed_fields(
     [
         ("stream_id", "run:run-2"),
         ("tenant_id", "tenant-2"),
-        ("data_schema", "newsroom.workflow-event/v2"),
+        ("data_schema", "newsroom.graph-node-verified/v2"),
         ("security_classification", SecurityClassification.PUBLIC),
         ("business_context", BusinessContext(run_id="run-2")),
         (

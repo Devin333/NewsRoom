@@ -24,11 +24,11 @@ from framework.harness.graph.model import (
     HarnessContractReference,
 )
 from framework.harness.graph.versioning import (
+    GRAPH_ONLY_NORMALIZED_HARNESS_GRAPH_SCHEMA,
     HARNESS_CONDITION_POLICY_VERSION,
-    HARNESS_GRAPH_COMPILER_VERSION,
-    NORMALIZED_HARNESS_GRAPH_SCHEMA,
+    HARNESS_GRAPH_ONLY_COMPILER_VERSION,
 )
-from framework.harness.runtime.activity_executor import HarnessGraphActivityTaskContext
+from framework.harness.control_plane.activity_execution import HarnessGraphActivityTaskContext
 from framework.shared.redaction import REDACTED_VALUE
 from infrastructure.research.artifact_port import (
     FilesystemHarnessArtifactPort,
@@ -308,13 +308,13 @@ def _context() -> AgentLoopGraphArtifactContext:
 def _activity() -> HarnessGraphActivity:
     graph_ref = HarnessGraphReference(
         graph_id="research.graph",
-        workflow_ref=HarnessContractReference(
-            HarnessContractKind.WORKFLOW,
+        graph_ref=HarnessContractReference(
+            HarnessContractKind.GRAPH,
             "research.graph",
             "2",
         ),
-        schema_version=NORMALIZED_HARNESS_GRAPH_SCHEMA,
-        compiler_version=HARNESS_GRAPH_COMPILER_VERSION,
+        schema_version=GRAPH_ONLY_NORMALIZED_HARNESS_GRAPH_SCHEMA,
+        compiler_version=HARNESS_GRAPH_ONLY_COMPILER_VERSION,
         condition_policy_version=HARNESS_CONDITION_POLICY_VERSION,
         checksum=checksum_for({"graph": "research.graph", "version": "2"}),
     )

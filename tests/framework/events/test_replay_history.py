@@ -87,7 +87,7 @@ def _command(
     kind: str = "schedule_activity",
     target: str = "summarizer",
     handler_version: str = "handler/v1",
-    workflow_version: str = "workflow/v1",
+    graph_version: str = "workflow/v1",
     policy_version: str = "policy/v1",
     decision_ref: str | None = None,
 ) -> CanonicalDeterministicCommand:
@@ -96,7 +96,7 @@ def _command(
         kind=kind,
         target=target,
         handler_version=handler_version,
-        workflow_version=workflow_version,
+        graph_version=graph_version,
         policy_version=policy_version,
         input_refs=("input://accepted/1",),
         input_checksums=(_ref("input-1"),),
@@ -123,7 +123,7 @@ def _input_driven_handler(
             kind="schedule_activity",
             target=target,
             handler_version="handler/v1",
-            workflow_version="workflow/v1",
+            graph_version="workflow/v1",
             policy_version="policy/v1",
             input_refs=("input://accepted/1",),
             input_checksums=(
@@ -160,7 +160,7 @@ def _handler_for(
 def _registry(handler) -> ExactVersionRegistry:
     registry = ExactVersionRegistry()
     for kind, component_id, version, value in (
-        ("workflow", "paper-analysis", "workflow/v1", "pinned"),
+        ("graph", "paper-analysis", "graph/v1", "pinned"),
         ("policy", "harness-policy", "policy/v1", "pinned"),
         (
             "schema",
@@ -262,8 +262,8 @@ def _policy(*, activity_required: bool = False) -> HistoryEventPolicy:
     return HistoryEventPolicy(
         handler_id="transition-handler",
         handler_version="handler/v1",
-        workflow_id="paper-analysis",
-        workflow_version="workflow/v1",
+        graph_id="paper-analysis",
+        graph_version="graph/v1",
         policy_id="harness-policy",
         policy_version="policy/v1",
         schema_id="io.newsroom.workflow-transition",
@@ -301,7 +301,7 @@ def test_command_is_canonical_checksum_verified_and_detached() -> None:
         kind="schedule_activity",
         target="summarizer",
         handler_version="handler/v1",
-        workflow_version="workflow/v1",
+        graph_version="workflow/v1",
         policy_version="policy/v1",
         input_refs=tuple(refs),
         input_checksums=tuple(checksums),
@@ -426,13 +426,13 @@ def test_history_session_verifies_event_and_returns_canonical_checkpoint() -> No
     assert advanced.state.next_sequence == 2
     assert advanced.state.next_command_ordinal == 1
     assert [(item.component, item.version) for item in advanced.pinned_versions] == [
+        ("graph:paper-analysis", "graph/v1"),
         ("policy:harness-policy", "policy/v1"),
         ("reducer:transition-handler", "handler/v1"),
         (
             "schema:io.newsroom.workflow-transition",
             "io.newsroom.workflow-transition/v2",
         ),
-        ("workflow:paper-analysis", "workflow/v1"),
     ]
     checkpoint = advanced.checkpoint()
     assert checkpoint["next_sequence"] == 2
@@ -510,13 +510,13 @@ def test_incompatible_component_version_fails_before_handler() -> None:
         versions=_registry(handler),
     )
     event = _event(
-        policy=replace(_policy(), workflow_version="workflow/missing"),
+        policy=replace(_policy(), graph_version="workflow/missing"),
     )
 
     with pytest.raises(HistoryIncompatibleVersionError) as caught:
         verifier.start().verify_event(event)
 
-    assert caught.value.details["component"] == "workflow:paper-analysis"
+    assert caught.value.details["component"] == "graph:paper-analysis"
 
 
 def test_noncontiguous_event_and_corrupt_recorded_order_fail_closed() -> None:

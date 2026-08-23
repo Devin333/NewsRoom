@@ -29,7 +29,7 @@ from framework.harness.artifacts import (
     GraphArtifactDeletionReceipt,
     GraphArtifactPhysicalDeleteRequest,
     GraphArtifactQuarantineReceipt,
-    GraphTerminalManifest,
+    GraphTerminalManifestV2,
 )
 from framework.harness.runtime.materializer import RESULT_PAYLOAD_SCHEMA
 from framework.harness.runtime.result_canonical import (
@@ -573,12 +573,12 @@ class FilesystemGraphArtifactLifecycle:
 
     def _manifest_evidence(
         self,
-        manifest: GraphTerminalManifest,
+        manifest: GraphTerminalManifestV2,
         *,
         record: ArtifactRecord,
         target: _Target,
     ) -> _ManifestEvidence | None:
-        if not isinstance(manifest, GraphTerminalManifest):
+        if not isinstance(manifest, GraphTerminalManifestV2):
             raise _gc_error("lifecycle.manifest.schema")
         artifact = manifest.artifact(target.artifact_type)
         if artifact is None:
@@ -634,7 +634,7 @@ class FilesystemGraphArtifactLifecycle:
 
     def _detach_manifest_member(
         self,
-        manifest: GraphTerminalManifest,
+        manifest: GraphTerminalManifestV2,
         *,
         run_id: str,
         artifact_type: str,

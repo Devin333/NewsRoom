@@ -351,20 +351,27 @@ def test_valid_settings_compose_full_durable_production_graph(
         )
 
         candidate_workspace = _ResearchRunWorkspace(
-            request=AnalyzePaperRequest(
-                run_id="candidate-object-graph",
-                paper_id="paper-candidate-object-graph",
-                source_ref="https://arxiv.org/abs/2606.00001",
-            ),
+                request=AnalyzePaperRequest(
+                    run_id="candidate-object-graph",
+                    paper_id="paper-candidate-object-graph",
+                    source_ref="https://arxiv.org/abs/2606.00001",
+                    tenant_id="tenant-candidate-object-graph",
+                    user_id="user-candidate-object-graph",
+                    memory_namespace="candidate-object-graph",
+                ),
             context_assembler=ContextAssembler(),
+            graph_transition_port=runtime.event_port_factory(
+                "candidate-object-graph"
+            ),
         )
         dynamic_stage = runtime.dynamic_task_plan_runner_factory(
             workspace=candidate_workspace,
             dependencies=object(),
         )
-        configured_verifier = (
-            dynamic_stage._runner.result_verifier._artifact_reference_verifier
-        )
+        configured_verifier = dynamic_stage._runner.result_verifier
+        while hasattr(configured_verifier, "_verifier"):
+            configured_verifier = configured_verifier._verifier
+        configured_verifier = configured_verifier._artifact_reference_verifier
         assert configured_verifier is runtime.artifact_port
         assert isinstance(configured_verifier, ArtifactReferenceVerifierPort)
         publish_worker = runtime._worker_registry(candidate_workspace)[
@@ -501,10 +508,7 @@ def test_enforce_mode_composes_real_graph_result_runtime(
             context_assembler.artifact_context_provider,
             ResearchGraphArtifactContextProvider,
         )
-        assert runtime.graph_result_observer_factory(
-            event_port=event_port,
-            request=request,
-        ) is None
+        assert not hasattr(runtime, "graph_result_observer_factory")
 
         materializer = committer._materializer
         assert isinstance(materializer, ResultMaterializer)

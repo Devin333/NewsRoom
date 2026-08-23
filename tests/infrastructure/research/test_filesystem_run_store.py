@@ -53,6 +53,7 @@ from tests.business.research.fakes import (
     FakeResearchLLMWorker,
     FakeResearchRAGRuntime,
     FakeResearchSourceProvider,
+    in_memory_node_output_resource_factory,
 )
 
 
@@ -282,6 +283,7 @@ def test_real_research_result_survives_restart_without_losing_replay_history(
         rag_runtime=FakeResearchRAGRuntime(),
         artifact_port=FakeArtifactPort(),
         event_port_factory=lambda _run_id: InMemoryHarnessEventPort(),
+        node_output_resource_factory=in_memory_node_output_resource_factory,
     )
     result = AnalyzePaperUseCase(runtime).analyze(
         AnalyzePaperRequest(
@@ -343,6 +345,7 @@ def test_missing_actor_scope_is_corruption_even_when_checksums_are_recomputed(
         rag_runtime=FakeResearchRAGRuntime(),
         artifact_port=FakeArtifactPort(),
         event_port_factory=lambda _run_id: InMemoryHarnessEventPort(),
+        node_output_resource_factory=in_memory_node_output_resource_factory,
     )
     result = AnalyzePaperUseCase(runtime).analyze(
         AnalyzePaperRequest(
@@ -391,6 +394,7 @@ def test_halted_research_result_survives_durable_round_trip(tmp_path: Path) -> N
         rag_runtime=FakeResearchRAGRuntime(missing_required_evidence=True),
         artifact_port=FakeArtifactPort(),
         event_port_factory=lambda _run_id: InMemoryHarnessEventPort(),
+        node_output_resource_factory=in_memory_node_output_resource_factory,
     )
     result = AnalyzePaperUseCase(runtime).analyze(
         AnalyzePaperRequest(

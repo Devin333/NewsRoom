@@ -220,6 +220,7 @@ class AgentLoopResult:
     trajectory: list[Any] = field(default_factory=list)
     tool_calls: list[dict[str, Any]] = field(default_factory=list)
     memory_ops: list[dict[str, Any]] = field(default_factory=list)
+    memory_candidates: list[dict[str, Any]] = field(default_factory=list)
     termination_reason: str | None = None
     max_steps_reached: bool = False
     trace_id: str | None = None
@@ -260,6 +261,7 @@ class AgentLoopResult:
             "trajectory": [_trace_item_to_dict(item) for item in self.trajectory],
             "tool_calls": [dict(item) for item in self.tool_calls],
             "memory_ops": [dict(item) for item in self.memory_ops],
+            "memory_candidates": [dict(item) for item in self.memory_candidates],
             "termination_reason": termination_reason,
             "max_steps_reached": self.max_steps_reached,
             "trace_id": trace_id,

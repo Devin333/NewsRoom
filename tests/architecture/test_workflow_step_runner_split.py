@@ -5,38 +5,24 @@ from pathlib import Path
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-RUNNERS_ROOT = PROJECT_ROOT / "framework" / "workflow" / "runners"
+RUNNERS_ROOT = PROJECT_ROOT / "framework" / "harness"
 
 
 def test_concrete_runner_modules_do_not_import_legacy_step_runner_shim() -> None:
-    concrete_modules = {
-        "agent_loop.py",
-        "artifact.py",
-        "function.py",
-        "join.py",
-        "memory.py",
-        "parallel.py",
-        "quality_gate.py",
-        "router.py",
-        "subworkflow.py",
-        "tool.py",
-        "tool_batch.py",
-    }
+    concrete_modules = {path for path in RUNNERS_ROOT.rglob("*.py")}
     violations: list[str] = []
-    for filename in concrete_modules:
-        path = RUNNERS_ROOT / filename
+    for path in concrete_modules:
         tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
         for node in ast.walk(tree):
             if isinstance(node, ast.ImportFrom) and node.module == "framework.workflow.runners.step_runner":
-                violations.append(filename)
+                violations.append(path.as_posix())
             elif isinstance(node, ast.Import):
                 for alias in node.names:
                     if alias.name == "framework.workflow.runners.step_runner":
-                        violations.append(filename)
+                        violations.append(path.as_posix())
 
     assert violations == []
 
 
 def test_legacy_step_runner_module_is_removed() -> None:
-    assert not (RUNNERS_ROOT / "step_runner.py").exists()
-    assert not (RUNNERS_ROOT / "_step_runner_impl.py").exists()
+    assert not any(path.name in {"step_runner.py", "_step_runner_impl.py"} for path in RUNNERS_ROOT.rglob("*.py"))

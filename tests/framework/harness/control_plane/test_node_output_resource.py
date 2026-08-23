@@ -28,8 +28,8 @@ from framework.harness.graph.model import (
 )
 from framework.harness.graph.versioning import (
     HARNESS_CONDITION_POLICY_VERSION,
-    HARNESS_GRAPH_COMPILER_VERSION,
-    NORMALIZED_HARNESS_GRAPH_SCHEMA,
+    HARNESS_GRAPH_ONLY_COMPILER_VERSION,
+    GRAPH_ONLY_NORMALIZED_HARNESS_GRAPH_SCHEMA,
 )
 
 
@@ -383,12 +383,12 @@ def _success_guard() -> HarnessNodeOutputCommitGuard:
 
 def _graph_ref() -> HarnessGraphReference:
     return HarnessGraphReference(
-        "graph",
-        _ref(HarnessContractKind.WORKFLOW, "research", version="2"),
-        NORMALIZED_HARNESS_GRAPH_SCHEMA,
-        HARNESS_GRAPH_COMPILER_VERSION,
-        HARNESS_CONDITION_POLICY_VERSION,
-        _sha("graph"),
+        graph_id="research",
+        schema_version=GRAPH_ONLY_NORMALIZED_HARNESS_GRAPH_SCHEMA,
+        compiler_version=HARNESS_GRAPH_ONLY_COMPILER_VERSION,
+        condition_policy_version=HARNESS_CONDITION_POLICY_VERSION,
+        checksum=_sha("graph"),
+        graph_ref=_ref(HarnessContractKind.GRAPH, "research", version="2"),
     )
 
 

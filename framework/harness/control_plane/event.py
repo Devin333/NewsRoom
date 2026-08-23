@@ -13,14 +13,14 @@ from framework.shared.time import format_datetime, parse_datetime, utc_now
 
 
 class HarnessEventType(StrEnum):
-    TRANSITION_COMMITTED = "harness_transition_committed"
     RUN_CREATED = "run_created"
     RUN_STATE_CHANGED = "run_state_changed"
     STEP_STATE_CHANGED = "step_state_changed"
     PHASE_RECORDED = "phase_recorded"
+    GRAPH_PHASE_TRANSITION_RECORDED = "graph_phase_transition_recorded"
     DECISION_RECORDED = "decision_recorded"
-    WORKER_CALLED = "worker_called"
-    WORKER_RESULT_RECORDED = "worker_result_recorded"
+    GRAPH_WORKER_CALLED = "graph_worker_called"
+    GRAPH_WORKER_RESULT_RECORDED = "graph_worker_result_recorded"
     BUDGET_FACT_RECORDED = "budget_fact_recorded"
     GATE_EVALUATED = "gate_evaluated"
     CHECKPOINT_CREATED = "checkpoint_created"
@@ -31,12 +31,15 @@ class HarnessEventType(StrEnum):
     CONTEXT_COMPACTION_REJECTED = "context_compaction_rejected"
 
 
+HARNESS_EVENT_SOURCE = "io.newsroom.harness.control-plane"
+
+
 @dataclass(frozen=True)
 class HarnessEvent:
     event_type: HarnessEventType | str
     run_id: str
     event_id: str | None = None
-    step_id: str | None = None
+    node_id: str | None = None
     payload: dict[str, Any] = field(default_factory=dict)
     metadata: dict[str, Any] = field(default_factory=dict)
     occurred_at: Any = field(default_factory=utc_now)
@@ -58,6 +61,7 @@ class HarnessEvent:
             raise HarnessValidationError("payload must be an object")
         if not isinstance(metadata, Mapping):
             raise HarnessValidationError("metadata must be an object")
+        payload = dict(payload)
         object.__setattr__(self, "payload", payload)
         object.__setattr__(self, "metadata", metadata)
         history = self.deterministic_history
@@ -74,7 +78,7 @@ class HarnessEvent:
         event_id = self.event_id or _stable_event_id(
             run_id=self.run_id,
             event_type=self.event_type.value,
-            step_id=self.step_id,
+            node_id=self.node_id,
             payload=self.payload,
             metadata=self.metadata,
             occurred_at=self.occurred_at,
@@ -92,7 +96,7 @@ class HarnessEvent:
             "event_id": self.event_id,
             "event_type": self.event_type.value,
             "run_id": self.run_id,
-            "step_id": self.step_id,
+            "node_id": self.node_id,
             "payload": to_jsonable(self.payload),
             "metadata": to_jsonable(self.metadata),
             "occurred_at": format_datetime(self.occurred_at),
@@ -120,7 +124,7 @@ class HarnessEvent:
                 f"Harness event field is required: {exc.args[0]}"
             ) from exc
         event_id = payload.pop("event_id", None)
-        step_id = payload.pop("step_id", None)
+        node_id = payload.pop("node_id", None)
         event_payload = payload.pop("payload", {})
         metadata = payload.pop("metadata", {})
         trace_id = payload.pop("trace_id", None)
@@ -134,7 +138,7 @@ class HarnessEvent:
             event_type=event_type,
             run_id=run_id,
             event_id=event_id,
-            step_id=step_id,
+            node_id=node_id,
             payload=event_payload,
             metadata=metadata,
             occurred_at=occurred_at,
@@ -147,7 +151,7 @@ def _stable_event_id(
     *,
     run_id: str,
     event_type: str,
-    step_id: str | None,
+    node_id: str | None,
     payload: Mapping[str, Any],
     metadata: Mapping[str, Any],
     occurred_at: Any,
@@ -155,13 +159,13 @@ def _stable_event_id(
     projection = {
         "run_id": run_id,
         "event_type": event_type,
-        "step_id": step_id,
+        "node_id": node_id,
         "payload": to_jsonable(payload),
         "metadata": to_jsonable(metadata),
         "occurred_at": format_datetime(occurred_at),
     }
     digest = hashlib.sha256(stable_json_dumps(projection).encode("utf-8")).hexdigest()
-    return f"harness-event:{digest}"
+    return f"graph-event:{digest}"
 
 
 __all__ = ["HarnessEvent", "HarnessEventType"]

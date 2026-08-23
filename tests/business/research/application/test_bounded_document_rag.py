@@ -9,6 +9,7 @@ from typing import Any, Callable
 import pytest
 
 from business.research.application.bounded_document_rag import BoundedDocumentRAGRuntime
+from business.research.graphs import build_paper_analysis_context_graph_identity
 from business.research.document.models import PaperChunk
 from business.research.domain.common import SourceLineage
 from business.research.domain.document import ResearchDocument, ResearchSection
@@ -245,9 +246,10 @@ def _spec(
         metadata["tenant_id"] = tenant_id
     return RAGSessionSpec(
         session_id=session_id,
-        run_id=run_id,
-        workflow_id="research.paper_analysis",
-        step_id="run_research_rag",
+        graph_identity=build_paper_analysis_context_graph_identity(
+            run_id=run_id,
+            stage_id="run_research_rag",
+        ),
         goal=RetrievalGoal(
             goal_id=f"goal-{run_id}",
             question=f"What evidence is available for {paper_id}?",
@@ -599,6 +601,8 @@ def test_uses_supplied_spec_identity_and_remaps_every_chunk_reference() -> None:
     assert child.metadata["canonical_chunk_id"] == f"chunk-{document.paper_id}-child"
     assert child.metadata["run_id"] == spec_a.run_id
     assert child.metadata["session_id"] == spec_a.session_id
+    assert child.metadata["graph_ref"] == spec_a.graph_identity.graph_ref
+    assert child.metadata["stage_id"] == spec_a.stage_id
     assert child.metadata["tenant_id"] == "tenant-a"
     assert child.metadata["source_hash"] == document.source_hash
 
@@ -613,8 +617,7 @@ def test_uses_supplied_spec_identity_and_remaps_every_chunk_reference() -> None:
         "started_duplicate",
         "started_session_id",
         "started_run_id",
-        "started_workflow_id",
-        "started_step_id",
+        "started_graph_identity",
         "pack_session",
         "terminal_decision",
         "decision_budget",
@@ -890,8 +893,9 @@ def test_projects_typed_evidence_gaps_budget_and_transcript_without_synthetic_ev
     assert context.metadata["budget"] == budget.to_dict()
     assert context.metadata["budget_snapshot"]["context_tokens_used"] == 37
     assert (
-        context.metadata["transcript"]["events"][0]["payload"]["session"]["run_id"]
-        == spec.run_id
+        context.metadata["transcript"]["events"][0]["payload"]["session"]
+        ["graph_identity"]
+        == spec.graph_identity.to_dict()
     )
     trace_status = {
         row["evidence_id"]: row["status"]

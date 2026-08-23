@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -9,7 +10,11 @@ from framework.harness.control_plane.cumulative_budget import (
 )
 from framework.harness.control_plane.errors import HarnessValidationError
 from framework.harness.control_plane.policy import HarnessBudgetSnapshot
-from framework.harness.control_plane.state import HarnessState, HarnessStepState
+from framework.harness.control_plane.graph_state import (
+    HarnessGraphState,
+    HarnessNodeInstanceState,
+)
+from framework.harness.control_plane.state import HarnessRunSpec
 from framework.harness.quality.verdict import HarnessQualityVerdict
 from framework.harness.graph.activity import HarnessStepSpec, HarnessWorkerType
 from framework.harness.workers.result import HarnessWorkerResult
@@ -71,13 +76,60 @@ class HarnessGateResult:
 
 @dataclass(frozen=True)
 class GateContext:
-    state: HarnessState
+    run_spec: HarnessRunSpec
+    graph_state: HarnessGraphState
     step_spec: HarnessStepSpec
-    step_state: HarnessStepState
+    node_state: HarnessNodeInstanceState | None = None
+    outputs: Mapping[str, Any] = field(default_factory=dict)
     worker_result: HarnessWorkerResult | None = None
     quality_verdict: HarnessQualityVerdict | None = None
     budget: HarnessBudgetSnapshot | None = None
     cumulative_budget_fact: HarnessCumulativeBudgetFact | None = None
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.run_spec, HarnessRunSpec):
+            raise TypeError("run_spec must be HarnessRunSpec")
+        if not isinstance(self.graph_state, HarnessGraphState):
+            raise TypeError("graph_state must be HarnessGraphState")
+        if self.graph_state.run_id != self.run_spec.run_id:
+            raise HarnessValidationError(
+                "Gate context Graph state belongs to another run",
+                code="gate_context_run_mismatch",
+            )
+        graph_definition = self.run_spec.graph
+        if (
+            self.graph_state.graph_ref.graph_id != graph_definition.graph_id
+            or self.graph_state.graph_ref.identity_version
+            != graph_definition.graph_version
+        ):
+            raise HarnessValidationError(
+                "Gate context Graph state belongs to another Graph",
+                code="gate_context_graph_mismatch",
+            )
+        if self.node_state is not None:
+            if not isinstance(self.node_state, HarnessNodeInstanceState):
+                raise TypeError("node_state must be HarnessNodeInstanceState")
+            committed_node = next(
+                (
+                    item
+                    for item in self.graph_state.node_instances
+                    if item.instance_id == self.node_state.instance_id
+                ),
+                None,
+            )
+            if committed_node != self.node_state:
+                raise HarnessValidationError(
+                    "Gate context node is not present in the Graph projection",
+                    code="gate_context_node_mismatch",
+                )
+            if self.node_state.step_id != self.step_spec.step_id:
+                raise HarnessValidationError(
+                    "Gate context node belongs to another Step",
+                    code="gate_context_step_mismatch",
+                )
+        if not isinstance(self.outputs, Mapping):
+            raise TypeError("outputs must be a mapping")
+        object.__setattr__(self, "outputs", dict(self.outputs))
 
 
 class DeterministicGate:
@@ -119,7 +171,7 @@ class OutputSchemaGate(DeterministicGate):
         schema = context.step_spec.metadata.get("output_schema")
         if schema is None:
             return HarnessGateResult(gate_name=self.gate_name, passed=True, reason="no output schema configured")
-        if not isinstance(schema, dict):
+        if not isinstance(schema, Mapping):
             raise HarnessValidationError("output_schema metadata must be a dict")
         if context.worker_result is None:
             return HarnessGateResult(gate_name=self.gate_name, passed=False, reason="worker result is required")
@@ -127,10 +179,10 @@ class OutputSchemaGate(DeterministicGate):
         missing = sorted(str(field) for field in schema.get("required", ()) if field not in output)
         invalid_types: list[str] = []
         properties = schema.get("properties", {})
-        if properties and not isinstance(properties, dict):
+        if properties and not isinstance(properties, Mapping):
             raise HarnessValidationError("output_schema.properties must be a dict")
         for name, definition in properties.items():
-            if name not in output or not isinstance(definition, dict):
+            if name not in output or not isinstance(definition, Mapping):
                 continue
             expected_type = definition.get("type")
             if expected_type and not _matches_json_type(output[name], str(expected_type)):
@@ -148,7 +200,9 @@ class DeduplicationGate(DeterministicGate):
     gate_name = "deduplication"
 
     def evaluate(self, context: GateContext) -> HarnessGateResult:
-        known_plan_keys = set(_coerce_string_set(context.state.metadata.get("plan_keys", ())))
+        known_plan_keys = set(
+            _coerce_string_set(context.run_spec.metadata.get("plan_keys", ()))
+        )
         plan_key = context.step_spec.metadata.get("plan_key")
         if context.worker_result is not None:
             plan_key = context.worker_result.output.get("plan_key", plan_key)
@@ -160,7 +214,9 @@ class DeduplicationGate(DeterministicGate):
                 details={"plan_key": str(plan_key)},
             )
 
-        seen_claims = set(_coerce_string_set(context.state.metadata.get("claims", ())))
+        seen_claims = set(
+            _coerce_string_set(context.run_spec.metadata.get("claims", ()))
+        )
         claims = _coerce_string_set(_result_sequence(context.worker_result, "claims"))
         duplicate_claims = sorted(seen_claims.intersection(claims))
         if duplicate_claims:
@@ -171,7 +227,9 @@ class DeduplicationGate(DeterministicGate):
                 details={"claims": duplicate_claims},
             )
 
-        seen_questions = set(_coerce_string_set(context.state.metadata.get("questions", ())))
+        seen_questions = set(
+            _coerce_string_set(context.run_spec.metadata.get("questions", ()))
+        )
         questions = _coerce_string_set(_result_sequence(context.worker_result, "questions"))
         duplicate_questions = sorted(seen_questions.intersection(questions))
         if duplicate_questions:

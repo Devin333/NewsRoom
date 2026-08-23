@@ -30,6 +30,7 @@ from business.research.ports.run_store import (
     ResearchRunStoreReason,
 )
 from business.research.rag import ResearchRetrievalGoal
+from framework.harness.context.models import ContextGraphIdentity
 from interfaces.models import ActorContext
 
 
@@ -114,6 +115,7 @@ class ResearchRagAskUseCase(Protocol):
         tenant_id: str | None,
         user_id: str | None,
         memory_namespace: str,
+        graph_identity: ContextGraphIdentity | None = None,
     ) -> dict[str, Any]:
         ...
 
@@ -360,7 +362,13 @@ class ResearchApplicationService:
             },
         }
 
-    def ask_paper(self, paper_id: str, request: ResearchAskInput) -> dict[str, Any]:
+    def ask_paper(
+        self,
+        paper_id: str,
+        request: ResearchAskInput,
+        *,
+        graph_identity: ContextGraphIdentity | None = None,
+    ) -> dict[str, Any]:
         question = _require_text(request.question, "question")
         mode = _ask_mode(request.mode)
         actor_scope = _resolve_actor_scope(
@@ -379,6 +387,7 @@ class ResearchApplicationService:
                 question,
                 request=request,
                 actor_scope=actor_scope,
+                graph_identity=graph_identity,
             )
 
         record = self._record_for_paper(paper_id, actor_scope=actor_scope)
@@ -428,6 +437,7 @@ class ResearchApplicationService:
         *,
         request: ResearchAskInput,
         actor_scope: ResearchActorScope,
+        graph_identity: ContextGraphIdentity | None,
     ) -> dict[str, Any]:
         normalized_paper_id = _require_text(paper_id, "paperId")
         section_index = _bounded_int(
@@ -442,16 +452,21 @@ class ResearchApplicationService:
             maximum=20,
         )
         try:
+            rag_kwargs = {
+                "section_index": section_index,
+                "limit": limit,
+                "generate": bool(request.generate),
+                "gated": bool(request.gated),
+                "tenant_id": actor_scope.tenant_id,
+                "user_id": actor_scope.user_id,
+                "memory_namespace": actor_scope.memory_namespace,
+            }
+            if graph_identity is not None:
+                rag_kwargs["graph_identity"] = graph_identity
             return self._rag_ask_use_case.rag_ask(
                 normalized_paper_id,
                 question,
-                section_index=section_index,
-                limit=limit,
-                generate=bool(request.generate),
-                gated=bool(request.gated),
-                tenant_id=actor_scope.tenant_id,
-                user_id=actor_scope.user_id,
-                memory_namespace=actor_scope.memory_namespace,
+                **rag_kwargs,
             )
         except ResearchServiceError:
             raise

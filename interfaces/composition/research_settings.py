@@ -623,7 +623,7 @@ def _graph_artifact_persistence_from_env(
             mode=_first_text(
                 values,
                 ("NEWS_RESEARCH_GRAPH_ARTIFACT_MODE",),
-                "shadow",
+                "enforce",
             ).lower(),
             policy_version=_first_text(
                 values,

@@ -57,7 +57,7 @@ def test_source_detail_probe_artifact_alias_and_memory_document_routes() -> None
 
     source = client.get("/api/v1/sources/source-1")
     probe = client.post("/api/v1/sources/source-1/probe", json={"force": True})
-    artifact = client.get("/api/v1/artifacts/output?run_id=run-1")
+    artifact = client.get("/api/v2/graph-runs/run-1/artifacts/output")
     memory = client.get("/api/v1/memory/doc-1?collection=report_sections")
 
     assert source.status_code == 200

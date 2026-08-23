@@ -10,9 +10,9 @@ from infrastructure.storage.records import (
     SourceItemRecord,
 )
 from infrastructure.storage.persistence.records import (
+    GraphRunRecord,
     ReportRecord,
     RunPersistenceBatch,
-    WorkflowRunRecord,
 )
 from infrastructure.storage.persistence.record_inputs import (
     RunPersistenceInput,
@@ -22,11 +22,11 @@ from infrastructure.storage.persistence.record_inputs import (
 UTC = _tz.utc
 
 
-def workflow_run_record_from_input(input_model: RunPersistenceInput) -> WorkflowRunRecord:
-    return WorkflowRunRecord(
+def graph_run_record_from_input(input_model: RunPersistenceInput) -> GraphRunRecord:
+    return GraphRunRecord(
         run_id=input_model.run_id,
-        workflow_id=input_model.workflow_id,
-        workflow_version=input_model.workflow_version,
+        graph_id=input_model.graph_id,
+        graph_version=input_model.graph_version,
         status=input_model.status,
         profile=input_model.profile,
         artifact_dir=input_model.artifact_dir,
@@ -37,8 +37,8 @@ def workflow_run_record_from_input(input_model: RunPersistenceInput) -> Workflow
     )
 
 
-def workflow_run_record_from_result(result: Any, *, profile: str) -> WorkflowRunRecord:
-    return workflow_run_record_from_input(
+def graph_run_record_from_result(result: Any, *, profile: str) -> GraphRunRecord:
+    return graph_run_record_from_input(
         run_persistence_input_from_result(result, profile=profile)
     )
 
@@ -104,7 +104,7 @@ def report_record_from_result(result: Any) -> ReportRecord | None:
 
 def run_persistence_batch_from_input(input_model: RunPersistenceInput) -> RunPersistenceBatch:
     return RunPersistenceBatch(
-        workflow_run=workflow_run_record_from_input(input_model),
+        graph_run=graph_run_record_from_input(input_model),
         report=report_record_from_input(input_model),
         source_items=source_item_records_from_input(input_model),
         evidence_items=evidence_item_records_from_input(input_model),
@@ -369,6 +369,6 @@ __all__ = [
     "run_persistence_input_from_result",
     "source_item_records_from_result",
     "source_item_records_from_input",
-    "workflow_run_record_from_result",
-    "workflow_run_record_from_input",
+    "graph_run_record_from_result",
+    "graph_run_record_from_input",
 ]

@@ -59,7 +59,7 @@ def test_graph_smoke_persists_verified_events_metrics_and_node_identity(
     assert result.status == "succeeded"
     assert result.output == {
         "summary": "Deterministic AgentLoop analysis for agentic research.",
-        "tool_used": "memory.search",
+        "tool_used": "memory.recall",
         "confidence": "high",
     }
     assert result.metrics["llm_calls"] == 3
@@ -134,7 +134,7 @@ def test_network_guard_blocks_connection_attempts() -> None:
 @pytest.mark.parametrize(
     ("diagnostics", "expected_failure"),
     [
-        ({"requested_tools": ["memory.search"]}, "agent_loop_output_missing"),
+        ({"requested_tools": ["memory.recall"]}, "agent_loop_output_missing"),
         ({"requested_tools": 7}, "tool_policy_evidence_invalid"),
     ],
 )

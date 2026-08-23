@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from dataclasses import replace
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -16,16 +18,16 @@ def test_api_run_events_forwards_sequence_cursor_and_filters() -> None:
     service = _CapturingInspectionService()
     client = TestClient(
         create_app(
-            run_inspection_service_factory=lambda: service,
+            graph_run_inspection_service_factory=lambda: service,
             audit_emitter_factory=None,
         )
     )
 
     response = client.get(
-        "/api/v1/runs/run-1/events",
+        "/api/v2/graph-runs/run-1/events",
         params={
             "event_type": "step_started",
-            "step_id": "step-7",
+            "node_instance_id": "node-7",
             "limit": 1,
             "sequence_cursor": "opaque-cursor",
         },
@@ -36,7 +38,7 @@ def test_api_run_events_forwards_sequence_cursor_and_filters() -> None:
         {
             "run_id": "run-1",
             "event_type": "step_started",
-            "step_id": "step-7",
+            "node_instance_id": "node-7",
             "limit": 1,
             "offset": 0,
             "sequence_cursor": "opaque-cursor",
@@ -55,7 +57,7 @@ def test_cli_run_events_forwards_cursor_and_prints_availability(
     service = _CapturingInspectionService()
     monkeypatch.setattr(
         run_commands,
-        "run_inspection_service_from_env",
+        "graph_run_inspection_service_from_env",
         lambda **kwargs: service,
     )
 
@@ -68,8 +70,8 @@ def test_cli_run_events_forwards_cursor_and_prints_availability(
             "1",
             "--event-type",
             "step_started",
-            "--step-id",
-            "step-7",
+            "--node-instance-id",
+            "node-7",
             "--sequence-cursor",
             "opaque-cursor",
         ]
@@ -107,29 +109,17 @@ def test_api_sse_uses_last_event_id_and_rejects_query_cursor_conflict() -> None:
     service = _CapturingInspectionService()
     client = TestClient(
         create_app(
-            run_inspection_service_factory=lambda: service,
+            graph_run_inspection_service_factory=lambda: service,
             audit_emitter_factory=None,
         )
     )
 
     response = client.get(
-        "/api/v1/runs/run-1/events/stream",
+        "/api/v2/graph-runs/run-1/events/stream",
         headers={"Last-Event-ID": "resume-cursor-7"},
     )
-    progress = client.get(
-        "/api/v1/runs/run-1/progress",
-        headers={"Last-Event-ID": "resume-cursor-7"},
-    )
-
     assert response.status_code == 200
-    assert progress.status_code == 200
     assert service.sse_calls == [
-        {
-            "run_id": "run-1",
-            "limit": None,
-            "sequence_cursor": None,
-            "last_event_id": "resume-cursor-7",
-        },
         {
             "run_id": "run-1",
             "limit": None,
@@ -139,31 +129,22 @@ def test_api_sse_uses_last_event_id_and_rejects_query_cursor_conflict() -> None:
     ]
 
     conflict = client.get(
-        "/api/v1/runs/run-1/events/stream?sequence_cursor=snapshot-cursor",
+        "/api/v2/graph-runs/run-1/events/stream?sequence_cursor=snapshot-cursor",
         headers={"Last-Event-ID": "resume-cursor-7"},
     )
     assert conflict.status_code == 400
-    assert conflict.json()["error"]["code"] == "invalid_run_events_request"
-    progress_conflict = client.get(
-        "/api/v1/runs/run-1/progress?sequence_cursor=snapshot-cursor",
-        headers={"Last-Event-ID": "resume-cursor-7"},
-    )
-    assert progress_conflict.status_code == 400
-    assert progress_conflict.json()["error"]["code"] == "invalid_run_progress_request"
-
-
+    assert conflict.json()["error"]["code"] == "invalid_graph_run_events_request"
 def test_api_maps_disabled_projection_fallback_to_retryable_503() -> None:
     client = TestClient(
         create_app(
-            run_inspection_service_factory=_UnavailableInspectionService,
+            graph_run_inspection_service_factory=_UnavailableInspectionService,
             audit_emitter_factory=None,
         )
     )
 
     for endpoint in (
-        "/api/v1/runs/run-1/events",
-        "/api/v1/runs/run-1/events/stream",
-        "/api/v1/runs/run-1/progress",
+        "/api/v2/graph-runs/run-1/events",
+        "/api/v2/graph-runs/run-1/events/stream",
     ):
         response = client.get(endpoint)
         assert response.status_code == 503
@@ -178,7 +159,7 @@ def test_cli_maps_disabled_projection_fallback_to_exit_code_two(
 ) -> None:
     monkeypatch.setattr(
         run_commands,
-        "run_inspection_service_from_env",
+        "graph_run_inspection_service_from_env",
         lambda **kwargs: _UnavailableInspectionService(),
     )
 
@@ -207,7 +188,7 @@ def test_projection_fallback_sse_does_not_emit_durable_event_id() -> None:
 
 def test_openapi_run_events_has_typed_metadata_envelope() -> None:
     schema = export_openapi_schema()
-    response = schema["paths"]["/api/v1/runs/{run_id}/events"]["get"]["responses"]["200"]
+    response = schema["paths"]["/api/v2/graph-runs/{run_id}/events"]["get"]["responses"]["200"]
 
     assert response["content"]["application/json"]["schema"] == {
         "$ref": "#/components/schemas/RunEventsApiResponse"
@@ -265,17 +246,18 @@ class _CapturingInspectionService:
         result = _result()
         event = dict(result.events[0])
         event["sse_resume_cursor"] = "resume-cursor-7"
-        return RunEventsResult(
-            **{
-                **result.__dict__,
-                "events": [event],
-                "sse_resume_cursor": "resume-cursor-7",
-            }
+        return replace(
+            result,
+            events=[event],
+            sse_resume_cursor="resume-cursor-7",
         )
 
 
 class _UnavailableInspectionService:
     def get_run_events(self, run_id: str, **kwargs):
+        raise EventStoreUnavailableError("durable event store is unavailable")
+
+    def get_run_events_for_sse(self, run_id: str, **kwargs):
         raise EventStoreUnavailableError("durable event store is unavailable")
 
 
@@ -286,7 +268,7 @@ def _result() -> RunEventsResult:
             {
                 "event_type": "step_started",
                 "stream_sequence": 7,
-                "step_id": "step-7",
+                "node_instance_id": "node-7",
                 "payload": {},
             }
         ],

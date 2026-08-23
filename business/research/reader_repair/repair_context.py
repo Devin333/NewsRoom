@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from framework.harness import ContextAssembler, ContextBudget, ContextEnvelope
+from framework.harness.context.models import ContextGraphIdentity
 
 from business.research.domain import SourceLineage, stable_research_id
 from business.research.domain.reader_repair import (
@@ -73,8 +74,7 @@ class ReaderRepairContextBuilder:
         self,
         *,
         context_pack: ReaderRepairContextPack,
-        run_id: str,
-        step_id: str,
+        graph_identity: ContextGraphIdentity,
         subagent_id: str,
         role: str,
         max_input_tokens: int = 4096,
@@ -82,17 +82,17 @@ class ReaderRepairContextBuilder:
     ) -> ReaderRepairContextBuildResult:
         envelope = self.context_assembler.assemble(
             {
-                "run_id": run_id,
-                "workflow_id": "research.reader_repair",
-                "step_id": step_id,
+                "run_id": graph_identity.run_id,
+                "step_id": graph_identity.stage_id,
+                "graph_identity": graph_identity,
                 "phase": "execute",
                 "worker_id": subagent_id,
                 "worker_type": "subagent",
-                "workflow_ref": "workflow://research.reader_repair",
+                "graph_ref": graph_identity.graph_ref,
                 "worker_contract_ref": f"schema://research.reader_repair/{role}",
-                "run_state_ref": f"run-state://{run_id}",
+                "run_state_ref": f"run-state://{graph_identity.run_id}",
                 "evidence_memory_ref": context_pack.context_id,
-                "current_task_ref": f"task://{step_id}",
+                "current_task_ref": f"task://{graph_identity.stage_id}",
                 "current_instruction": "Generate or verify a reader repair candidate without deciding routing, memory writes, or skill promotion.",
                 "source_refs": context_pack.source_refs,
                 "artifact_refs": tuple(ref for case in context_pack.recalled_cases for ref in (case.payload_before_ref, case.payload_after_ref) if ref),

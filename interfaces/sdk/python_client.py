@@ -157,33 +157,50 @@ class NewsClient:
 
 
 class RunsClient:
+    _PREFIX = "/api/v2/graph-runs"
+
     def __init__(self, client: NewsClient) -> None:
         self.client = client
 
     def get(self, run_id: str) -> dict[str, Any]:
-        return self.client.get(f"/api/v1/runs/{_quote_path_segment(run_id)}")
+        return self.client.get(f"{self._PREFIX}/{_quote_path_segment(run_id)}")
 
-    def list(self, *, limit: int = 20) -> dict[str, Any]:
-        return self.client.get("/api/v1/runs", params={"limit": limit})
+    def list(
+        self,
+        *,
+        limit: int = 20,
+        offset: int = 0,
+        status: str | None = None,
+        graph_id: str | None = None,
+    ) -> dict[str, Any]:
+        return self.client.get(
+            self._PREFIX,
+            params={
+                "limit": limit,
+                "offset": offset,
+                "status": status,
+                "graph_id": graph_id,
+            },
+        )
 
     def manifest(self, run_id: str) -> dict[str, Any]:
-        return self.client.get(f"/api/v1/runs/{_quote_path_segment(run_id)}/manifest")
+        return self.client.get(f"{self._PREFIX}/{_quote_path_segment(run_id)}/manifest")
 
     def events(
         self,
         run_id: str,
         *,
         event_type: str | None = None,
-        step_id: str | None = None,
+        node_instance_id: str | None = None,
         limit: int | None = None,
         offset: int = 0,
         sequence_cursor: str | None = None,
     ) -> dict[str, Any]:
         return self.client.get(
-            f"/api/v1/runs/{_quote_path_segment(run_id)}/events",
+            f"{self._PREFIX}/{_quote_path_segment(run_id)}/events",
             params={
                 "event_type": event_type,
-                "step_id": step_id,
+                "node_instance_id": node_instance_id,
                 "limit": limit,
                 "offset": offset,
                 "sequence_cursor": sequence_cursor,
@@ -191,20 +208,31 @@ class RunsClient:
         )
 
     def replay(self, run_id: str) -> dict[str, Any]:
-        return self.client.get(f"/api/v1/runs/{_quote_path_segment(run_id)}/replay")
+        return self.client.get(f"{self._PREFIX}/{_quote_path_segment(run_id)}/replay")
 
     def diagnostics(self, run_id: str) -> dict[str, Any]:
-        return self.client.get(f"/api/v1/runs/{_quote_path_segment(run_id)}/diagnostics")
+        return self.client.get(f"{self._PREFIX}/{_quote_path_segment(run_id)}/diagnostics")
 
     def health(self, run_id: str) -> dict[str, Any]:
-        return self.client.get(f"/api/v1/runs/{_quote_path_segment(run_id)}/health")
+        return self.client.get(f"{self._PREFIX}/{_quote_path_segment(run_id)}/health")
+
+    def graph(self, run_id: str, *, verify_history: bool = False) -> dict[str, Any]:
+        return self.client.get(
+            f"{self._PREFIX}/{_quote_path_segment(run_id)}/graph",
+            params={"verify_history": verify_history},
+        )
+
+    def graph_health(self, run_id: str) -> dict[str, Any]:
+        return self.client.get(
+            f"{self._PREFIX}/{_quote_path_segment(run_id)}/graph/health"
+        )
 
     def catalog_health(self) -> dict[str, Any]:
-        return self.client.get("/api/v1/runs/catalog/health")
+        return self.client.get(f"{self._PREFIX}/catalog/health")
 
     def compare(self, base_run_id: str, target_run_id: str) -> dict[str, Any]:
         return self.client.get(
-            "/api/v1/runs/compare",
+            f"{self._PREFIX}/compare",
             params={
                 "base_run_id": base_run_id,
                 "target_run_id": target_run_id,
@@ -212,26 +240,41 @@ class RunsClient:
         )
 
     def lineage(self, run_id: str) -> dict[str, Any]:
-        return self.client.get(f"/api/v1/runs/{_quote_path_segment(run_id)}/lineage")
+        return self.client.get(f"{self._PREFIX}/{_quote_path_segment(run_id)}/lineage")
 
     def lineage_upstream(self, run_id: str, *, target_type: str, target_id: str) -> dict[str, Any]:
         return self.client.get(
-            f"/api/v1/runs/{_quote_path_segment(run_id)}/lineage/upstream",
+            f"{self._PREFIX}/{_quote_path_segment(run_id)}/lineage/upstream",
             params={"target_type": target_type, "target_id": target_id},
         )
 
     def lineage_downstream(self, run_id: str, *, source_type: str, source_id: str) -> dict[str, Any]:
         return self.client.get(
-            f"/api/v1/runs/{_quote_path_segment(run_id)}/lineage/downstream",
+            f"{self._PREFIX}/{_quote_path_segment(run_id)}/lineage/downstream",
             params={"source_type": source_type, "source_id": source_id},
         )
 
     def artifacts(self, run_id: str) -> dict[str, Any]:
-        return self.client.get(f"/api/v1/runs/{_quote_path_segment(run_id)}/artifacts")
+        return self.client.get(f"{self._PREFIX}/{_quote_path_segment(run_id)}/artifacts")
 
     def artifact(self, run_id: str, artifact_key: str) -> dict[str, Any]:
         return self.client.get(
-            f"/api/v1/runs/{_quote_path_segment(run_id)}/artifacts/{_quote_path_segment(artifact_key)}"
+            f"{self._PREFIX}/{_quote_path_segment(run_id)}/artifacts/{_quote_path_segment(artifact_key)}"
+        )
+
+    def cancel(
+        self,
+        run_id: str,
+        *,
+        reason_code: str,
+        cancellation_id: str | None = None,
+    ) -> dict[str, Any]:
+        return self.client.post(
+            f"{self._PREFIX}/{_quote_path_segment(run_id)}/cancel",
+            json_body={
+                "reason_code": reason_code,
+                "cancellation_id": cancellation_id,
+            },
         )
 
 
@@ -248,10 +291,16 @@ class ReportsClient:
     def search(self, query: str, *, limit: int = 20) -> dict[str, Any]:
         return self.client.get("/api/v1/search/reports", params={"q": query, "limit": limit})
 
-    def list(self, *, limit: int = 20, workflow_id: str | None = None) -> dict[str, Any]:
+    def list(
+        self,
+        *,
+        limit: int = 20,
+        graph_id: str | None = None,
+        graph_ids: list[str] | None = None,
+    ) -> dict[str, Any]:
         return self.client.get(
             "/api/v1/reports",
-            params={"limit": limit, "workflow_id": workflow_id},
+            params={"limit": limit, "graph_id": graph_id, "graph_ids": graph_ids},
         )
 
     def markdown(self, report_id: str) -> dict[str, Any]:

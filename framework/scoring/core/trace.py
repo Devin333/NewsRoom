@@ -7,6 +7,7 @@ from typing import Any
 from framework.shared.ids import generate_id
 from framework.shared.json import to_jsonable
 from framework.shared.time import duration_ms, format_datetime, parse_datetime, utc_now
+from framework.shared.graph_identity import GraphExecutionIdentity
 
 
 @dataclass(frozen=True)
@@ -21,6 +22,7 @@ class ScoringStepTrace:
     output_summary: dict[str, Any] = field(default_factory=dict)
     warnings: list[str] = field(default_factory=list)
     metadata: dict[str, Any] = field(default_factory=dict)
+    execution_identity: GraphExecutionIdentity | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "started_at", parse_datetime(self.started_at) or utc_now())
@@ -29,6 +31,14 @@ class ScoringStepTrace:
         object.__setattr__(self, "output_summary", dict(self.output_summary or {}))
         object.__setattr__(self, "warnings", [str(warning) for warning in self.warnings])
         object.__setattr__(self, "metadata", dict(self.metadata or {}))
+        if self.execution_identity is not None and not isinstance(
+            self.execution_identity, GraphExecutionIdentity
+        ):
+            object.__setattr__(
+                self,
+                "execution_identity",
+                GraphExecutionIdentity.from_dict(self.execution_identity),
+            )
 
     def finish(
         self,
@@ -48,7 +58,7 @@ class ScoringStepTrace:
         )
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        payload = {
             "step_id": self.step_id,
             "step_type": self.step_type,
             "status": self.status,
@@ -60,6 +70,9 @@ class ScoringStepTrace:
             "warnings": list(self.warnings),
             "metadata": to_jsonable(self.metadata),
         }
+        if self.execution_identity is not None:
+            payload["execution_identity"] = self.execution_identity.to_dict()
+        return payload
 
     @classmethod
     def from_dict(cls, payload: dict[str, Any]) -> "ScoringStepTrace":
@@ -74,6 +87,11 @@ class ScoringStepTrace:
             output_summary=dict(payload.get("output_summary") or {}),
             warnings=[str(warning) for warning in payload.get("warnings") or []],
             metadata=dict(payload.get("metadata") or {}),
+            execution_identity=(
+                GraphExecutionIdentity.from_dict(payload["execution_identity"])
+                if payload.get("execution_identity") is not None
+                else None
+            ),
         )
 
 
@@ -85,6 +103,7 @@ class ScoringTrace:
     target_type: str | None = None
     steps: list[ScoringStepTrace] = field(default_factory=list)
     metadata: dict[str, Any] = field(default_factory=dict)
+    execution_identity: GraphExecutionIdentity | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(
@@ -93,6 +112,23 @@ class ScoringTrace:
             [step if isinstance(step, ScoringStepTrace) else ScoringStepTrace.from_dict(dict(step)) for step in self.steps],
         )
         object.__setattr__(self, "metadata", dict(self.metadata or {}))
+        if self.execution_identity is not None and not isinstance(
+            self.execution_identity, GraphExecutionIdentity
+        ):
+            object.__setattr__(
+                self,
+                "execution_identity",
+                GraphExecutionIdentity.from_dict(self.execution_identity),
+            )
+        if self.execution_identity is not None:
+            mismatched = [
+                step.step_id
+                for step in self.steps
+                if step.execution_identity is not None
+                and step.execution_identity != self.execution_identity
+            ]
+            if mismatched:
+                raise ValueError("scoring step identity does not match trace identity")
 
     @classmethod
     def create(
@@ -102,6 +138,7 @@ class ScoringTrace:
         target_id: str | None = None,
         target_type: str | None = None,
         metadata: dict[str, Any] | None = None,
+        execution_identity: GraphExecutionIdentity | None = None,
     ) -> "ScoringTrace":
         return cls(
             trace_id=generate_id("score_trace"),
@@ -109,13 +146,14 @@ class ScoringTrace:
             target_id=target_id,
             target_type=target_type,
             metadata=dict(metadata or {}),
+            execution_identity=execution_identity,
         )
 
     def add_step(self, step: ScoringStepTrace) -> "ScoringTrace":
         return replace(self, steps=[*self.steps, step])
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        payload = {
             "trace_id": self.trace_id,
             "recipe_id": self.recipe_id,
             "target_id": self.target_id,
@@ -123,6 +161,9 @@ class ScoringTrace:
             "steps": [step.to_dict() for step in self.steps],
             "metadata": to_jsonable(self.metadata),
         }
+        if self.execution_identity is not None:
+            payload["execution_identity"] = self.execution_identity.to_dict()
+        return payload
 
     @classmethod
     def from_dict(cls, payload: dict[str, Any]) -> "ScoringTrace":
@@ -133,4 +174,9 @@ class ScoringTrace:
             target_type=str(payload["target_type"]) if payload.get("target_type") is not None else None,
             steps=[ScoringStepTrace.from_dict(dict(step)) for step in payload.get("steps") or []],
             metadata=dict(payload.get("metadata") or {}),
+            execution_identity=(
+                GraphExecutionIdentity.from_dict(payload["execution_identity"])
+                if payload.get("execution_identity") is not None
+                else None
+            ),
         )

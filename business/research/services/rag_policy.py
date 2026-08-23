@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from framework.harness.context.models import ContextGraphIdentity
 from framework.harness.rag.models import RAGBudget, RAGSessionSpec, RetrievalGoal
 
 from business.research.rag.models import ResearchRetrievalGoal
@@ -29,9 +30,7 @@ class ResearchRAGPolicyBuilder:
     def build_session_spec(
         self,
         *,
-        run_id: str,
-        workflow_id: str,
-        step_id: str,
+        graph_identity: ContextGraphIdentity,
         session_id: str,
         goal: ResearchRetrievalGoal,
         allowed_corpora: tuple[str, ...] = ("research_papers",),
@@ -42,9 +41,7 @@ class ResearchRAGPolicyBuilder:
         scope_metadata = _scope_metadata(goal)
         return RAGSessionSpec(
             session_id=session_id,
-            run_id=run_id,
-            workflow_id=workflow_id,
-            step_id=step_id,
+            graph_identity=graph_identity,
             goal=RetrievalGoal(
                 goal_id=goal.goal_id,
                 question=goal.question,
@@ -72,7 +69,16 @@ class ResearchRAGPolicyBuilder:
             budget=budget or RAGBudget.safe_default(),
             context_policy={"projection": "research_rag_context", "stable_prefix": False},
             generation_policy=dict(generation_policy or {}),
-            metadata={"paper_id": goal.paper_id, "run_id": run_id, **scope_metadata},
+            metadata={
+                "paper_id": goal.paper_id,
+                "run_id": graph_identity.run_id,
+                "graph_id": graph_identity.graph_id,
+                "graph_version": graph_identity.graph_version,
+                "graph_ref": graph_identity.graph_ref,
+                "graph_checksum": graph_identity.graph_checksum,
+                "stage_id": graph_identity.stage_id,
+                **scope_metadata,
+            },
         )
 
 

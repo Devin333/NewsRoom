@@ -152,22 +152,16 @@ def test_production_shaped_legacy_manifest_uses_owner_metadata_contract(
     tmp_path: Path,
 ) -> None:
     from framework.harness.artifacts.terminal_manifest import GraphTerminalManifest
-    from framework.workflow.runtime.manifest import validate_run_manifest
     from scripts.graph_only_migration.reader import BoundedLegacySourceReader
     from scripts.graph_only_migration.transformer import GraphHistoryTransformer
-    from tests.fixtures.workflow_runs import write_canonical_terminal_run
 
-    fixture = write_canonical_terminal_run(
-        tmp_path / "run-manifests",
-        run_id="run-001",
-        workflow_id="legacy-paper-analysis",
-        workflow_version="1.4.0",
-    )
-    manifest = dict(fixture.manifest)
+    manifest_root = tmp_path / "run-manifests"
+    shutil.copytree(_FIXTURE_ROOT / "run-manifests", manifest_root)
+    manifest_path = manifest_root / "run-001" / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     manifest["checkpoint_ref"] = "cp-001"
     manifest["latest_checkpoint_id"] = "cp-001"
-    validate_run_manifest(manifest, require_terminal_artifact=True)
-    fixture.manifest_path.write_text(
+    manifest_path.write_text(
         json.dumps(manifest, sort_keys=True),
         encoding="utf-8",
     )
@@ -191,20 +185,11 @@ def test_production_shaped_legacy_manifest_uses_owner_metadata_contract(
 
 def test_fixture_sources_remain_valid_for_legacy_and_migration_readers() -> None:
     from framework.agent.artifacts.models import ArtifactRef
-    from framework.events.canonical import StoredEvent
-    from framework.workflow.checkpoint.durable import (
-        durable_envelope_from_payload,
-        verify_durable_checkpoint_checksum,
-    )
-    from framework.workflow.runtime.manifest import validate_run_manifest
+    from scripts.graph_only_migration.reader import BoundedLegacySourceReader
 
-    event_rows = [
-        json.loads(line)
-        for line in (_FIXTURE_ROOT / "events/run-001.jsonl")
-        .read_text(encoding="utf-8")
-        .splitlines()
-    ]
-    stored_events = tuple(StoredEvent.from_dict(row) for row in event_rows)
+    legacy_event_records = BoundedLegacySourceReader().read(
+        _source_for_kind(LegacyRecordKind.WORKFLOW_EVENT)
+    )
     manifest_payload = json.loads(
         (_FIXTURE_ROOT / "run-manifests/run-001/manifest.json").read_text(
             encoding="utf-8"
@@ -233,9 +218,15 @@ def test_fixture_sources_remain_valid_for_legacy_and_migration_readers() -> None
         ).read_text(encoding="utf-8")
     )
 
-    assert [item.stream_sequence for item in stored_events] == [1, 2]
-    validate_run_manifest(manifest_payload, require_terminal_artifact=True)
-    assert verify_durable_checkpoint_checksum(checkpoint)
+    assert [item.value["stream_sequence"] for item in legacy_event_records] == [1, 2]
+    assert manifest_payload["schema_version"] == "newsroom.workflow_run_manifest.v1"
+    assert checkpoint_payload["schema_version"] == "workflow-checkpoint/v2"
+    assert BoundedLegacySourceReader().read(
+        _source_for_kind(LegacyRecordKind.RUN_MANIFEST)
+    )[0].value["run_id"] == "run-001"
+    assert BoundedLegacySourceReader().read(
+        _source_for_kind(LegacyRecordKind.WORKFLOW_CHECKPOINT)
+    )[0].value["checkpoint_id"] == "cp-001"
     assert artifact_payload["artifact_id"] == "report-artifact"
     assert cursor["workflow_checkpoint_id"] == "cp-001"
     assert iteration["workflow_checkpoint_id"] == "cp-001"

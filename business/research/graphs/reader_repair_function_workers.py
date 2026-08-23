@@ -115,6 +115,13 @@ class _ReaderRepairFunctionTask:
     step_id: str
     inputs: Mapping[str, Any]
     activity_attempt: int | None
+    graph_id: str | None = None
+    graph_version: str | None = None
+    graph_ref: str | None = None
+    graph_checksum: str | None = None
+    node_id: str | None = None
+    node_instance_id: str | None = None
+    activity_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -508,6 +515,13 @@ class _ReaderRepairFunctionWorkerBuilder:
             identity_scope_ref=authority.identity_scope_ref,
             subject_scope_ref=authority.subject_scope_ref,
             attempt=task.activity_attempt,
+            graph_id=task.graph_id,
+            graph_version=task.graph_version,
+            graph_ref=task.graph_ref,
+            graph_checksum=task.graph_checksum,
+            node_id=task.node_id,
+            node_instance_id=task.node_instance_id,
+            activity_id=task.activity_id,
         )
 
     def _run_authority(
@@ -609,6 +623,7 @@ def _parse_task(
             "Reader Repair Function task metadata must be an object",
             step_id=expected_step_id,
         )
+    context = _task_activity_context(value, run_id=run_id, step_id=expected_step_id)
     return _ReaderRepairFunctionTask(
         run_id=run_id,
         step_id=expected_step_id,
@@ -618,7 +633,45 @@ def _parse_task(
             run_id=run_id,
             step_id=expected_step_id,
         ),
+        graph_id=None if context is None else context.activity.graph_ref.graph_id,
+        graph_version=None if context is None else context.activity.graph_ref.identity_version,
+        graph_ref=None if context is None else context.activity.graph_ref.identity_ref.exact_ref,
+        graph_checksum=None if context is None else context.activity.graph_ref.checksum,
+        node_id=None if context is None else context.activity.node_id,
+        node_instance_id=None if context is None else context.activity.node_instance_id,
+        activity_id=None if context is None else context.activity.activity_id,
     )
+
+
+def _task_activity_context(
+    value: Mapping[str, Any],
+    *,
+    run_id: str,
+    step_id: str,
+) -> HarnessGraphActivityTaskContext | None:
+    raw_context = value.get(HARNESS_GRAPH_ACTIVITY_TASK_CONTEXT_KEY)
+    if raw_context is None:
+        return None
+    if not isinstance(raw_context, Mapping):
+        raise _worker_error(
+            "Reader Repair Harness activity identity must be an object",
+            step_id=step_id,
+        )
+    try:
+        context = HarnessGraphActivityTaskContext.from_dict(raw_context)
+    except (HarnessValidationError, TypeError, ValueError) as exc:
+        raise _worker_error(
+            "Reader Repair Harness activity context is invalid",
+            step_id=step_id,
+            error_code=getattr(exc, "code", None),
+        ) from exc
+    activity = context.activity
+    if activity.run_id != run_id or activity.node_id != step_id:
+        raise _worker_error(
+            "Reader Repair Harness activity context does not match the task",
+            step_id=step_id,
+        )
+    return context
 
 
 def _activity_attempt(

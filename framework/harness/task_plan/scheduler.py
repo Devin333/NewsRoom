@@ -264,50 +264,18 @@ class TaskPlanScheduler:
 def materialize_queue_task(
     instance: TaskInstance,
     *,
-    workflow_id: str | None = None,
     queue_name: str = "framework:queue:default",
 ) -> Any:
-    """Create a generic execution projection containing identity metadata only."""
-    if instance.is_graph_only:
-        if workflow_id is not None:
-            raise HarnessValidationError(
-                "Graph-only TaskPlan queue projection cannot carry legacy orchestration identity",
-                code="graph_task_plan_queue_workflow_alias_rejected",
-            )
-        return TaskPlanQueueProjection.for_instance(
-            instance,
-            queue_name=queue_name,
-        ).to_task()
-    if workflow_id is None:
+    """Create the exact Graph-only queue projection for one accepted attempt."""
+    if not instance.is_graph_only:
         raise HarnessValidationError(
-            "legacy TaskPlan queue projection requires explicit orchestration identity",
-            code="task_plan_queue_workflow_identity_missing",
+            "live TaskPlan queue projection requires Graph-only task identity",
+            code="legacy_task_plan_queue_projection_forbidden",
         )
-    from framework.workers.models.task import Task
-
-    metadata = {
-        "run_id": instance.run_id,
-        "workflow_id": workflow_id,
-        "stage_id": instance.stage_id,
-        "plan_id": instance.plan_id,
-        "plan_version": instance.plan_version,
-        "task_id": instance.task_id,
-        "task_instance_id": instance.task_instance_id,
-        "attempt": instance.attempt,
-        "task_checksum": instance.task_definition_checksum,
-        "worker_ref": instance.worker_ref,
-        "idempotency_key": instance.idempotency_key,
-        "fencing_token": instance.fencing_token,
-    }
-    return Task(
-        task_id=instance.task_instance_id,
-        task_type="harness_task_plan",
+    return TaskPlanQueueProjection.for_instance(
+        instance,
         queue_name=queue_name,
-        payload={},
-        metadata=metadata,
-        dedup_key=instance.idempotency_key,
-        max_attempts=1,
-    )
+    ).to_task()
 
 
 def task_instance_for_attempt(

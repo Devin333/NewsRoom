@@ -41,7 +41,7 @@ class ContextMaterializationRequest:
     retry_state_ref: str | None = None
     control_decision_refs: tuple[str, ...] = ()
     physical_profile_revision: str | None = None
-    step_id: str | None = None
+    stage_id: str | None = None
     diagnostic_metadata: Mapping[str, Any] = field(default_factory=dict, repr=False)
 
     def __post_init__(self) -> None:
@@ -51,7 +51,7 @@ class ContextMaterializationRequest:
                 field_name,
                 required_text(getattr(self, field_name), field=field_name),
             )
-        object.__setattr__(self, "step_id", optional_text(self.step_id, field="step_id"))
+        object.__setattr__(self, "stage_id", optional_text(self.stage_id, field="stage_id"))
         object.__setattr__(
             self,
             "output_contract_ref",
@@ -171,7 +171,7 @@ class ContextGroupMaterializer:
         )
         return ContextSemanticSnapshot(
             run_id=request.run_id,
-            step_id=request.step_id,
+            stage_id=request.stage_id,
             task_binding_ref=request.task_binding_ref,
             groups=groups_tuple,
             policy_revision=request.policy_revision,
@@ -187,10 +187,10 @@ class ContextGroupMaterializer:
         for segment in request.segments:
             source_refs = tuple(dict.fromkeys((segment.content_ref, *segment.provenance_refs)))
             semantic_metadata = {
-                "legacy_segment_id": segment.segment_id,
-                "legacy_segment_type": segment.segment_type.value,
-                "legacy_compression_level": segment.compression_level.value,
-                "legacy_token_estimate": segment.token_estimate,
+                "segment_id": segment.segment_id,
+                "segment_type": segment.segment_type.value,
+                "compression_level": segment.compression_level.value,
+                "token_estimate": segment.token_estimate,
             }
             if segment.segment_type is ContextSegmentType.GLOBAL_POLICY:
                 groups.append(
@@ -202,23 +202,23 @@ class ContextGroupMaterializer:
                         semantic_metadata=semantic_metadata,
                     )
                 )
-            elif segment.segment_type is ContextSegmentType.WORKFLOW:
+            elif segment.segment_type is ContextSegmentType.GRAPH:
                 groups.append(
                     _single_ref_group(
-                        kind=ContextGroupKind.WORKFLOW_CONTRACT,
+                        kind=ContextGroupKind.GRAPH_CONTRACT,
                         content_ref=segment.content_ref,
                         source_refs=source_refs,
-                        protection=(ContextProtectionReason.WORKFLOW_CONTRACT,),
+                        protection=(ContextProtectionReason.GRAPH_CONTRACT,),
                         semantic_metadata=semantic_metadata,
                     )
                 )
             elif segment.segment_type is ContextSegmentType.WORKER_CONTRACT:
                 groups.append(
                     _single_ref_group(
-                        kind=ContextGroupKind.WORKFLOW_CONTRACT,
+                        kind=ContextGroupKind.GRAPH_CONTRACT,
                         content_ref=segment.content_ref,
                         source_refs=source_refs,
-                        protection=(ContextProtectionReason.WORKFLOW_CONTRACT,),
+                        protection=(ContextProtectionReason.GRAPH_CONTRACT,),
                         semantic_metadata=semantic_metadata,
                     )
                 )

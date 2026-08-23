@@ -24,7 +24,7 @@ from interfaces.services.harness_graph_service import (
 
 _TOKEN = "harness-graph-secret"
 _AUTH_HEADERS = {"Authorization": f"Bearer {_TOKEN}"}
-_GRAPH_PATH = "/api/v1/runs/run-1/graph"
+_GRAPH_PATH = "/api/v2/graph-runs/run-1/graph"
 
 
 @dataclass

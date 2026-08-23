@@ -4,12 +4,13 @@ import logging
 from contextlib import contextmanager
 from threading import Condition, Lock
 from typing import Any, Callable
-from uuid import uuid4
 
 from business.research.application import AskPaperUseCase
+from business.research.domain import stable_research_id
 from business.research.rag.models import ResearchRetrievalGoal
 from business.research.rag.retrieval.paper_retriever import RetrievalRequest
 from business.research.services.tenant_visibility import chunk_visible_to_tenant, public_metrics
+from framework.harness.context.models import ContextGraphIdentity
 from framework.harness.rag.visibility import evidence_visible_to_tenant
 from interfaces.services.paper_rag_factory import PaperRagRuntimeResources
 from interfaces.services.paper_rag_transcript_store import SCHEMA_VERSION, PaperRagTranscriptFileStore
@@ -125,6 +126,7 @@ class PaperRagApplicationService:
         tenant_id: str | None = None,
         user_id: str | None = None,
         memory_namespace: str | None = None,
+        graph_identity: ContextGraphIdentity | None = None,
     ) -> dict[str, Any]:
         with self._operation():
             return self._rag_ask(
@@ -137,6 +139,7 @@ class PaperRagApplicationService:
                 tenant_id=tenant_id,
                 user_id=user_id,
                 memory_namespace=memory_namespace,
+                graph_identity=graph_identity,
             )
 
     def _rag_ask(
@@ -151,6 +154,7 @@ class PaperRagApplicationService:
         tenant_id: str | None,
         user_id: str | None,
         memory_namespace: str | None,
+        graph_identity: ContextGraphIdentity | None,
     ) -> dict[str, Any]:
         if generate and not gated:
             raise ValueError(
@@ -166,6 +170,7 @@ class PaperRagApplicationService:
                 tenant_id=tenant_id,
                 user_id=user_id,
                 memory_namespace=memory_namespace,
+                graph_identity=graph_identity,
             )
         result = self._retriever.retrieve(RetrievalRequest(
             paper_id=paper_id,
@@ -214,26 +219,44 @@ class PaperRagApplicationService:
         tenant_id: str | None,
         user_id: str | None,
         memory_namespace: str | None,
+        graph_identity: ContextGraphIdentity | None,
     ) -> dict[str, Any]:
+        if not isinstance(graph_identity, ContextGraphIdentity):
+            raise ValueError(
+                "Graph-bound paper RAG generation requires an exact Graph activity identity"
+            )
+        if not graph_identity.has_physical_activity:
+            raise ValueError(
+                "Graph-bound paper RAG generation requires a physical activity identity"
+            )
         session = self._session_factory(
             with_reranker=self._with_reranker,
             with_answer_worker=True,
         )
-        run_suffix = uuid4().hex[:12]
         goal = self._ask_use_case.build_paper_ask_goal(
             paper_id=paper_id,
             question=question,
-            goal_id=f"paper-rag-ask-{run_suffix}",
+            goal_id=stable_research_id(
+                "paper_rag_ask",
+                graph_identity.run_id,
+                graph_identity.activity_id,
+                paper_id,
+                question,
+            ),
             tenant_id=tenant_id,
             user_id=user_id,
             memory_namespace=memory_namespace,
         )
         result = session.run(
             goal,
-            run_id=f"paper-rag-ask-run-{run_suffix}",
-            workflow_id="research.paper_rag_ask",
-            step_id="rag_ask",
-            session_id=f"paper-rag-ask-session-{run_suffix}",
+            graph_identity=graph_identity,
+            session_id=stable_research_id(
+                "paper_rag_session",
+                graph_identity.run_id,
+                graph_identity.activity_id,
+                paper_id,
+                question,
+            ),
             current_section_index=section_index,
         )
         transcript_artifact = _persist_transcript_best_effort(

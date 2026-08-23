@@ -37,11 +37,10 @@ FORBIDDEN_SUBAGENT_RESULT_KEYS = frozenset(
         "write_memory",
         "publish_artifact",
         "promote_skill",
-        "halt_workflow",
+        "halt_graph",
     }
 )
 
-SUBAGENT_INVOCATION_SCHEMA_V2 = "newsroom.subagent-invocation/v2"
 SUBAGENT_INVOCATION_SCHEMA_V3 = "newsroom.subagent-invocation/v3"
 
 
@@ -156,8 +155,7 @@ class SubAgentInvocation:
     invocation_id: str
     parent_run_id: str
     child_run_id: str
-    workflow_id: str | None
-    step_id: str
+    stage_id: str
     task_id: str
     task_instance_id: str
     attempt: int
@@ -166,16 +164,16 @@ class SubAgentInvocation:
     input_refs: tuple[str, ...]
     context_envelope: SubAgentContextEnvelope
     budget_snapshot: HarnessBudgetSnapshot
+    attempt_identity: SubAgentAttemptIdentity
     metadata: dict[str, Any] = field(default_factory=dict)
-    attempt_identity: SubAgentAttemptIdentity | None = None
-    schema_version: str | None = None
+    schema_version: str = SUBAGENT_INVOCATION_SCHEMA_V3
 
     def __post_init__(self) -> None:
         for field_name in (
             "invocation_id",
             "parent_run_id",
             "child_run_id",
-            "step_id",
+            "stage_id",
             "task_id",
             "task_instance_id",
         ):
@@ -192,42 +190,27 @@ class SubAgentInvocation:
             raise HarnessValidationError("context_envelope must be SubAgentContextEnvelope")
         if not isinstance(self.budget_snapshot, HarnessBudgetSnapshot):
             raise HarnessValidationError("budget_snapshot must be HarnessBudgetSnapshot")
-        if self.schema_version is None:
-            if not isinstance(self.workflow_id, str) or not self.workflow_id.strip():
-                raise HarnessValidationError("workflow_id is required")
-            if self.attempt_identity is not None:
-                raise HarnessValidationError(
-                    "legacy SubAgent invocation cannot carry Graph-only identity",
-                    code="subagent_invocation_identity_schema_mismatch",
-                )
-        elif self.schema_version == SUBAGENT_INVOCATION_SCHEMA_V2:
+        if self.schema_version != SUBAGENT_INVOCATION_SCHEMA_V3:
             raise HarnessValidationError(
-                "v2 SubAgent invocation is read-only durable evidence and cannot be dispatched",
+                "unsupported SubAgent invocation schema",
+                code="subagent_invocation_schema_unsupported",
+            )
+        if (
+            not isinstance(self.attempt_identity, SubAgentAttemptIdentity)
+            or self.attempt_identity.schema_version != SUBAGENT_ATTEMPT_IDENTITY_SCHEMA_V3
+        ):
+            raise HarnessValidationError(
+                "Graph-only SubAgent invocation requires Graph v3 attempt identity",
                 code="subagent_invocation_identity_schema_mismatch",
             )
-        elif self.schema_version == SUBAGENT_INVOCATION_SCHEMA_V3:
-            if self.workflow_id is not None:
-                raise HarnessValidationError(
-                    "Graph-only SubAgent invocation cannot carry workflow_id",
-                    code="subagent_invocation_identity_schema_mismatch",
-                )
-            if (
-                not isinstance(self.attempt_identity, SubAgentAttemptIdentity)
-                or not self.attempt_identity.is_graph_only
-                or self.attempt_identity.schema_version
-                != SUBAGENT_ATTEMPT_IDENTITY_SCHEMA_V3
-            ):
-                raise HarnessValidationError(
-                    "Graph-only SubAgent invocation requires Graph-only attempt identity",
-                    code="subagent_invocation_identity_schema_mismatch",
-                )
+        else:
             mismatches = tuple(
                 field_name
                 for field_name, invocation_value, identity_value in (
                     ("invocation_id", self.invocation_id, self.attempt_identity.invocation_id),
                     ("parent_run_id", self.parent_run_id, self.attempt_identity.parent_run_id),
                     ("child_run_id", self.child_run_id, self.attempt_identity.child_run_id),
-                    ("step_id", self.step_id, self.attempt_identity.stage_id),
+                    ("stage_id", self.stage_id, self.attempt_identity.stage_id),
                     ("task_id", self.task_id, self.attempt_identity.task_id),
                     (
                         "task_instance_id",
@@ -278,6 +261,10 @@ class SubAgentInvocation:
                 "stage_binding_checksum": self.attempt_identity.stage_binding_checksum,
                 "stage_identity_schema": self.attempt_identity.stage_identity_schema,
                 "stage_identity_checksum": self.attempt_identity.stage_identity_checksum,
+                "node_id": self.attempt_identity.node_id,
+                "node_instance_id": self.attempt_identity.node_instance_id,
+                "activity_id": self.attempt_identity.activity_id,
+                "activity_attempt": self.attempt_identity.activity_attempt,
                 "task_id": self.attempt_identity.task_id,
                 "task_instance_id": self.attempt_identity.task_instance_id,
                 "attempt": self.attempt_identity.attempt,
@@ -304,44 +291,18 @@ class SubAgentInvocation:
                     "Graph-only SubAgent invocation context content does not match its attempt",
                     code="subagent_invocation_identity_mismatch",
                 )
-        else:
-            raise HarnessValidationError(
-                "unsupported SubAgent invocation schema",
-                code="subagent_invocation_schema_unsupported",
-            )
         object.__setattr__(self, "input_refs", tuple(str(ref) for ref in self.input_refs))
         object.__setattr__(self, "metadata", dict(self.metadata))
         object.__setattr__(self, "observed_at", observed_at)
 
     @property
     def is_graph_only(self) -> bool:
-        return self.schema_version in {
-            SUBAGENT_INVOCATION_SCHEMA_V2,
-            SUBAGENT_INVOCATION_SCHEMA_V3,
-        }
+        return True
 
     def to_dict(self) -> dict[str, Any]:
-        if self.is_graph_only:
-            assert self.attempt_identity is not None
-            return {
-                "schema_version": self.schema_version,
-                "attempt_identity": self.attempt_identity.to_dict(),
-                "observed_at": format_datetime(self.observed_at),
-                "subagent_spec": self.subagent_spec.to_dict(),
-                "input_refs": list(self.input_refs),
-                "context_envelope": self.context_envelope.to_dict(),
-                "budget_snapshot": self.budget_snapshot.to_dict(),
-                "metadata": to_jsonable(self.metadata),
-            }
         return {
-            "invocation_id": self.invocation_id,
-            "parent_run_id": self.parent_run_id,
-            "child_run_id": self.child_run_id,
-            "workflow_id": self.workflow_id,
-            "step_id": self.step_id,
-            "task_id": self.task_id,
-            "task_instance_id": self.task_instance_id,
-            "attempt": self.attempt,
+            "schema_version": self.schema_version,
+            "attempt_identity": self.attempt_identity.to_dict(),
             "observed_at": format_datetime(self.observed_at),
             "subagent_spec": self.subagent_spec.to_dict(),
             "input_refs": list(self.input_refs),
@@ -575,7 +536,6 @@ class SubAgentResult:
 __all__ = [
     "FORBIDDEN_SUBAGENT_CONTEXT_KEYS",
     "FORBIDDEN_SUBAGENT_RESULT_KEYS",
-    "SUBAGENT_INVOCATION_SCHEMA_V2",
     "SUBAGENT_INVOCATION_SCHEMA_V3",
     "SubAgentContextEnvelope",
     "SubAgentHandoff",

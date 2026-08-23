@@ -10,7 +10,8 @@ PROJECT_ROOT = Path(__file__).resolve().parents[3]
 
 def test_persistence_package_exports_repository_symbols() -> None:
     assert persistence.PersistenceRepository is not None
-    assert persistence.WorkflowRunRecord is not None
+    assert persistence.GraphRunRecord is not None
+    assert not hasattr(persistence, "WorkflowRunRecord")
     assert persistence.ReportRecord is not None
     assert persistence.RunPersistenceBatch is not None
     assert persistence.RunPersistenceInput is not None

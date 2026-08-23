@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import hashlib
-import re
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -24,9 +23,19 @@ from framework.events.errors import (
     EventStoreCorruptionError,
 )
 from framework.events.ports import EventReaderPort, EventRuntimePort
+from framework.events.projection import (
+    GRAPH_EVENT_CONTEXT_EXTENSION,
+    GraphEventContext,
+    GraphEventExecutionVersion,
+)
+from framework.events.graph_phase import GraphPhaseTransitionRecord
+from framework.shared.graph_identity import (
+    GraphExecutionIdentity,
+    GraphRunIdentity,
+    GraphStageIdentity,
+)
 from framework.events.runtime.models import StreamReadRequest, StreamSequenceCursor
 from framework.events.runtime.activities import (
-    REPLAY_ACTIVITY_RECORD_SCHEMA,
     ActivityRecorder,
     ActivityRecordingHandle,
     RecordedActivityResolver,
@@ -49,24 +58,18 @@ from framework.events.runtime.history import (
 from framework.events.runtime.publisher import EventPublishRequest
 from framework.events.schema.security import SecurityClassification
 from framework.harness.control_plane.errors import HarnessValidationError
-from framework.harness.control_plane.event import HarnessEvent
+from framework.harness.control_plane.event import HarnessEvent, HARNESS_EVENT_SOURCE
 from framework.harness.control_plane.event_log import (
     HarnessEventLogEntry,
     event_log_entry_from_stored_event,
 )
 from framework.harness.control_plane.replay_history import (
     harness_activity_kind,
-    harness_activity_history,
+    harness_graph_activity_history,
     harness_event_history,
     harness_graph_history,
 )
-from framework.harness.control_plane.activity import (
-    HARNESS_ACTIVITY_CONTRACT,
-    HARNESS_ACTIVITY_EXTENSION,
-    HarnessActivity,
-    harness_activity_input_checksum,
-    validate_activity_call_marker,
-)
+from framework.harness.graph.activity import graph_activity_input_checksum
 from framework.harness.graph.decision import HarnessGraphDecision
 from framework.harness.control_plane.graph_evaluator import (
     HarnessAcceptedGraphObservation,
@@ -92,28 +95,23 @@ from framework.harness.graph.result_lineage import (
     HarnessGraphResultLineage,
 )
 from framework.harness.control_plane.graph_state import HarnessGraphState
-from framework.harness.control_plane.transition import (
-    HARNESS_EVENT_SOURCE,
-    HARNESS_TRANSITION_DATA_SCHEMA,
-    HARNESS_TRANSITION_EVENT_TYPE,
-    HarnessTransitionCommitted,
-)
 from framework.harness.quality.verdict import gate_result_evidence
 from framework.harness.graph.model import (
     HarnessContractReference,
     HarnessExecutableNode,
     NormalizedHarnessGraph,
 )
+from framework.harness.graph.reference import HarnessGraphReference
 from framework.harness.graph.versioning import (
+    GRAPH_ONLY_HARNESS_GRAPH_STATE_SCHEMA,
     HARNESS_GRAPH_REDUCER_VERSION,
-    HARNESS_GRAPH_STATE_SCHEMA,
 )
 from framework.harness.workers.result import HarnessWorkerResult, HarnessWorkerStatus
 from framework.events.budget import CanonicalBudgetEventSink, DurableBudgetFactResolver
 from framework.shared.time import format_datetime, parse_datetime
 
 
-HARNESS_DATA_SCHEMA = "newsroom.harness-event/v1"
+HARNESS_DATA_SCHEMA = "newsroom.harness-graph-event/v1"
 HARNESS_SAFE_PROJECTION = "harness-safe-summary/v1"
 HARNESS_GRAPH_INITIALIZED_EVENT_TYPE = "harness_graph_initialized"
 HARNESS_GRAPH_DECISION_EVENT_TYPE = "harness_graph_decision_committed"
@@ -128,11 +126,6 @@ HARNESS_GRAPH_EVENT_TYPES = frozenset(
         HARNESS_GRAPH_ACTIVITY_RESULT_EVENT_TYPE,
         HARNESS_GRAPH_OBSERVATION_EVENT_TYPE,
     }
-)
-_LEGACY_TRACE_ID_PATTERN = re.compile(
-    r"(?:[0-9a-fA-F]{16}|[0-9a-fA-F]{32}|"
-    r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-"
-    r"[0-9a-fA-F]{4}-[0-9a-fA-F]{12})\Z"
 )
 _HARNESS_STATUS_VALUES = frozenset(
     {
@@ -182,7 +175,7 @@ _HARNESS_TRANSITION_KINDS = frozenset(
 
 
 @dataclass(frozen=True, slots=True)
-class _ResolvedHarnessActivity:
+class _ResolvedGraphActivity:
     activity: ResolvedReplayActivity
     worker_result: HarnessWorkerResult
 
@@ -204,7 +197,7 @@ class _HarnessGraphProjectionRecord:
     state_summary: Mapping[str, Any]
     activated_node_instance_id: str | None
     projection_commit_checksum: str
-    state_schema_version: str = HARNESS_GRAPH_STATE_SCHEMA
+    state_schema_version: str = GRAPH_ONLY_HARNESS_GRAPH_STATE_SCHEMA
     reducer_version: str = HARNESS_GRAPH_REDUCER_VERSION
     schema_version: str = HARNESS_GRAPH_PROJECTION_RECORD_SCHEMA
     record_checksum: str = field(init=False)
@@ -281,7 +274,7 @@ class _HarnessGraphProjectionRecord:
                 "activated_node_instance_id",
             )
         )
-        if self.state_schema_version != HARNESS_GRAPH_STATE_SCHEMA:
+        if self.state_schema_version != GRAPH_ONLY_HARNESS_GRAPH_STATE_SCHEMA:
             raise HarnessValidationError(
                 "durable graph projection requires the pinned state schema",
                 code="unsupported_graph_projection_state_schema",
@@ -458,25 +451,40 @@ class HarnessEventCanonicalAdapter:
     def identity_scope_ref(self) -> str | None:
         return None if self.tenant_id is None else checksum_for(self.tenant_id)
 
-    def to_publish_request(self, event: HarnessEvent) -> EventPublishRequest:
+    def to_publish_request(
+        self,
+        event: HarnessEvent,
+        *,
+        graph_context: GraphEventContext | None = None,
+    ) -> EventPublishRequest:
         if not isinstance(event, HarnessEvent):
             raise TypeError("event must be HarnessEvent")
+        if event.event_type.value in {
+            "worker_called",
+            "worker_result_recorded",
+        }:
+            raise HarnessValidationError(
+                "flat Harness worker events are not supported; use Graph activity events",
+                code="legacy_harness_activity_event",
+            )
         run_id = validate_artifact_path_segment(event.run_id, field="run_id")
         _validate_payload_context(
             event.payload,
             run_id=run_id,
-            step_id=event.step_id,
+            node_id=event.node_id,
             event_type=event.event_type.value,
             occurred_at=event.occurred_at,
         )
         canonical_payload = _canonical_harness_payload(event)
+        context = graph_context or _event_graph_context(event)
+        if not isinstance(context, GraphEventContext):
+            raise HarnessValidationError(
+                "Graph event context is required for durable Harness events",
+                code="graph_event_context_missing",
+            )
         harness_extension: dict[str, Any] = {
             "metadata": _harness_metadata_projection(event.metadata)
         }
-        if event.trace_id is not None:
-            # A legacy trace id without a span id is correlation data only and
-            # must never be injected as canonical W3C trace context.
-            harness_extension["legacy_trace_id"] = _legacy_trace_id(event.trace_id)
         history = harness_event_history(
             event,
             data_schema=HARNESS_DATA_SCHEMA,
@@ -491,87 +499,85 @@ class HarnessEventCanonicalAdapter:
             event_type=event.event_type.value,
             data_schema=HARNESS_DATA_SCHEMA,
             source=HARNESS_EVENT_SOURCE,
-            subject=event.step_id or run_id,
+            subject=event.node_id or run_id,
             occurred_at=event.occurred_at,
             stream_id=f"run:{run_id}",
             correlation_id=run_id,
-            business_context=BusinessContext(
-                run_id=run_id,
-                workflow_id=_optional_metadata_text(event.metadata, "workflow_id"),
-                step_id=event.step_id,
-            ),
+            business_context=_graph_business_context(context),
             producer=self.producer,
             tenant_id=self.tenant_id,
             security_classification=self.security_classification,
             payload=canonical_payload,
             extensions={
                 "harness": harness_extension,
+                GRAPH_EVENT_CONTEXT_EXTENSION: context.to_dict(),
                 DETERMINISTIC_HISTORY_EXTENSION: history.to_dict(),
             },
         )
 
-    def to_activity_result_publish_request(
+    def to_graph_activity_result_publish_request(
         self,
-        activity: HarnessActivity,
+        activity: HarnessGraphActivity,
         recorded: RecordedActivityWrite,
+        *,
+        graph_context: GraphEventContext,
     ) -> EventPublishRequest:
-        if not isinstance(activity, HarnessActivity):
-            raise TypeError("activity must be HarnessActivity")
+        """Build the worker evidence event without projecting to step identity."""
+
+        if not isinstance(activity, HarnessGraphActivity):
+            raise TypeError("activity must be HarnessGraphActivity")
         if not isinstance(recorded, RecordedActivityWrite):
             raise TypeError("recorded must be RecordedActivityWrite")
+        if not isinstance(graph_context, GraphEventContext):
+            raise HarnessValidationError(
+                "Graph event context is required for activity result events",
+                code="graph_event_context_missing",
+            )
+        expected_identity = _graph_execution_identity_from_activity(activity)
+        if graph_context.execution_identity != expected_identity:
+            raise HarnessValidationError(
+                "Graph activity event context must carry the exact activity identity",
+                code="graph_activity_execution_identity_mismatch",
+            )
         recorded.verify_integrity()
         if self.tenant_id is None:
             raise HarnessValidationError(
-                "Harness activity history requires an authoritative tenant"
+                "Graph activity history requires an authoritative tenant"
             )
         if activity.identity_scope_ref != self.identity_scope_ref:
             raise HarnessValidationError(
-                "Harness activity identity scope conflicts with adapter tenant"
+                "Graph activity identity scope conflicts with adapter tenant"
             )
-        run_id = validate_artifact_path_segment(activity.run_id, field="run_id")
-        descriptor = recorded.record.activity
         outcome = recorded.record.outcome
-        _validate_harness_activity_descriptor(descriptor, activity)
-        if (
-            descriptor.tenant_id != self.tenant_id
-            or descriptor.security_classification
-            is not self.activity_security_classification
-        ):
-            raise EventStoreCorruptionError(
-                "Harness activity record security scope conflicts with adapter"
-            )
-        if outcome.status is ReplayActivityStatus.PENDING:
+        if outcome.status is ReplayActivityStatus.PENDING or outcome.completed_at is None:
             raise HarnessValidationError(
-                "Harness activity event requires a terminal record"
+                "Graph activity event requires a terminal record"
             )
-        completed_at = outcome.completed_at
-        if completed_at is None:  # pragma: no cover - terminal outcome invariant
-            raise HarnessValidationError("Harness activity completion time is missing")
         worker_status = _worker_status_from_outcome(outcome)
         return EventPublishRequest(
-            event_id=activity.result_event_id,
-            event_type="worker_result_recorded",
+            event_id=_scoped_harness_event_id(
+                _graph_worker_result_event_id(activity.activity_id),
+                identity_scope_ref=self.identity_scope_ref,
+            ),
+            event_type="graph_worker_result_recorded",
             data_schema=HARNESS_DATA_SCHEMA,
             source=HARNESS_EVENT_SOURCE,
-            subject=activity.step_id,
-            occurred_at=completed_at,
-            stream_id=f"run:{run_id}",
-            correlation_id=run_id,
-            business_context=BusinessContext(
-                run_id=run_id,
-                step_id=activity.step_id,
-            ),
+            subject=activity.node_id,
+            occurred_at=outcome.completed_at,
+            stream_id=f"run:{activity.run_id}",
+            correlation_id=activity.run_id,
+            business_context=_graph_business_context(graph_context),
             producer=self.producer,
             tenant_id=self.tenant_id,
             security_classification=self.activity_security_classification,
             content_type=recorded.recorded_ref.content_type,
             payload_ref=recorded.recorded_ref,
             extensions={
-                HARNESS_ACTIVITY_EXTENSION: {
+                "harness_graph_activity": {
                     "schema": recorded.record.schema,
                     "activity": activity.to_dict(),
                     "status": worker_status,
-                    "input_ref": descriptor.input_ref.to_dict(),
+                    "input_ref": recorded.record.activity.input_ref.to_dict(),
                     "output_ref": (
                         None
                         if outcome.output_ref is None
@@ -583,32 +589,32 @@ class HarnessEventCanonicalAdapter:
                         else outcome.error_ref.to_dict()
                     ),
                     "error_class": outcome.error_class,
-                    "accepted_at": format_datetime(descriptor.accepted_at),
+                    "accepted_at": format_datetime(recorded.record.activity.accepted_at),
                     "started_at": format_datetime(outcome.started_at),
-                    "completed_at": format_datetime(completed_at),
+                    "completed_at": format_datetime(outcome.completed_at),
                 },
-                DETERMINISTIC_HISTORY_EXTENSION: harness_activity_history(
-                    recorded
+                GRAPH_EVENT_CONTEXT_EXTENSION: graph_context.to_dict(),
+                DETERMINISTIC_HISTORY_EXTENSION: harness_graph_activity_history(
+                    recorded,
+                    graph_activity=activity,
                 ).to_dict(),
             },
         )
 
     def from_stored_event(self, event: StoredEvent) -> HarnessEvent:
         _validate_stored_harness_event(event)
-        if event.event_type == HARNESS_TRANSITION_EVENT_TYPE:
-            transition = HarnessTransitionCommitted.from_stored_event(event)
-            return HarnessEvent(
-                event_id=event.event_id,
-                event_type=event.event_type,
-                run_id=transition.run_id,
-                step_id=event.business_context.step_id,
-                payload=transition.to_payload(),
-                occurred_at=event.occurred_at,
-                deterministic_history=_stored_deterministic_history(event),
+        context = _stored_graph_context(event)
+        if event.event_type == "graph_worker_result_recorded" and event.payload_ref is None:
+            raise EventStoreCorruptionError(
+                "Graph activity result is missing its recorded payload reference"
             )
         if event.payload_ref is not None:
+            if event.event_type != "graph_worker_result_recorded":
+                raise EventStoreCorruptionError(
+                    "stored Harness payload reference is not a Graph activity result"
+                )
             extension = thaw_canonical_json(
-                event.extensions.get(HARNESS_ACTIVITY_EXTENSION, {})
+                event.extensions.get("harness_graph_activity", {})
             )
             if not isinstance(extension, dict):
                 raise HarnessValidationError(
@@ -618,7 +624,7 @@ class HarnessEventCanonicalAdapter:
                 event_id=event.event_id,
                 event_type=event.event_type,
                 run_id=event.business_context.run_id or "",
-                step_id=event.business_context.step_id,
+                node_id=context.node_id,
                 payload={
                     "projection_schema": HARNESS_SAFE_PROJECTION,
                     "status": extension.get("status"),
@@ -636,11 +642,11 @@ class HarnessEventCanonicalAdapter:
             raise HarnessValidationError(
                 "stored Harness event requires business_context.run_id"
             )
-        step_id = event.business_context.step_id
+        node_id = _stored_harness_node_id(event, context, run_id=run_id)
         _validate_payload_context(
             payload,
             run_id=run_id,
-            step_id=step_id,
+            node_id=node_id,
             event_type=event.event_type,
             occurred_at=event.occurred_at,
         )
@@ -650,16 +656,14 @@ class HarnessEventCanonicalAdapter:
         metadata = extension.get("metadata", {})
         if not isinstance(metadata, dict):
             raise HarnessValidationError("stored Harness metadata must be an object")
-        legacy_trace_id = extension.get("legacy_trace_id")
         return HarnessEvent(
             event_id=event.event_id,
             event_type=event.event_type,
             run_id=run_id,
-            step_id=step_id,
+            node_id=node_id,
             payload=payload,
             metadata=metadata,
             occurred_at=event.occurred_at,
-            trace_id=str(legacy_trace_id) if legacy_trace_id is not None else None,
             deterministic_history=_stored_deterministic_history(event),
         )
 
@@ -699,38 +703,19 @@ class DurableHarnessEventPort:
         self.events: list[HarnessEvent] = []
         self.event_log_entries: list[HarnessEventLogEntry] = []
 
-    def create_activity(
-        self,
-        *,
-        run_id: str,
-        step_id: str,
-        attempt: int,
-        activity_type: str,
-        inputs: Mapping[str, Any],
-        contract_version: str = HARNESS_ACTIVITY_CONTRACT,
-        worker_version: str = "1",
-    ) -> HarnessActivity:
-        self.require_activity_storage()
-        return HarnessActivity.for_worker_call(
-            run_id=run_id,
-            step_id=step_id,
-            attempt=attempt,
-            activity_type=activity_type,
-            inputs=inputs,
-            identity_scope_ref=self._adapter.identity_scope_ref,
-            contract_version=contract_version,
-            worker_version=worker_version,
-        )
-
     def record(self, event: HarnessEvent) -> HarnessEvent:
-        request = self._adapter.to_publish_request(event)
+        request = self._adapter.to_publish_request(
+            event,
+            graph_context=self.graph_context_for_event(event),
+        )
         stored = self._runtime.publish(request)
         _validate_commit_result(stored, request)
         projected = self._adapter.from_stored_event(stored)
         log_entry = event_log_entry_from_stored_event(stored)
         self._on_canonical_event_committed(stored)
-        # These are compatibility/read projections. They intentionally advance
-        # only after EventRuntime.publish() returned a committed StoredEvent.
+        # Keep an in-process projection for callers that explicitly request the
+        # canonical event view. It is populated only after the durable commit;
+        # it is never an authority or a fallback reader.
         self.events.append(projected)
         self.event_log_entries.append(log_entry)
         return projected
@@ -755,16 +740,21 @@ class DurableHarnessEventPort:
                 "durable Harness worker execution requires an authoritative tenant"
             )
 
-    def accept_activity(
+    def accept_graph_activity(
         self,
-        activity: HarnessActivity,
+        activity: HarnessGraphActivity,
+        graph: NormalizedHarnessGraph,
         inputs: Mapping[str, Any],
         *,
         accepted_at: datetime,
         started_at: datetime,
     ) -> HarnessWorkerResult | None:
-        if not isinstance(activity, HarnessActivity):
-            raise TypeError("activity must be HarnessActivity")
+        """Accept a Graph activity without creating a flat step descriptor."""
+
+        if not isinstance(activity, HarnessGraphActivity):
+            raise TypeError("activity must be HarnessGraphActivity")
+        if not isinstance(graph, NormalizedHarnessGraph):
+            raise TypeError("graph must be NormalizedHarnessGraph")
         if not isinstance(inputs, Mapping):
             raise TypeError("inputs must be a mapping")
         self.require_activity_storage()
@@ -772,44 +762,61 @@ class DurableHarnessEventPort:
         assert self._adapter.tenant_id is not None
         if activity.identity_scope_ref != self._adapter.identity_scope_ref:
             raise HarnessValidationError(
-                "Harness activity identity scope conflicts with adapter tenant"
+                "Graph activity identity scope conflicts with adapter tenant"
             )
-        if harness_activity_input_checksum(inputs) != activity.input_checksum:
+        definition = next(
+            (item for item in graph.nodes if item.node_id == activity.node_id),
+            None,
+        )
+        if not isinstance(definition, HarnessExecutableNode):
+            raise EventStoreCorruptionError(
+                "Graph activity has no executable node definition"
+            )
+        if graph_activity_input_checksum(inputs) != activity.input_ref:
             raise EventReplayMismatchError(
-                sequence=activity.attempt,
-                reason="Harness accepted activity input conflicts with descriptor",
+                sequence=activity.causal_decision_sequence,
+                reason="Graph accepted activity input conflicts with descriptor",
+            )
+        worker_type = definition.metadata.get("worker_type")
+        if not isinstance(worker_type, str) or not worker_type.strip():
+            raise EventStoreCorruptionError(
+                "Graph executable node has no canonical worker type"
             )
         handle = self._activity_recorder.accept(
             activity_id=activity.activity_id,
-            activity_kind=harness_activity_kind(activity.activity_type),
+            activity_kind=harness_activity_kind(worker_type),
             input_value=inputs,
             idempotency_key=activity.idempotency_key,
             attempt=activity.attempt,
-            contract_version=activity.contract_version,
-            handler_version=activity.worker_version,
+            contract_version=activity.activity_ref.version,
+            handler_version=activity.worker_ref.version,
             accepted_at=accepted_at,
             started_at=started_at,
             context={
                 "run_id": activity.run_id,
-                "step_id": activity.step_id,
-                "activity_type": activity.activity_type,
-                "identity_scope_ref": activity.identity_scope_ref,
+                "graph_ref": activity.graph_ref.to_dict(),
+                "node_id": activity.node_id,
+                "node_instance_id": activity.node_instance_id,
+                "step_ref": activity.step_ref.to_dict(),
+                "worker_ref": activity.worker_ref.to_dict(),
+                "activity_ref": activity.activity_ref.to_dict(),
+                "activity_checksum": activity.activity_checksum,
+                "causal_decision_checksum": activity.causal_decision_checksum,
             },
             tenant_id=self._adapter.tenant_id,
             security_classification=self._adapter.activity_security_classification,
         )
-        if handle.activity.input_checksum != activity.input_checksum:
+        if handle.activity.input_checksum != activity.input_ref:
             raise EventStoreCorruptionError(
-                "recorded Harness activity input checksum conflicts with descriptor"
+                "recorded Graph activity input checksum conflicts with descriptor"
             )
         self._activity_handles[activity.activity_id] = handle
         if not handle.is_terminal:
             return None
-        resolved = self._resolve_recorded_activity(
+        return self._resolve_recorded_activity(
             handle.activity,
             handle.recorded_ref,
-        )
-        return resolved.worker_result
+        ).worker_result
 
     def resolve_graph_replay_activity(
         self,
@@ -825,59 +832,65 @@ class DurableHarnessEventPort:
             raise TypeError("graph must be NormalizedHarnessGraph")
         if inputs is not None and not isinstance(inputs, Mapping):
             raise TypeError("inputs must be a mapping or None")
-        expected = _legacy_graph_activity_descriptor(activity, graph)
         if inputs is not None and (
-            harness_activity_input_checksum(inputs) != expected.input_checksum
+            graph_activity_input_checksum(inputs) != activity.input_ref
         ):
             raise EventReplayMismatchError(
                 sequence=activity.causal_decision_sequence,
                 reason="graph replay activity input conflicts with its descriptor",
             )
         event = self._require_reader().get_event(
-            expected.result_event_id,
+            _scoped_harness_event_id(
+                _graph_worker_result_event_id(activity.activity_id),
+                identity_scope_ref=self._adapter.identity_scope_ref,
+            ),
             tenant_id=self._adapter.tenant_id,
         )
         if event is None:
             raise EventIncompleteHistoryError(
                 "graph activity result evidence is missing"
             )
-        return self._resolve_activity_event(
-            event,
-            expected=expected,
-        ).worker_result
+        return self._resolve_graph_activity_event(event, expected=activity).worker_result
 
-    def record_activity_result(
+    def record_graph_activity_result(
         self,
-        activity: HarnessActivity,
+        activity: HarnessGraphActivity,
+        graph: NormalizedHarnessGraph,
         result: HarnessWorkerResult,
         *,
         completed_at: datetime,
+        graph_context: GraphEventContext,
     ) -> HarnessEvent:
-        if not isinstance(activity, HarnessActivity):
-            raise TypeError("activity must be HarnessActivity")
+        """Record terminal worker evidence under the immutable Graph identity."""
+
+        if not isinstance(activity, HarnessGraphActivity):
+            raise TypeError("activity must be HarnessGraphActivity")
+        if not isinstance(graph, NormalizedHarnessGraph):
+            raise TypeError("graph must be NormalizedHarnessGraph")
         if not isinstance(result, HarnessWorkerResult):
             raise TypeError("result must be HarnessWorkerResult")
-        reader = self._require_reader()
-        existing = reader.get_event(
-            activity.result_event_id,
+        existing = self._require_reader().get_event(
+            _scoped_harness_event_id(
+                _graph_worker_result_event_id(activity.activity_id),
+                identity_scope_ref=self._adapter.identity_scope_ref,
+            ),
             tenant_id=self._adapter.tenant_id,
         )
         if existing is not None:
-            recovered = self._resolve_activity_event(existing, expected=activity)
+            recovered = self._resolve_graph_activity_event(existing, expected=activity)
             if recovered.worker_result.to_dict() != result.to_dict():
                 raise EventReplayMismatchError(
                     sequence=existing.stream_sequence,
-                    reason="Harness activity retry produced a different result",
+                    reason="Graph activity retry produced a different result",
                 )
             projected = self._adapter.from_stored_event(existing)
-            self._append_compatibility_projection(existing, projected)
+            self._append_local_projection(existing, projected)
             return projected
-
         self.require_activity_storage()
         handle = self._activity_handles.get(activity.activity_id)
         if handle is None:
             raise EventIncompleteHistoryError(
-                "Harness activity result has no accepted durable activity"
+                "Graph activity result has no accepted durable activity"
             )
         if result.status.value == "succeeded":
             recorded = handle.succeed(result.to_dict(), completed_at=completed_at)
@@ -887,16 +900,20 @@ class DurableHarnessEventPort:
                 result.to_dict(),
                 completed_at=completed_at,
             )
-        request = self._adapter.to_activity_result_publish_request(activity, recorded)
+        request = self._adapter.to_graph_activity_result_publish_request(
+            activity,
+            recorded,
+            graph_context=graph_context,
+        )
         stored = self._runtime.publish(request)
         _validate_commit_result(stored, request)
-        self._resolve_activity_event(stored, expected=activity)
+        self._resolve_graph_activity_event(stored, expected=activity)
         self._on_canonical_event_committed(stored)
         projected = self._adapter.from_stored_event(stored)
-        self._append_compatibility_projection(stored, projected)
+        self._append_local_projection(stored, projected)
         return projected
 
-    def _append_compatibility_projection(
+    def _append_local_projection(
         self,
         stored: StoredEvent,
         projected: HarnessEvent,
@@ -907,6 +924,9 @@ class DurableHarnessEventPort:
             entry.event_id == stored.event_id for entry in self.event_log_entries
         ):
             self.event_log_entries.append(event_log_entry_from_stored_event(stored))
+
+    def graph_context_for_event(self, event: HarnessEvent) -> GraphEventContext | None:
+        return _event_graph_context(event)
 
     def read_history(self, run_id: str) -> tuple[HarnessEvent, ...]:
         stored = self._read_stored_history(run_id)
@@ -943,7 +963,7 @@ class DurableHarnessEventPort:
                     through_sequence=high_watermark,
                     tenant_id=self._adapter.tenant_id,
                     data_schemas=frozenset(
-                        {HARNESS_DATA_SCHEMA, HARNESS_TRANSITION_DATA_SCHEMA}
+                        {HARNESS_DATA_SCHEMA}
                     ),
                 )
             )
@@ -953,49 +973,79 @@ class DurableHarnessEventPort:
             cursor = page.next_cursor
         return tuple(events)
 
-    def _resolve_activity_event(
+    def _resolve_graph_activity_event(
         self,
         event: StoredEvent,
         *,
-        expected: HarnessActivity,
-    ) -> _ResolvedHarnessActivity:
+        expected: HarnessGraphActivity,
+    ) -> _ResolvedGraphActivity:
+        """Resolve a Graph worker result without flattening its identity."""
+
         self.require_activity_storage()
         assert self._activity_store is not None
         assert self._adapter.tenant_id is not None
+        if not isinstance(expected, HarnessGraphActivity):
+            raise TypeError("expected must be HarnessGraphActivity")
         event.verify_integrity()
-        if (
-            event.event_id != expected.result_event_id
-            or event.event_type != "worker_result_recorded"
-            or event.data_schema != HARNESS_DATA_SCHEMA
-            or event.source != HARNESS_EVENT_SOURCE
-            or event.stream_id != f"run:{expected.run_id}"
-            or event.business_context.run_id != expected.run_id
-            or event.business_context.step_id != expected.step_id
-            or event.tenant_id != self._adapter.tenant_id
-            or event.security_classification
-            is not self._adapter.activity_security_classification
-            or event.payload_ref is None
-            or event.content_type != event.payload_ref.content_type
-        ):
+        context = _stored_graph_context(event)
+        identity_mismatches = {
+            "event_id": (
+                event.event_id,
+                _scoped_harness_event_id(
+                    _graph_worker_result_event_id(expected.activity_id),
+                    identity_scope_ref=self._adapter.identity_scope_ref,
+                ),
+            ),
+            "event_type": (event.event_type, "graph_worker_result_recorded"),
+            "data_schema": (event.data_schema, HARNESS_DATA_SCHEMA),
+            "source": (event.source, HARNESS_EVENT_SOURCE),
+            "stream_id": (event.stream_id, f"run:{expected.run_id}"),
+            "business_run_id": (event.business_context.run_id, expected.run_id),
+            "context_run_id": (context.identity.run_id, expected.run_id),
+            "context_node_id": (context.node_id, expected.node_id),
+            "context_node_instance_id": (
+                context.node_instance_id,
+                expected.node_instance_id,
+            ),
+            "tenant_id": (event.tenant_id, self._adapter.tenant_id),
+            "classification": (
+                event.security_classification.value,
+                self._adapter.activity_security_classification.value,
+            ),
+            "payload_ref": (event.payload_ref is not None, True),
+        }
+        if any(actual != expected_value for actual, expected_value in identity_mismatches.values()):
             raise EventStoreCorruptionError(
-                "committed Harness activity event identity is invalid"
+                "committed Graph activity event identity is invalid: "
+                + repr(
+                    {
+                        key: value
+                        for key, value in identity_mismatches.items()
+                        if value[0] != value[1]
+                    }
+                )
             )
         extension = thaw_canonical_json(
-            event.extensions.get(HARNESS_ACTIVITY_EXTENSION, {})
+            event.extensions.get("harness_graph_activity", {})
         )
         if not isinstance(extension, Mapping):
             raise EventStoreCorruptionError(
-                "committed Harness activity extension is invalid"
+                "committed Graph activity extension is invalid"
             )
         activity_value = extension.get("activity")
         if not isinstance(activity_value, Mapping):
             raise EventStoreCorruptionError(
-                "committed Harness activity descriptor is missing"
+                "committed Graph activity descriptor is missing"
             )
-        stored_activity = HarnessActivity.from_dict(activity_value)
+        try:
+            stored_activity = HarnessGraphActivity.from_dict(activity_value)
+        except (HarnessValidationError, TypeError, ValueError) as exc:
+            raise EventStoreCorruptionError(
+                "committed Graph activity descriptor is invalid"
+            ) from exc
         if stored_activity != expected:
             raise EventStoreCorruptionError(
-                "committed Harness activity descriptor conflicts with state"
+                "committed Graph activity descriptor conflicts with state"
             )
         try:
             history_value = thaw_canonical_json(
@@ -1007,45 +1057,41 @@ class DurableHarnessEventPort:
             history.verify_integrity()
         except (TypeError, ValueError) as exc:
             raise EventStoreCorruptionError(
-                "committed Harness activity history is corrupt"
+                "committed Graph activity history is corrupt"
             ) from exc
         descriptor = history.policy.expected_activity
         recorded_ref = history.policy.recorded_activity_ref
-        if (
-            descriptor is None
-            or recorded_ref is None
-            or recorded_ref != event.payload_ref
-        ):
+        if descriptor is None or recorded_ref is None or recorded_ref != event.payload_ref:
             raise EventStoreCorruptionError(
-                "committed Harness activity history is missing its recorded binding"
+                "committed Graph activity history is missing its recorded binding"
             )
-        _validate_harness_activity_descriptor(descriptor, expected)
-        if (
-            descriptor.tenant_id != self._adapter.tenant_id
-            or descriptor.security_classification
-            is not self._adapter.activity_security_classification
-        ):
+        expected_context = {
+            "run_id": expected.run_id,
+            "graph_ref": expected.graph_ref.to_dict(),
+            "node_id": expected.node_id,
+            "node_instance_id": expected.node_instance_id,
+            "step_ref": expected.step_ref.to_dict(),
+            "worker_ref": expected.worker_ref.to_dict(),
+            "activity_ref": expected.activity_ref.to_dict(),
+            "activity_checksum": expected.activity_checksum,
+            "causal_decision_checksum": expected.causal_decision_checksum,
+        }
+        if descriptor.activity_id != expected.activity_id or descriptor.idempotency_key != expected.idempotency_key:
             raise EventStoreCorruptionError(
-                "committed Harness activity descriptor has an invalid security scope"
+                "committed Graph activity replay descriptor identity is invalid"
+            )
+        if thaw_canonical_json(descriptor.context) != expected_context:
+            raise EventStoreCorruptionError(
+                "committed Graph activity replay context conflicts with state"
             )
         resolved = self._resolve_recorded_activity(descriptor, recorded_ref)
-        if resolved.activity.activity != descriptor:
-            raise EventStoreCorruptionError(
-                "committed Harness activity descriptor conflicts with recorded history"
-            )
-        _validate_harness_activity_extension(
-            extension,
-            expected=expected,
-            resolved=resolved.activity,
-            occurred_at=event.occurred_at,
-        )
         return resolved
 
     def _resolve_recorded_activity(
         self,
         descriptor: ReplayActivityDescriptor,
         recorded_ref: PayloadReference,
-    ) -> _ResolvedHarnessActivity:
+    ) -> _ResolvedGraphActivity:
         assert self._activity_store is not None
         registry = ReplayActivityRegistry()
         registry.register(descriptor.pinned_version)
@@ -1060,17 +1106,17 @@ class DurableHarnessEventPort:
             )
         except ReplayActivityMissingError as exc:
             raise EventIncompleteHistoryError(
-                "committed Harness activity result is unavailable"
+                "committed Graph activity result is unavailable"
             ) from exc
         except ReplayActivityIncompleteError as exc:
             raise EventIncompleteHistoryError(
-                "committed Harness activity result is incomplete"
+                "committed Graph activity result is incomplete"
             ) from exc
         except (ReplayActivityCorruptionError, ReplayActivityVersionError) as exc:
             raise EventStoreCorruptionError(
-                "committed Harness activity result is corrupt"
+                "committed Graph activity result is corrupt"
             ) from exc
-        return _ResolvedHarnessActivity(resolved, worker_result)
+        return _ResolvedGraphActivity(resolved, worker_result)
 
     def _require_reader(self) -> EventReaderPort:
         if self._reader is None:
@@ -1116,6 +1162,7 @@ class DurableHarnessTransitionPort(DurableHarnessEventPort):
         )
         self._graph_snapshot_lock = RLock()
         self._graph_snapshots: dict[str, HarnessGraphRecovery] = {}
+        self._graph_refs: dict[str, HarnessGraphReference] = {}
 
     def initialize_graph(
         self,
@@ -1131,6 +1178,7 @@ class DurableHarnessTransitionPort(DurableHarnessEventPort):
         if not isinstance(state, HarnessGraphState):
             raise TypeError("state must be HarnessGraphState")
         _validate_graph_adapter_scope(state, self._adapter)
+        self._graph_refs[state.run_id] = HarnessGraphReference.from_graph(graph)
         run_spec_ref = _graph_checksum(run_spec_checksum, "run_spec_checksum")
         raw_event_id = _graph_initial_event_id(state.run_id, graph.checksum)
         existing = self._graph_event_by_id(raw_event_id)
@@ -1347,6 +1395,7 @@ class DurableHarnessTransitionPort(DurableHarnessEventPort):
             commit=commit,
             canonical_head=canonical_head,
             raw_event_id=raw_event_id,
+            activity=activity,
         )
 
     def commit_graph_observation(
@@ -1492,6 +1541,8 @@ class DurableHarnessTransitionPort(DurableHarnessEventPort):
                 )
             if canonical_head == recovery.expected_last_sequence:
                 self._graph_snapshots[safe_run_id] = recovery
+                if recovery.state is not None:
+                    self._graph_refs[safe_run_id] = recovery.state.graph_ref
                 return recovery, canonical_head
             events = _read_canonical_stream(
                 reader,
@@ -1512,7 +1563,31 @@ class DurableHarnessTransitionPort(DurableHarnessEventPort):
                 adapter=self._adapter,
             )
             self._graph_snapshots[safe_run_id] = recovery
+            if recovery.state is not None:
+                self._graph_refs[safe_run_id] = recovery.state.graph_ref
             return recovery, canonical_head
+
+    def graph_context_for_event(self, event: HarnessEvent) -> GraphEventContext | None:
+        context = _event_graph_context(event)
+        if context is not None:
+            return context
+        graph_ref = self._graph_refs.get(event.run_id)
+        if graph_ref is None:
+            try:
+                recovery = self.recover_graph(event.run_id)
+            except Exception:
+                recovery = None
+            graph_ref = (
+                None
+                if recovery is None or recovery.state is None
+                else recovery.state.graph_ref
+            )
+        if graph_ref is None:
+            return None
+        return _graph_context_from_ref(
+            event.run_id,
+            graph_ref,
+        )
 
     def _on_canonical_event_committed(self, event: StoredEvent) -> None:
         run_id = event.business_context.run_id
@@ -1567,6 +1642,7 @@ class DurableHarnessTransitionPort(DurableHarnessEventPort):
         raw_event_id: str,
         graph: NormalizedHarnessGraph | None = None,
         run_spec_checksum: str | None = None,
+        activity: HarnessGraphActivity | None = None,
     ):
         request = _graph_publish_request(
             adapter=self._adapter,
@@ -1576,6 +1652,8 @@ class DurableHarnessTransitionPort(DurableHarnessEventPort):
             raw_event_id=raw_event_id,
             graph=graph,
             run_spec_checksum=run_spec_checksum,
+            graph_ref=self._graph_refs.get(run_id),
+            activity=activity,
         )
         stored = self._runtime.publish(
             request,
@@ -1608,6 +1686,8 @@ def _graph_publish_request(
     raw_event_id: str,
     graph: NormalizedHarnessGraph | None,
     run_spec_checksum: str | None,
+    graph_ref: HarnessGraphReference | None,
+    activity: HarnessGraphActivity | None = None,
 ) -> EventPublishRequest:
     safe_run_id = validate_artifact_path_segment(run_id, field="run_id")
     if event_type not in HARNESS_GRAPH_EVENT_TYPES:
@@ -1652,6 +1732,46 @@ def _graph_publish_request(
             "only graph initialization may carry pinned graph content",
             code="graph_commit_identity_mismatch",
         )
+    resolved_graph_ref = (
+        HarnessGraphReference.from_graph(graph)
+        if graph is not None
+        else graph_ref
+    )
+    if resolved_graph_ref is None:
+        if isinstance(commit, HarnessGraphDecisionCommit):
+            resolved_graph_ref = commit.decision.graph_ref
+        elif isinstance(commit, HarnessGraphProjectionCommit):
+            resolved_graph_ref = commit.state.graph_ref
+    if resolved_graph_ref is None:
+        raise HarnessValidationError(
+            "Graph commit event requires a pinned Graph identity",
+            code="graph_event_context_missing",
+        )
+    activity = (
+        commit.activity
+        if isinstance(commit, HarnessGraphProjectionCommit)
+        else activity
+    )
+    stage_id, node_instance_id = _graph_commit_node_scope(commit)
+    graph_context = _graph_context_from_ref(
+        safe_run_id,
+        resolved_graph_ref,
+        execution_identity=(
+            None
+            if activity is None
+            else _graph_execution_identity_from_activity(activity)
+        ),
+        stage_identity=(
+            None
+            if activity is not None or stage_id is None or node_instance_id is None
+            else _graph_stage_identity_from_ref(
+                safe_run_id,
+                resolved_graph_ref,
+                node_id=stage_id,
+                node_instance_id=node_instance_id,
+            )
+        ),
+    )
     return EventPublishRequest(
         event_id=_scoped_harness_event_id(
             raw_event_id,
@@ -1664,17 +1784,176 @@ def _graph_publish_request(
         occurred_at=commit.occurred_at,
         stream_id=f"run:{safe_run_id}",
         correlation_id=safe_run_id,
-        business_context=BusinessContext(run_id=safe_run_id),
+        business_context=_graph_business_context(graph_context),
         producer=adapter.producer,
         tenant_id=adapter.tenant_id,
         security_classification=adapter.security_classification,
         payload=payload,
         extensions={
+            GRAPH_EVENT_CONTEXT_EXTENSION: graph_context.to_dict(),
             DETERMINISTIC_HISTORY_EXTENSION: harness_graph_history(
                 data_schema=data_schema,
             ).to_dict()
         },
     )
+
+
+def _graph_context_from_ref(
+    run_id: str,
+    graph_ref: HarnessGraphReference,
+    *,
+    execution_identity: GraphExecutionIdentity | None = None,
+    stage_identity: GraphStageIdentity | None = None,
+) -> GraphEventContext:
+    if not isinstance(graph_ref, HarnessGraphReference):
+        raise HarnessValidationError(
+            "Graph event context requires a Graph reference",
+            code="graph_event_context_missing",
+        )
+    return GraphEventContext(
+        identity=GraphRunIdentity(
+            run_id=run_id,
+            graph_id=graph_ref.graph_id,
+            graph_version=graph_ref.identity_version,
+            graph_ref=f"{graph_ref.graph_id}@{graph_ref.identity_version}",
+            graph_checksum=graph_ref.checksum,
+        ),
+        execution_version=GraphEventExecutionVersion(
+            graph_schema_version=graph_ref.schema_version,
+            compiler_version=graph_ref.compiler_version,
+            normalized_graph_checksum=graph_ref.checksum,
+        ),
+        execution_identity=execution_identity,
+        stage_identity=stage_identity,
+    )
+
+
+def _graph_stage_identity_from_ref(
+    run_id: str,
+    graph_ref: HarnessGraphReference,
+    *,
+    node_id: str,
+    node_instance_id: str,
+) -> GraphStageIdentity:
+    return GraphStageIdentity(
+        run_id=run_id,
+        graph_id=graph_ref.graph_id,
+        graph_version=graph_ref.identity_version,
+        graph_ref=f"{graph_ref.graph_id}@{graph_ref.identity_version}",
+        graph_checksum=graph_ref.checksum,
+        node_id=node_id,
+        node_instance_id=node_instance_id,
+    )
+
+
+def _graph_commit_node_scope(
+    commit: Any,
+) -> tuple[str | None, str | None]:
+    if isinstance(commit, HarnessGraphDecisionCommit):
+        return commit.decision.node_id, commit.decision.node_instance_id
+    if isinstance(commit, HarnessGraphProjectionCommit):
+        activity = commit.activity
+        if activity is not None:
+            return activity.node_id, activity.node_instance_id
+    if isinstance(commit, HarnessGraphObservationCommit):
+        return commit.observation.node_id, commit.observation.node_instance_id
+    if isinstance(commit, HarnessGraphActivityResultCommit):
+        return None, commit.result.node_instance_id
+    return None, None
+
+
+def _graph_execution_identity_from_activity(
+    activity: HarnessGraphActivity,
+) -> GraphExecutionIdentity:
+    if not isinstance(activity, HarnessGraphActivity):
+        raise TypeError("activity must be HarnessGraphActivity")
+    graph_ref = activity.graph_ref
+    return GraphExecutionIdentity(
+        run_id=activity.run_id,
+        graph_id=graph_ref.graph_id,
+        graph_version=graph_ref.identity_version,
+        graph_ref=f"{graph_ref.graph_id}@{graph_ref.identity_version}",
+        graph_checksum=graph_ref.checksum,
+        node_id=activity.node_id,
+        node_instance_id=activity.node_instance_id,
+        activity_id=activity.activity_id,
+        attempt=activity.attempt,
+    )
+
+
+def _graph_business_context(
+    context: GraphEventContext,
+    *,
+    task_id: str | None = None,
+) -> BusinessContext:
+    """Bind the canonical event envelope to the same pinned Graph context."""
+
+    identity = context.identity
+    return BusinessContext(
+        run_id=identity.run_id,
+        graph_id=identity.graph_id,
+        graph_version=identity.graph_version,
+        graph_ref=f"{identity.graph_id}@{identity.graph_version}",
+        graph_checksum=identity.graph_checksum,
+        execution_identity=context.execution_identity,
+        stage_id=context.node_id,
+        node_instance_id=context.node_instance_id,
+        task_id=task_id,
+    )
+
+
+def _event_graph_context(event: HarnessEvent) -> GraphEventContext | None:
+    raw = event.metadata.get(GRAPH_EVENT_CONTEXT_EXTENSION)
+    if raw is None:
+        return None
+    if not isinstance(raw, Mapping):
+        raise HarnessValidationError(
+            "Harness event graph context must be an object",
+            code="graph_event_context_invalid",
+        )
+    try:
+        return GraphEventContext.from_dict(raw)
+    except (TypeError, ValueError, EventIntegrityError) as exc:
+        raise HarnessValidationError(
+            "Harness event graph context is invalid",
+            code="graph_event_context_invalid",
+        ) from exc
+
+
+def _stored_graph_context(event: StoredEvent) -> GraphEventContext:
+    raw = thaw_canonical_json(event.extensions.get(GRAPH_EVENT_CONTEXT_EXTENSION))
+    if not isinstance(raw, Mapping):
+        raise HarnessValidationError(
+            "stored Harness event graph context is missing",
+            code="graph_event_context_missing",
+        )
+    try:
+        context = GraphEventContext.from_dict(raw)
+    except (TypeError, ValueError) as exc:
+        raise HarnessValidationError(
+            "stored Harness event graph context is invalid",
+            code="graph_event_context_invalid",
+        ) from exc
+    if context.identity.run_id != event.business_context.run_id:
+        raise HarnessValidationError(
+            "stored Harness event graph context run identity conflicts",
+            code="graph_event_context_mismatch",
+        )
+    return context
+
+
+def _stored_harness_node_id(
+    event: StoredEvent,
+    context: GraphEventContext,
+    *,
+    run_id: str,
+) -> str | None:
+    if context.node_id is not None:
+        return context.node_id
+    subject = event.subject
+    if subject is None or subject == run_id:
+        return None
+    return subject
 
 
 def _stored_graph_commit(
@@ -2034,7 +2313,7 @@ def _graph_activity_from_dict(value: Mapping[str, Any]) -> HarnessGraphActivity:
 def _graph_activity_result_from_dict(
     value: Mapping[str, Any],
 ) -> HarnessGraphActivityResult:
-    legacy_fields = {
+    required_fields = {
         "schema_version",
         "activity_id",
         "node_instance_id",
@@ -2053,8 +2332,8 @@ def _graph_activity_result_from_dict(
     }
     actual_fields = set(value)
     allowed_fields = {
-        frozenset(legacy_fields),
-        frozenset((*legacy_fields, "result_lineage")),
+        frozenset(required_fields),
+        frozenset((*required_fields, "result_lineage")),
     }
     if actual_fields not in allowed_fields:
         raise EventStoreCorruptionError("graph activity result fields are invalid")
@@ -2677,7 +2956,7 @@ def _dispatched_graph_activity_id(
     activities: Mapping[str, HarnessGraphActivity],
     adapter: HarnessEventCanonicalAdapter,
 ) -> str | None:
-    if event.event_type == "worker_called":
+    if event.event_type == "graph_worker_called":
         payload = thaw_canonical_json(event.payload or {})
         if not isinstance(payload, Mapping):
             raise EventStoreCorruptionError(
@@ -2692,45 +2971,60 @@ def _dispatched_graph_activity_id(
                 "Graph worker call marker references an unknown activity"
             )
         activity = activities[value]
-        expected = _legacy_graph_activity_descriptor(activity, graph)
         try:
-            _validate_stored_harness_event(event)
-            validate_activity_call_marker(payload, expected_activity=expected)
+            _validate_graph_worker_call_marker(
+                payload,
+                activity=activity,
+                graph=graph,
+                event=event,
+                adapter=adapter,
+            )
         except (EventIntegrityError, HarnessValidationError, TypeError) as exc:
             raise EventStoreCorruptionError(
                 "Graph worker call marker is invalid"
             ) from exc
-        if (
-            payload.get("projection_schema") != HARNESS_SAFE_PROJECTION
-            or node_instance_id != activity.node_instance_id
-            or event.subject != expected.step_id
-            or event.correlation_id != expected.run_id
-            or event.business_context.run_id != expected.run_id
-            or event.business_context.step_id != expected.step_id
-            or event.tenant_id != adapter.tenant_id
-            or event.security_classification is not adapter.security_classification
-            or event.producer != adapter.producer
-        ):
-            raise EventStoreCorruptionError(
-                "Graph worker call marker context conflicts with activity"
-            )
-    elif event.event_type == "worker_result_recorded":
+    elif event.event_type == "graph_worker_result_recorded":
         extension = thaw_canonical_json(
-            event.extensions.get(HARNESS_ACTIVITY_EXTENSION, {})
+            event.extensions.get("harness_graph_activity", {})
         )
-        activity = extension.get("activity") if isinstance(extension, Mapping) else None
-        value = activity.get("activity_id") if isinstance(activity, Mapping) else None
+        activity_value = (
+            extension.get("activity") if isinstance(extension, Mapping) else None
+        )
+        value = (
+            activity_value.get("activity_id")
+            if isinstance(activity_value, Mapping)
+            else None
+        )
         if isinstance(value, str) and value in activities:
-            expected = _legacy_graph_activity_descriptor(activities[value], graph)
             try:
-                recorded = HarnessActivity.from_dict(activity)
+                recorded = HarnessGraphActivity.from_dict(activity_value)
             except (HarnessValidationError, TypeError, ValueError) as exc:
                 raise EventStoreCorruptionError(
                     "Graph worker result marker activity is invalid"
                 ) from exc
-            if recorded != expected:
+            if recorded != activities[value]:
                 raise EventStoreCorruptionError(
                     "Graph worker result marker conflicts with activity"
+                )
+            expected_event_id = _scoped_harness_event_id(
+                _graph_worker_result_event_id(value),
+                identity_scope_ref=adapter.identity_scope_ref,
+            )
+            if (
+                event.event_id != expected_event_id
+                or event.subject != recorded.node_id
+                or event.correlation_id != recorded.run_id
+                or event.business_context.run_id != recorded.run_id
+                or _stored_graph_context(event).node_id != recorded.node_id
+                or _stored_graph_context(event).node_instance_id
+                != recorded.node_instance_id
+                or event.tenant_id != adapter.tenant_id
+                or event.security_classification
+                is not adapter.activity_security_classification
+                or event.producer != adapter.producer
+            ):
+                raise EventStoreCorruptionError(
+                    "Graph worker result marker context conflicts with activity"
                 )
     else:
         return None
@@ -2739,35 +3033,59 @@ def _dispatched_graph_activity_id(
     return value
 
 
-def _legacy_graph_activity_descriptor(
+def _validate_graph_worker_call_marker(
+    payload: Mapping[str, Any],
+    *,
     activity: HarnessGraphActivity,
     graph: NormalizedHarnessGraph,
-) -> HarnessActivity:
+    event: StoredEvent,
+    adapter: HarnessEventCanonicalAdapter,
+) -> None:
+    if payload.get("projection_schema") != HARNESS_SAFE_PROJECTION:
+        raise EventStoreCorruptionError("Graph worker call marker projection is invalid")
     definition = next(
         (item for item in graph.nodes if item.node_id == activity.node_id),
         None,
     )
-    if not isinstance(definition, HarnessExecutableNode):
-        raise EventStoreCorruptionError(
-            "Graph activity has no executable node definition"
-        )
-    worker_type = definition.metadata.get("worker_type")
-    if not isinstance(worker_type, str) or not worker_type:
-        raise EventStoreCorruptionError(
-            "Graph executable node has no canonical worker type"
-        )
-    return HarnessActivity(
-        activity_id=activity.activity_id,
-        run_id=activity.run_id,
-        step_id=definition.step_id,
-        attempt=activity.attempt,
-        activity_type=worker_type,
-        idempotency_key=activity.idempotency_key,
-        input_checksum=activity.input_ref,
-        identity_scope_ref=activity.identity_scope_ref,
-        contract_version=HARNESS_ACTIVITY_CONTRACT,
-        worker_version=activity.worker_ref.version,
+    worker_type = (
+        definition.metadata.get("worker_type")
+        if isinstance(definition, HarnessExecutableNode)
+        else None
     )
+    expected = {
+        "worker_type": worker_type,
+        "activity_id": activity.activity_id,
+        "idempotency_key": activity.idempotency_key,
+        "activity_attempt": activity.attempt,
+        "activity_contract_version": activity.activity_ref.version,
+        "activity_checksum": activity.activity_checksum,
+        "graph_ref": activity.graph_ref.to_dict(),
+        "node_id": activity.node_id,
+        "node_instance_id": activity.node_instance_id,
+        "step_ref": activity.step_ref.to_dict(),
+        "worker_ref": activity.worker_ref.to_dict(),
+        "activity_ref": activity.activity_ref.to_dict(),
+        "activity_input_ref": activity.input_ref,
+    }
+    for field_name, expected_value in expected.items():
+        if payload.get(field_name) != expected_value:
+            raise EventStoreCorruptionError(
+                f"Graph worker call marker {field_name} conflicts with activity"
+            )
+    context = _stored_graph_context(event)
+    if (
+        event.subject != activity.node_id
+        or event.correlation_id != activity.run_id
+        or event.business_context.run_id != activity.run_id
+        or context.node_id != activity.node_id
+        or context.node_instance_id != activity.node_instance_id
+        or event.tenant_id != adapter.tenant_id
+        or event.security_classification is not adapter.security_classification
+        or event.producer != adapter.producer
+    ):
+        raise EventStoreCorruptionError(
+            "Graph worker call marker context conflicts with activity"
+        )
 
 
 def _graph_commit_subject(
@@ -2856,6 +3174,13 @@ def _graph_node_event_id(node_instance_id: str) -> str:
 def _graph_activity_result_event_id(activity_id: str) -> str:
     return (
         "harness-graph-activity-result:"
+        f"{_graph_required_text(activity_id, 'activity_id')}"
+    )
+
+
+def _graph_worker_result_event_id(activity_id: str) -> str:
+    return (
+        "harness-graph-worker-result:"
         f"{_graph_required_text(activity_id, 'activity_id')}"
     )
 
@@ -2959,24 +3284,42 @@ def _validate_stored_harness_event(event: StoredEvent) -> None:
     if not isinstance(event, StoredEvent):
         raise TypeError("event must be StoredEvent")
     event.verify_integrity()
-    expected_schema = (
-        HARNESS_TRANSITION_DATA_SCHEMA
-        if event.event_type == HARNESS_TRANSITION_EVENT_TYPE
-        else HARNESS_DATA_SCHEMA
-    )
-    if event.data_schema != expected_schema:
+    if event.data_schema != HARNESS_DATA_SCHEMA:
         raise HarnessValidationError("stored event is not a Harness event schema")
     if event.source != HARNESS_EVENT_SOURCE:
         raise HarnessValidationError(
             "stored Harness event has an unexpected producer source"
         )
+    if event.event_type in {"worker_called", "worker_result_recorded"}:
+        raise HarnessValidationError(
+            "flat Harness worker events are quarantined and cannot enter live history",
+            code="legacy_harness_activity_event",
+        )
+    context = _stored_graph_context(event)
+    if event.event_type == "graph_phase_transition_recorded":
+        payload = thaw_canonical_json(event.payload or {})
+        if not isinstance(payload, Mapping):
+            raise EventStoreCorruptionError("stored Graph phase payload must be an object")
+        try:
+            record = GraphPhaseTransitionRecord.from_dict(
+                payload.get("graph_phase_transition", {})
+            )
+            record.assert_envelope_sequence(event.stream_sequence)
+        except Exception as exc:
+            raise EventStoreCorruptionError(
+                "stored Graph phase transition is invalid"
+            ) from exc
+        if record.context.to_dict() != context.to_dict():
+            raise EventStoreCorruptionError(
+                "stored Graph phase context conflicts with canonical context"
+            )
 
 
 def _validate_payload_context(
     payload: Mapping[str, Any],
     *,
     run_id: str,
-    step_id: str | None,
+    node_id: str | None,
     event_type: str,
     occurred_at: Any,
 ) -> None:
@@ -2985,10 +3328,10 @@ def _validate_payload_context(
         raise HarnessValidationError(
             "Harness payload run_id conflicts with canonical business context"
         )
-    payload_step_id = payload.get("step_id")
-    if payload_step_id is not None and (step_id is None or payload_step_id != step_id):
+    payload_node_id = payload.get("node_id")
+    if payload_node_id is not None and (node_id is None or payload_node_id != node_id):
         raise HarnessValidationError(
-            "Harness payload step_id conflicts with canonical business context"
+            "Graph payload node_id conflicts with canonical business context"
         )
     duplicate_time_field = {
         "phase_recorded": "occurred_at",
@@ -3025,15 +3368,20 @@ def _canonical_harness_payload(event: HarnessEvent) -> dict[str, Any]:
     payload = thaw_canonical_json(event.payload)
     if not isinstance(payload, dict):
         raise HarnessValidationError("Harness payload must be an object")
+    event_type = event.event_type.value
+    if event_type == "graph_phase_transition_recorded":
+        record = GraphPhaseTransitionRecord.from_dict(payload)
+        return {"graph_phase_transition": record.to_dict()}
     # These values are authoritative in EventPublishRequest/business_context.
-    # Equal legacy duplicates are accepted by _validate_payload_context() above,
+    # Equal duplicate context fields are accepted by _validate_payload_context() above,
     # then removed so a new stored envelope has only one canonical owner.
     payload.pop("run_id", None)
-    payload.pop("step_id", None)
+    payload_node_id = payload.pop("node_id", None)
+    if payload_node_id is not None:
+        payload["node_id"] = payload_node_id
     payload.pop("occurred_at", None)
     payload.pop("decided_at", None)
     payload["projection_schema"] = HARNESS_SAFE_PROJECTION
-    event_type = event.event_type.value
     if event_type == "phase_recorded":
         payload["input_ref_checksums"] = _reference_checksums(
             payload.pop("input_refs", ()),
@@ -3053,14 +3401,14 @@ def _canonical_harness_payload(event: HarnessEvent) -> dict[str, Any]:
         if reason is not None:
             payload["reason_ref"] = _value_ref(reason)
         return payload
-    if event_type == "worker_called":
+    if event_type == "graph_worker_called":
         inputs = payload.pop("inputs", {})
         metadata = payload.pop("metadata", {})
         payload["input_ref"] = _value_ref(inputs)
         payload["input_count"] = len(inputs) if isinstance(inputs, Mapping) else 0
         payload["metadata_ref"] = _value_ref(metadata)
         return payload
-    if event_type == "worker_result_recorded":
+    if event_type == "graph_worker_result_recorded":
         output = payload.pop("output", {})
         artifacts = payload.pop("artifacts", ())
         diagnostics = payload.pop("diagnostics", {})
@@ -3170,7 +3518,7 @@ def _safe_side_effect_authorization_projection(value: Any) -> dict[str, Any]:
         "disposition",
         "idempotency_ref",
     }
-    legacy = compact | {
+    full_fields = compact | {
         "kind",
         "aggregate_verdict_ref",
         "atomic_group_ref",
@@ -3178,7 +3526,7 @@ def _safe_side_effect_authorization_projection(value: Any) -> dict[str, Any]:
         "effect_attempt_limit",
     }
     fields = set(value)
-    if fields != compact and fields != legacy:
+    if fields != compact and fields != full_fields:
         raise HarnessValidationError(
             "side-effect authorization projection fields are invalid"
         )
@@ -3195,7 +3543,7 @@ def _safe_side_effect_authorization_projection(value: Any) -> dict[str, Any]:
             raise HarnessValidationError(
                 f"side-effect authorization {field_name} must be a sha256 reference"
             )
-    if fields == legacy:
+    if fields == full_fields:
         if not _valid_checksum_ref(value.get("atomic_group_ref")):
             raise HarnessValidationError(
                 "side-effect authorization atomic_group_ref must be a sha256 reference"
@@ -3345,15 +3693,6 @@ def _reference_checksums(value: Any, *, field_name: str) -> list[str]:
     return [_value_ref(item) for item in value]
 
 
-def _legacy_trace_id(value: Any) -> str:
-    if not isinstance(value, str):
-        raise HarnessValidationError("legacy Harness trace_id must be a string")
-    normalized = value.strip()
-    if _LEGACY_TRACE_ID_PATTERN.fullmatch(normalized) is None:
-        raise HarnessValidationError("legacy Harness trace_id has an unsafe format")
-    return normalized.lower()
-
-
 def _value_ref(value: Any) -> str:
     return checksum_for(thaw_canonical_json(value))
 
@@ -3369,31 +3708,6 @@ def _scoped_harness_event_id(
         f"{identity_scope_ref}|{event_id}".encode("utf-8")
     ).hexdigest()
     return f"harness-event-v2:{digest}"
-
-
-def _validate_harness_activity_descriptor(
-    descriptor: ReplayActivityDescriptor,
-    expected: HarnessActivity,
-) -> None:
-    expected_context = {
-        "run_id": expected.run_id,
-        "step_id": expected.step_id,
-        "activity_type": expected.activity_type,
-        "identity_scope_ref": expected.identity_scope_ref,
-    }
-    if (
-        descriptor.activity_id != expected.activity_id
-        or descriptor.activity_kind is not harness_activity_kind(expected.activity_type)
-        or descriptor.input_checksum != expected.input_checksum
-        or descriptor.idempotency_key != expected.idempotency_key
-        or descriptor.attempt != expected.attempt
-        or descriptor.contract_version != expected.contract_version
-        or descriptor.handler_version != expected.worker_version
-        or thaw_canonical_json(descriptor.context) != expected_context
-    ):
-        raise EventStoreCorruptionError(
-            "committed Harness activity descriptor conflicts with state"
-        )
 
 
 def _worker_status_from_outcome(outcome: ReplayActivityOutcome) -> str:
@@ -3508,66 +3822,6 @@ def _worker_result_from_recorded_activity(
             "recorded Harness worker status conflicts with activity outcome"
         )
     return result
-
-
-def _validate_harness_activity_extension(
-    extension: Mapping[str, Any],
-    *,
-    expected: HarnessActivity,
-    resolved: ResolvedReplayActivity,
-    occurred_at: datetime,
-) -> None:
-    expected_fields = {
-        "schema",
-        "activity",
-        "status",
-        "input_ref",
-        "output_ref",
-        "error_ref",
-        "error_class",
-        "accepted_at",
-        "started_at",
-        "completed_at",
-    }
-    if set(extension) != expected_fields:
-        raise EventStoreCorruptionError(
-            "committed Harness activity extension fields are invalid"
-        )
-    try:
-        input_ref = PayloadReference.from_dict(extension["input_ref"])
-        output_ref = _optional_payload_reference(extension.get("output_ref"))
-        error_ref = _optional_payload_reference(extension.get("error_ref"))
-        accepted_at = parse_datetime(extension.get("accepted_at"))
-        started_at = parse_datetime(extension.get("started_at"))
-        completed_at = parse_datetime(extension.get("completed_at"))
-    except (KeyError, TypeError, ValueError) as exc:
-        raise EventStoreCorruptionError(
-            "committed Harness activity extension is corrupt"
-        ) from exc
-    if (
-        extension.get("schema") != REPLAY_ACTIVITY_RECORD_SCHEMA
-        or HarnessActivity.from_dict(extension["activity"]) != expected
-        or extension.get("status") != _worker_status_from_outcome(resolved.outcome)
-        or input_ref != resolved.activity.input_ref
-        or output_ref != resolved.outcome.output_ref
-        or error_ref != resolved.outcome.error_ref
-        or extension.get("error_class") != resolved.outcome.error_class
-        or accepted_at != resolved.activity.accepted_at
-        or started_at != resolved.outcome.started_at
-        or completed_at != resolved.outcome.completed_at
-        or occurred_at != resolved.outcome.completed_at
-    ):
-        raise EventStoreCorruptionError(
-            "committed Harness activity extension conflicts with recorded history"
-        )
-
-
-def _optional_payload_reference(value: Any) -> PayloadReference | None:
-    if value is None:
-        return None
-    if not isinstance(value, Mapping):
-        raise TypeError("payload reference must be an object")
-    return PayloadReference.from_dict(value)
 
 
 def _activity_extension_id(extension: Mapping[str, Any]) -> str:

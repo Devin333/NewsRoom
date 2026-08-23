@@ -3,7 +3,6 @@ from __future__ import annotations
 import pytest
 
 from framework.harness import (
-    ContextEnvelope,
     HarnessValidationError,
     SubAgentContextEnvelope,
     SubAgentResult,
@@ -48,6 +47,16 @@ def test_subagent_result_rejects_flow_control_fields() -> None:
 
 
 def test_subagent_context_only_contains_envelope_not_parent_raw_context() -> None:
-    envelope = ContextEnvelope(envelope_id="context://safe", stable_prefix={"policy": "ok"})
+    envelope = SubAgentContextEnvelope(
+        child_run_id="child",
+        parent_run_id="parent",
+        subagent_id="critic",
+        role="critic",
+        allowed_input_refs=("input://1",),
+        context_pack={"policy": "ok"},
+        memory_context_refs=(),
+        tool_policy_ref="tool-policy://child",
+        budget_snapshot={},
+    )
 
     assert "parent_raw_messages" not in envelope.to_dict()

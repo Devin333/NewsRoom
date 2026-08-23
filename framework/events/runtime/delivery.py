@@ -490,7 +490,7 @@ class DurableConsumerRegistry:
             raise EventConsumerIdempotencyError(
                 "subscription does not support idempotent out-of-order repair; "
                 "use a new subscription version with deterministic rebuild or "
-                "an authorized compensation workflow"
+                "an authorized compensation operation"
             )
         if not subscription.effect.performs_external_effects:
             return
@@ -2086,7 +2086,7 @@ def _generation_bucket(generation: int) -> str:
 
 def _consumer_metric_bucket(consumer_id: str) -> str:
     normalized = consumer_id.casefold()
-    for bucket in ("audit", "harness", "projection", "telemetry", "workflow"):
+    for bucket in ("audit", "graph", "harness", "projection", "telemetry"):
         if bucket in normalized:
             return bucket
     return "unknown"

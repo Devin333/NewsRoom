@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+from collections import OrderedDict
 from collections.abc import Callable, Mapping
 from contextvars import ContextVar
 from dataclasses import dataclass, replace
+from threading import Lock
 from typing import Any, Protocol, cast, get_args
 
 from framework.harness.rag.models import (
@@ -11,6 +13,7 @@ from framework.harness.rag.models import (
     RAGSessionSpec,
     RAGSessionStatus,
 )
+from framework.harness.context.models import ContextGraphIdentity
 from framework.harness.rag.session import RAGSessionResult
 
 from business.research.application.paper_rag_session import PaperRAGSession
@@ -38,10 +41,8 @@ RAGSessionFactory = Callable[[ChunkStorePort], _RAGSessionPort]
 @dataclass(frozen=True)
 class _RunChunkScope:
     paper_id: str
-    run_id: str
     session_id: str
-    workflow_id: str
-    step_id: str
+    graph_identity: ContextGraphIdentity
     tenant_id: str
     user_id: str
 
@@ -64,13 +65,19 @@ class _RunChunkScope:
             raise ValueError("RAG session declares conflicting user scope")
         return cls(
             paper_id=document.paper_id,
-            run_id=spec.run_id,
             session_id=spec.session_id,
-            workflow_id=spec.workflow_id,
-            step_id=spec.step_id,
+            graph_identity=spec.graph_identity,
             tenant_id=tenant_ids[0] if tenant_ids else "",
             user_id=user_ids[0] if user_ids else "",
         )
+
+    @property
+    def run_id(self) -> str:
+        return self.graph_identity.run_id
+
+    @property
+    def stage_id(self) -> str:
+        return self.graph_identity.stage_id
 
     @property
     def tenant_namespace(self) -> str:
@@ -79,6 +86,8 @@ class _RunChunkScope:
 
 class BoundedDocumentRAGRuntime:
     """Run one bounded Harness RAG child session over one accepted document."""
+
+    _CONTEXT_PACK_INDEX_LIMIT = 256
 
     def __init__(
         self,
@@ -106,10 +115,26 @@ class BoundedDocumentRAGRuntime:
             f"bounded_document_rag_last_context_pack_{id(self)}",
             default=None,
         )
+        # A ContextVar is correct for same-thread callers, but a Graph activity
+        # may execute in a worker thread while its result is inspected by the
+        # parent dispatcher. Keep a bounded, run-keyed projection for that
+        # cross-thread boundary instead of inferring ownership from a thread.
+        self._context_pack_index: OrderedDict[str, RAGContextPack] = OrderedDict()
+        self._context_pack_index_lock = Lock()
 
     @property
     def last_context_pack(self) -> RAGContextPack | None:
         return self._last_context_pack.get()
+
+    def context_pack_for_run(self, run_id: str) -> RAGContextPack | None:
+        """Return the committed context pack for an exact Graph run identity."""
+        if not isinstance(run_id, str) or not run_id.strip():
+            raise ValueError("run_id must be a non-empty string")
+        with self._context_pack_index_lock:
+            pack = self._context_pack_index.get(run_id)
+            if pack is not None:
+                self._context_pack_index.move_to_end(run_id)
+            return pack
 
     def run(
         self,
@@ -125,6 +150,9 @@ class BoundedDocumentRAGRuntime:
         # A failed invocation must never expose a context pack from an earlier run
         # in the same thread or async task.
         self._last_context_pack.set(None)
+        with self._context_pack_index_lock:
+            # A reused run id must never expose the previous execution's pack.
+            self._context_pack_index.pop(session_spec.run_id, None)
         scope = _RunChunkScope.from_spec(session_spec, document)
         source_refs = _validated_document_source_refs(session_spec, document)
         canonical_chunks = self._chunker.chunk(document, _parse_source(document))
@@ -149,6 +177,11 @@ class BoundedDocumentRAGRuntime:
             source_refs=source_refs,
         )
         self._last_context_pack.set(context_pack)
+        with self._context_pack_index_lock:
+            self._context_pack_index[session_spec.run_id] = context_pack
+            self._context_pack_index.move_to_end(session_spec.run_id)
+            while len(self._context_pack_index) > self._CONTEXT_PACK_INDEX_LIMIT:
+                self._context_pack_index.popitem(last=False)
         return context
 
 
@@ -310,10 +343,9 @@ def _scope_chunks(
             {
                 "canonical_chunk_id": canonical_id,
                 "physical_chunk_id": id_map[canonical_id],
-                "run_id": scope.run_id,
+                **scope.graph_identity.to_dict(),
+                "graph_identity": scope.graph_identity.to_dict(),
                 "session_id": scope.session_id,
-                "workflow_id": scope.workflow_id,
-                "step_id": scope.step_id,
                 "source_hash": document.source_hash,
                 "document_source_refs": list(document.lineage.source_refs),
                 "document_lineage": document_lineage,
@@ -461,10 +493,9 @@ def _project_result(
             metadata={"run_id": spec.run_id, "session_id": spec.session_id},
         ),
         metadata={
-            "run_id": spec.run_id,
+            **spec.graph_identity.to_dict(),
+            "graph_identity": spec.graph_identity.to_dict(),
             "session_id": spec.session_id,
-            "workflow_id": spec.workflow_id,
-            "step_id": spec.step_id,
             "tenant_id": scope.tenant_id,
             "user_id": scope.user_id,
             "memory_namespace": spec.allowed_memory_namespaces[0],
@@ -535,9 +566,8 @@ def _terminal_context_pack(
             "terminal evidence and gap state."
         ),
         metadata={
-            "run_id": spec.run_id,
-            "workflow_id": spec.workflow_id,
-            "step_id": spec.step_id,
+            **spec.graph_identity.to_dict(),
+            "graph_identity": spec.graph_identity.to_dict(),
             "session_id": spec.session_id,
             "status": result.status.value,
             "decision": result.decision.to_dict(),
@@ -619,6 +649,9 @@ def _sanitize_context_pack(
         ),
         metadata={
             **dict(pack.metadata),
+            **spec.graph_identity.to_dict(),
+            "graph_identity": spec.graph_identity.to_dict(),
+            "session_id": spec.session_id,
             "artifact_refs": artifact_refs,
             "evidence_trace": evidence_trace,
         },
@@ -683,6 +716,9 @@ def _scoped_evidence_trace(
             ]
             rows.append(
                 {
+                    **spec.graph_identity.to_dict(),
+                    "graph_identity": spec.graph_identity.to_dict(),
+                    "session_id": spec.session_id,
                     "status": status,
                     "evidence_id": candidate.evidence_id,
                     "evidence_type": candidate.evidence_type,
@@ -1002,13 +1038,22 @@ def _mapping_identity_conflicts(
     expected = {
         "session_id": spec.session_id,
         "run_id": spec.run_id,
-        "workflow_id": spec.workflow_id,
-        "step_id": spec.step_id,
+        "graph_id": spec.graph_identity.graph_id,
+        "graph_version": spec.graph_identity.graph_version,
+        "graph_ref": spec.graph_identity.graph_ref,
+        "graph_checksum": spec.graph_identity.graph_checksum,
+        "stage_id": spec.stage_id,
     }
-    return any(
+    if any(
         str(value.get(field) or "").strip()
         and str(value[field]).strip() != expected_value
         for field, expected_value in expected.items()
+    ):
+        return True
+    nested_identity = value.get("graph_identity")
+    return (
+        isinstance(nested_identity, Mapping)
+        and dict(nested_identity) != spec.graph_identity.to_dict()
     )
 
 

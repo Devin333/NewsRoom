@@ -10,7 +10,6 @@ from framework.harness.graph.activity import HarnessWorkerType
 from framework.harness.graph.model import HarnessExecutableNode, NormalizedHarnessGraph
 from framework.harness.graph.versioning import (
     GRAPH_ONLY_NORMALIZED_HARNESS_GRAPH_SCHEMA,
-    NORMALIZED_HARNESS_GRAPH_SCHEMA,
 )
 from framework.harness.task_plan.canonical import (
     canonical_payload_checksum,
@@ -23,10 +22,7 @@ from framework.harness.task_plan.schema import (
     DEFAULT_TASK_PLAN_SCHEMA_REGISTRY,
     GRAPH_ONLY_TASK_PLAN_STAGE_BINDING_SCHEMA,
     GRAPH_ONLY_VALIDATED_TASK_PLAN_SCHEMA,
-    TASK_PLAN_EVENT_SCHEMA_V1,
     TASK_PLAN_EVENT_SCHEMA_V2,
-    TASK_PLAN_STAGE_BINDING_SCHEMA,
-    VALIDATED_TASK_PLAN_SCHEMA,
     TaskPlanContractKind,
 )
 
@@ -64,12 +60,13 @@ class TaskPlanStageBinding:
     def __post_init__(self) -> None:
         if not isinstance(self.graph, NormalizedHarnessGraph):
             raise TypeError("graph must be NormalizedHarnessGraph")
-        expected_schema = (
-            GRAPH_ONLY_TASK_PLAN_STAGE_BINDING_SCHEMA
-            if self.graph.schema_version
-            == GRAPH_ONLY_NORMALIZED_HARNESS_GRAPH_SCHEMA
-            else TASK_PLAN_STAGE_BINDING_SCHEMA
-        )
+        if self.graph.schema_version != GRAPH_ONLY_NORMALIZED_HARNESS_GRAPH_SCHEMA:
+            raise HarnessValidationError(
+                "TaskPlan stage binding requires the live Graph v2 schema",
+                code="legacy_task_plan_graph_schema_forbidden",
+                details={"schema_version": self.graph.schema_version},
+            )
+        expected_schema = GRAPH_ONLY_TASK_PLAN_STAGE_BINDING_SCHEMA
         schema_version = (
             expected_schema if self.schema_version is None else self.schema_version
         )
@@ -153,12 +150,7 @@ class TaskPlanStageBinding:
                 code="dynamic_task_plan_schema_missing_or_inexact",
                 details={"stage_id": stage_id, "schema": str(task_plan_schema)},
             ) from exc
-        expected_task_plan_schema = (
-            GRAPH_ONLY_VALIDATED_TASK_PLAN_SCHEMA
-            if self.graph.schema_version
-            == GRAPH_ONLY_NORMALIZED_HARNESS_GRAPH_SCHEMA
-            else VALIDATED_TASK_PLAN_SCHEMA
-        )
+        expected_task_plan_schema = GRAPH_ONLY_VALIDATED_TASK_PLAN_SCHEMA
         if task_plan_schema != expected_task_plan_schema:
             raise HarnessValidationError(
                 "dynamic TaskPlan schema does not match its Graph identity",
@@ -222,12 +214,7 @@ class TaskPlanStageBinding:
                 code="dynamic_task_plan_support_inexact",
                 details={"stage_id": stage_id, "inexact": sorted(inexact)},
             )
-        expected_event_schema = (
-            TASK_PLAN_EVENT_SCHEMA_V2
-            if self.graph.schema_version
-            == GRAPH_ONLY_NORMALIZED_HARNESS_GRAPH_SCHEMA
-            else TASK_PLAN_EVENT_SCHEMA_V1
-        )
+        expected_event_schema = TASK_PLAN_EVENT_SCHEMA_V2
         if normalized_support["event_schema"] != expected_event_schema:
             raise HarnessValidationError(
                 "dynamic TaskPlan event schema does not match its Graph identity",
@@ -268,16 +255,6 @@ class TaskPlanStageBinding:
         )
 
     @property
-    def workflow_id(self) -> str:
-        if self.graph.schema_version != NORMALIZED_HARNESS_GRAPH_SCHEMA:
-            raise HarnessValidationError(
-                "Graph-only TaskPlan binding has no legacy orchestration identity",
-                code="legacy_task_plan_identity_forbidden",
-            )
-        assert self.graph.workflow_ref is not None
-        return self.graph.workflow_ref.contract_id
-
-    @property
     def graph_id(self) -> str:
         return self.graph.graph_id
 
@@ -299,22 +276,13 @@ class TaskPlanStageBinding:
             "graph_version": self.graph_version,
             "graph_checksum": self.graph_checksum,
         }
-        if self.graph.schema_version == GRAPH_ONLY_NORMALIZED_HARNESS_GRAPH_SCHEMA:
-            assert self.graph.graph_ref is not None
-            projection.update(
-                {
-                    "condition_policy_version": self.graph.condition_policy_version,
-                    "graph_ref": self.graph.graph_ref.exact_ref,
-                }
-            )
-        else:
-            assert self.graph.workflow_ref is not None
-            projection.update(
-                {
-                    "workflow_id": self.workflow_id,
-                    "workflow_ref": self.graph.workflow_ref.exact_ref,
-                }
-            )
+        assert self.graph.graph_ref is not None
+        projection.update(
+            {
+                "condition_policy_version": self.graph.condition_policy_version,
+                "graph_ref": self.graph.graph_ref.exact_ref,
+            }
+        )
         projection.update(
             {
                 "node_id": self.node_id,

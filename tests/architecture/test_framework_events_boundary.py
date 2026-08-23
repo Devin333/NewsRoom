@@ -12,7 +12,6 @@ PRODUCTION_ROOTS = tuple(
 )
 EVENT_CANDIDATE_CONSTRUCTION_BOUNDARIES = frozenset(
     {
-        "framework/events/migration.py",
         "framework/events/runtime/publisher.py",
     }
 )
@@ -57,94 +56,62 @@ def test_event_candidate_construction_stays_behind_security_projection() -> None
 
 
 def test_workflow_runner_cannot_reintroduce_post_run_event_indexing() -> None:
-    runner = PROJECT_ROOT / "framework" / "workflow" / "runtime" / "runner.py"
-    tree = ast.parse(runner.read_text(encoding="utf-8"), filename=str(runner))
-    defined_names = {
-        node.name
-        for node in ast.walk(tree)
-        if isinstance(node, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef))
-    }
-    imported_names = {
-        alias.name
-        for node in ast.walk(tree)
-        if isinstance(node, ast.ImportFrom)
-        for alias in node.names
-    }
-
-    assert defined_names.isdisjoint(
-        {"_index_events", "WorkflowEventRecord", "LocalJsonWorkflowEventStore"}
-    )
-    assert "event_store_from_env" not in imported_names
+    assert not (PROJECT_ROOT / "framework" / "workflow" / "runtime" / "runner.py").exists()
 
 
 def test_framework_legacy_event_recorders_are_not_public_writers() -> None:
-    recorder = EVENTS_ROOT / "recorder.py"
-    tree = ast.parse(recorder.read_text(encoding="utf-8"), filename=str(recorder))
-    class_names = {
-        node.name for node in ast.walk(tree) if isinstance(node, ast.ClassDef)
-    }
     events_init = (EVENTS_ROOT / "__init__.py").read_text(encoding="utf-8")
 
-    assert "EventRecord" not in class_names
-    assert "EventRecorder" not in class_names
+    assert not (EVENTS_ROOT / "recorder.py").exists()
     assert '"EventRecord"' not in events_init
     assert '"EventRecorder"' not in events_init
 
 
 def test_expired_event_compatibility_runtime_shims_are_removed() -> None:
     events_init = (EVENTS_ROOT / "__init__.py").read_text(encoding="utf-8")
-    subscriber = (EVENTS_ROOT / "subscriber.py").read_text(encoding="utf-8")
-    bus = (EVENTS_ROOT / "bus.py").read_text(encoding="utf-8")
 
     assert not (EVENTS_ROOT / "publisher.py").exists()
     assert not (EVENTS_ROOT / "replay.py").exists()
+    assert not (EVENTS_ROOT / "bus.py").exists()
+    assert not (EVENTS_ROOT / "envelope.py").exists()
+    assert not (EVENTS_ROOT / "event.py").exists()
+    assert not (EVENTS_ROOT / "filters.py").exists()
+    assert not (EVENTS_ROOT / "ordering.py").exists()
+    assert not (EVENTS_ROOT / "recorder.py").exists()
     for retired_name in (
+        "Event",
         "EventBus",
+        "EventEnvelope",
+        "EventFilter",
         "EventPublisher",
         "EventReplay",
+        "EventType",
         "FunctionEventSubscriber",
+        "InMemoryEventBus",
+        "InMemoryEventRecorder",
     ):
         assert f'"{retired_name}"' not in events_init
-    assert "class FunctionEventSubscriber" not in subscriber
-    assert "EventBus = InMemoryEventBus" not in bus
-    assert "legacy_callable" not in bus
 
-    for relative_path in (
-        "framework/workflow/__init__.py",
-        "framework/workflow/runtime/runner.py",
-        "framework/workflow/runtime/executor.py",
-        "framework/workflow/runtime/execution_context.py",
-    ):
-        source = (PROJECT_ROOT / relative_path).read_text(encoding="utf-8")
-        assert "EventBus" not in source
-        assert "event_bus" not in source
+    assert not any((PROJECT_ROOT / "framework/workflow").glob("*.py"))
 
 
-def test_legacy_postgres_event_writer_is_removed_but_migration_reader_remains() -> None:
+def test_legacy_postgres_event_writer_and_migration_reader_are_removed() -> None:
     postgres_root = PROJECT_ROOT / "infrastructure" / "storage" / "postgres"
     postgres_init = (postgres_root / "__init__.py").read_text(encoding="utf-8")
-    migration_reader = (
-        PROJECT_ROOT / "infrastructure" / "storage" / "events" / "migration_readers.py"
-    ).read_text(encoding="utf-8")
 
     assert not (postgres_root / "event_store.py").exists()
     assert "PostgresEventStore" not in postgres_init
-    assert "class PostgresEventMigrationReader" in migration_reader
-    assert "FROM workflow_events" in migration_reader
+    assert not (PROJECT_ROOT / "infrastructure/storage/events/migration_readers.py").exists()
 
 
 def test_legacy_storage_event_record_and_jsonl_writer_are_removed() -> None:
     events_root = PROJECT_ROOT / "infrastructure" / "storage" / "events"
     events_init = (events_root / "__init__.py").read_text(encoding="utf-8")
-    migration_reader = (events_root / "migration_readers.py").read_text(
-        encoding="utf-8"
-    )
 
     assert not (events_root / "models.py").exists()
     assert not (events_root / "local_json.py").exists()
     assert '"EventRecord"' not in events_init
     assert '"LocalJsonEventStore"' not in events_init
-    assert "def iter_jsonl_records" in migration_reader
 
 
 def _imported_modules(tree: ast.AST) -> list[str]:

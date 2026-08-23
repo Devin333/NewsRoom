@@ -4,6 +4,7 @@ from framework.harness.graph import (
     HarnessContractKind,
     HarnessContractReference,
     HarnessGraphDefinition,
+    HarnessGraphCompiler,
     HarnessGraphLeafBinding,
     HarnessGraphSpec,
     HarnessGraphTaskPlanStageBinding,
@@ -16,6 +17,11 @@ from framework.harness.graph import (
     StepRef,
     VerifiedAggregation,
 )
+from framework.harness.context.models import (
+    CONTEXT_GRAPH_TASK_PLAN_STAGE_IDENTITY_SCHEMA_V2,
+    ContextGraphIdentity,
+)
+from framework.events.canonical import checksum_for
 from framework.harness.task_plan.schema import (
     GRAPH_ONLY_VALIDATED_TASK_PLAN_SCHEMA,
 )
@@ -177,6 +183,63 @@ def _definition(
         terminal_side_effect_policy=(
             build_research_artifact_terminal_policy()
         ),
+    )
+
+
+def build_paper_analysis_context_graph_identity(
+    *,
+    run_id: str,
+    stage_id: str,
+    dynamic_task_plan: bool = False,
+) -> ContextGraphIdentity:
+    """Build the exact Graph identity used by Research child contexts."""
+
+    definition = (
+        build_dynamic_paper_analysis_graph_definition()
+        if dynamic_task_plan
+        else build_paper_analysis_graph_definition()
+    )
+    activities = {
+        activity.step_id: activity
+        for activity in definition.activities
+    }
+    if stage_id not in activities:
+        raise ValueError(f"Unknown Research Graph stage: {stage_id}")
+    graph = HarnessGraphCompiler().compile(definition).graph
+    stage_binding_checksum = checksum_for(
+        {
+            "definition_checksum": definition.definition_checksum,
+            "graph_checksum": graph.checksum,
+            "stage_id": stage_id,
+            "activity": activities[stage_id].to_dict(),
+        }
+    )
+    identity_projection = {
+        "schema_version": CONTEXT_GRAPH_TASK_PLAN_STAGE_IDENTITY_SCHEMA_V2,
+        "run_id": run_id,
+        "graph_schema_version": graph.schema_version,
+        "compiler_version": graph.compiler_version,
+        "condition_policy_version": graph.condition_policy_version,
+        "graph_id": graph.graph_id,
+        "graph_version": graph.graph_version,
+        "graph_checksum": graph.checksum,
+        "stage_id": stage_id,
+        "stage_binding_checksum": stage_binding_checksum,
+        "graph_ref": graph.graph_ref.exact_ref,
+    }
+    return ContextGraphIdentity(
+        run_id=run_id,
+        graph_id=graph.graph_id,
+        graph_version=graph.graph_version,
+        graph_ref=graph.graph_ref.exact_ref,
+        graph_schema_version=graph.schema_version,
+        compiler_version=graph.compiler_version,
+        condition_policy_version=graph.condition_policy_version,
+        graph_checksum=graph.checksum,
+        stage_id=stage_id,
+        stage_binding_checksum=stage_binding_checksum,
+        stage_identity_schema=CONTEXT_GRAPH_TASK_PLAN_STAGE_IDENTITY_SCHEMA_V2,
+        stage_identity_checksum=checksum_for(identity_projection),
     )
 
 

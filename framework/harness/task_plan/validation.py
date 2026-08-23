@@ -66,10 +66,6 @@ class TaskPlanValidationContext:
         object.__setattr__(self, "remaining_task_budget", budget)
 
     @property
-    def workflow_id(self) -> str:
-        return self.stage_identity.workflow_id
-
-    @property
     def graph_id(self) -> str:
         return self.stage_identity.graph_id
 
@@ -210,16 +206,7 @@ class TaskPlanValidator:
         for name in ("run_id", "stage_id", "graph_checksum"):
             if getattr(candidate, name) != getattr(context, name):
                 diagnostics.append(_diag(f"candidate_{name}_mismatch", f"candidate {name} does not match stage context", "identity", field=name))
-        if candidate.is_graph_only != context.stage_identity.is_graph_only:
-            diagnostics.append(
-                _diag(
-                    "task_plan_candidate_identity_schema_mismatch",
-                    "TaskPlan candidate identity schema does not match stage context",
-                    "identity",
-                    field="schema_version",
-                )
-            )
-        elif candidate.is_graph_only and not candidate.matches_stage_identity(
+        if not candidate.matches_stage_identity(
             context.stage_identity
         ):
             diagnostics.append(
@@ -228,18 +215,6 @@ class TaskPlanValidator:
                     "candidate Graph identity does not match stage context",
                     "identity",
                     field="stage_identity_checksum",
-                )
-            )
-        elif (
-            not candidate.is_graph_only
-            and candidate.workflow_id != context.workflow_id
-        ):
-            diagnostics.append(
-                _diag(
-                    "candidate_workflow_id_mismatch",
-                    "candidate workflow_id does not match stage context",
-                    "identity",
-                    field="workflow_id",
                 )
             )
         if candidate.stage_id != policy.stage_id:
@@ -386,7 +361,7 @@ class TaskPlanValidator:
             elif ref not in policy.allowed_input_refs or ref not in context.available_input_refs:
                 diagnostics.append(_diag("task_plan_input_reference_unavailable", "task input reference is not authorized and available in this stage", "dataflow", task_id=task.task_id, details={"ref": ref}))
         for ref in task.output_contract.metadata.values():
-            if isinstance(ref, str) and ref in {"route", "quality_passed", "publish_artifact", "write_memory", "halt_workflow"}:
+            if isinstance(ref, str) and ref in {"route", "quality_passed", "publish_artifact", "write_memory", "halt_graph"}:
                 diagnostics.append(_diag("forbidden_control_field", "task output metadata contains a control field", "forbidden", task_id=task.task_id))
 
     @staticmethod

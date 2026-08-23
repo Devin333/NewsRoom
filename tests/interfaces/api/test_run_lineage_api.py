@@ -11,7 +11,7 @@ def test_run_lineage_api_lists_lineage() -> None:
     fake_service = _FakeStorageService()
     client = TestClient(create_app(storage_service_factory=lambda: fake_service))
 
-    response = client.get("/api/v1/runs/run-1/lineage")
+    response = client.get("/api/v2/graph-runs/run-1/lineage")
     payload = response.json()
 
     assert response.status_code == 200
@@ -25,10 +25,10 @@ def test_run_lineage_api_queries_upstream_and_downstream() -> None:
     client = TestClient(create_app(storage_service_factory=lambda: fake_service))
 
     upstream_response = client.get(
-        "/api/v1/runs/run-1/lineage/upstream?target_type=evidence&target_id=ev-1"
+        "/api/v2/graph-runs/run-1/lineage/upstream?target_type=evidence&target_id=ev-1"
     )
     downstream_response = client.get(
-        "/api/v1/runs/run-1/lineage/downstream?source_type=source_item&source_id=raw-1"
+        "/api/v2/graph-runs/run-1/lineage/downstream?source_type=source_item&source_id=raw-1"
     )
 
     assert upstream_response.status_code == 200
@@ -48,7 +48,7 @@ def test_run_lineage_api_queries_upstream_and_downstream() -> None:
 def test_run_lineage_api_invalid_request_uses_unified_error() -> None:
     client = TestClient(create_app(storage_service_factory=lambda: _InvalidStorageService()))
 
-    response = client.get("/api/v1/runs/bad/lineage")
+    response = client.get("/api/v2/graph-runs/bad/lineage")
     payload = response.json()
 
     assert response.status_code == 400
@@ -74,7 +74,7 @@ def test_run_lineage_api_reads_real_local_json_store(tmp_path) -> None:
     )
 
     response = client.get(
-        "/api/v1/runs/run-1/lineage/upstream?target_type=report&target_id=run-1:final"
+        "/api/v2/graph-runs/run-1/lineage/upstream?target_type=report&target_id=run-1:final"
     )
     payload = response.json()
 

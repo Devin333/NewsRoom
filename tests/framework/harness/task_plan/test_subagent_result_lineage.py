@@ -58,7 +58,6 @@ from framework.harness import (
     task_plan_context_identities,
     task_instance_for_attempt,
 )
-from framework.harness.task_plan.store import TASK_PLAN_RESULT_SCHEMA_V1
 from framework.harness.graph import HarnessGraphCompiler, HarnessWorkerType
 from framework.harness.graph.bindings import HarnessWorkerBinding
 from framework.harness.graph.model import (
@@ -66,26 +65,41 @@ from framework.harness.graph.model import (
     HarnessContractReference,
 )
 from framework.harness.subagents.transcript import (
-    SUBAGENT_ATTEMPT_IDENTITY_SCHEMA_V2,
     SUBAGENT_CONTEXT_SCHEMA_V3,
     SUBAGENT_OUTPUT_SCHEMA_V3,
-    SUBAGENT_RECEIPT_SCHEMA_V2,
     SUBAGENT_RECEIPT_SCHEMA_V3,
     SUBAGENT_TRANSCRIPT_SCHEMA_V3,
     subagent_evidence_schemas,
 )
-from framework.harness.subagents.models import (
-    SUBAGENT_INVOCATION_SCHEMA_V2,
-    SUBAGENT_INVOCATION_SCHEMA_V3,
-)
+from framework.harness.subagents.models import SUBAGENT_INVOCATION_SCHEMA_V3
 from framework.harness.task_plan import task_plan_subagent_attempt_identity
 from framework.harness.task_plan import TASK_PLAN_REPLAY_REDUCER_VERSION_V2
+from framework.shared.graph_identity import GraphExecutionIdentity
 from infrastructure.storage.harness import FilesystemSubAgentTranscriptStore
 from infrastructure.storage.events import SQLiteEventStore
 from tests.fixtures.task_plan import build_task_plan_stage_binding
 
 
 ACCEPTED_AT = "2026-08-13T00:00:00Z"
+
+
+def _execution_identity(
+    plan,
+    instance,
+    *,
+    node_id: str | None = None,
+) -> GraphExecutionIdentity:
+    return GraphExecutionIdentity(
+        run_id=plan.run_id,
+        graph_id=plan.graph_id,
+        graph_version=plan.graph_version,
+        graph_ref=plan.graph_ref,
+        graph_checksum=plan.graph_checksum,
+        node_id=node_id or f"node-{plan.stage_id}",
+        node_instance_id=f"node-instance-{instance.task_instance_id}",
+        activity_id=f"activity-{instance.task_instance_id}",
+        attempt=1,
+    )
 
 
 class _CountingSubAgentWorker:
@@ -210,7 +224,7 @@ def _fixture(
         ),
     )
     stage_binding = build_task_plan_stage_binding(
-        workflow_id="lineage-workflow",
+        graph_id="lineage-graph",
         stage_id=policy.stage_id,
         policy_ref=policy.exact_ref,
         required_output_roles=policy.required_output_roles,
@@ -231,12 +245,13 @@ def _fixture(
         budget_request=policy.per_task_budget,
         retry_policy=TaskRetryPolicy(max_attempts=1),
     )
-    candidate = PlanCandidate(
+    stage_identity = TaskPlanStageIdentity(
+        "lineage-run",
+        stage_binding,
+    )
+    candidate = PlanCandidate.for_stage(
+        stage_identity=stage_identity,
         candidate_id="lineage-candidate",
-        run_id="lineage-run",
-        workflow_id="lineage-workflow",
-        stage_id="dynamic_stage",
-        graph_checksum=stage_binding.graph_checksum,
         input_context_refs=("document",),
         tasks=(task,),
         required_output_roles=("analysis.lineage",),
@@ -268,20 +283,29 @@ def _fixture(
         transcript_store=transcript_store,
         artifact_reference_verifier=artifact_reference_verifier,
     )
-    context_pack = ContextEnvelope(
+    binding = registry.resolve(task.worker_capability, policy)
+    resolved = plan.tasks[0]
+    instance = task_instance_for_attempt(plan, task.task_id, 1)
+    execution_identity = _execution_identity(
+        plan,
+        instance,
+        node_id=stage_binding.node_id,
+    )
+    graph_identity, task_identity = task_plan_context_identities(
+        plan,
+        instance,
+        execution_identity=execution_identity,
+    )
+    context_pack = ContextEnvelope.for_graph(
         envelope_id="lineage-context",
-        run_id=plan.run_id,
-        workflow_id=plan.workflow_id,
-        step_id=plan.stage_id,
+        graph_identity=graph_identity,
+        task_execution_identity=task_identity,
         phase="EXECUTE",
         worker_id="lineage-task-plan",
         worker_type=HarnessWorkerType.TASK_PLAN.value,
         dynamic_tail={"input_refs": ["document"]},
     )
     budget = HarnessBudgetSnapshot.from_budget(HarnessBudget.safe_default())
-    binding = registry.resolve(task.worker_capability, policy)
-    resolved = plan.tasks[0]
-    instance = task_instance_for_attempt(plan, task.task_id, 1)
 
     def invoke():
         child = adapter.invoke(
@@ -291,11 +315,13 @@ def _fixture(
             instance=instance,
             context_pack=context_pack,
             budget_snapshot=budget,
+            execution_identity=execution_identity,
         )
         return _worker_result_from_child(child)
 
-    def recover(_binding, active_instance):
+    def recover(_binding, active_instance, active_execution):
         assert active_instance == instance
+        assert active_execution == execution_identity
         child = adapter.recover(
             plan=plan,
             resolved_task=resolved,
@@ -303,6 +329,7 @@ def _fixture(
             instance=instance,
             context_pack=context_pack,
             budget_snapshot=budget,
+            execution_identity=execution_identity,
         )
         return None if child is None else _worker_result_from_child(child, recovered=True)
 
@@ -314,6 +341,7 @@ def _fixture(
         policy_ref=policy.exact_ref,
         accepted_at=ACCEPTED_AT,
         candidate=candidate,
+        execution_identity=execution_identity,
     )
     return {
         "adapter": adapter,
@@ -329,6 +357,7 @@ def _fixture(
         "artifact_reference_verifier": artifact_reference_verifier,
         "verifier": verifier,
         "instance": instance,
+        "execution_identity": execution_identity,
         "resolved": resolved,
         "invoke": invoke,
         "recover": recover,
@@ -401,7 +430,11 @@ def _graph_only_plan_for_fixture(fixture):
 
 
 def _graph_context_for_attempt(plan, instance, *, envelope_id: str) -> ContextEnvelope:
-    graph_identity, task_identity = task_plan_context_identities(plan, instance)
+    graph_identity, task_identity = task_plan_context_identities(
+        plan,
+        instance,
+        execution_identity=_execution_identity(plan, instance),
+    )
     return ContextEnvelope.for_graph(
         envelope_id=envelope_id,
         graph_identity=graph_identity,
@@ -524,48 +557,12 @@ def _committed_lineage(
             task=fixture["resolved"],
             instance=fixture["instance"],
             worker_result=worker_result,
+            execution_identity=fixture["execution_identity"],
         ),
     )
     store.append_result(record)
     fixture.update(store=store, worker_result=worker_result, record=record)
     return fixture
-
-
-def test_legacy_subagent_invocation_wire_contract_remains_unversioned(
-    tmp_path: Path,
-) -> None:
-    fixture = _fixture(tmp_path)
-    invocation = fixture["adapter"].build_invocation(
-        plan=fixture["plan"],
-        resolved_task=fixture["resolved"],
-        binding=fixture["binding"],
-        instance=fixture["instance"],
-        context_pack=fixture["context_pack"],
-        budget_snapshot=fixture["budget"],
-    )
-    payload = invocation.to_dict()
-
-    assert invocation.schema_version is None
-    assert invocation.attempt_identity is None
-    assert set(payload) == {
-        "attempt",
-        "budget_snapshot",
-        "child_run_id",
-        "context_envelope",
-        "input_refs",
-        "invocation_id",
-        "metadata",
-        "observed_at",
-        "parent_run_id",
-        "step_id",
-        "subagent_spec",
-        "task_id",
-        "task_instance_id",
-        "workflow_id",
-    }
-    assert canonical_payload_checksum(payload) == (
-        "sha256:e1ab8dff2fd0f5b4d3362ed246100af164d4e8233d2a5a28d08dcb7933008082"
-    )
 
 
 def test_graph_only_subagent_invocation_uses_accepted_plan_identity_and_recovery(
@@ -578,7 +575,11 @@ def test_graph_only_subagent_invocation_uses_accepted_plan_identity_and_recovery
         plan.tasks[0].task.worker_capability,
         policy,
     )
-    graph_identity, task_identity = task_plan_context_identities(plan, instance)
+    graph_identity, task_identity = task_plan_context_identities(
+        plan,
+        instance,
+        execution_identity=_execution_identity(plan, instance),
+    )
     context_pack = ContextEnvelope.for_graph(
         envelope_id="lineage-graph-context",
         graph_identity=graph_identity,
@@ -595,6 +596,7 @@ def test_graph_only_subagent_invocation_uses_accepted_plan_identity_and_recovery
         instance=instance,
         context_pack=context_pack,
         budget_snapshot=fixture["budget"],
+        execution_identity=_execution_identity(plan, instance),
     )
     expected_identity = task_plan_subagent_attempt_identity(
         plan,
@@ -607,7 +609,6 @@ def test_graph_only_subagent_invocation_uses_accepted_plan_identity_and_recovery
     payload = invocation.to_dict()
 
     assert invocation.schema_version == SUBAGENT_INVOCATION_SCHEMA_V3
-    assert invocation.workflow_id is None
     assert invocation.attempt_identity == expected_identity
     assert set(payload) == {
         "attempt_identity",
@@ -629,20 +630,10 @@ def test_graph_only_subagent_invocation_uses_accepted_plan_identity_and_recovery
         context_payload
     )
     assert canonical_payload_checksum(payload) == (
-        "sha256:5e84a83b64c430e1e6bfe107a6399290d728122eaf9edbb2f142578d33c31686"
+        "sha256:783f9ba724b62181bc7706fdf9e990828becbd71a8ec893f172c2c76e6b248b8"
     )
 
-    legacy_context = ContextEnvelope(
-        envelope_id="lineage-unbound-context",
-        run_id=plan.run_id,
-        workflow_id=None,
-        step_id=plan.stage_id,
-        phase="EXECUTE",
-        worker_id="lineage-task-plan",
-        worker_type=HarnessWorkerType.TASK_PLAN.value,
-    )
     for invalid_context in (
-        legacy_context,
         context_pack.to_dict(),
         ContextEnvelope.for_graph(
             envelope_id="lineage-wrong-attempt-context",
@@ -661,6 +652,7 @@ def test_graph_only_subagent_invocation_uses_accepted_plan_identity_and_recovery
                 instance=instance,
                 context_pack=invalid_context,
                 budget_snapshot=fixture["budget"],
+                execution_identity=_execution_identity(plan, instance),
             )
         assert context_error.value.code == "task_plan_result_identity_mismatch"
         assert fixture["worker"].calls == 0
@@ -672,6 +664,7 @@ def test_graph_only_subagent_invocation_uses_accepted_plan_identity_and_recovery
         instance=instance,
         context_pack=context_pack,
         budget_snapshot=fixture["budget"],
+        execution_identity=_execution_identity(plan, instance),
     )
     assert result.status is SubAgentStatus.SUCCEEDED
     assert fixture["worker"].calls == 1
@@ -699,6 +692,7 @@ def test_graph_only_subagent_invocation_uses_accepted_plan_identity_and_recovery
         instance=instance,
         context_pack=context_pack,
         budget_snapshot=fixture["budget"],
+        execution_identity=_execution_identity(plan, instance),
     )
     assert recovered is not None
     assert recovered.invocation_id == result.invocation_id
@@ -710,19 +704,8 @@ def test_graph_only_subagent_invocation_uses_accepted_plan_identity_and_recovery
     assert fixture["worker"].calls == 1
 
     with pytest.raises(HarnessValidationError) as invocation_error:
-        replace(invocation, workflow_id="legacy-workflow")
-    assert invocation_error.value.code == "subagent_invocation_identity_schema_mismatch"
-
-    with pytest.raises(HarnessValidationError) as context_error:
-        fixture["adapter"].build_invocation(
-            plan=plan,
-            resolved_task=plan.tasks[0],
-            binding=binding,
-            instance=instance,
-            context_pack=replace(context_pack, workflow_id="legacy-workflow"),
-            budget_snapshot=fixture["budget"],
-        )
-    assert context_error.value.code == "context_envelope_identity_schema_mismatch"
+        replace(invocation, schema_version="newsroom.subagent-invocation/v2")
+    assert invocation_error.value.code == "subagent_invocation_schema_unsupported"
 
 
 def test_success_and_failure_events_carry_complete_typed_lineage(tmp_path: Path) -> None:
@@ -781,7 +764,11 @@ def test_graph_only_subagent_invocation_rejects_forged_task_plan_identity_before
         plan.tasks[0].task.worker_capability,
         policy,
     )
-    graph_identity, task_identity = task_plan_context_identities(plan, instance)
+    graph_identity, task_identity = task_plan_context_identities(
+        plan,
+        instance,
+        execution_identity=_execution_identity(plan, instance),
+    )
     context_pack = ContextEnvelope.for_graph(
         envelope_id="lineage-direct-invocation-context",
         graph_identity=graph_identity,
@@ -797,6 +784,7 @@ def test_graph_only_subagent_invocation_rejects_forged_task_plan_identity_before
         instance=instance,
         context_pack=context_pack,
         budget_snapshot=fixture["budget"],
+        execution_identity=_execution_identity(plan, instance),
     )
     assert invocation.attempt_identity is not None
 
@@ -813,7 +801,7 @@ def test_graph_only_subagent_invocation_rejects_forged_task_plan_identity_before
     assert fixture["worker"].calls == 0
 
 
-def test_graph_only_subagent_invocation_rejects_v2_downgrade_without_task_identity(
+def test_graph_only_subagent_invocation_rejects_non_v3_schema(
     tmp_path: Path,
 ) -> None:
     fixture = _fixture(tmp_path)
@@ -823,9 +811,13 @@ def test_graph_only_subagent_invocation_rejects_v2_downgrade_without_task_identi
         plan.tasks[0].task.worker_capability,
         policy,
     )
-    graph_identity, task_identity = task_plan_context_identities(plan, instance)
+    graph_identity, task_identity = task_plan_context_identities(
+        plan,
+        instance,
+        execution_identity=_execution_identity(plan, instance),
+    )
     context_pack = ContextEnvelope.for_graph(
-        envelope_id="lineage-v2-downgrade-context",
+        envelope_id="lineage-non-v3-schema-context",
         graph_identity=graph_identity,
         task_execution_identity=task_identity,
         phase="EXECUTE",
@@ -839,38 +831,15 @@ def test_graph_only_subagent_invocation_rejects_v2_downgrade_without_task_identi
         instance=instance,
         context_pack=context_pack,
         budget_snapshot=fixture["budget"],
+        execution_identity=_execution_identity(plan, instance),
     )
-    assert invocation.attempt_identity is not None
-    v2_identity = replace(
-        invocation.attempt_identity,
-        schema_version=SUBAGENT_ATTEMPT_IDENTITY_SCHEMA_V2,
-        plan_id=None,
-        plan_version=None,
-        plan_checksum=None,
-        task_definition_checksum=None,
-        context_envelope_id=None,
-        context_envelope_checksum=None,
-    )
-    unbound_context = ContextEnvelope.for_graph(
-        envelope_id="lineage-v2-unbound-context",
-        graph_identity=graph_identity,
-        phase="EXECUTE",
-        worker_id="lineage-task-plan",
-        worker_type=HarnessWorkerType.TASK_PLAN.value,
-    )
-
     with pytest.raises(HarnessValidationError) as captured:
         replace(
             invocation,
-            schema_version=SUBAGENT_INVOCATION_SCHEMA_V2,
-            attempt_identity=v2_identity,
-            context_envelope=replace(
-                invocation.context_envelope,
-                context_pack=unbound_context,
-            ),
+            schema_version="newsroom.subagent-invocation/v2",
         )
 
-    assert captured.value.code == "subagent_invocation_identity_schema_mismatch"
+    assert captured.value.code == "subagent_invocation_schema_unsupported"
     assert fixture["worker"].calls == 0
 
 
@@ -905,6 +874,7 @@ def test_graph_only_subagent_invocation_rejects_context_content_tampering_before
         instance=instance,
         context_pack=context_pack,
         budget_snapshot=fixture["budget"],
+        execution_identity=_execution_identity(plan, instance),
     )
     forged_context = replace(
         context_pack,
@@ -947,6 +917,7 @@ def test_graph_only_verifier_binds_v3_transcript_to_v3_result(
             task=plan.tasks[0],
             instance=instance,
             worker_result=worker_result,
+            execution_identity=_execution_identity(plan, instance),
         ),
     )
 
@@ -981,6 +952,7 @@ def test_graph_only_offline_replay_verifies_v3_transcript_without_worker_call(
             task=plan.tasks[0],
             instance=instance,
             worker_result=worker_result,
+            execution_identity=_execution_identity(plan, instance),
         ),
     )
     store.append_result(record)
@@ -1031,72 +1003,6 @@ def test_graph_only_offline_replay_verifies_v3_transcript_without_worker_call(
     assert fixture["worker"].calls == worker_calls
 
 
-def test_graph_only_verifier_and_replay_accept_historical_v2_transcript_evidence(
-    tmp_path: Path,
-) -> None:
-    fixture = _fixture(tmp_path)
-    candidate, plan, instance = _graph_only_candidate_plan_for_fixture(fixture)
-    context_pack = _graph_context_for_attempt(
-        plan,
-        instance,
-        envelope_id="lineage-historical-v2-context",
-    )
-    v3_identity = task_plan_subagent_attempt_identity(
-        plan,
-        instance,
-        invocation_id=f"invocation://{instance.task_instance_id}",
-        child_run_id=f"{plan.run_id}:{plan.stage_id}:{instance.task_instance_id}",
-        subagent_id=plan.tasks[0].subagent_id,
-        context_pack=context_pack,
-    )
-    v2_identity = replace(
-        v3_identity,
-        schema_version=SUBAGENT_ATTEMPT_IDENTITY_SCHEMA_V2,
-        plan_id=None,
-        plan_version=None,
-        plan_checksum=None,
-        task_definition_checksum=None,
-        context_envelope_id=None,
-        context_envelope_checksum=None,
-    )
-    _, receipt, worker_result = _write_graph_only_attempt(
-        fixture,
-        plan,
-        instance,
-        identity=v2_identity,
-    )
-
-    record = fixture["verifier"].verify(
-        worker_result,
-        task=plan.tasks[0],
-        request=TaskPlanResultVerificationRequest(
-            plan=plan,
-            task=plan.tasks[0],
-            instance=instance,
-            worker_result=worker_result,
-        ),
-    )
-
-    assert receipt.schema_version == SUBAGENT_RECEIPT_SCHEMA_V2
-    assert record.transcript_ref == receipt.transcript_ref
-    assert record.transcript_ref.startswith("subagent-transcript://v2/")
-
-    store = InMemoryTaskPlanStore()
-    store.append_candidate(candidate)
-    store.accept_plan(plan)
-    _start_attempt(store, plan, instance)
-    store.append_result(record)
-    report = TaskPlanReplayReducer(fixture["transcript_store"]).replay(
-        (plan,),
-        store.read_events(plan.run_id, plan.stage_id),
-        results=(record,),
-    )
-
-    assert report.projection.matches_plan_identity(plan)
-    assert report.projection.tasks[0].status is TaskLifecycle.SUCCEEDED
-    assert fixture["worker"].calls == 0
-
-
 def test_graph_only_verifier_rejects_cross_graph_transcript_identity(
     tmp_path: Path,
 ) -> None:
@@ -1136,6 +1042,7 @@ def test_graph_only_verifier_rejects_cross_graph_transcript_identity(
                 task=plan.tasks[0],
                 instance=instance,
                 worker_result=worker_result,
+                execution_identity=_execution_identity(plan, instance),
             ),
         )
 
@@ -1221,6 +1128,7 @@ def test_subagent_artifact_refs_require_the_canonical_owner(tmp_path: Path) -> N
                 task=missing["resolved"],
                 instance=missing["instance"],
                 worker_result=missing_result,
+                execution_identity=missing["execution_identity"],
             ),
         )
     assert missing_error.value.code == "task_plan_subagent_artifact_verifier_required"
@@ -1241,6 +1149,7 @@ def test_subagent_artifact_refs_require_the_canonical_owner(tmp_path: Path) -> N
                 task=fabricated["resolved"],
                 instance=fabricated["instance"],
                 worker_result=fabricated_result,
+                execution_identity=fabricated["execution_identity"],
             ),
         )
     assert fabricated_error.value.code == "task_plan_subagent_artifact_unverified"
@@ -1424,100 +1333,3 @@ def test_receipt_before_task_result_is_recovered_without_live_worker_call(
         "STAGE_OUTPUT_AGGREGATED",
         "TASK_PLAN_VERIFIED",
     ]
-
-
-def test_unversioned_v1_result_roundtrips_but_subagent_replay_is_unavailable(
-    tmp_path: Path,
-) -> None:
-    fixture = _committed_lineage(tmp_path)
-    record = fixture["record"]
-    legacy = TaskResultRecord(
-        run_id=record.run_id,
-        workflow_id=record.workflow_id,
-        stage_id=record.stage_id,
-        plan_id=record.plan_id,
-        plan_version=record.plan_version,
-        task_id=record.task_id,
-        task_instance_id=record.task_instance_id,
-        attempt=record.attempt,
-        worker_ref=record.worker_ref,
-        task_checksum=record.task_checksum,
-        binding_checksum=record.binding_checksum,
-        status=record.status,
-        result_ref="result://legacy-subagent",
-        output_refs=record.output_refs,
-        output_roles=record.output_roles,
-        output_schema_ref=record.output_schema_ref,
-        usage=record.usage,
-        verified_gate_refs=record.verified_gate_refs,
-        gate_evidence_refs=record.gate_evidence_refs,
-        schema_version=TASK_PLAN_RESULT_SCHEMA_V1,
-    )
-    restored = TaskResultRecord.from_dict(legacy.to_dict())
-
-    assert restored.schema_version == TASK_PLAN_RESULT_SCHEMA_V1
-    assert "schema_version" not in legacy.to_dict()
-    assert restored.transcript_ref is None
-
-    events = fixture["store"].read_events(
-        fixture["plan"].run_id,
-        fixture["plan"].stage_id,
-    )
-    legacy_events = []
-    for event in events:
-        if event.event_type not in {"TASK_RESULT_ACCEPTED", "TASK_COMPLETED"}:
-            legacy_events.append(event)
-            continue
-        payload = dict(event.payload)
-        payload.update(
-            {
-                "result_ref": legacy.result_ref,
-                "result_checksum": legacy.result_checksum,
-                "transcript_ref": None,
-                "transcript_checksum": None,
-                "subagent_output_ref": None,
-                "subagent_output_checksum": None,
-            }
-        )
-        legacy_events.append(
-            replace(
-                event,
-                input_checksum=(
-                    legacy.result_checksum
-                    if event.event_type == "TASK_COMPLETED"
-                    else legacy.task_checksum
-                ),
-                payload=payload,
-            )
-        )
-    with pytest.raises(HarnessValidationError) as captured:
-        TaskPlanReplayReducer(fixture["transcript_store"]).replay(
-            (fixture["plan"],),
-            tuple(legacy_events),
-            results=(legacy,),
-        )
-    assert captured.value.code == "subagent_transcript_legacy_unavailable"
-
-
-def test_non_subagent_v1_result_remains_readable() -> None:
-    legacy = TaskResultRecord(
-        run_id="legacy-run",
-        workflow_id="legacy-workflow",
-        stage_id="legacy-stage",
-        plan_id="legacy-plan",
-        plan_version=1,
-        task_id="legacy-task",
-        task_instance_id="legacy-instance",
-        attempt=1,
-        worker_ref="legacy-worker@1",
-        task_checksum="sha256:" + "1" * 64,
-        binding_checksum="sha256:" + "2" * 64,
-        status=TaskLifecycle.SUCCEEDED,
-        result_ref="result://legacy",
-        output_refs=("artifact://legacy",),
-        output_roles=("analysis.legacy",),
-        output_schema_ref="legacy-output@1",
-        schema_version=TASK_PLAN_RESULT_SCHEMA_V1,
-    )
-
-    assert TaskResultRecord.from_dict(legacy.to_dict()) == legacy

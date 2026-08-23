@@ -57,24 +57,40 @@ def test_news_client_reads_run_inspection_endpoints() -> None:
     client = NewsClient("https://news.example", opener=opener)
 
     assert client.runs.get("run/1") == {"ok": True}
+    assert client.runs.list(status="running", graph_id="research.paper_analysis") == {"ok": True}
     assert client.runs.manifest("run/1") == {"ok": True}
     assert client.runs.events("run/1", limit=2, sequence_cursor="cursor-1") == {"ok": True}
     assert client.runs.replay("run/1") == {"ok": True}
     assert client.runs.diagnostics("run/1") == {"ok": True}
     assert client.runs.health("run/1") == {"ok": True}
+    assert client.runs.graph("run/1", verify_history=True) == {"ok": True}
+    assert client.runs.graph_health("run/1") == {"ok": True}
     assert client.runs.catalog_health() == {"ok": True}
     assert client.runs.compare("run/1", "run 2") == {"ok": True}
+    assert client.runs.cancel(
+        "run/1",
+        reason_code="operator_requested",
+        cancellation_id="cancel-1",
+    ) == {"ok": True}
 
     assert [request.full_url for request in opener.requests] == [
-        "https://news.example/api/v1/runs/run%2F1",
-        "https://news.example/api/v1/runs/run%2F1/manifest",
-        "https://news.example/api/v1/runs/run%2F1/events?limit=2&offset=0&sequence_cursor=cursor-1",
-        "https://news.example/api/v1/runs/run%2F1/replay",
-        "https://news.example/api/v1/runs/run%2F1/diagnostics",
-        "https://news.example/api/v1/runs/run%2F1/health",
-        "https://news.example/api/v1/runs/catalog/health",
-        "https://news.example/api/v1/runs/compare?base_run_id=run%2F1&target_run_id=run+2",
+        "https://news.example/api/v2/graph-runs/run%2F1",
+        "https://news.example/api/v2/graph-runs?limit=20&offset=0&status=running&graph_id=research.paper_analysis",
+        "https://news.example/api/v2/graph-runs/run%2F1/manifest",
+        "https://news.example/api/v2/graph-runs/run%2F1/events?limit=2&offset=0&sequence_cursor=cursor-1",
+        "https://news.example/api/v2/graph-runs/run%2F1/replay",
+        "https://news.example/api/v2/graph-runs/run%2F1/diagnostics",
+        "https://news.example/api/v2/graph-runs/run%2F1/health",
+        "https://news.example/api/v2/graph-runs/run%2F1/graph?verify_history=True",
+        "https://news.example/api/v2/graph-runs/run%2F1/graph/health",
+        "https://news.example/api/v2/graph-runs/catalog/health",
+        "https://news.example/api/v2/graph-runs/compare?base_run_id=run%2F1&target_run_id=run+2",
+        "https://news.example/api/v2/graph-runs/run%2F1/cancel",
     ]
+    assert json.loads(opener.requests[-1].data.decode("utf-8")) == {
+        "reason_code": "operator_requested",
+        "cancellation_id": "cancel-1",
+    }
 
 
 def test_news_client_reads_p1_p2_interface_surfaces() -> None:
@@ -209,7 +225,7 @@ def test_news_client_reads_report_memory_and_artifact_helpers() -> None:
     )
     client = NewsClient("https://news.example", opener=opener)
 
-    assert client.reports.list(limit=1, workflow_id="research.paper_analysis") == {"ok": True}
+    assert client.reports.list(limit=1, graph_id="research.paper_analysis") == {"ok": True}
     assert client.reports.markdown("report/1") == {"ok": True}
     assert client.reports.quality("report/1") == {"ok": True}
     assert client.memory.get("doc/1", collection="reports") == {"ok": True}
@@ -220,15 +236,15 @@ def test_news_client_reads_report_memory_and_artifact_helpers() -> None:
     assert client.runs.artifact("run/1", "report/json") == {"ok": True}
 
     assert [request.full_url for request in opener.requests] == [
-        "https://news.example/api/v1/reports?limit=1&workflow_id=research.paper_analysis",
+        "https://news.example/api/v1/reports?limit=1&graph_id=research.paper_analysis",
         "https://news.example/api/v1/reports/report%2F1/markdown",
         "https://news.example/api/v1/reports/report%2F1/quality",
         "https://news.example/api/v1/memory/doc%2F1?collection=reports",
-        "https://news.example/api/v1/runs/run%2F1/lineage",
-        "https://news.example/api/v1/runs/run%2F1/lineage/upstream?target_type=report&target_id=r1",
-        "https://news.example/api/v1/runs/run%2F1/lineage/downstream?source_type=source&source_id=s1",
-        "https://news.example/api/v1/runs/run%2F1/artifacts",
-        "https://news.example/api/v1/runs/run%2F1/artifacts/report%2Fjson",
+        "https://news.example/api/v2/graph-runs/run%2F1/lineage",
+        "https://news.example/api/v2/graph-runs/run%2F1/lineage/upstream?target_type=report&target_id=r1",
+        "https://news.example/api/v2/graph-runs/run%2F1/lineage/downstream?source_type=source&source_id=s1",
+        "https://news.example/api/v2/graph-runs/run%2F1/artifacts",
+        "https://news.example/api/v2/graph-runs/run%2F1/artifacts/report%2Fjson",
     ]
 
 

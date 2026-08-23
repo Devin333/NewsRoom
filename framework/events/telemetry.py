@@ -108,7 +108,7 @@ _METRIC_LABEL_VALUE_DOMAINS: Mapping[str, frozenset[str]] = MappingProxyType(
             }
         ),
         "consumer": frozenset(
-            {"audit", "harness", "projection", "telemetry", "unknown", "workflow"}
+            {"audit", "graph", "harness", "projection", "telemetry", "unknown"}
         ),
         "event_type": frozenset({"registered", "unknown"}),
         "from": frozenset(
@@ -145,9 +145,9 @@ _METRIC_LABEL_VALUE_DOMAINS: Mapping[str, frozenset[str]] = MappingProxyType(
                 "unknown",
             }
         ),
-        "projection": frozenset({"harness", "unknown", "workflow"}),
+        "projection": frozenset({"graph", "harness", "unknown"}),
         "source": frozenset(
-            {"api", "harness", "migration", "tool", "unknown", "workflow"}
+            {"api", "graph", "harness", "migration", "tool", "unknown"}
         ),
         "to": frozenset(
             {"unknown", "other", *(f"v{index}" for index in range(1, 11))}

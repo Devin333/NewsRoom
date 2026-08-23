@@ -7,9 +7,9 @@ from interfaces.api import create_app
 from interfaces.services.artifact_service import ArtifactInspectionService
 from interfaces.services.event_projection_service import EventProjectionConflictError
 from interfaces.services.mcp_service import MCPApplicationService
-from interfaces.services.run_inspection_service import RunInspectionService
+from interfaces.services.run_inspection_service import GraphRunInspectionService
 from tests.fixtures.graph_runs import write_graph_terminal_run
-from tests.fixtures.workflow_runs import write_canonical_terminal_run
+from tests.fixtures.graph_runs import write_graph_terminal_run
 
 
 def test_api_mcp_catalog_and_manifest_match_service() -> None:
@@ -270,7 +270,7 @@ def test_api_mcp_normalizes_event_contract_subclasses_before_http_mapping() -> N
 
 
 def test_api_mcp_default_service_maps_real_filesystem_tamper_without_data(tmp_path) -> None:
-    replay_fixture = write_canonical_terminal_run(tmp_path, "run-replay")
+    replay_fixture = write_graph_terminal_run(tmp_path, "run-replay")
     artifact_fixture = write_graph_terminal_run(tmp_path, "run-artifact")
     replay_fixture.artifact_path("output").write_text(
         '{"result":"tampered-mcp-http-secret"}',
@@ -282,7 +282,7 @@ def test_api_mcp_default_service_maps_real_filesystem_tamper_without_data(tmp_pa
     )
     client = TestClient(
         create_app(
-            run_inspection_service_factory=lambda: RunInspectionService(tmp_path),
+            graph_run_inspection_service_factory=lambda: GraphRunInspectionService(tmp_path),
             artifact_service_factory=lambda: ArtifactInspectionService(tmp_path),
             audit_emitter_factory=None,
         )
@@ -313,7 +313,7 @@ def test_api_mcp_tool_call_requires_tool_specific_permission() -> None:
     client = TestClient(
         create_app(
             api_keys={"readonly-token": ["read-only"]},
-            run_operation_service_factory=lambda: _FakeRunOperationService(),
+            graph_run_operation_service_factory=lambda: _FakeRunOperationService(),
             audit_emitter_factory=None,
         )
     )
@@ -324,7 +324,7 @@ def test_api_mcp_tool_call_requires_tool_specific_permission() -> None:
         json={
             "arguments": {
                 "run_id": "run-1",
-                "reason": "manual stop",
+                "reason_code": "manual_stop",
             }
         },
     )
@@ -340,7 +340,8 @@ def test_api_mcp_default_service_uses_injected_run_operation_service() -> None:
     fake_operations = _FakeRunOperationService()
     client = TestClient(
         create_app(
-            run_operation_service_factory=lambda: fake_operations,
+            graph_run_operation_service_factory=lambda: fake_operations,
+            api_keys={"operator-token": ["operator"]},
             audit_emitter_factory=None,
         )
     )
@@ -350,11 +351,11 @@ def test_api_mcp_default_service_uses_injected_run_operation_service() -> None:
         json={
             "arguments": {
                 "run_id": "run-1",
-                "reason": "manual stop",
-                "actor_id": "operator",
-                "metadata": {"source": "api-mcp"},
+                "reason_code": "manual_stop",
+                "cancellation_id": "cancel-api-mcp",
             }
         },
+        headers={"Authorization": "Bearer operator-token"},
     )
     payload = response.json()
 
@@ -362,17 +363,13 @@ def test_api_mcp_default_service_uses_injected_run_operation_service() -> None:
     assert payload["success"] is True
     assert payload["data"]["success"] is True
     assert payload["data"]["data"]["operation_type"] == "cancel_run"
-    assert fake_operations.calls == [
-        (
-            "cancel_run",
-            {
-                "run_id": "run-1",
-                "reason": "manual stop",
-                "actor_id": "operator",
-                "metadata": {"source": "api-mcp"},
-            },
-        )
-    ]
+    assert len(fake_operations.calls) == 1
+    operation, call = fake_operations.calls[0]
+    assert operation == "cancel_run"
+    assert call["run_id"] == "run-1"
+    assert call["reason_code"] == "manual_stop"
+    assert call["cancellation_id"] == "cancel-api-mcp"
+    assert call["actor_id"].startswith("api-key:")
 
 
 class _FakeMCPService:
@@ -466,15 +463,15 @@ class _FakeRunOperationService:
     def __init__(self) -> None:
         self.calls: list[tuple[str, dict]] = []
 
-    def cancel_run(self, run_id, *, reason=None, actor_id=None, metadata=None):
+    def cancel_run(self, run_id, *, reason_code, actor, cancellation_id=None):
         self.calls.append(
             (
                 "cancel_run",
                 {
                     "run_id": run_id,
-                    "reason": reason,
-                    "actor_id": actor_id,
-                    "metadata": dict(metadata or {}),
+                    "reason_code": reason_code,
+                    "cancellation_id": cancellation_id,
+                    "actor_id": actor.actor_id,
                 },
             )
         )

@@ -71,8 +71,8 @@ def register(subparsers: argparse._SubParsersAction) -> None:
     _add_store_path(match_parser)
     match_parser.add_argument("--artifact-root", default=".newsroom/runs")
     match_parser.add_argument("--limit", type=int, default=20)
-    match_parser.add_argument("--workflow-id", default=None)
-    match_parser.add_argument("--workflow-family", default=None)
+    match_parser.add_argument("--graph-id", default=None)
+    match_parser.add_argument("--graph-ids", nargs="+", default=None)
     match_parser.add_argument("--json", action="store_true", help="Print machine-readable JSON")
     match_parser.set_defaults(handler=match_entity_reports_from_cli)
 
@@ -206,8 +206,8 @@ def match_entity_reports(
             args.entity_id,
             artifact_root=args.artifact_root,
             limit=args.limit,
-            workflow_id=args.workflow_id,
-            workflow_family=args.workflow_family,
+            graph_id=args.graph_id,
+            graph_ids=tuple(args.graph_ids) if args.graph_ids is not None else None,
         )
     except (KeyError, ValueError) as exc:
         print(str(exc))

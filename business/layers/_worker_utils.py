@@ -9,7 +9,7 @@ from business.layers.worker_output import (
     summary_fields,
     summary_from_output,
 )
-from framework.specs import WorkflowStatus
+from framework.harness.control_plane.state import HarnessRunStatus
 from framework.workers.models import TaskStatus
 
 
@@ -19,20 +19,20 @@ def optional_int(value: Any) -> int | None:
     return int(value)
 
 
-def workflow_status_value(status: Any) -> str:
+def graph_status_value(status: Any) -> str:
     return str(getattr(status, "value", status))
 
 
-def task_status_from_workflow_status(status: str) -> TaskStatus:
-    if status == WorkflowStatus.SUCCEEDED.value:
+def task_status_from_graph_status(status: str) -> TaskStatus:
+    if status == HarnessRunStatus.SUCCEEDED.value:
         return TaskStatus.SUCCEEDED
-    if status in {WorkflowStatus.BLOCKED.value, WorkflowStatus.BUDGET_EXCEEDED.value}:
+    if status == HarnessRunStatus.BLOCKED.value:
         return TaskStatus.SUCCEEDED
-    if status == WorkflowStatus.WAITING_FOR_HUMAN.value:
+    if status == HarnessRunStatus.WAITING_APPROVAL.value:
         return TaskStatus.WAITING_FOR_APPROVAL
-    if status == WorkflowStatus.PAUSED.value:
+    if status == HarnessRunStatus.HALTED.value:
         return TaskStatus.PAUSED
-    if status == WorkflowStatus.CANCELLED.value:
+    if status == HarnessRunStatus.CANCELLED.value:
         return TaskStatus.CANCELLED
     return TaskStatus.FAILED
 

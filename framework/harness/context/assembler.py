@@ -20,8 +20,10 @@ from framework.harness.context.models import (
     ContextBudget,
     ContextCacheScope,
     ContextEnvelope,
+    ContextGraphIdentity,
     ContextSegment,
     ContextSegmentType,
+    ContextTaskExecutionIdentity,
 )
 from framework.harness.context.snapshot import ContextSnapshotStore
 from framework.harness.control_plane.errors import HarnessValidationError
@@ -42,7 +44,7 @@ class _ContextCompactionRuntimePort(Protocol):
 
 
 class ContextAssembler:
-    """Build compatibility envelopes and delegate lossy changes to Harness runtime."""
+    """Build Graph-bound context envelopes and delegate lossy changes to Harness runtime."""
 
     def __init__(
         self,
@@ -106,41 +108,53 @@ class ContextAssembler:
         self._event("context_assembly_started", request)
         budget = _budget_from_request(request)
         segments = self._collect_segments(request)
-        envelope = ContextEnvelope(
-            envelope_id=str(
-                request.get(
-                    "envelope_id",
-                    f"context://{request.get('run_id', 'run')}/{request.get('step_id', 'step')}",
-                )
-            ),
-            run_id=request.get("run_id"),
-            workflow_id=request.get("workflow_id"),
-            step_id=request.get("step_id"),
-            phase=request.get("phase"),
-            worker_id=request.get("worker_id"),
-            worker_type=request.get("worker_type"),
-            segments=segments,
-            budget=budget,
-            stable_prefix=_stable_prefix_payload(segments),
-            dynamic_tail=_dynamic_tail_payload(segments),
-            artifact_refs=tuple(request.get("artifact_refs", ())),
-            memory_refs=tuple(request.get("memory_refs", ())),
-            evidence_refs=tuple(request.get("evidence_refs", ())),
-            token_estimate=sum(segment.token_estimate for segment in segments),
-            metadata=dict(request.get("metadata", {})),
+        envelope_id = str(
+            request.get(
+                "envelope_id",
+                f"context://{request.get('run_id', 'run')}/{request.get('stage_id', 'step')}",
+            )
+        )
+        common = {
+            "envelope_id": envelope_id,
+            "phase": request.get("phase"),
+            "worker_id": request.get("worker_id"),
+            "worker_type": request.get("worker_type"),
+            "segments": segments,
+            "budget": budget,
+            "stable_prefix": _stable_prefix_payload(segments),
+            "dynamic_tail": _dynamic_tail_payload(segments),
+            "artifact_refs": tuple(request.get("artifact_refs", ())),
+            "memory_refs": tuple(request.get("memory_refs", ())),
+            "evidence_refs": tuple(request.get("evidence_refs", ())),
+            "token_estimate": sum(segment.token_estimate for segment in segments),
+            "metadata": dict(request.get("metadata", {})),
+        }
+        graph_identity = _context_graph_identity(request.get("graph_identity"))
+        if graph_identity is None:
+            raise HarnessValidationError(
+                "context assembly requires an exact Graph identity",
+                code="context_graph_identity_required",
+            )
+        task_execution_identity = _context_task_execution_identity(
+            request.get("task_execution_identity")
+        )
+        envelope = ContextEnvelope.for_graph(
+            graph_identity=graph_identity,
+            task_execution_identity=task_execution_identity,
+            **common,
         )
         estimate = self.budget_estimator.estimate(envelope)
         self._event("context_budget_checked", {"usage": estimate.to_dict()})
         envelope = self._verify_or_reject_context(
             envelope,
             request=request,
-            legacy_budget_passed=ContextBudgetGate().evaluate(envelope).passed,
+            budget_passed=ContextBudgetGate().evaluate(envelope).passed,
         )
         cache_policy = self.cache_policy_builder.build(
             envelope,
             provider_hint=request.get("provider_hint"),
         )
-        envelope = replace(envelope, cache_policy=cache_policy)
+        envelope = envelope.bind_cache_policy(cache_policy)
         self._event("context_cache_key_created", cache_policy.to_dict())
         envelope, snapshot = self.snapshot_store.save_bound(envelope)
         self._event("context_snapshot_written", snapshot.to_dict())
@@ -207,7 +221,7 @@ class ContextAssembler:
         envelope: ContextEnvelope,
         *,
         request: Mapping[str, Any],
-        legacy_budget_passed: bool,
+        budget_passed: bool,
     ) -> ContextEnvelope:
         compaction_runtime = self.compaction_runtime
         if self.compaction_runtime_factory is not None:
@@ -217,7 +231,7 @@ class ContextAssembler:
                     "compaction_runtime_factory must return ContextCompactionRuntime"
                 )
         if compaction_runtime is None:
-            if not legacy_budget_passed:
+            if not budget_passed:
                 self._event(
                     "context_compaction_rejected",
                     {
@@ -226,15 +240,14 @@ class ContextAssembler:
                     },
                 )
                 raise HarnessValidationError(
-                    "context exceeds the legacy budget and requires a verified compaction runtime"
+                    "context exceeds its budget and requires a verified compaction runtime"
                 )
-            # The old envelope/snapshot path remains readable for callers that have
-            # not bound a physical request, but it cannot authorize dispatch.
             return replace(
                 envelope,
+                checksum=None,
                 metadata={
                     **envelope.metadata,
-                    "context_verification_classification": "legacy_unverified",
+                    "context_verification_classification": "graph_unverified",
                     "context_dispatch_authorized": False,
                 },
             )
@@ -255,7 +268,7 @@ class ContextAssembler:
         source = ContextGroupMaterializer().materialize(
             ContextMaterializationRequest(
                 run_id=str(envelope.run_id or "context-assembly"),
-                step_id=envelope.step_id,
+                stage_id=envelope.stage_id,
                 task_binding_ref=str(
                     request.get("current_task_ref", f"task://{envelope.envelope_id}")
                 ),
@@ -314,6 +327,7 @@ class ContextAssembler:
         assert evidence is not None
         return replace(
             envelope,
+            checksum=None,
             token_estimate=evidence.input_tokens,
             metadata={
                 **envelope.metadata,
@@ -323,7 +337,7 @@ class ContextAssembler:
                     and result.result_snapshot.snapshot_id != result.source_snapshot.snapshot_id
                     else "versioned_no_compaction_evidence"
                 ),
-                # The envelope is a legacy compatibility projection, not the
+                # The envelope is a bounded projection, not the
                 # exact provider request admitted by the runtime. Downstream
                 # dispatch must rematerialize and match this fingerprint.
                 "context_dispatch_authorized": False,
@@ -343,7 +357,7 @@ class ContextAssembler:
                     else result.source_snapshot.checksum
                 ),
                 "context_durable_refs": result.durable_refs.to_dict(),
-                "context_projection": "legacy_envelope_ref_only",
+                "context_projection": "graph_envelope_ref_only",
             },
         )
 
@@ -357,9 +371,17 @@ class ContextAssembler:
                 for segment in configured
             )
         else:
+            graph_identity = _context_graph_identity(request.get("graph_identity"))
+            if graph_identity is None:
+                raise HarnessValidationError(
+                    "context segments require an exact Graph identity",
+                    code="context_graph_identity_required",
+                )
+            graph_ref = graph_identity.graph_ref
+            graph_summary = "Frozen Graph route, current phase, step budget, and explicit deterministic gates."
             segments = (
                 _segment("global-policy", ContextSegmentType.GLOBAL_POLICY, "policy://global", "Harness controls routing, tools, memory, quality, and publication.", 80, ContextCacheScope.STABLE_PREFIX, ("policy://global",), {"global_policy": True, "forbidden_fields": ["next_step", "write_memory", "promote_skill"]}),
-                _segment("workflow", ContextSegmentType.WORKFLOW, str(request.get("workflow_ref", "workflow://current")), "Workflow route table, current phase, step budget, and explicit gates.", 80, ContextCacheScope.STABLE_PREFIX, (str(request.get("workflow_ref", "workflow://current")),), {"route_table": request.get("allowed_routes", []), "budget": request.get("budget", {})}),
+                _segment("graph", ContextSegmentType.GRAPH, graph_ref, graph_summary, 80, ContextCacheScope.STABLE_PREFIX, (graph_ref,), {"graph_identity": graph_identity.to_dict(), "route_table": request.get("allowed_routes", []), "budget": request.get("budget", {})}),
                 _segment("worker-contract", ContextSegmentType.WORKER_CONTRACT, str(request.get("worker_contract_ref", "worker://contract")), "Worker input schema, output schema, tool allowlist, memory namespace policy, and forbidden fields.", 80, ContextCacheScope.STABLE_PREFIX, (str(request.get("worker_contract_ref", "worker://contract")),), {"input_schema": request.get("input_schema", {}), "output_schema": request.get("output_schema", {}), "tool_allowlist": request.get("allowed_tools", ()), "memory_namespace_policy": request.get("allowed_memory_namespaces", ())}),
                 _segment("run-state", ContextSegmentType.RUN_STATE, str(request.get("run_state_ref", "run-state://current")), "Completed steps, failures, budget usage, checkpoint refs, and accepted artifact refs.", 120, ContextCacheScope.DYNAMIC_TAIL, tuple(request.get("run_state_refs", ("checkpoint://current",))), {"budget": request.get("budget", {})}),
                 _segment("evidence-memory", ContextSegmentType.EVIDENCE_MEMORY, str(request.get("evidence_memory_ref", "evidence-memory://current")), "Accepted evidence, rejected evidence, memory hits, source refs, gap report, and retrieval rationale.", int(request.get("evidence_memory_tokens", 120)) + int(request.get("artifact_context_loaded_tokens", 0)), ContextCacheScope.DYNAMIC_TAIL, tuple(request.get("source_refs", ("source://approved",))), {"source_refs": list(request.get("source_refs", ("source://approved",))), "artifact_refs": list(request.get("artifact_refs", ())), "artifact_context": request.get("artifact_context"), "content_markers": ["rag_result", "memory_hit"]}),
@@ -420,6 +442,34 @@ def _budget_from_request(request: Mapping[str, Any]) -> ContextBudget:
     if not isinstance(budget, ContextBudget):
         raise HarnessValidationError("context budget must be ContextBudget")
     return budget
+
+
+def _context_graph_identity(value: Any) -> ContextGraphIdentity | None:
+    if value is None:
+        return None
+    if isinstance(value, ContextGraphIdentity):
+        return value
+    if isinstance(value, Mapping):
+        return ContextGraphIdentity.from_dict(value)
+    raise HarnessValidationError(
+        "graph_identity must be ContextGraphIdentity or a serialized mapping",
+        code="context_graph_identity_invalid",
+    )
+
+
+def _context_task_execution_identity(
+    value: Any,
+) -> ContextTaskExecutionIdentity | None:
+    if value is None:
+        return None
+    if isinstance(value, ContextTaskExecutionIdentity):
+        return value
+    if isinstance(value, Mapping):
+        return ContextTaskExecutionIdentity.from_dict(value)
+    raise HarnessValidationError(
+        "task_execution_identity must be ContextTaskExecutionIdentity or a serialized mapping",
+        code="context_task_execution_identity_invalid",
+    )
 
 
 def _runtime_request(**values: Any) -> Any:

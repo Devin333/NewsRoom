@@ -5,7 +5,8 @@ import pytest
 from interfaces.services.report_service import ReportApplicationService
 
 
-RESEARCH_WORKFLOW_ID = "research-paper-analysis"
+RESEARCH_GRAPH_ID = "research.paper-analysis"
+GRAPH_VERSION = "2"
 
 
 def test_report_service_searches_local_report_artifacts(tmp_path) -> None:
@@ -40,45 +41,45 @@ def test_report_service_lists_report_artifacts(tmp_path) -> None:
         "run-1",
         "2026-05-11T00:00:00Z",
         "AI Policy Report",
-        workflow_id=RESEARCH_WORKFLOW_ID,
+        graph_id=RESEARCH_GRAPH_ID,
     )
 
     result = ReportApplicationService(artifact_root=tmp_path).list_reports(
-        workflow_id=RESEARCH_WORKFLOW_ID
+        graph_id=RESEARCH_GRAPH_ID
     )
 
     payload = result.to_dict()
-    assert payload["workflow_id"] == RESEARCH_WORKFLOW_ID
+    assert payload["graph_id"] == RESEARCH_GRAPH_ID
     assert payload["report_count"] == 1
     assert payload["reports"][0]["report_id"] == "run-1:final"
 
 
-def test_report_service_keeps_workflow_family_as_request_metadata(tmp_path) -> None:
+def test_report_service_filters_by_graph_ids(tmp_path) -> None:
     _write_report_run(
         tmp_path,
         "run-research",
         "2026-05-10T00:00:00Z",
         "Research Paper Analysis",
-        workflow_id=RESEARCH_WORKFLOW_ID,
+        graph_id=RESEARCH_GRAPH_ID,
     )
     _write_report_run(
         tmp_path,
         "run-other",
         "2026-05-11T00:00:00Z",
         "Other Workflow",
-        workflow_id="other-workflow",
+        graph_id="other.graph",
     )
 
     result = ReportApplicationService(artifact_root=tmp_path).list_reports(
-        workflow_family="research"
+        graph_ids=(RESEARCH_GRAPH_ID, "other.graph")
     )
 
     payload = result.to_dict()
-    assert payload["workflow_family"] == "research"
+    assert payload["graph_ids"] == [RESEARCH_GRAPH_ID, "other.graph"]
     assert payload["report_count"] == 2
-    assert {report["workflow_id"] for report in payload["reports"]} == {
-        RESEARCH_WORKFLOW_ID,
-        "other-workflow",
+    assert {report["graph_id"] for report in payload["reports"]} == {
+        RESEARCH_GRAPH_ID,
+        "other.graph",
     }
 
 
@@ -288,7 +289,7 @@ def _write_report_run(
     finished_at: str,
     title: str,
     *,
-    workflow_id: str | None = None,
+    graph_id: str | None = None,
     report_json: dict | None = None,
     claims: list[dict] | None = None,
     quality_results: list[dict] | None = None,
@@ -302,7 +303,8 @@ def _write_report_run(
         json.dumps(
             {
                 "run_id": run_id,
-                "workflow_id": workflow_id,
+                "graph_id": graph_id or "research.paper-analysis",
+                "graph_version": GRAPH_VERSION,
                 "status": "succeeded",
                 "finished_at": finished_at,
                 "quality_score": 0.9,

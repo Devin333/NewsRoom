@@ -14,7 +14,7 @@ def test_transcript_records_plan_execute_verify_phase_entries() -> None:
             HarnessTranscriptEntry(
                 entry_id=f"entry-{phase}",
                 run_id="run-transcript",
-                step_id="collect",
+                node_id="collect",
                 phase=phase,
                 gate_results=({"gate": f"{phase}-gate", "passed": True},) if phase == "verify" else (),
                 budget_snapshot={"turns_used": 1},
@@ -31,7 +31,7 @@ def test_transcript_round_trips_all_persisted_reference_fields() -> None:
     entry = HarnessTranscriptEntry(
         entry_id="entry-persist",
         run_id="run-persist",
-        step_id="verify",
+        node_id="verify",
         phase="VERIFY",
         decision={"decision": "complete"},
         input_refs=("input://1",),

@@ -15,9 +15,7 @@ from framework.harness.graph.model import (
 from framework.harness.graph.versioning import (
     GRAPH_ONLY_NORMALIZED_HARNESS_GRAPH_SCHEMA,
     HARNESS_CONDITION_POLICY_VERSION,
-    HARNESS_GRAPH_COMPILER_VERSION,
     HARNESS_GRAPH_ONLY_COMPILER_VERSION,
-    NORMALIZED_HARNESS_GRAPH_SCHEMA,
 )
 
 
@@ -29,7 +27,6 @@ class HarnessGraphReference:
     """Exact normalized Graph identity shared by Graph runtime contracts."""
 
     graph_id: str
-    workflow_ref: HarnessContractReference | None
     schema_version: str
     compiler_version: str
     condition_policy_version: str
@@ -42,54 +39,30 @@ class HarnessGraphReference:
             self.schema_version,
             "graph_ref.schema_version",
         )
-        workflow_ref = self.workflow_ref
         graph_ref = self.graph_ref
-        if schema_version == NORMALIZED_HARNESS_GRAPH_SCHEMA:
-            if not isinstance(workflow_ref, HarnessContractReference):
-                raise TypeError("workflow_ref must be HarnessContractReference")
-            if workflow_ref.contract_kind is not HarnessContractKind.WORKFLOW:
-                raise HarnessValidationError(
-                    "legacy graph reference must use legacy orchestration contract kind",
-                    code="graph_state_contract_kind_mismatch",
-                )
-            if graph_ref is not None:
-                raise HarnessValidationError(
-                    "legacy graph reference cannot carry Graph-only identity",
-                    code="graph_state_identity_schema_mismatch",
-                )
-        elif schema_version == GRAPH_ONLY_NORMALIZED_HARNESS_GRAPH_SCHEMA:
-            if workflow_ref is not None:
-                raise HarnessValidationError(
-                    "Graph-only reference cannot carry legacy orchestration identity",
-                    code="legacy_graph_identity_forbidden",
-                )
-            if not isinstance(graph_ref, HarnessContractReference):
-                raise TypeError("graph_ref must be HarnessContractReference")
-            if graph_ref.contract_kind is not HarnessContractKind.GRAPH:
-                raise HarnessValidationError(
-                    "Graph-only reference must use Graph contract kind",
-                    code="graph_state_contract_kind_mismatch",
-                )
-            if graph_ref.contract_id != graph_id:
-                raise HarnessValidationError(
-                    "Graph-only reference does not match graph_id",
-                    code="graph_state_graph_identity_mismatch",
-                )
-        else:
+        if schema_version != GRAPH_ONLY_NORMALIZED_HARNESS_GRAPH_SCHEMA:
             raise HarnessValidationError(
-                "unsupported normalized graph reference schema",
-                code="unsupported_graph_reference_schema",
+                "only the Graph v2 reference schema is accepted by the live reader",
+                code="legacy_graph_schema_forbidden",
                 details={"schema_version": schema_version},
+            )
+        if not isinstance(graph_ref, HarnessContractReference):
+            raise TypeError("graph_ref must be HarnessContractReference")
+        if graph_ref.contract_kind is not HarnessContractKind.GRAPH:
+            raise HarnessValidationError(
+                "Graph reference must use Graph contract kind",
+                code="graph_state_contract_kind_mismatch",
+            )
+        if graph_ref.contract_id != graph_id:
+            raise HarnessValidationError(
+                "Graph reference does not match graph_id",
+                code="graph_state_graph_identity_mismatch",
             )
         compiler_version = required_text(
             self.compiler_version,
             "graph_ref.compiler_version",
         )
-        expected_compiler_version = (
-            HARNESS_GRAPH_ONLY_COMPILER_VERSION
-            if schema_version == GRAPH_ONLY_NORMALIZED_HARNESS_GRAPH_SCHEMA
-            else HARNESS_GRAPH_COMPILER_VERSION
-        )
+        expected_compiler_version = HARNESS_GRAPH_ONLY_COMPILER_VERSION
         if compiler_version != expected_compiler_version:
             raise HarnessValidationError(
                 "graph reference uses an unsupported compiler version",
@@ -126,7 +99,6 @@ class HarnessGraphReference:
             raise TypeError("graph must be NormalizedHarnessGraph")
         return cls(
             graph_id=graph.graph_id,
-            workflow_ref=graph.workflow_ref,
             schema_version=graph.schema_version,
             compiler_version=graph.compiler_version,
             condition_policy_version=graph.condition_policy_version,
@@ -136,7 +108,7 @@ class HarnessGraphReference:
 
     @property
     def identity_ref(self) -> HarnessContractReference:
-        reference = self.graph_ref or self.workflow_ref
+        reference = self.graph_ref
         if reference is None:  # pragma: no cover - constructor invariant
             raise AssertionError("graph reference identity is unavailable")
         return reference
@@ -153,12 +125,8 @@ class HarnessGraphReference:
             "condition_policy_version": self.condition_policy_version,
             "checksum": self.checksum,
         }
-        if self.schema_version == GRAPH_ONLY_NORMALIZED_HARNESS_GRAPH_SCHEMA:
-            assert self.graph_ref is not None
-            payload["graph_ref"] = self.graph_ref.to_dict()
-        else:
-            assert self.workflow_ref is not None
-            payload["workflow_ref"] = self.workflow_ref.to_dict()
+        assert self.graph_ref is not None
+        payload["graph_ref"] = self.graph_ref.to_dict()
         return payload
 
     @classmethod
@@ -169,11 +137,13 @@ class HarnessGraphReference:
                 code="invalid_graph_state_projection",
             )
         schema_version = value.get("schema_version")
-        identity_field = (
-            "graph_ref"
-            if schema_version == GRAPH_ONLY_NORMALIZED_HARNESS_GRAPH_SCHEMA
-            else "workflow_ref"
-        )
+        if schema_version != GRAPH_ONLY_NORMALIZED_HARNESS_GRAPH_SCHEMA:
+            raise HarnessValidationError(
+                "only the Graph v2 reference schema is accepted by the live reader",
+                code="legacy_graph_schema_forbidden",
+                details={"schema_version": schema_version},
+            )
+        identity_field = "graph_ref"
         _exact_keys(
             value,
             {
@@ -188,20 +158,11 @@ class HarnessGraphReference:
         )
         return cls(
             graph_id=value["graph_id"],
-            workflow_ref=(
-                None
-                if identity_field == "graph_ref"
-                else HarnessContractReference.from_dict(value["workflow_ref"])
-            ),
             schema_version=value["schema_version"],
             compiler_version=value["compiler_version"],
             condition_policy_version=value["condition_policy_version"],
             checksum=value["checksum"],
-            graph_ref=(
-                HarnessContractReference.from_dict(value["graph_ref"])
-                if identity_field == "graph_ref"
-                else None
-            ),
+            graph_ref=HarnessContractReference.from_dict(value["graph_ref"]),
         )
 
 

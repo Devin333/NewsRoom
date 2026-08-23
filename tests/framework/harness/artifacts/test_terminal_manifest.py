@@ -13,9 +13,6 @@ from business.research.graphs import (
     build_dynamic_paper_analysis_graph_definition,
     build_paper_analysis_graph_definition,
 )
-from business.research.workflows.paper_analysis_workflow import (
-    build_paper_analysis_workflow_spec,
-)
 from framework.harness.artifacts import (
     GRAPH_TERMINAL_MANIFEST_SCHEMA,
     GRAPH_TERMINAL_MANIFEST_V2_SCHEMA,
@@ -43,7 +40,6 @@ from framework.harness.graph import (
     HarnessGraphCompiler,
     NormalizedHarnessGraph,
 )
-from framework.harness.workflow.compiler import HarnessWorkflowGraphCompiler
 
 
 _NOW = datetime(2026, 8, 14, 10, 30, tzinfo=UTC)
@@ -108,39 +104,13 @@ def _publication() -> GraphTerminalPublicationEvidence:
     )
 
 
-def _manifest(
+def _terminal_manifest(
     *artifacts: GraphTerminalArtifact,
     publication: GraphTerminalPublicationEvidence | None = None,
+    graph: NormalizedHarnessGraph | None = None,
 ) -> GraphTerminalManifest:
+    graph = graph or _graph_only_graph()
     return GraphTerminalManifest(
-        tenant_id="tenant-1",
-        run_id="run-1",
-        graph_id="research.paper-analysis",
-        graph_version="1",
-        graph_schema_version="1",
-        compiler_version="1",
-        normalized_graph_checksum=_SHA_A,
-        status=GraphTerminalStatus.SUCCEEDED,
-        started_at=_NOW,
-        completed_at=_NOW + timedelta(seconds=2),
-        terminal_state_ref=_SHA_B,
-        checkpoint_ref="checkpoint://run-1/terminal",
-        terminal_node_ids=("publish",),
-        gate_evidence_refs=(_SHA_C,),
-        artifacts=tuple(artifacts),
-        publication=publication,
-    )
-
-
-def _graph_only_graph():
-    return HarnessGraphCompiler().compile(
-        build_paper_analysis_graph_definition()
-    ).graph
-
-
-def _v2_manifest() -> tuple[GraphTerminalManifestV2, NormalizedHarnessGraph]:
-    graph = _graph_only_graph()
-    manifest = GraphTerminalManifest(
         tenant_id="tenant-1",
         run_id="run-1",
         graph_id=graph.graph_id,
@@ -155,8 +125,34 @@ def _v2_manifest() -> tuple[GraphTerminalManifestV2, NormalizedHarnessGraph]:
         checkpoint_ref="checkpoint://run-1/terminal",
         terminal_node_ids=graph.terminal_node_ids,
         gate_evidence_refs=(_SHA_C,),
+        artifacts=tuple(artifacts),
+        publication=publication,
     )
-    return build_graph_terminal_manifest_v2(manifest, graph), graph
+
+
+def _graph_only_graph():
+    return HarnessGraphCompiler().compile(
+        build_paper_analysis_graph_definition()
+    ).graph
+
+
+def _manifest(
+    *artifacts: GraphTerminalArtifact,
+    publication: GraphTerminalPublicationEvidence | None = None,
+) -> GraphTerminalManifestV2:
+    graph = _graph_only_graph()
+    return build_graph_terminal_manifest_v2(
+        _terminal_manifest(*artifacts, publication=publication, graph=graph),
+        graph,
+    )
+
+
+def _v2_manifest() -> tuple[GraphTerminalManifestV2, NormalizedHarnessGraph]:
+    graph = _graph_only_graph()
+    return build_graph_terminal_manifest_v2(
+        _terminal_manifest(graph=graph),
+        graph,
+    ), graph
 
 
 def test_graph_terminal_manifest_round_trips_with_canonical_hash() -> None:
@@ -167,15 +163,18 @@ def test_graph_terminal_manifest_round_trips_with_canonical_hash() -> None:
     restored = parse_graph_terminal_manifest(payload, expected_run_id="run-1")
 
     assert restored == manifest
-    assert restored.schema_version == GRAPH_TERMINAL_MANIFEST_SCHEMA
+    assert restored.schema_version == GRAPH_TERMINAL_MANIFEST_V2_SCHEMA
     assert restored.manifest_hash == graph_terminal_manifest_hash(restored)
     assert restored.artifact("analysis") == artifact
     assert restored.publication == _publication()
 
 
-def test_graph_terminal_manifest_v1_checksum_oracle_remains_stable() -> None:
-    assert _manifest().manifest_hash == (
-        "sha256:7dcdf58ac715bfa5b810e741461c34d3aab092c4430cb56ec8411af97bf3a64c"
+def test_graph_terminal_projection_checksum_oracle_remains_stable() -> None:
+    terminal = _terminal_manifest()
+
+    assert terminal.schema_version == GRAPH_TERMINAL_MANIFEST_SCHEMA
+    assert terminal.manifest_hash == (
+        "sha256:4d94ac246761ce4150992cfd6ff350f092ed6ca36720e89c1cbc8a5fd832aa3f"
     )
 
 
@@ -211,13 +210,15 @@ def test_graph_terminal_manifest_v2_round_trips_exact_execution_versions() -> No
     assert "workflow_ref" not in json.dumps(payload)
 
 
-def test_live_manifest_parser_remains_v1_only_until_cutover() -> None:
+def test_live_manifest_parser_accepts_graph_v2_without_external_witness() -> None:
     manifest, _graph = _v2_manifest()
 
-    with pytest.raises(GraphTerminalManifestError) as raised:
-        parse_graph_terminal_manifest(manifest.to_dict(), expected_run_id="run-1")
+    restored = parse_graph_terminal_manifest(
+        manifest.to_dict(),
+        expected_run_id="run-1",
+    )
 
-    assert raised.value.code is GraphTerminalManifestErrorCode.SCHEMA_UNSUPPORTED
+    assert restored == manifest
 
 
 def test_graph_terminal_manifest_v2_rejects_unknown_execution_schema() -> None:
@@ -311,14 +312,15 @@ def test_graph_terminal_manifest_v2_requires_wire_checksums(
     assert raised.value.code is GraphTerminalManifestErrorCode.SCHEMA_INVALID
 
 
-def test_graph_terminal_manifest_v2_reader_requires_graph_witness() -> None:
+def test_graph_terminal_manifest_v2_restores_embedded_execution_versions() -> None:
     manifest, _graph = _v2_manifest()
 
-    with pytest.raises(TypeError):
-        GraphTerminalManifestV2.from_dict(
-            manifest.to_dict(),
-            expected_run_id="run-1",
-        )
+    restored = GraphTerminalManifestV2.from_dict(
+        manifest.to_dict(),
+        expected_run_id="run-1",
+    )
+
+    assert restored == manifest
 
 
 def test_graph_terminal_manifest_v2_rejects_cross_graph_substitution() -> None:
@@ -338,23 +340,6 @@ def test_graph_terminal_manifest_v2_rejects_cross_graph_substitution() -> None:
         raised.value.code
         is GraphTerminalManifestErrorCode.EXECUTION_VERSION_MISMATCH
     )
-
-
-def test_graph_terminal_manifest_v2_rejects_legacy_graph_witness() -> None:
-    manifest, _graph = _v2_manifest()
-    legacy_graph = HarnessWorkflowGraphCompiler().compile(
-        build_paper_analysis_workflow_spec()
-    ).graph
-
-    with pytest.raises(GraphTerminalManifestError) as raised:
-        parse_graph_terminal_manifest_v2(
-            manifest.to_dict(),
-            expected_run_id="run-1",
-            expected_graph=legacy_graph,
-        )
-
-    assert raised.value.code is GraphTerminalManifestErrorCode.SCHEMA_INVALID
-    assert raised.value.field == "expected_graph"
 
 
 def test_execution_versions_pin_dynamic_task_plan_support_contracts() -> None:
@@ -404,7 +389,7 @@ def test_graph_terminal_manifest_v2_rejects_oversized_execution_identifier() -> 
 
 
 def test_graph_terminal_manifest_rejects_hash_tampering() -> None:
-    payload = _manifest(_artifact()).to_dict()
+    payload = _terminal_manifest(_artifact()).to_dict()
     payload["graph_version"] = "2"
 
     with pytest.raises(GraphTerminalManifestError) as raised:
@@ -415,7 +400,7 @@ def test_graph_terminal_manifest_rejects_hash_tampering() -> None:
 
 
 def test_graph_terminal_manifest_rejects_unknown_fields() -> None:
-    payload = _manifest().to_dict()
+    payload = _terminal_manifest().to_dict()
     payload["workflow_id"] = "legacy"
 
     with pytest.raises(GraphTerminalManifestError) as raised:
@@ -425,7 +410,7 @@ def test_graph_terminal_manifest_rejects_unknown_fields() -> None:
 
 
 def test_graph_terminal_manifest_rejects_run_identity_mismatch() -> None:
-    payload = _manifest().to_dict()
+    payload = _terminal_manifest().to_dict()
 
     with pytest.raises(GraphTerminalManifestError) as raised:
         GraphTerminalManifest.from_dict(payload, expected_run_id="run-2")
@@ -533,9 +518,13 @@ def test_graph_terminal_metadata_is_immutable_and_rejects_secrets() -> None:
 
 @pytest.mark.parametrize(
     "schema_version",
-    ["newsroom.workflow_run_manifest.v1", "newsroom.workflow_run_manifest.v999"],
+    [
+        GRAPH_TERMINAL_MANIFEST_SCHEMA,
+        "newsroom.workflow_run_manifest.v1",
+        "newsroom.workflow_run_manifest.v999",
+    ],
 )
-def test_legacy_workflow_manifest_returns_typed_history_quarantine(
+def test_legacy_manifest_returns_typed_history_quarantine(
     schema_version: str,
 ) -> None:
     payload = {

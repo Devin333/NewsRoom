@@ -14,9 +14,9 @@ from framework.harness.graph.model import (
     HarnessContractReference,
 )
 from framework.harness.graph.versioning import (
+    GRAPH_ONLY_NORMALIZED_HARNESS_GRAPH_SCHEMA,
     HARNESS_CONDITION_POLICY_VERSION,
-    HARNESS_GRAPH_COMPILER_VERSION,
-    NORMALIZED_HARNESS_GRAPH_SCHEMA,
+    HARNESS_GRAPH_ONLY_COMPILER_VERSION,
 )
 
 
@@ -240,12 +240,16 @@ def _step_decision(
 
 def _graph_ref() -> HarnessGraphReference:
     return HarnessGraphReference(
-        "graph",
-        HarnessContractReference(HarnessContractKind.WORKFLOW, "research", "2"),
-        NORMALIZED_HARNESS_GRAPH_SCHEMA,
-        HARNESS_GRAPH_COMPILER_VERSION,
-        HARNESS_CONDITION_POLICY_VERSION,
-        _sha("graph"),
+        graph_id="research",
+        schema_version=GRAPH_ONLY_NORMALIZED_HARNESS_GRAPH_SCHEMA,
+        compiler_version=HARNESS_GRAPH_ONLY_COMPILER_VERSION,
+        condition_policy_version=HARNESS_CONDITION_POLICY_VERSION,
+        checksum=_sha("graph"),
+        graph_ref=HarnessContractReference(
+            HarnessContractKind.GRAPH,
+            "research",
+            "2",
+        ),
     )
 
 

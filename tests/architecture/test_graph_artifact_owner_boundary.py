@@ -23,18 +23,11 @@ _LEGACY_MANIFEST_METHODS = frozenset(
         "update_run_manifest",
     }
 )
-_INACTIVE_V2_MANIFEST_SYMBOLS = frozenset(
-    {
-        "GraphTerminalManifestV2",
-        "build_graph_terminal_manifest_v2",
-        "parse_graph_terminal_manifest_v2",
-    }
-)
-_V2_MANIFEST_INACTIVE_ROOTS = (
-    _PROJECT_ROOT / "business",
-    _PROJECT_ROOT / "infrastructure",
-    _PROJECT_ROOT / "interfaces",
-    _PROJECT_ROOT / "framework" / "harness" / "control_plane",
+_REQUIRED_V2_MANIFEST_OWNERS = (
+    "infrastructure/research/artifact_port.py",
+    "infrastructure/research/artifact_publication.py",
+    "infrastructure/research/graph_artifact_lifecycle.py",
+    "infrastructure/storage/artifacts/graph_terminal.py",
 )
 
 
@@ -73,21 +66,19 @@ def test_graph_artifact_owner_modules_do_not_call_legacy_manifest_helpers() -> N
     assert violations == []
 
 
-def test_graph_terminal_manifest_v2_contract_is_not_activated() -> None:
-    violations: list[str] = []
-    for root in _V2_MANIFEST_INACTIVE_ROOTS:
-        for path in root.rglob("*.py"):
-            tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
-            used_symbols = {
-                node.id for node in ast.walk(tree) if isinstance(node, ast.Name)
-            } | {
-                node.attr
-                for node in ast.walk(tree)
-                if isinstance(node, ast.Attribute)
-            }
-            activated = sorted(used_symbols.intersection(_INACTIVE_V2_MANIFEST_SYMBOLS))
-            if activated:
-                relative = path.relative_to(_PROJECT_ROOT).as_posix()
-                violations.append(f"{relative}: {', '.join(activated)}")
+def test_graph_terminal_manifest_v2_contract_is_active_in_production_owners() -> None:
+    missing: list[str] = []
+    for relative_path in _REQUIRED_V2_MANIFEST_OWNERS:
+        path = _PROJECT_ROOT / relative_path
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        used_symbols = {
+            node.id for node in ast.walk(tree) if isinstance(node, ast.Name)
+        } | {
+            node.attr
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Attribute)
+        }
+        if "GraphTerminalManifestV2" not in used_symbols:
+            missing.append(relative_path)
 
-    assert violations == []
+    assert missing == []

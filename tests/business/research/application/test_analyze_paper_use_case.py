@@ -21,6 +21,7 @@ from tests.business.research.fakes import (
     FakeResearchLLMWorker,
     FakeResearchRAGRuntime,
     FakeResearchSourceProvider,
+    in_memory_node_output_resource_factory,
 )
 
 
@@ -35,23 +36,20 @@ class _WriteOnlyHarnessTransitionPort:
         self.record_count += 1
         return self._delegate.record(event)
 
-    def create_activity(self, **kwargs):
-        return self._delegate.create_activity(**kwargs)
-
     def read_history(self, *args, **kwargs):
         return self._delegate.read_history(*args, **kwargs)
 
     def require_activity_storage(self) -> None:
         self._delegate.require_activity_storage()
 
-    def accept_activity(self, *args, **kwargs):
-        return self._delegate.accept_activity(*args, **kwargs)
+    def accept_graph_activity(self, *args, **kwargs):
+        return self._delegate.accept_graph_activity(*args, **kwargs)
 
     def resolve_graph_replay_activity(self, *args, **kwargs):
         return self._delegate.resolve_graph_replay_activity(*args, **kwargs)
 
-    def record_activity_result(self, *args, **kwargs):
-        return self._delegate.record_activity_result(*args, **kwargs)
+    def record_graph_activity_result(self, *args, **kwargs):
+        return self._delegate.record_graph_activity_result(*args, **kwargs)
 
     def initialize_graph(self, *args, **kwargs):
         return self._delegate.initialize_graph(*args, **kwargs)
@@ -95,6 +93,7 @@ def _use_case(
         artifact_port=artifact_port or FakeArtifactPort(),
         event_port_factory=event_port_factory
         or (lambda run_id: InMemoryHarnessEventPort()),
+        node_output_resource_factory=in_memory_node_output_resource_factory,
     )
     return AnalyzePaperUseCase(runtime)
 
@@ -203,8 +202,13 @@ def test_llm_flow_control_candidate_does_not_route_workflow() -> None:
     )
 
     assert result.succeeded is True
-    assert result.diagnostics["worker_results"]["analyze_structure"]["output"]["warnings"] == ["next_step"]
-    assert "publish_artifacts" in [entry.step_id for entry in result.transcript.entries()]
+    analyze_structure_result = next(
+        item
+        for item in result.diagnostics["worker_results"].values()
+        if item["node_id"] == "analyze_structure"
+    )
+    assert analyze_structure_result["output"]["warnings"] == ["next_step"]
+    assert "publish_artifacts" in [entry.node_id for entry in result.transcript.entries()]
 
 
 def test_missing_evidence_halts_after_replan_budget_is_exhausted() -> None:
@@ -219,7 +223,7 @@ def test_missing_evidence_halts_after_replan_budget_is_exhausted() -> None:
 
     assert result.status == "halted"
     assert result.quality.passed is False
-    assert result.diagnostics["terminal_reason"] == "verification failed and replan budget is exhausted"
+    assert result.diagnostics["terminal_reason"] == "verification_failed_replans_exhausted"
     failure = next(
         failure
         for failure in result.diagnostics["gate_failures"]

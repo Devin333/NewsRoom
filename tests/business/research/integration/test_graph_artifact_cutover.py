@@ -57,6 +57,7 @@ from infrastructure.storage.events import (
     DurableEventStorage,
     durable_event_storage_from_env,
 )
+from infrastructure.storage.harness import SQLiteHarnessNodeOutputResource
 from infrastructure.storage.harness import SQLiteHarnessSideEffectStore
 from tests.business.research.fakes import (
     FakeGithubRepositoryPort,
@@ -103,7 +104,7 @@ def test_enforced_source_to_report_reopens_without_external_producers(
         first_recovery = first_port.recover_graph(request.run_id)
         first_history = first_port.read_history(request.run_id)
         first_worker_event_count = sum(
-            event.event_type is HarnessEventType.WORKER_RESULT_RECORDED
+            event.event_type is HarnessEventType.GRAPH_WORKER_RESULT_RECORDED
             for event in first_history
         )
         first_lineage = _lineage_checksums(first_recovery.activity_result_commits)
@@ -171,7 +172,7 @@ def test_enforced_source_to_report_reopens_without_external_producers(
         first_recovery.state.projection_checksum
     )
     assert sum(
-        event.event_type is HarnessEventType.WORKER_RESULT_RECORDED
+        event.event_type is HarnessEventType.GRAPH_WORKER_RESULT_RECORDED
         for event in replay_history
     ) == first_worker_event_count
 
@@ -238,7 +239,7 @@ def test_enforced_quality_gate_failure_retains_internal_results_without_publicat
         event
         for event in history
         if event.event_type is HarnessEventType.GATE_EVALUATED
-        and event.step_id == "quality_gate"
+        and event.node_id == "quality_gate"
         and event.payload.get("passed") is False
     ]
     assert len(quality_failures) == 1
@@ -541,6 +542,9 @@ def _runtime_bundle(
         side_effect_store=side_effect_store,
         artifact_handler_factory=ResearchArtifactBundleHandler,
         graph_result_committer_factory=graph_result_committer_factory,
+        node_output_resource_factory=lambda _run_id: SQLiteHarnessNodeOutputResource(
+            records_root / "node-output.sqlite3"
+        ),
     )
     return _RuntimeBundle(
         runtime=runtime,

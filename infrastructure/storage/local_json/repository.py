@@ -40,6 +40,7 @@ class LocalJsonRepository:
             raise ReportNotFoundError(f"no local report found under {self.artifact_root}")
 
         _, manifest_path, manifest = sorted(candidates, key=lambda item: item[0], reverse=True)[0]
+        _require_graph_identity(manifest)
         return _detail_from_manifest(manifest_path, manifest)
 
     def get_report(self, report_id: str) -> ReportDetailRecord:
@@ -57,21 +58,26 @@ class LocalJsonRepository:
             raise ReportNotFoundError(f"report not found: {report_id}")
         if _report_status_from_artifacts(artifacts) != report_status:
             raise ReportNotFoundError(f"report not found: {report_id}")
+        _require_graph_identity(manifest)
         return _detail_from_manifest(manifest_path, manifest)
 
     def list_reports(
         self,
         *,
         limit: int = 20,
-        workflow_id: str | None = None,
-        workflow_ids: tuple[str, ...] | None = None,
+        graph_id: str | None = None,
+        graph_ids: tuple[str, ...] | None = None,
     ) -> list[ReportSummaryRecord]:
         if limit <= 0:
             raise ValueError("limit must be greater than zero")
+        if graph_id and graph_ids:
+            raise ValueError("graph_id and graph_ids are mutually exclusive")
+        if graph_ids is not None and not graph_ids:
+            raise ValueError("graph_ids must not be empty")
         records: list[ReportSummaryRecord] = []
         for manifest_path, manifest in self._iter_report_manifests(
-            workflow_id=workflow_id,
-            workflow_ids=workflow_ids,
+            graph_id=graph_id,
+            graph_ids=graph_ids,
         ):
             records.append(_summary_from_manifest(manifest_path, manifest))
         records.sort(key=lambda item: item.finished_at, reverse=True)
@@ -103,8 +109,8 @@ class LocalJsonRepository:
     def _iter_report_manifests(
         self,
         *,
-        workflow_id: str | None = None,
-        workflow_ids: tuple[str, ...] | None = None,
+        graph_id: str | None = None,
+        graph_ids: tuple[str, ...] | None = None,
     ) -> list[tuple[Path, dict[str, Any]]]:
         manifests: list[tuple[Path, dict[str, Any]]] = []
         for manifest_path in _iter_manifest_paths(self.artifact_root):
@@ -114,9 +120,10 @@ class LocalJsonRepository:
                 continue
             if manifest.get("status") != "succeeded":
                 continue
-            if workflow_id is not None and manifest.get("workflow_id") != workflow_id:
+            _require_graph_identity(manifest)
+            if graph_id is not None and manifest.get("graph_id") != graph_id:
                 continue
-            if workflow_ids is not None and manifest.get("workflow_id") not in set(workflow_ids):
+            if graph_ids is not None and manifest.get("graph_id") not in set(graph_ids):
                 continue
             artifacts = manifest.get("artifacts", {})
             if not _has_report_artifact(artifacts):
@@ -196,12 +203,25 @@ def _summary_from_manifest(manifest_path: Path, manifest: dict[str, Any]) -> Rep
         finished_at=manifest.get("finished_at") or "",
         title=(report_json or {}).get("title"),
         quality_score=manifest.get("quality_score"),
-        workflow_id=manifest.get("workflow_id"),
+        graph_id=_require_graph_identity(manifest)[0],
+        graph_version=_require_graph_identity(manifest)[1],
         profile=manifest.get("profile"),
         manifest_path=str(manifest_path),
         report_json_path=str(report_json_path) if report_json_path is not None else None,
         report_markdown_path=str(report_markdown_path) if report_markdown_path is not None else None,
     )
+
+
+def _require_graph_identity(manifest: dict[str, Any]) -> tuple[str, str]:
+    if "workflow_id" in manifest or "workflow_version" in manifest:
+        raise ValueError("legacy_workflow_identity_not_supported")
+    graph_id = manifest.get("graph_id")
+    graph_version = manifest.get("graph_version")
+    if not isinstance(graph_id, str) or not graph_id.strip():
+        raise ValueError("graph_id is required in report manifest")
+    if not isinstance(graph_version, str) or not graph_version.strip():
+        raise ValueError("graph_version is required in report manifest")
+    return graph_id, graph_version
 
 
 def _parse_report_id(report_id: str) -> tuple[str, str]:

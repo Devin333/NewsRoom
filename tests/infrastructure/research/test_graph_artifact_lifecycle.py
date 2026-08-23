@@ -9,11 +9,14 @@ from pathlib import Path
 
 import pytest
 
+from business.research.graphs import build_paper_analysis_graph_definition
 from framework.harness.artifacts import (
     ArtifactWriteRequest,
     GraphArtifactPhysicalLifecyclePort,
     GraphTerminalManifest,
+    GraphTerminalManifestV2,
 )
+from framework.harness.graph import GraphExecutionVersionManifest, HarnessGraphCompiler
 from framework.harness.artifacts.catalog import (
     ArtifactCatalogClaim,
     ArtifactCatalogEntry,
@@ -103,23 +106,27 @@ def _write_graph_result(
             )
         )
     staged = port.list_staged_artifacts("run-1")
+    execution_versions = _execution_versions()
     port.write_terminal_manifest(
-        GraphTerminalManifest(
-            tenant_id="tenant-1",
-            run_id="run-1",
-            graph_id="research-graph",
-            graph_version="1.0.0",
-            graph_schema_version="1.0.0",
-            compiler_version="1.0.0",
-            normalized_graph_checksum="sha256:" + "d" * 64,
-            status="succeeded",
-            started_at=NOW,
-            completed_at=NOW + timedelta(seconds=2),
-            terminal_state_ref="sha256:" + "e" * 64,
-            checkpoint_ref="graph-state://run-1/terminal",
-            terminal_node_ids=("collect-evidence",),
-            gate_evidence_refs=("sha256:" + "f" * 64,),
-            artifacts=staged,
+        GraphTerminalManifestV2(
+            terminal=GraphTerminalManifest(
+                tenant_id="tenant-1",
+                run_id="run-1",
+                graph_id=execution_versions.graph_id,
+                graph_version=execution_versions.graph_version,
+                graph_schema_version=execution_versions.normalized_graph_schema_version,
+                compiler_version=execution_versions.compiler_version,
+                normalized_graph_checksum=execution_versions.normalized_graph_checksum,
+                status="succeeded",
+                started_at=NOW,
+                completed_at=NOW + timedelta(seconds=2),
+                terminal_state_ref="sha256:" + "e" * 64,
+                checkpoint_ref="graph-state://run-1/terminal",
+                terminal_node_ids=execution_versions.terminal_node_ids,
+                gate_evidence_refs=("sha256:" + "f" * 64,),
+                artifacts=staged,
+            ),
+            execution_versions=execution_versions,
         )
     )
     record = ArtifactRecord(
@@ -150,6 +157,13 @@ def _write_graph_result(
         request=_registration(record),
     )
     return port, catalog, record
+
+
+def _execution_versions() -> GraphExecutionVersionManifest:
+    graph = HarnessGraphCompiler().compile(
+        build_paper_analysis_graph_definition()
+    ).graph
+    return GraphExecutionVersionManifest.from_normalized_graph(graph)
 
 
 def _registration(record: ArtifactRecord) -> ArtifactCatalogRegistrationRequest:
@@ -337,7 +351,11 @@ def test_lifecycle_rejects_tampered_physical_evidence_without_detach(
         )
         tampered = replace(
             manifest,
-            artifacts=(tampered_artifact,),
+            terminal=replace(
+                manifest.terminal,
+                artifacts=(tampered_artifact,),
+                manifest_hash=None,
+            ),
             manifest_hash=None,
         )
         port.manager.write_json("run-1", "manifest.json", tampered.to_dict())

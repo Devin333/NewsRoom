@@ -7,10 +7,12 @@ import pytest
 from framework.events import (
     GRAPH_PHASE_TRANSITION_SCHEMA,
     GraphEventContext,
+    GraphEventExecutionVersion,
     GraphExecutionPhase,
     GraphPhaseBoundary,
     GraphPhaseTransitionRecord,
     GraphRunIdentity,
+    GraphStageIdentity,
 )
 from framework.events.errors import EventContractError, EventIntegrityError
 
@@ -34,8 +36,8 @@ def test_graph_phase_transition_round_trips_exact_identity_and_checksum() -> Non
     assert restored == record
     assert payload["schema"] == GRAPH_PHASE_TRANSITION_SCHEMA
     assert payload["context"]["graph_id"] == "research.paper-analysis"
-    assert payload["context"]["node_id"] == "analyze"
-    assert payload["context"]["node_instance_id"] == "analyze:2"
+    assert payload["context"]["stage_identity"]["node_id"] == "analyze"
+    assert payload["context"]["stage_identity"]["node_instance_id"] == "analyze:2"
     assert payload["gate_evidence_refs"] == [CHECKSUM_B, CHECKSUM_C]
     restored.verify_integrity()
     restored.assert_envelope_sequence(17)
@@ -50,7 +52,14 @@ def test_graph_phase_transition_checksum_is_independent_of_evidence_input_order(
 
 
 def test_graph_phase_transition_requires_node_scoped_context() -> None:
-    context = GraphEventContext(identity=_identity())
+    context = GraphEventContext(
+        identity=_identity(),
+        execution_version=GraphEventExecutionVersion(
+            graph_schema_version="newsroom.normalized-harness-graph/v3",
+            compiler_version="3",
+            normalized_graph_checksum=CHECKSUM_A,
+        ),
+    )
 
     with pytest.raises(EventContractError, match="requires node identity"):
         _record(context=context)
@@ -64,7 +73,7 @@ def test_graph_phase_transition_rejects_moving_versions(field_name: str) -> None
     payload = _record().to_dict()
     payload["context"][field_name] = "latest"
 
-    with pytest.raises(EventContractError, match="must be an exact version"):
+    with pytest.raises(EventContractError, match=r"must be (an )?exact"):
         GraphPhaseTransitionRecord.from_dict(payload)
 
 
@@ -151,17 +160,28 @@ def _identity() -> GraphRunIdentity:
         run_id="run-phase-contract",
         graph_id="research.paper-analysis",
         graph_version="4",
-        graph_schema_version="newsroom.normalized-harness-graph/v3",
-        compiler_version="3",
-        normalized_graph_checksum=CHECKSUM_A,
+        graph_ref="research.paper-analysis@4",
+        graph_checksum=CHECKSUM_A,
     )
 
 
 def _context() -> GraphEventContext:
     return GraphEventContext(
         identity=_identity(),
-        node_id="analyze",
-        node_instance_id="analyze:2",
+        execution_version=GraphEventExecutionVersion(
+            graph_schema_version="newsroom.normalized-harness-graph/v3",
+            compiler_version="3",
+            normalized_graph_checksum=CHECKSUM_A,
+        ),
+        stage_identity=GraphStageIdentity(
+            run_id="run-phase-contract",
+            graph_id="research.paper-analysis",
+            graph_version="4",
+            graph_ref="research.paper-analysis@4",
+            graph_checksum=CHECKSUM_A,
+            node_id="analyze",
+            node_instance_id="analyze:2",
+        ),
     )
 
 

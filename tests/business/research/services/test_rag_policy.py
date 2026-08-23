@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from business.research.rag import ResearchRetrievalGoal
+from business.research.graphs import build_paper_analysis_context_graph_identity
 from business.research.services import ResearchRAGPolicyBuilder
 
 
@@ -16,9 +17,10 @@ def test_rag_policy_builds_harness_session_spec_without_running_loop() -> None:
     )
 
     spec = ResearchRAGPolicyBuilder().build_session_spec(
-        run_id="run-1",
-        workflow_id="research.paper_rag",
-        step_id="run_research_rag",
+        graph_identity=build_paper_analysis_context_graph_identity(
+            run_id="run-1",
+            stage_id="run_research_rag",
+        ),
         session_id="rag-1",
         goal=goal,
     )
@@ -28,4 +30,5 @@ def test_rag_policy_builds_harness_session_spec_without_running_loop() -> None:
     assert payload["goal"]["metadata"]["paper_id"] == "paper-1"
     assert payload["source_policy"]["allowed_source_refs"] == ["paper://paper-1/sec-method"]
     assert payload["context_policy"]["stable_prefix"] is False
+    assert payload["graph_identity"]["graph_id"] == "research.paper_analysis.graph"
     assert payload["budget"]["max_rounds"] > 0

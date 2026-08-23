@@ -364,8 +364,6 @@ class GraphArtifactGovernanceRuntime:
             ),
             generated_at=now,
         )
-        if self._config.mode is GraphArtifactRolloutMode.LEGACY:
-            return report
         stored = self._ledger.put_cost_report(report)
         if stored != report:
             raise result_error(
@@ -420,8 +418,6 @@ class GraphArtifactGovernanceRuntime:
             window_end=window_end,
             reconciliation=reconciliation,
         )
-        if self._config.mode is GraphArtifactRolloutMode.LEGACY:
-            return candidates
         for issue in reconciliation.issues:
             operation_id = (
                 "graph-artifact-catalog-drift://"
@@ -478,8 +474,6 @@ class GraphArtifactGovernanceRuntime:
             usage_facts=usage,
             reconciliation=reconciliation,
         )
-        if self._config.mode is GraphArtifactRolloutMode.LEGACY:
-            return candidates
         return self._deliver_alerts(tenant_id=tenant, candidates=candidates)
 
     def list_alerts(

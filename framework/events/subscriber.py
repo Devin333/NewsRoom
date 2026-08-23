@@ -6,7 +6,6 @@ from enum import Enum
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 from framework.events.canonical import StoredEvent
-from framework.events.envelope import EventEnvelope
 
 if TYPE_CHECKING:
     from framework.events.runtime.models import DurableSubscription
@@ -14,15 +13,6 @@ if TYPE_CHECKING:
 
 MAX_CONSUMER_DIAGNOSTIC_LENGTH = 2_048
 MAX_CONSUMER_REASON_CLASS_LENGTH = 128
-
-
-class EventSubscriber(Protocol):
-    """Synchronous subscriber contract for the in-memory test adapter."""
-
-    subscriber_id: str
-
-    def handle(self, envelope: EventEnvelope) -> None:
-        ...
 
 
 class ConsumerDisposition(str, Enum):

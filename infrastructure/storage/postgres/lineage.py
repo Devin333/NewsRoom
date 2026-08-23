@@ -11,6 +11,7 @@ import psycopg
 from infrastructure.storage.postgres.dsn import normalize_dsn
 
 from infrastructure.storage.lineage.models import LineageRef
+from framework.shared.graph_identity import GraphRunIdentity
 
 
 ConnectionFactory = Callable[[], Any]
@@ -27,8 +28,9 @@ class PostgresLineageStore:
         INSERT INTO lineage_refs (
             lineage_id, run_id, source_type, source_id, target_type, target_id,
             relation_type, created_at, metadata
+            , graph_identity
         )
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s::jsonb)
         ON CONFLICT (lineage_id) DO UPDATE SET
             run_id = EXCLUDED.run_id,
             source_type = EXCLUDED.source_type,
@@ -38,6 +40,7 @@ class PostgresLineageStore:
             relation_type = EXCLUDED.relation_type,
             created_at = EXCLUDED.created_at,
             metadata = EXCLUDED.metadata,
+            graph_identity = EXCLUDED.graph_identity,
             indexed_at = now()
         """
         self._execute(
@@ -52,6 +55,7 @@ class PostgresLineageStore:
                 ref.relation_type,
                 ref.created_at,
                 _json(ref.metadata),
+                _json(ref.graph_identity.to_dict() if ref.graph_identity else {}),
             ),
         )
 
@@ -97,7 +101,7 @@ def _select_sql(where_clause: str) -> str:
     return f"""
         SELECT
             lineage_id, run_id, source_type, source_id, target_type, target_id,
-            relation_type, created_at, metadata
+            relation_type, created_at, metadata, graph_identity
         FROM lineage_refs
         {where_clause}
         ORDER BY created_at ASC, lineage_id ASC
@@ -105,6 +109,12 @@ def _select_sql(where_clause: str) -> str:
 
 
 def _ref_from_row(row: tuple[Any, ...]) -> LineageRef:
+    graph_payload = row[9] if len(row) > 9 else None
+    graph_identity = None
+    if graph_payload:
+        normalized_graph_payload = _dict(graph_payload)
+        if normalized_graph_payload:
+            graph_identity = GraphRunIdentity.from_dict(normalized_graph_payload)
     return LineageRef(
         lineage_id=str(row[0]),
         run_id=str(row[1]),
@@ -115,6 +125,7 @@ def _ref_from_row(row: tuple[Any, ...]) -> LineageRef:
         relation_type=str(row[6]),
         created_at=_timestamp(row[7]),
         metadata=_dict(row[8]),
+        graph_identity=graph_identity,
     )
 
 

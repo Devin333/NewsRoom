@@ -246,8 +246,8 @@ def _history_policy() -> HistoryEventPolicy:
     return HistoryEventPolicy(
         handler_id="counter-history",
         handler_version="1",
-        workflow_id="counter-workflow",
-        workflow_version="1",
+        graph_id="counter-graph",
+        graph_version="1",
         policy_id="counter-policy",
         policy_version="1",
         schema_id="counter-schema",
@@ -273,7 +273,7 @@ def _history_verifier(
     handler = _history_handler_for(expected)
     versions = ExactVersionRegistry()
     for kind, component_id, version, value in (
-        ("workflow", "counter-workflow", "1", "pinned"),
+        ("graph", "counter-graph", "1", "pinned"),
         ("policy", "counter-policy", "1", "pinned"),
         ("schema", "counter-schema", "2", "pinned"),
         ("reducer", "counter-history", "1", handler),
@@ -577,7 +577,7 @@ def _command(*, target: str) -> DeterministicCommand:
         kind="route",
         target=target,
         handler_version="1",
-        workflow_version="1",
+        graph_version="1",
         policy_version="1",
         input_refs=("event://counter/1",),
         input_checksums=(checksum_for("counter-input"),),
@@ -692,7 +692,7 @@ def test_verify_history_missing_activity_and_version_fail_closed() -> None:
                 1,
                 history_policy=replace(
                     _history_policy(),
-                    workflow_version="missing-version",
+                    graph_version="missing-version",
                 ),
             )
         ]
@@ -1263,7 +1263,7 @@ def test_verify_checkpoint_rejects_conflicting_pinned_versions_on_build_and_rest
     ).checkpoint
     conflicting_versions = tuple(
         ReplayVersion(item.component, "conflicting-version")
-        if item.component == "workflow:counter-workflow"
+            if item.component == "graph:counter-graph"
         else item
         for item in checkpoint.versions
     )

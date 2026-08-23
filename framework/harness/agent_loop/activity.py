@@ -49,7 +49,7 @@ from framework.harness.graph.model import (
     HarnessContractKind,
     HarnessContractReference,
 )
-from framework.harness.runtime.activity_executor import (
+from framework.harness.control_plane.activity_execution import (
     HARNESS_GRAPH_ACTIVITY_TASK_CONTEXT_KEY,
     HarnessGraphActivityTaskContext,
 )
@@ -59,6 +59,7 @@ from framework.harness.workers.result import (
     HarnessWorkerStatus,
 )
 from framework.shared.redaction import redact_sensitive_values
+from framework.shared.graph_identity import GraphExecutionIdentity
 
 
 AGENT_LOOP_GRAPH_ACTIVITY_TASK_SCHEMA = (
@@ -821,8 +822,15 @@ class AgentLoopGraphWorker:
             mapping_to_dict(parsed.inputs),
             conversation_id=parsed.conversation_id,
             run_id=activity.run_id,
+            graph_id=activity.graph_ref.graph_id,
+            graph_version=activity.graph_ref.identity_version,
+            graph_ref=activity.graph_ref.identity_ref.exact_ref,
+            graph_checksum=activity.graph_ref.checksum,
+            node_id=activity.node_id,
             node_instance_id=activity.node_instance_id,
             graph_checkpoint_ref=parsed.task_context.graph_checkpoint_ref,
+            activity_id=activity.activity_id,
+            attempt=activity.attempt,
             resume_from_cursor=parsed.resume_from_cursor,
         )
         if not isinstance(result, AgentLoopResult):
@@ -846,7 +854,25 @@ class AgentLoopGraphWorker:
             if wait_candidate is None
             else AgentLoopGraphApprovalWaitFact.from_candidate(wait_candidate)
         )
-        result_projection = _agent_result_projection(result)
+        result_projection = _agent_result_projection(
+            result,
+            execution_identity=GraphExecutionIdentity(
+                run_id=activity.run_id,
+                graph_id=activity.graph_ref.graph_id,
+                graph_version=activity.graph_ref.identity_version,
+                graph_ref=activity.graph_ref.identity_ref.exact_ref,
+                graph_checksum=activity.graph_ref.checksum,
+                node_id=activity.node_id,
+                node_instance_id=activity.node_instance_id,
+                activity_id=activity.activity_id,
+                attempt=activity.attempt,
+            ),
+            max_memory_candidates=(
+                self.agent.loop_policy.max_tool_calls + 1
+                if self.agent.loop_policy.memory_write_enabled
+                else 0
+            ),
+        )
         preliminary_evidence = (
             () if wait_candidate is None else (wait_candidate.worker_evidence(),)
         )
@@ -983,9 +1009,14 @@ class AgentLoopGraphWaitCandidateGate(DeterministicGate):
                 "AgentLoop waiting evidence is invalid",
                 "agent_loop_wait_evidence_invalid",
             )
-        run_inputs = context.state.run_spec.inputs
-        state_metadata = context.state.metadata
-        step_metadata = context.step_state.metadata
+        run_inputs = context.run_spec.inputs
+        graph_ref = context.graph_state.graph_ref
+        node_state = context.node_state
+        if node_state is None:
+            return self._failure(
+                "AgentLoop Gate requires an exact Graph node instance",
+                "agent_loop_wait_node_state_missing",
+            )
         expected_tenant_scope = run_inputs.get(self.tenant_scope_input_key)
         expected_identity_scope = run_inputs.get(self.identity_scope_input_key)
         mismatches = tuple(
@@ -1005,22 +1036,22 @@ class AgentLoopGraphWaitCandidateGate(DeterministicGate):
                 ),
                 (
                     "run_id",
-                    context.state.run_spec.run_id,
+                    context.run_spec.run_id,
                     candidate.run_id,
                 ),
                 (
                     "graph_id",
-                    state_metadata.get("graph_id"),
+                    graph_ref.graph_id,
                     candidate.graph_id,
                 ),
                 (
                     "graph_version",
-                    state_metadata.get("graph_version"),
+                    graph_ref.identity_version,
                     candidate.graph_version,
                 ),
                 (
                     "graph_checksum",
-                    state_metadata.get("graph_checksum"),
+                    graph_ref.checksum,
                     candidate.graph_checksum,
                 ),
                 (
@@ -1030,12 +1061,15 @@ class AgentLoopGraphWaitCandidateGate(DeterministicGate):
                 ),
                 (
                     "node_instance_id",
-                    step_metadata.get("node_instance_id"),
+                    node_state.metadata.get(
+                        "node_instance_id",
+                        node_state.instance_id,
+                    ),
                     candidate.node_instance_id,
                 ),
                 (
                     "activity_attempt",
-                    context.step_state.attempts,
+                    node_state.attempt,
                     candidate.activity_attempt,
                 ),
                 (
@@ -1213,7 +1247,7 @@ class AgentLoopGraphApprovalWaitBinding:
         if tuple(sorted(raw_paths or ())) != self.control_fact_paths:
             mismatches.append("control_fact_paths")
         if isinstance(metadata, Mapping) and metadata.get("approval_required") is True:
-            mismatches.append("legacy_approval_required")
+            mismatches.append("approval_policy_must_use_graph_wait")
         if mismatches:
             raise HarnessValidationError(
                 "AgentLoop approval Wait binding does not match its Step contract",
@@ -1428,12 +1462,22 @@ def build_agent_loop_graph_activity_binding_bundle(
     )
 
 
-def _agent_result_projection(result: AgentLoopResult) -> dict[str, Any]:
+def _agent_result_projection(
+    result: AgentLoopResult,
+    *,
+    execution_identity: GraphExecutionIdentity,
+    max_memory_candidates: int,
+) -> dict[str, Any]:
     if result.memory_ops:
         raise HarnessValidationError(
             "Graph AgentLoop cannot carry direct memory operations",
             code="agent_loop_graph_memory_side_effect_forbidden",
         )
+    memory_candidates = _validated_memory_candidates(
+        result.memory_candidates,
+        execution_identity=execution_identity,
+        max_candidates=max_memory_candidates,
+    )
     serialized = result.to_dict()
     payload = {
         "success": result.success,
@@ -1458,6 +1502,7 @@ def _agent_result_projection(result: AgentLoopResult) -> dict[str, Any]:
         "trajectory_count": len(result.trajectory),
         "tool_call_count": len(result.tool_calls),
         "llm_call_artifact_count": len(result.llm_call_artifacts),
+        "memory_candidates": memory_candidates,
     }
     frozen = freeze_json(
         redact_sensitive_values(payload),
@@ -1466,6 +1511,62 @@ def _agent_result_projection(result: AgentLoopResult) -> dict[str, Any]:
     if not isinstance(frozen, Mapping):  # pragma: no cover - invariant
         raise AssertionError("AgentLoop result projection must remain a mapping")
     return mapping_to_dict(frozen)
+
+
+def _validated_memory_candidates(
+    candidates: list[dict[str, Any]],
+    *,
+    execution_identity: GraphExecutionIdentity,
+    max_candidates: int,
+) -> list[dict[str, Any]]:
+    if len(candidates) > max_candidates:
+        raise HarnessValidationError(
+            "Graph AgentLoop memory candidate budget exceeded",
+            code="agent_loop_graph_memory_candidate_budget_exceeded",
+            details={
+                "candidate_count": len(candidates),
+                "max_candidates": max_candidates,
+            },
+        )
+    expected_identity = execution_identity.to_dict()
+    normalized: list[dict[str, Any]] = []
+    candidate_ids: set[str] = set()
+    for raw_candidate in candidates:
+        if not isinstance(raw_candidate, Mapping):
+            raise HarnessValidationError(
+                "Graph AgentLoop memory candidate must be an object",
+                code="agent_loop_graph_memory_candidate_invalid",
+            )
+        candidate = dict(raw_candidate)
+        metadata = candidate.get("metadata")
+        refs = candidate.get("refs")
+        candidate_id = candidate.get("memory_id")
+        if (
+            not isinstance(metadata, Mapping)
+            or metadata.get("candidate_only") is not True
+            or metadata.get("source") != "agent_loop"
+            or metadata.get("graph_identity") != expected_identity
+            or not isinstance(refs, Mapping)
+            or any(refs.get(key) != value for key, value in expected_identity.items())
+            or candidate.get("scope") != "graph"
+            or candidate.get("namespace") != "agent.loop"
+            or not isinstance(candidate_id, str)
+            or not candidate_id.startswith("agent-loop:")
+            or not isinstance(candidate.get("content"), str)
+            or len(candidate["content"]) > 16_448
+        ):
+            raise HarnessValidationError(
+                "Graph AgentLoop memory candidate is not candidate-only or has mismatched identity",
+                code="agent_loop_graph_memory_candidate_invalid",
+            )
+        if candidate_id in candidate_ids:
+            raise HarnessValidationError(
+                "Graph AgentLoop memory candidate ids must be unique",
+                code="agent_loop_graph_memory_candidate_invalid",
+            )
+        candidate_ids.add(candidate_id)
+        normalized.append(candidate)
+    return normalized
 
 
 def _worker_status(result: AgentLoopResult) -> HarnessWorkerStatus:

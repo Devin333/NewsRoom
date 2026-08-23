@@ -12,6 +12,7 @@ from framework.harness.task_plan.canonical import (
     identifier,
 )
 from framework.harness.task_plan.models import TaskInstance
+from framework.shared.graph_identity import GraphRunIdentity
 
 
 TASK_PLAN_QUEUE_TASK_TYPE = "harness_task_plan"
@@ -154,6 +155,8 @@ class TaskPlanQueueProjection:
             task_type=TASK_PLAN_QUEUE_TASK_TYPE,
             queue_name=self.queue_name,
             payload={},
+            execution_scope="graph",
+            graph_identity=_task_instance_graph_identity(instance),
             metadata={TASK_PLAN_QUEUE_METADATA_KEY: self.to_dict()},
             dedup_key=instance.idempotency_key,
             max_attempts=1,
@@ -267,6 +270,7 @@ class TaskPlanQueueProjection:
             or task.task_id != instance.task_instance_id
             or task.queue_name != projection.queue_name
             or task.payload != {}
+            or task.graph_identity != _task_instance_graph_identity(instance)
             or task.dedup_key != instance.idempotency_key
             or type(task.max_attempts) is not int
             or task.max_attempts != 1
@@ -285,6 +289,18 @@ class TaskPlanQueueProjection:
                 details={"task_instance_id": instance.task_instance_id},
             )
         return projection
+
+
+def _task_instance_graph_identity(instance: TaskInstance) -> GraphRunIdentity:
+    """Project a Graph-only TaskPlan attempt onto the generic queue carrier."""
+
+    return GraphRunIdentity(
+        run_id=instance.run_id,
+        graph_id=instance.graph_id,
+        graph_version=instance.graph_version,
+        graph_ref=instance.graph_ref,
+        graph_checksum=instance.graph_checksum,
+    )
 
 
 @dataclass(frozen=True, slots=True)

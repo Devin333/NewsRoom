@@ -10,9 +10,6 @@ from business.research.graphs import (
     build_paper_analysis_graph_definition,
     build_reader_repair_graph_definition,
 )
-from business.research.workflows.paper_analysis_workflow import (
-    build_paper_analysis_workflow_spec,
-)
 from framework.harness.control_plane.errors import HarnessValidationError
 from framework.harness.graph import (
     BoundedLoop,
@@ -46,7 +43,6 @@ from framework.harness.graph import (
     Wait,
 )
 from framework.harness.side_effects.models import HarnessTerminalSideEffectPolicy
-from framework.harness.workflow.compiler import HarnessWorkflowGraphCompiler
 
 
 def test_graph_compiler_emits_v2_identity_without_workflow_aliases() -> None:
@@ -314,18 +310,9 @@ def test_graph_compile_result_rejects_version_or_definition_substitution() -> No
     assert lineage_error.value.code == "graph_definition_lineage_mismatch"
 
 
-def test_graph_only_compiler_is_not_a_workflow_compiler_or_live_cutover() -> None:
-    workflow = build_paper_analysis_workflow_spec()
-
+def test_graph_only_compiler_rejects_non_definition_input() -> None:
     with pytest.raises(TypeError):
-        HarnessGraphCompiler().compile(workflow)  # type: ignore[arg-type]
-
-    legacy_graph = HarnessWorkflowGraphCompiler().compile(workflow).graph
-    legacy_payload = legacy_graph.to_dict()
-    assert "workflow_id" in legacy_payload
-    assert "graph_version" not in legacy_payload
-    assert "definition_checksum" not in legacy_payload
-    assert legacy_graph.schema_version != GRAPH_ONLY_NORMALIZED_HARNESS_GRAPH_SCHEMA
+        HarnessGraphCompiler().compile(object())  # type: ignore[arg-type]
 
 
 def _control_construct_definition() -> HarnessGraphDefinition:

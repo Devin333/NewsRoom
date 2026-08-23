@@ -24,6 +24,7 @@ from tests.business.research.fakes import (
     FakeResearchLLMWorker,
     FakeResearchRAGRuntime,
     FakeResearchSourceProvider,
+    in_memory_node_output_resource_factory,
 )
 
 
@@ -125,6 +126,7 @@ def test_incomplete_research_registry_fails_before_source_or_artifact_calls() ->
         rag_runtime=FakeResearchRAGRuntime(),
         artifact_port=artifact_port,
         event_port_factory=lambda run_id: event_port,
+        node_output_resource_factory=in_memory_node_output_resource_factory,
     )
     runtime.gate_registry = DeterministicGateRegistry()
 
@@ -356,6 +358,7 @@ def test_active_paper_gate_failure_records_exact_evidence_before_downstream_work
         rag_runtime=FakeResearchRAGRuntime(),
         artifact_port=artifact_port,
         event_port_factory=lambda run_id: event_port,
+        node_output_resource_factory=in_memory_node_output_resource_factory,
     )
 
     result = AnalyzePaperUseCase(runtime).analyze(
@@ -373,7 +376,7 @@ def test_active_paper_gate_failure_records_exact_evidence_before_downstream_work
         index
         for index, event in enumerate(events)
         if event.get("event_type") == "gate_evaluated"
-        and event.get("step_id") == step_id
+            and event.get("node_id") == step_id
         and event.get("payload", {}).get("gate") == gate_id
         and event.get("payload", {}).get("passed") is False
     ]
@@ -388,8 +391,8 @@ def test_active_paper_gate_failure_records_exact_evidence_before_downstream_work
     downstream_call_indexes = [
         index
         for index, event in enumerate(events)
-        if event.get("event_type") == "worker_called"
-        and event.get("step_id") == next_step_id
+        if event.get("event_type") == "graph_worker_called"
+            and event.get("node_id") == next_step_id
     ]
     if uses_controlled_repair:
         assert downstream_call_indexes
@@ -404,7 +407,7 @@ def test_active_paper_gate_failure_records_exact_evidence_before_downstream_work
         assert committed_history
         assert any(
             event.event_type.value == "gate_evaluated"
-            and event.step_id == step_id
+            and event.node_id == step_id
             and event.payload.get("details", {})
             .get("harness_gate", {})
             .get("reference")

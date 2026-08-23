@@ -18,6 +18,7 @@ from framework.scoring.ranking import PriorityRanker
 from framework.scoring.recipes import RecipeValidator, ScoringRecipe
 from framework.scoring.registry import ScoringRegistry, build_default_scoring_registry
 from framework.shared.time import utc_now
+from framework.shared.graph_identity import GraphExecutionIdentity
 
 
 class ScoringRuntime:
@@ -39,6 +40,7 @@ class ScoringRuntime:
         features: FeatureVector,
         recipe: ScoringRecipe,
         context: ScoringContext | None = None,
+        execution_identity: GraphExecutionIdentity | None = None,
     ) -> ScoringResult:
         self._validate_recipe(recipe)
         actual_context = (context or ScoringContext()).with_recipe(recipe)
@@ -47,23 +49,24 @@ class ScoringRuntime:
             target_id=target.target_id,
             target_type=target.target_type,
             metadata={"trace_level": recipe.trace_level},
+            execution_identity=execution_identity,
         )
 
         if recipe.normalizers:
-            normalizer_step = _step("normalizers", "normalizer", input_summary={"normalizers": recipe.normalizers})
+            normalizer_step = _step("normalizers", "normalizer", input_summary={"normalizers": recipe.normalizers}, execution_identity=execution_identity)
             features = self._run_normalizers(features, recipe=recipe, context=actual_context)
             trace = trace.add_step(normalizer_step.finish(output_summary={"feature_count": len(features.values)}))
 
         gate_specs = self._resolve_gate_specs(recipe)
-        gate_step = _step("gates", "gate", input_summary={"gate_count": len(gate_specs)})
+        gate_step = _step("gates", "gate", input_summary={"gate_count": len(gate_specs)}, execution_identity=execution_identity)
         gate_results = self.gate_runner.run(gate_specs, target=target, features=features, context=actual_context)
         trace = trace.add_step(gate_step.finish(output_summary={"gate_count": len(gate_results)}))
 
-        scorer_step = _step("scorers", "scorer", input_summary={"scorers": recipe.scorer_ids()})
+        scorer_step = _step("scorers", "scorer", input_summary={"scorers": recipe.scorer_ids()}, execution_identity=execution_identity)
         bundle = self._run_scorers(target=target, features=features, recipe=recipe, context=actual_context)
         trace = trace.add_step(scorer_step.finish(output_summary={"final_score": bundle.final_score}))
 
-        gate_apply_step = _step("apply_gates", "gate_application")
+        gate_apply_step = _step("apply_gates", "gate_application", execution_identity=execution_identity)
         bundle, blocked, review_required, warnings = self._apply_gates(bundle, gate_results)
         trace = trace.add_step(
             gate_apply_step.finish(output_summary={"final_score": bundle.final_score, "blocked": blocked})
@@ -85,11 +88,11 @@ class ScoringRuntime:
             },
         )
 
-        calibrator_step = _step("calibrators", "calibrator", input_summary={"calibrators": recipe.calibrators})
+        calibrator_step = _step("calibrators", "calibrator", input_summary={"calibrators": recipe.calibrators}, execution_identity=execution_identity)
         result = self._run_calibrators(result, recipe=recipe, context=actual_context)
         trace = trace.add_step(calibrator_step.finish(output_summary={"final_score": result.final_score}))
 
-        explanation_step = _step("explanation", "explainer", input_summary={"explainer": recipe.explainer or "template"})
+        explanation_step = _step("explanation", "explainer", input_summary={"explainer": recipe.explainer or "template"}, execution_identity=execution_identity)
         explanation = self._build_explanation(
             target=target,
             features=features,
@@ -107,6 +110,7 @@ class ScoringRuntime:
         feature_vectors: dict[str, FeatureVector],
         recipe: ScoringRecipe,
         context: ScoringContext | None = None,
+        execution_identity: GraphExecutionIdentity | None = None,
     ):
         results: list[ScoringResult] = []
         warnings: list[str] = []
@@ -115,7 +119,15 @@ class ScoringRuntime:
             if features is None:
                 warnings.append(f"missing feature vector for target {target.target_id}")
                 continue
-            results.append(self.score_object(target, features=features, recipe=recipe, context=context))
+            results.append(
+                self.score_object(
+                    target,
+                    features=features,
+                    recipe=recipe,
+                    context=context,
+                    execution_identity=execution_identity,
+                )
+            )
         rankers = recipe.rankers or ["priority"]
         ranking = PriorityRanker().rank(results, recipe=recipe, context=context or ScoringContext())
         for ranker_id in rankers:
@@ -130,10 +142,17 @@ class ScoringRuntime:
         features: FeatureVector,
         recipe: ScoringRecipe,
         context: ScoringContext | None = None,
+        execution_identity: GraphExecutionIdentity | None = None,
     ) -> ScoringResult:
         if not any("graph_path" in scorer_id or "path" in scorer_id for scorer_id in recipe.scorers):
             raise ValueError("score_path requires a graph path scorer in recipe.scorers")
-        return self.score_object(path_target, features=features, recipe=recipe, context=context)
+        return self.score_object(
+            path_target,
+            features=features,
+            recipe=recipe,
+            context=context,
+            execution_identity=execution_identity,
+        )
 
     def fuse_rankings(
         self,
@@ -308,11 +327,12 @@ class ScoringRuntime:
             raise ValueError("; ".join(errors))
 
 
-def _step(step_id: str, step_type: str, *, input_summary: dict[str, Any] | None = None) -> ScoringStepTrace:
+def _step(step_id: str, step_type: str, *, input_summary: dict[str, Any] | None = None, execution_identity: GraphExecutionIdentity | None = None) -> ScoringStepTrace:
     return ScoringStepTrace(
         step_id=step_id,
         step_type=step_type,
         status="started",
         started_at=utc_now(),
         input_summary=dict(input_summary or {}),
+        execution_identity=execution_identity,
     )

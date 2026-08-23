@@ -1,11 +1,8 @@
 from __future__ import annotations
 
-import pytest
-
 from framework.harness import (
     FakeArtifactPort,
     HarnessEventType,
-    HarnessValidationError,
     InMemoryHarnessEventPort,
 )
 
@@ -17,6 +14,7 @@ from tests.business.research.fakes import (
     FakeResearchLLMWorker,
     FakeResearchRAGRuntime,
     FakeResearchSourceProvider,
+    in_memory_node_output_resource_factory,
 )
 from tests.framework.harness.context.runtime_fakes import verified_context_assembler
 
@@ -34,6 +32,7 @@ def test_rag_context_writes_snapshot_before_llm_visible_artifacts() -> None:
             github_repository=FakeGithubRepositoryPort(),
             rag_runtime=FakeResearchRAGRuntime(),
             artifact_port=artifact_port,
+            node_output_resource_factory=in_memory_node_output_resource_factory,
             event_port_factory=lambda run_id: InMemoryHarnessEventPort(),
             context_assembler=context_assembler,
         )
@@ -78,25 +77,35 @@ def test_protected_research_context_overflow_fails_closed() -> None:
             github_repository=FakeGithubRepositoryPort(),
             rag_runtime=FakeResearchRAGRuntime(),
             artifact_port=artifact_port,
+            node_output_resource_factory=in_memory_node_output_resource_factory,
             event_port_factory=lambda run_id: InMemoryHarnessEventPort(),
             context_assembler=context_assembler,
         )
     )
 
-    with pytest.raises(HarnessValidationError, match="did not authorize"):
-        use_case.analyze(
-            AnalyzePaperRequest(
-                run_id="research-run-context-compression",
-                paper_id="paper-harness-001",
-                source_ref="https://arxiv.org/abs/2606.00123",
-                user_id="user-1",
-                options={
-                    "context_max_input_tokens": 256,
-                    "evidence_memory_tokens": 900,
-                },
-            )
+    result = use_case.analyze(
+        AnalyzePaperRequest(
+            run_id="research-run-context-compression",
+            paper_id="paper-harness-001",
+            source_ref="https://arxiv.org/abs/2606.00123",
+            user_id="user-1",
+            options={
+                "context_max_input_tokens": 256,
+                "evidence_memory_tokens": 900,
+            },
         )
+    )
 
+    assert result.status == "failed"
+    assert result.diagnostics["terminal_reason"] == "graph_terminal_failure"
+    publish_result = next(
+        item
+        for item in result.diagnostics["worker_results"].values()
+        if item["node_id"] == "publish_artifacts"
+    )
+    assert publish_result["error"] == (
+        "verified context runtime did not authorize provider dispatch"
+    )
     assert HarnessEventType.CONTEXT_COMPACTION_VERIFIED not in {
         event.event_type for event in context_events.events
     }
@@ -117,6 +126,7 @@ def test_request_cannot_expand_the_composition_context_limit() -> None:
             github_repository=FakeGithubRepositoryPort(),
             rag_runtime=FakeResearchRAGRuntime(),
             artifact_port=artifact_port,
+            node_output_resource_factory=in_memory_node_output_resource_factory,
             event_port_factory=lambda run_id: InMemoryHarnessEventPort(),
             context_assembler=context_assembler,
             context_max_input_tokens=8_192,

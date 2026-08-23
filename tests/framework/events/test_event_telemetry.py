@@ -17,6 +17,7 @@ from framework.events.telemetry import (
     default_event_telemetry,
 )
 from framework.events.trace import TraceContext
+from framework.shared import GraphExecutionIdentity
 import framework.events.telemetry as telemetry_module
 
 
@@ -119,7 +120,7 @@ def test_telemetry_projects_only_schema_defined_low_cardinality_attributes() -> 
         "newsroom.event.delivery",
         attributes={
             "newsroom.component": "delivery",
-            "newsroom.event.type": "workflow_step_completed",
+            "newsroom.event.type": "graph_step_completed",
             "newsroom.outcome": "acked",
             "run_id": "run-secret",
             "tenant_id": "tenant-secret",
@@ -133,7 +134,7 @@ def test_telemetry_projects_only_schema_defined_low_cardinality_attributes() -> 
 
     assert backend.started[0]["attributes"] == {
         "newsroom.component": "delivery",
-        "newsroom.event.type": "workflow_step_completed",
+        "newsroom.event.type": "graph_step_completed",
         "newsroom.outcome": "acked",
     }
     serialized = repr(backend.started)
@@ -149,7 +150,17 @@ def test_span_links_preserve_async_causality_without_business_ids() -> None:
     telemetry = EventTelemetry(backend)
     contexts = [
         TraceContext.root(
-            run_id=f"run-{index}",
+            execution_identity=GraphExecutionIdentity(
+                run_id=f"run-{index}",
+                graph_id="test.graph",
+                graph_version="1",
+                graph_ref="test.graph@1",
+                graph_checksum="sha256:" + "a" * 64,
+                node_id="batch",
+                node_instance_id=f"batch:{index}",
+                activity_id=f"activity-{index}",
+                attempt=1,
+            ),
             trace_id=f"{index + 1:032x}",
             span_id=f"{index + 1:016x}",
         )
@@ -260,7 +271,7 @@ def test_operational_metric_contract_supports_histograms_and_current_gauges() ->
     telemetry.record_gauge(
         "event_delivery_pending",
         12,
-        labels={"consumer": "workflow"},
+        labels={"consumer": "graph"},
     )
     telemetry.record_gauge(
         "event_store_health",
@@ -270,7 +281,7 @@ def test_operational_metric_contract_supports_histograms_and_current_gauges() ->
     telemetry.record_gauge(
         "event_delivery_pending",
         99,
-        labels={"consumer": "workflow", "run_id": "run-secret"},
+        labels={"consumer": "graph", "run_id": "run-secret"},
     )
     telemetry.record_histogram(
         "event_append_latency_seconds",
@@ -282,7 +293,7 @@ def test_operational_metric_contract_supports_histograms_and_current_gauges() ->
         ("event_append_latency_seconds", 0.125, {"backend": "sqlite"})
     ]
     assert backend.gauges == [
-        ("event_delivery_pending", 12.0, {"consumer": "workflow"}),
+        ("event_delivery_pending", 12.0, {"consumer": "graph"}),
         ("event_store_health", 1.0, {"backend": "postgresql"}),
     ]
 
@@ -293,26 +304,26 @@ def test_all_required_operational_metric_names_have_low_cardinality_contracts() 
 
     counters = (
         ("event_append_total", {"backend": "sqlite", "result": "accepted"}),
-        ("event_delivery_attempt_total", {"consumer": "workflow", "outcome": "ack"}),
-        ("event_dead_letter_total", {"consumer": "workflow", "reason_class": "permanent"}),
-        ("event_lease_recovery_total", {"consumer": "workflow"}),
+        ("event_delivery_attempt_total", {"consumer": "graph", "outcome": "ack"}),
+        ("event_dead_letter_total", {"consumer": "graph", "reason_class": "permanent"}),
+        ("event_lease_recovery_total", {"consumer": "graph"}),
         ("event_schema_validation_total", {"event_type": "registered", "result": "success"}),
         (
             "event_upcast_total",
             {"event_type": "registered", "from": "v1", "to": "v2", "result": "success"},
         ),
         ("event_quarantine_total", {"reason": "schema"}),
-        ("event_identity_collision_total", {"source": "workflow"}),
+        ("event_identity_collision_total", {"source": "graph"}),
         ("event_replay_total", {"mode": "rebuild_state", "result": "success"}),
         ("event_replay_mismatch_total", {"reason": "command"}),
     )
     for name, labels in counters:
         telemetry.add_counter(name, labels=labels)
     for name, labels in (
-        ("event_delivery_lag", {"consumer": "workflow"}),
-        ("event_delivery_oldest_age_seconds", {"consumer": "workflow"}),
-        ("event_projection_high_watermark", {"projection": "workflow"}),
-        ("event_projection_staleness", {"projection": "workflow"}),
+        ("event_delivery_lag", {"consumer": "graph"}),
+        ("event_delivery_oldest_age_seconds", {"consumer": "graph"}),
+        ("event_projection_high_watermark", {"projection": "graph"}),
+        ("event_projection_staleness", {"projection": "graph"}),
     ):
         telemetry.record_gauge(name, 1, labels=labels)
 

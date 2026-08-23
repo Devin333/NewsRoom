@@ -14,11 +14,13 @@ from framework.events.canonical import (
     thaw_canonical_json,
 )
 from framework.events.errors import EventCanonicalizationError, EventTimeError
+from framework.shared.graph_identity import GraphExecutionIdentity
 from framework.shared.time import ensure_utc, format_datetime, parse_datetime
 
 
 UTC = _tz.utc
 TRACE_EVENT_SCHEMA_VERSION = "newsroom.trace_event.v1"
+TRACE_CONTEXT_SCHEMA_VERSION = "newsroom.trace-context/v2"
 TRACE_METADATA_SCHEMA_VERSION = "newsroom.trace-metadata/v1"
 REDACTED_TRACE_VALUE = "[REDACTED]"
 MAX_TRACESTATE_BYTES = 512
@@ -29,6 +31,23 @@ _TRACE_FLAGS_PATTERN = re.compile(r"[0-9a-f]{2}\Z")
 _CAMEL_BOUNDARY_1 = re.compile(r"(.)([A-Z][a-z]+)")
 _CAMEL_BOUNDARY_2 = re.compile(r"([a-z0-9])([A-Z])")
 _KEY_SEPARATOR = re.compile(r"[^A-Za-z0-9]+")
+_TRACE_CONTEXT_FIELDS = frozenset(
+    {
+        "schema_version",
+        "execution_identity",
+        "trace_id",
+        "span_id",
+        "parent_span_id",
+        "trace_flags",
+        "tracestate",
+        "is_remote",
+        "agent_id",
+        "tool_call_id",
+        "memory_operation_id",
+        "artifact_id",
+        "metadata",
+    }
+)
 
 # These are exact normalized field names, not substrings. A schema can add
 # sensitive paths or explicitly allow one path through TraceRedactionPolicy.
@@ -120,19 +139,17 @@ class TraceRedactionPolicy:
 
 @dataclass(frozen=True, slots=True)
 class TraceContext:
-    """Bounded compatibility facade over immutable W3C span context.
+    """Business trace context bound to one exact Graph activity attempt.
 
-    Explicit historical identifiers remain readable even when they do not
-    satisfy W3C. Callers must check ``is_injectable`` (the shared propagator
-    does this automatically) before placing a context in an outbound carrier.
+    W3C transport state is intentionally kept separate in ``W3CSpanContext``.
+    A business TraceContext cannot be created without a complete physical
+    execution identity, so transport-only propagation uses ``extract_span``.
     """
 
-    run_id: str
+    execution_identity: GraphExecutionIdentity
     trace_id: str
     span_id: str
     parent_span_id: str | None = None
-    workflow_id: str | None = None
-    step_id: str | None = None
     agent_id: str | None = None
     tool_call_id: str | None = None
     memory_operation_id: str | None = None
@@ -141,9 +158,11 @@ class TraceContext:
     trace_flags: str = "00"
     tracestate: str | None = None
     is_remote: bool = False
+    schema_version: str = TRACE_CONTEXT_SCHEMA_VERSION
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "run_id", _required_str(self.run_id, "run_id"))
+        if not isinstance(self.execution_identity, GraphExecutionIdentity):
+            raise TypeError("execution_identity must be GraphExecutionIdentity")
         object.__setattr__(self, "trace_id", _required_str(self.trace_id, "trace_id"))
         object.__setattr__(self, "span_id", _required_str(self.span_id, "span_id"))
         object.__setattr__(
@@ -151,14 +170,7 @@ class TraceContext:
             "parent_span_id",
             _optional_str(self.parent_span_id, "parent_span_id"),
         )
-        for field_name in (
-            "workflow_id",
-            "step_id",
-            "agent_id",
-            "tool_call_id",
-            "memory_operation_id",
-            "artifact_id",
-        ):
+        for field_name in ("agent_id", "tool_call_id", "memory_operation_id", "artifact_id"):
             object.__setattr__(
                 self,
                 field_name,
@@ -177,6 +189,8 @@ class TraceContext:
         object.__setattr__(self, "tracestate", tracestate)
         if not isinstance(self.is_remote, bool):
             raise TypeError("is_remote must be a boolean")
+        if self.schema_version != TRACE_CONTEXT_SCHEMA_VERSION:
+            raise ValueError("trace context schema is unsupported")
         object.__setattr__(self, "metadata", _immutable_mapping(self.metadata, "metadata"))
 
     @property
@@ -191,15 +205,37 @@ class TraceContext:
     def has_legacy_identifiers(self) -> bool:
         return not self.is_w3c_valid
 
+    @property
+    def run_id(self) -> str:
+        return self.execution_identity.run_id
+
+    @property
+    def graph_id(self) -> str:
+        return self.execution_identity.graph_id
+
+    @property
+    def graph_version(self) -> str:
+        return self.execution_identity.graph_version
+
+    @property
+    def graph_ref(self) -> str:
+        return self.execution_identity.graph_ref
+
+    @property
+    def graph_checksum(self) -> str:
+        return self.execution_identity.graph_checksum
+
+    @property
+    def graph_identity(self) -> GraphExecutionIdentity:
+        return self.execution_identity
+
     @classmethod
     def root(
         cls,
         *,
-        run_id: str,
-        workflow_id: str | None = None,
+        execution_identity: GraphExecutionIdentity,
         trace_id: str | None = None,
         span_id: str | None = None,
-        step_id: str | None = None,
         agent_id: str | None = None,
         tool_call_id: str | None = None,
         memory_operation_id: str | None = None,
@@ -210,11 +246,9 @@ class TraceContext:
         is_remote: bool = False,
     ) -> "TraceContext":
         return cls(
-            run_id=run_id,
+            execution_identity=execution_identity,
             trace_id=trace_id if trace_id is not None else new_trace_id(),
             span_id=span_id if span_id is not None else new_span_id(),
-            workflow_id=workflow_id,
-            step_id=step_id,
             agent_id=agent_id,
             tool_call_id=tool_call_id,
             memory_operation_id=memory_operation_id,
@@ -229,7 +263,6 @@ class TraceContext:
         self,
         *,
         span_id: str | None = None,
-        step_id: str | None = None,
         agent_id: str | None = None,
         tool_call_id: str | None = None,
         memory_operation_id: str | None = None,
@@ -240,12 +273,10 @@ class TraceContext:
         if metadata:
             child_metadata.update(dict(metadata))
         return TraceContext(
-            run_id=self.run_id,
+            execution_identity=self.execution_identity,
             trace_id=self.trace_id,
             span_id=span_id if span_id is not None else new_span_id(),
             parent_span_id=self.span_id,
-            workflow_id=self.workflow_id,
-            step_id=step_id if step_id is not None else self.step_id,
             agent_id=agent_id if agent_id is not None else self.agent_id,
             tool_call_id=(
                 tool_call_id if tool_call_id is not None else self.tool_call_id
@@ -275,15 +306,14 @@ class TraceContext:
                 policy=redaction_policy or DEFAULT_TRACE_REDACTION_POLICY,
             )
         return {
-            "run_id": self.run_id,
+            "schema_version": self.schema_version,
+            "execution_identity": self.execution_identity.to_dict(),
             "trace_id": self.trace_id,
             "span_id": self.span_id,
             "parent_span_id": self.parent_span_id,
             "trace_flags": self.trace_flags,
             "tracestate": self.tracestate,
             "is_remote": self.is_remote,
-            "workflow_id": self.workflow_id,
-            "step_id": self.step_id,
             "agent_id": self.agent_id,
             "tool_call_id": self.tool_call_id,
             "memory_operation_id": self.memory_operation_id,
@@ -293,16 +323,19 @@ class TraceContext:
 
     @classmethod
     def from_dict(cls, payload: Mapping[str, Any]) -> "TraceContext":
+        if not isinstance(payload, Mapping) or set(payload) != _TRACE_CONTEXT_FIELDS:
+            raise ValueError("trace context fields are invalid")
         metadata = payload.get("metadata") or {}
         if not isinstance(metadata, Mapping):
             raise TypeError("trace metadata must be an object")
+        execution_identity = payload.get("execution_identity")
+        if not isinstance(execution_identity, Mapping):
+            raise TypeError("trace execution_identity must be an object")
         return cls(
-            run_id=payload.get("run_id"),
+            execution_identity=GraphExecutionIdentity.from_dict(execution_identity),
             trace_id=payload.get("trace_id"),
             span_id=payload.get("span_id"),
             parent_span_id=payload.get("parent_span_id"),
-            workflow_id=payload.get("workflow_id"),
-            step_id=payload.get("step_id"),
             agent_id=payload.get("agent_id"),
             tool_call_id=payload.get("tool_call_id"),
             memory_operation_id=payload.get("memory_operation_id"),
@@ -311,6 +344,7 @@ class TraceContext:
             trace_flags=payload.get("trace_flags", "00"),
             tracestate=payload.get("tracestate"),
             is_remote=payload.get("is_remote", False),
+            schema_version=payload.get("schema_version"),
         )
 
 
@@ -414,16 +448,15 @@ class TraceEvent:
 def trace_fields(context: TraceContext | None) -> dict[str, Any]:
     if context is None:
         return {}
+    identity = context.execution_identity
     return {
-        "run_id": context.run_id,
+        **identity.to_dict(),
         "trace_id": context.trace_id,
         "span_id": context.span_id,
         "parent_span_id": context.parent_span_id,
         "trace_flags": context.trace_flags,
         "tracestate": context.tracestate,
         "is_remote": context.is_remote,
-        "workflow_id": context.workflow_id,
-        "step_id": context.step_id,
         "agent_id": context.agent_id,
         "tool_call_id": context.tool_call_id,
         "memory_operation_id": context.memory_operation_id,
@@ -567,6 +600,7 @@ __all__ = [
     "MAX_TRACESTATE_BYTES",
     "REDACTED_TRACE_VALUE",
     "TRACE_EVENT_SCHEMA_VERSION",
+    "TRACE_CONTEXT_SCHEMA_VERSION",
     "TRACE_METADATA_SCHEMA_VERSION",
     "TraceContext",
     "TraceEvent",

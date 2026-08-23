@@ -14,7 +14,7 @@ from framework.harness.artifacts import (
 )
 from framework.harness.control_plane.errors import HarnessValidationError
 from framework.harness.control_plane.graph_runtime import HarnessGraphActivity
-from framework.harness.runtime.activity_executor import HarnessGraphActivityTaskContext
+from framework.harness.control_plane.activity_execution import HarnessGraphActivityTaskContext
 from framework.harness.workers.result import HarnessWorkerEvidence
 from framework.shared.redaction import redact_sensitive_values
 

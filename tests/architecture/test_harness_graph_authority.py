@@ -4,9 +4,7 @@ import ast
 from dataclasses import fields
 from pathlib import Path
 
-from business.research.workflows.paper_analysis_workflow import (
-    build_paper_analysis_workflow_spec,
-)
+from business.research.graphs import build_paper_analysis_graph_definition
 from framework.harness.graph.model import HarnessControlNode, HarnessExecutableNode
 
 
@@ -75,10 +73,6 @@ _EXECUTABLE_BINDING_FIELDS = frozenset(
 def test_harness_graph_modules_do_not_import_outer_layers() -> None:
     graph_modules = (
         *sorted(Path("framework/harness/graph").rglob("*.py")),
-        Path("framework/harness/workflow/compiler.py"),
-        Path("framework/harness/workflow/reader.py"),
-        Path("framework/harness/workflow/versioning.py"),
-        *sorted(Path("framework/harness/workflow/validation").glob("*.py")),
     )
     violations: list[str] = []
 
@@ -118,12 +112,10 @@ def test_research_workers_and_gates_do_not_own_harness_routing() -> None:
 
     assert violations == []
 
-    workflow = build_paper_analysis_workflow_spec()
-    assert workflow.graph is not None
-    assert workflow.routing_rules == ()
+    definition = build_paper_analysis_graph_definition()
     assert all(
         not _ROUTING_METADATA_KEYS.intersection(step.metadata)
-        for step in workflow.steps
+        for step in definition.activities
     )
 
 

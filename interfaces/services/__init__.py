@@ -9,16 +9,7 @@ from interfaces.services.entity_service import EntityTrackingApplicationService
 from interfaces.services.event_delivery_operations_service import (
     EventDeliveryOperationsService,
 )
-from interfaces.services.event_migration_service import (
-    EventMigrationApplicationService,
-    EventMigrationBackfillApplicationService,
-    MigrationSourceSelection,
-    MigrationSourceSnapshot,
-)
 from interfaces.services.event_projection_service import EventProjectionService
-from interfaces.services.graph_event_preparation_service import (
-    GraphEventPreparationApplicationService,
-)
 from interfaces.services.event_quarantine_service import EventQuarantineService
 from interfaces.services.event_reader_service import (
     EventAuthorizationContext,
@@ -44,10 +35,10 @@ from interfaces.services.mcp_service import MCPApplicationService
 from interfaces.services.project_service import ProjectApplicationService, ProjectsApplicationService
 from interfaces.services.research_service import ResearchApplicationService
 from interfaces.services.report_service import ReportApplicationService
-from interfaces.services.run_inspection_service import RunInspectionService
+from interfaces.services.run_inspection_service import GraphRunInspectionService
 from interfaces.services.run_inspection_factory import (
-    build_run_inspection_service,
-    run_inspection_service_from_env,
+    build_graph_run_inspection_service,
+    graph_run_inspection_service_from_env,
 )
 from interfaces.services.source_service import SourceApplicationService
 from interfaces.services.schedule_service import ScheduleApplicationService
@@ -61,8 +52,6 @@ __all__ = [
     "DiagnosticApplicationService",
     "EntityTrackingApplicationService",
     "EventDeliveryOperationsService",
-    "EventMigrationApplicationService",
-    "EventMigrationBackfillApplicationService",
     "EventAuthorizationContext",
     "EventAuthorizationDecision",
     "EventAuthorizationRequest",
@@ -72,7 +61,6 @@ __all__ = [
     "EventReaderService",
     "EventReplayService",
     "EventStreamReadResult",
-    "GraphEventPreparationApplicationService",
     "HarnessWaitApplicationService",
     "HarnessGraphApplicationService",
     "HarnessGraphReplayResult",
@@ -81,16 +69,14 @@ __all__ = [
     "HarnessWaitOperationResult",
     "ArtifactInspectionService",
     "MemoryApplicationService",
-    "MigrationSourceSelection",
-    "MigrationSourceSnapshot",
     "MCPApplicationService",
     "ProjectApplicationService",
     "ProjectsApplicationService",
     "ResearchApplicationService",
     "ReportApplicationService",
-    "RunInspectionService",
-    "build_run_inspection_service",
-    "run_inspection_service_from_env",
+    "GraphRunInspectionService",
+    "build_graph_run_inspection_service",
+    "graph_run_inspection_service_from_env",
     "RunApplicationService",
     "ScheduleApplicationService",
     "SourceApplicationService",

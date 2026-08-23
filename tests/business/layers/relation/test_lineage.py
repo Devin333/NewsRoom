@@ -1,4 +1,5 @@
 from business.layers.relation.lineage import evidence_bundle_lineage_extractor
+from framework.shared.graph_identity import GraphRunIdentity
 
 
 def test_evidence_bundle_lineage_extractor_builds_business_lineage_refs() -> None:
@@ -16,8 +17,13 @@ def test_evidence_bundle_lineage_extractor_builds_business_lineage_refs() -> Non
                 ],
             }
         },
-        run_id="run-1",
-        workflow_id="daily",
+        graph_identity=GraphRunIdentity(
+            run_id="run-1",
+            graph_id="research.paper-analysis",
+            graph_version="2",
+            graph_ref="research.paper-analysis@2",
+            graph_checksum="sha256:" + "a" * 64,
+        ),
     )
 
     assert {ref.source_type for ref in refs} == {

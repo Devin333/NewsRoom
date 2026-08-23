@@ -182,58 +182,6 @@ def condition_from_dict(value: Mapping[str, Any]) -> HarnessCondition:
     )
 
 
-def condition_from_legacy_dict(value: Mapping[str, Any]) -> HarnessCondition:
-    if not isinstance(value, Mapping):
-        raise HarnessValidationError(
-            "legacy condition must be an object",
-            code="invalid_condition_contract",
-        )
-    keys = set(value)
-    if "all" in value or "any" in value:
-        if keys not in ({"all"}, {"any"}):
-            raise HarnessValidationError(
-                "legacy boolean condition cannot mix all/any with other fields",
-                code="ambiguous_condition_contract",
-            )
-        combinator = "all" if "all" in value else "any"
-        raw_children = value[combinator]
-        if not isinstance(raw_children, Sequence) or isinstance(
-            raw_children, (str, bytes, bytearray)
-        ):
-            raise HarnessValidationError(
-                f"legacy {combinator} condition must be an array",
-                code="invalid_condition_contract",
-            )
-        children = tuple(condition_from_legacy_dict(child) for child in raw_children)
-        return ConditionAll(children) if combinator == "all" else ConditionAny(children)
-
-    path_keys = keys.intersection({"path", "field"})
-    if len(path_keys) != 1:
-        raise HarnessValidationError(
-            "legacy condition requires exactly one path or field",
-            code="invalid_condition_path",
-        )
-    path_key = next(iter(path_keys))
-    operator_keys = keys.intersection({operator.value for operator in ConditionOperator})
-    unknown = keys.difference(path_keys).difference(operator_keys)
-    if unknown:
-        raise HarnessValidationError(
-            "legacy condition contains unsupported fields",
-            code="unsupported_condition_field",
-            details={"fields": sorted(str(item) for item in unknown)},
-        )
-    if not operator_keys:
-        raise HarnessValidationError(
-            "legacy condition requires an explicit operator",
-            code="missing_condition_operator",
-        )
-    predicates = tuple(
-        ConditionPredicate(path=value[path_key], operator=operator, expected=value[operator])
-        for operator in sorted(operator_keys)
-    )
-    return predicates[0] if len(predicates) == 1 else ConditionAll(predicates)
-
-
 def evaluate_condition(condition: HarnessCondition, context: Mapping[str, Any]) -> bool:
     if isinstance(condition, ConditionAll):
         return all(evaluate_condition(child, context) for child in condition.conditions)
@@ -357,7 +305,6 @@ __all__ = [
     "ConditionPredicate",
     "HarnessCondition",
     "condition_from_dict",
-    "condition_from_legacy_dict",
     "evaluate_condition",
     "resolve_condition_path",
 ]

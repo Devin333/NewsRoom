@@ -120,7 +120,7 @@ def test_research_evidence_first_compaction_is_verified_and_replayable() -> None
     source = ContextGroupMaterializer().materialize(
         ContextMaterializationRequest(
             run_id="research-evidence-runtime",
-            step_id="research-analysis",
+            stage_id="research-analysis",
             task_binding_ref="task://research/paper-analysis/evidence",
             policy_revision=policy.policy_revision,
             physical_profile_revision="profile-research-runtime-v1",
@@ -190,7 +190,7 @@ def test_research_protected_context_overflow_halts_without_verified_event() -> N
     source = ContextGroupMaterializer().materialize(
         ContextMaterializationRequest(
             run_id="research-protected-runtime",
-            step_id="research-analysis",
+            stage_id="research-analysis",
             task_binding_ref="task://research/paper-analysis/protected",
             policy_revision=policy.policy_revision,
             physical_profile_revision="profile-research-runtime-v1",
@@ -244,7 +244,7 @@ def test_research_verified_summary_replacement_replays_without_worker_call() -> 
     source = ContextGroupMaterializer().materialize(
         ContextMaterializationRequest(
             run_id="research-summary-runtime",
-            step_id="research-analysis",
+            stage_id="research-analysis",
             task_binding_ref="task://research/paper-analysis/summary",
             policy_revision=policy.policy_revision,
             physical_profile_revision="profile-research-runtime-v1",

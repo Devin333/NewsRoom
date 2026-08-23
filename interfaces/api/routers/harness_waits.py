@@ -55,7 +55,7 @@ HarnessWaitCall = Callable[
 def create_router(services: ApiServices, helpers: ApiRouteHelpers) -> APIRouter:
     router = APIRouter()
 
-    @router.get("/api/v1/runs/{run_id}/waits/{node_instance_id}")
+    @router.get("/api/v2/graph-runs/{run_id}/waits/{node_instance_id}")
     def inspect_wait(
         request: Request,
         run_id: str = Path(min_length=1, max_length=_MAX_ID_LENGTH),
@@ -68,7 +68,7 @@ def create_router(services: ApiServices, helpers: ApiRouteHelpers) -> APIRouter:
             operation=lambda service: service.inspect_wait(run_id, node_instance_id),
         )
 
-    @router.post("/api/v1/runs/{run_id}/waits/{node_instance_id}/signals")
+    @router.post("/api/v2/graph-runs/{run_id}/waits/{node_instance_id}/signals")
     def deliver_signal(
         body: HarnessWaitSignalRequest,
         request: Request,
@@ -89,7 +89,7 @@ def create_router(services: ApiServices, helpers: ApiRouteHelpers) -> APIRouter:
             ),
         )
 
-    @router.post("/api/v1/runs/{run_id}/waits/{node_instance_id}/approval")
+    @router.post("/api/v2/graph-runs/{run_id}/waits/{node_instance_id}/approval")
     def decide_approval(
         body: HarnessWaitApprovalRequest,
         request: Request,
@@ -108,7 +108,7 @@ def create_router(services: ApiServices, helpers: ApiRouteHelpers) -> APIRouter:
             ),
         )
 
-    @router.post("/api/v1/runs/{run_id}/waits/{node_instance_id}/cancel")
+    @router.post("/api/v2/graph-runs/{run_id}/waits/{node_instance_id}/cancel")
     def cancel_wait(
         body: HarnessWaitCancellationRequest,
         request: Request,

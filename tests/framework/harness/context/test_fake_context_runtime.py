@@ -10,11 +10,19 @@ from framework.harness import (
     fake_subagent_spec,
 )
 from framework.harness.retrieval import EvidencePack
+from tests.framework.harness.context.test_context_models import _graph_identity
 
 
 def test_fake_context_runtime_assembles_snapshots_and_replays_without_llm() -> None:
     runtime = FakeContextRuntime()
-    envelope = runtime.assemble({"run_id": "run-fake", "step_id": "current"})
+    envelope = runtime.assemble(
+        {
+            "graph_identity": _graph_identity(),
+            "phase": "EXECUTE",
+            "worker_id": "context-worker",
+            "worker_type": "function",
+        }
+    )
     replayed = runtime.replay(envelope.snapshot_ref or "")
 
     assert replayed.to_dict() == envelope.to_dict()
@@ -39,6 +47,10 @@ def test_rag_context_pack_must_enter_prompt_through_context_segment_with_provena
     )
     envelope = ContextAssembler().assemble(
         {
+            "graph_identity": _graph_identity(),
+            "phase": "EXECUTE",
+            "worker_id": "context-worker",
+            "worker_type": "function",
             "source_refs": pack.evidence[0].source_refs,
             "evidence_refs": tuple(item.evidence_id for item in pack.evidence),
             "evidence_memory_ref": pack.pack_id,
@@ -50,7 +62,14 @@ def test_rag_context_pack_must_enter_prompt_through_context_segment_with_provena
 
 def test_subagent_context_projection_excludes_parent_raw_messages_and_sibling_notes() -> None:
     spec = fake_subagent_spec()
-    envelope = ContextEnvelope(envelope_id="context://safe-subagent", stable_prefix={"policy": "ok"})
+    envelope = ContextEnvelope.for_graph(
+        envelope_id="context://safe-subagent",
+        graph_identity=_graph_identity(),
+        phase="EXECUTE",
+        worker_id="subagent-worker",
+        worker_type="subagent",
+        stable_prefix={"policy": "ok"},
+    )
     subagent_context = SubAgentContextEnvelope(
         child_run_id="child",
         parent_run_id="parent",

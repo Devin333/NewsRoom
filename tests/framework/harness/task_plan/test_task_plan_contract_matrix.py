@@ -24,13 +24,16 @@ from framework.harness.task_plan import (
     TaskPlanPolicyRegistry,
     TaskPlanEvent,
     TaskPlanProjection,
+    TaskPlanQueueProjection,
     TaskPlanReadyDecision,
     TaskPlanReplayReducer,
     TaskPlanScheduler,
+    TaskPlanStageIdentity,
     TaskPlanValidationContext,
     TaskPlanValidator,
     TaskProjection,
     TaskResultReference,
+    TASK_PLAN_RESULT_SCHEMA_V3,
     TaskRetryPolicy,
     TaskSpec,
     ValidatedTaskPlan,
@@ -68,7 +71,7 @@ class _CountingWorker:
 def _stage_binding(policy: TaskPlanPolicy | None = None):
     selected = policy or _policy()
     return build_task_plan_stage_binding(
-        workflow_id="research.paper-analysis.dynamic",
+        graph_id="research.paper-analysis.dynamic",
         stage_id=selected.stage_id,
         policy_ref=selected.exact_ref,
         required_output_roles=selected.required_output_roles,
@@ -175,12 +178,10 @@ def _candidate(
     required_roles: tuple[str, ...] = ("analysis.structure",),
     policy: TaskPlanPolicy | None = None,
 ) -> PlanCandidate:
-    return PlanCandidate(
+    stage_binding = _stage_binding(policy)
+    return PlanCandidate.for_stage(
+        stage_identity=TaskPlanStageIdentity("run-1", stage_binding),
         candidate_id="candidate-1",
-        run_id="run-1",
-        workflow_id="research.paper-analysis.dynamic",
-        stage_id="dynamic_analysis_stage",
-        graph_checksum=_graph_checksum(policy),
         input_context_refs=("document", "evidence_pack"),
         tasks=tasks,
         required_output_roles=required_roles,
@@ -245,6 +246,15 @@ def test_contracts_are_immutable_canonical_and_fail_closed_on_tamper():
         run_id=plan.run_id,
         stage_id=plan.stage_id,
         graph_checksum=plan.graph_checksum,
+        graph_id=plan.graph_id,
+        graph_version=plan.graph_version,
+        graph_ref=plan.graph_ref,
+        graph_schema_version=plan.graph_schema_version,
+        compiler_version=plan.compiler_version,
+        condition_policy_version=plan.condition_policy_version,
+        stage_binding_checksum=plan.stage_binding_checksum,
+        stage_identity_schema=plan.stage_identity_schema,
+        stage_identity_checksum=plan.stage_identity_checksum,
         plan_id=plan.plan_id,
         plan_version=plan.version,
         plan_checksum=plan.plan_checksum,
@@ -262,12 +272,9 @@ def test_contracts_are_immutable_canonical_and_fail_closed_on_tamper():
         consumed_budget={"consumed_max_turns": 1},
         last_sequence=4,
     )
-    patch = PlanPatch(
+    patch = PlanPatch.for_plan(
+        plan,
         patch_id="patch-1",
-        run_id=plan.run_id,
-        stage_id=plan.stage_id,
-        base_plan_id=plan.plan_id,
-        base_plan_version=plan.version,
         reason_code="missing-output",
         source_candidate_ref="candidate://patch-1",
         operations=(
@@ -372,12 +379,9 @@ def test_validator_does_not_resolve_an_unregistered_worker_capability() -> None:
 
 def test_plan_patch_payload_cannot_express_outer_graph_changes() -> None:
     plan, _, _, _ = _accepted_plan((_task("structure"),))
-    payload = PlanPatch(
+    payload = PlanPatch.for_plan(
+        plan,
         patch_id="stage-local-only",
-        run_id=plan.run_id,
-        stage_id=plan.stage_id,
-        base_plan_id=plan.plan_id,
-        base_plan_version=plan.version,
         reason_code="repair",
         source_candidate_ref="candidate://stage-local-only",
         operations=(
@@ -395,53 +399,8 @@ def test_plan_patch_payload_cannot_express_outer_graph_changes() -> None:
     assert error.value.code == "invalid_task_plan_payload_fields"
 
 
-def test_legacy_plan_patch_wire_and_checksum_remain_stable() -> None:
-    plan, _, _, _ = _accepted_plan((_task("structure"),))
-    patch = PlanPatch(
-        patch_id="legacy-patch-wire",
-        run_id=plan.run_id,
-        stage_id=plan.stage_id,
-        base_plan_id=plan.plan_id,
-        base_plan_version=plan.version,
-        reason_code="repair",
-        source_candidate_ref="candidate://legacy-patch-wire",
-        operations=(
-            PlanPatchOperation(
-                PlanPatchOperationType.UPDATE_PENDING_DEPENDENCY,
-                target_task_id="structure",
-                depends_on=("upstream",),
-            ),
-        ),
-    )
-
-    assert patch.to_dict() == {
-        "schema_version": "newsroom.harness-task-plan-patch/v1",
-        "patch_id": "legacy-patch-wire",
-        "run_id": "run-1",
-        "stage_id": "dynamic_analysis_stage",
-        "base_plan_id": (
-            "sha256:e5cc088469143e785f994b35a4756bd324c76736e50fe7e21a61610751618612"
-        ),
-        "base_plan_version": 1,
-        "reason_code": "repair",
-        "source_candidate_ref": "candidate://legacy-patch-wire",
-        "operations": [
-            {
-                "operation": "UPDATE_PENDING_DEPENDENCY",
-                "target_task_id": "structure",
-                "replacement_task": None,
-                "depends_on": ["upstream"],
-            }
-        ],
-        "patch_checksum": (
-            "sha256:5bc04734f8526529b814cdfb2b6bb3c2e28dde8eb1ce08e6403c2a51b97d9047"
-        ),
-    }
-    assert PlanPatch.from_dict(patch.to_dict()) == patch
-
-
-def test_validated_plan_policy_checksum_is_durable_and_legacy_replay_is_read_only() -> None:
-    plan, policy, registry, _ = _accepted_plan((_task("structure"),))
+def test_validated_plan_policy_checksum_is_durable_and_legacy_payload_is_not_executable() -> None:
+    plan, policy, _, _ = _accepted_plan((_task("structure"),))
     assert plan.policy_checksum == policy.policy_checksum
     assert ValidatedTaskPlan.from_dict(plan.to_dict()) == plan
 
@@ -454,44 +413,9 @@ def test_validated_plan_policy_checksum_is_durable_and_legacy_replay_is_read_onl
             if key != "plan_checksum"
         }
     )
-    legacy_plan = ValidatedTaskPlan.from_dict(legacy_payload)
-    assert legacy_plan.policy_checksum is None
-    assert legacy_plan.to_dict() == legacy_payload
-
-    store = InMemoryTaskPlanStore()
-    candidate = _candidate(tuple(item.task for item in legacy_plan.tasks))
-    store.append_candidate(candidate)
-    legacy_plan = replace(
-        legacy_plan,
-        source_candidate_ref=candidate.candidate_checksum,
-    )
-    store.accept_plan(legacy_plan)
-    patch = PlanPatch(
-        patch_id="legacy-policy-patch",
-        run_id=legacy_plan.run_id,
-        stage_id=legacy_plan.stage_id,
-        base_plan_id=legacy_plan.plan_id,
-        base_plan_version=legacy_plan.version,
-        reason_code="repair",
-        source_candidate_ref="candidate://legacy-policy-patch",
-        operations=(
-            PlanPatchOperation(
-                PlanPatchOperationType.SKIP_PENDING_TASK,
-                target_task_id="structure",
-            ),
-        ),
-    )
     with pytest.raises(HarnessValidationError) as error:
-        TaskPlanPatchValidator().apply(
-            legacy_plan,
-            patch,
-            store.load_projection(legacy_plan.run_id, legacy_plan.stage_id),
-            policy,
-            registry,
-            accepted_at="2026-08-01T00:02:00Z",
-            available_input_refs=("document", "evidence_pack"),
-        )
-    assert error.value.code == "task_plan_policy_mismatch"
+        ValidatedTaskPlan.from_dict(legacy_payload)
+    assert error.value.code == "task_plan_policy_checksum_required"
 
 
 def test_validator_accepts_optional_required_role_but_rejects_implicit_task_dataflow():
@@ -695,17 +619,29 @@ def test_scheduler_queue_projection_and_result_identity_are_deterministic():
     )
     assert [instance.task_id for instance in decision.task_instances] == ["a-root"]
     instance = decision.task_instances[0]
-    queue_task = materialize_queue_task(instance, workflow_id=plan.workflow_id)
+    queue_task = materialize_queue_task(instance)
     assert queue_task.payload == {}
-    assert "depends_on" not in queue_task.metadata
-    assert queue_task.metadata["plan_version"] == 1
+    assert set(queue_task.metadata) == {"task_plan_queue_projection"}
+    assert queue_task.graph_identity is not None
+    assert queue_task.graph_identity.to_dict() == {
+        "run_id": instance.run_id,
+        "graph_id": instance.graph_id,
+        "graph_version": instance.graph_version,
+        "graph_ref": instance.graph_ref,
+        "graph_checksum": instance.graph_checksum,
+    }
+    assert TaskPlanQueueProjection.from_task(queue_task).matches_instance(instance)
+
+    queue_task.graph_identity = None
+    with pytest.raises(HarnessValidationError) as missing_identity:
+        TaskPlanQueueProjection.from_task(queue_task)
+    assert missing_identity.value.code == "task_plan_queue_transport_mismatch"
 
     projection = scheduler.reserve_ready_tasks(store.load_projection(plan.run_id, plan.stage_id), decision)
     projection = scheduler.mark_dispatched(projection, instance)
     store.update_projection(projection)
     accepted = TaskResultRecord(
         run_id=plan.run_id,
-        workflow_id=plan.workflow_id,
         stage_id=plan.stage_id,
         plan_id=plan.plan_id,
         plan_version=plan.version,
@@ -718,6 +654,17 @@ def test_scheduler_queue_projection_and_result_identity_are_deterministic():
             item.binding_checksum for item in plan.tasks if item.task_id == instance.task_id
         ),
         status=TaskLifecycle.SUCCEEDED,
+        schema_version=TASK_PLAN_RESULT_SCHEMA_V3,
+        graph_checksum=instance.graph_checksum,
+        graph_id=instance.graph_id,
+        graph_version=instance.graph_version,
+        graph_ref=instance.graph_ref,
+        graph_schema_version=instance.graph_schema_version,
+        compiler_version=instance.compiler_version,
+        condition_policy_version=instance.condition_policy_version,
+        stage_binding_checksum=instance.stage_binding_checksum,
+        stage_identity_schema=instance.stage_identity_schema,
+        stage_identity_checksum=instance.stage_identity_checksum,
         result_ref="result://a-root",
         output_refs=("artifact://a-root",),
         output_roles=("analysis.helper",),
@@ -772,26 +719,20 @@ def test_harness_scheduler_and_store_commit_terminal_result_with_budget_parity()
             projection = scheduler.mark_task_plan_started(projection, instance)
         projection = replace(projection, last_sequence=sequence)
         store.commit_event(
-            TaskPlanEvent(
+            TaskPlanEvent.for_plan(
                 event_type,
-                run_id=plan.run_id,
-                workflow_id=plan.workflow_id,
-                stage_id=plan.stage_id,
-                graph_checksum=plan.graph_checksum,
-                plan_id=plan.plan_id,
-                plan_version=plan.version,
+                plan,
+                sequence=sequence,
                 task_id=instance.task_id,
                 task_instance_id=instance.task_instance_id,
                 attempt=instance.attempt,
                 input_checksum=instance.task_definition_checksum,
-                sequence=sequence,
             ),
             projection,
         )
 
     result = TaskResultRecord(
         run_id=plan.run_id,
-        workflow_id=plan.workflow_id,
         stage_id=plan.stage_id,
         plan_id=plan.plan_id,
         plan_version=plan.version,
@@ -802,6 +743,17 @@ def test_harness_scheduler_and_store_commit_terminal_result_with_budget_parity()
         task_checksum=instance.task_definition_checksum,
         binding_checksum=plan.tasks[0].binding_checksum,
         status=TaskLifecycle.SUCCEEDED,
+        schema_version=TASK_PLAN_RESULT_SCHEMA_V3,
+        graph_checksum=instance.graph_checksum,
+        graph_id=instance.graph_id,
+        graph_version=instance.graph_version,
+        graph_ref=instance.graph_ref,
+        graph_schema_version=instance.graph_schema_version,
+        compiler_version=instance.compiler_version,
+        condition_policy_version=instance.condition_policy_version,
+        stage_binding_checksum=instance.stage_binding_checksum,
+        stage_identity_schema=instance.stage_identity_schema,
+        stage_identity_checksum=instance.stage_identity_checksum,
         result_ref="result://structure",
         output_refs=("artifact://structure",),
         output_roles=("analysis.structure",),
@@ -846,12 +798,9 @@ def test_patch_history_is_immutable_and_running_tasks_cannot_be_edited():
     store.append_candidate(candidate)
     plan = replace(plan, source_candidate_ref=candidate.candidate_checksum)
     store.accept_plan(plan)
-    patch = PlanPatch(
+    patch = PlanPatch.for_plan(
+        plan,
         patch_id="patch-1",
-        run_id=plan.run_id,
-        stage_id=plan.stage_id,
-        base_plan_id=plan.plan_id,
-        base_plan_version=plan.version,
         reason_code="repair",
         source_candidate_ref="candidate://repair",
         operations=(
@@ -947,12 +896,9 @@ def test_patch_rejects_policy_reference_and_checksum_drift() -> None:
     plan = replace(plan, source_candidate_ref=candidate.candidate_checksum)
     store.accept_plan(plan)
     projection = store.load_projection(plan.run_id, plan.stage_id)
-    patch = PlanPatch(
+    patch = PlanPatch.for_plan(
+        plan,
         patch_id="policy-drift-patch",
-        run_id=plan.run_id,
-        stage_id=plan.stage_id,
-        base_plan_id=plan.plan_id,
-        base_plan_version=plan.version,
         reason_code="repair",
         source_candidate_ref="candidate://policy-drift",
         operations=(
@@ -1021,12 +967,9 @@ def test_patch_rejects_dependency_depth_beyond_policy_with_shared_memo() -> None
             for item in projection.tasks
         ),
     )
-    patch = PlanPatch(
+    patch = PlanPatch.for_plan(
+        plan,
         patch_id="deep-patch",
-        run_id=plan.run_id,
-        stage_id=plan.stage_id,
-        base_plan_id=plan.plan_id,
-        base_plan_version=plan.version,
         reason_code="repair",
         source_candidate_ref="candidate://deep-patch",
         operations=(
@@ -1081,41 +1024,30 @@ def test_replay_uses_only_recorded_evidence_and_matches_projection_checksum():
     projection = scheduler.reserve_ready_tasks(store.load_projection(plan.run_id, plan.stage_id), decision)
     projection = scheduler.mark_dispatched(projection, instance)
     store.append_event(
-        TaskPlanEvent(
+        TaskPlanEvent.for_plan(
             "TASK_READY",
-            run_id=plan.run_id,
-            workflow_id=plan.workflow_id,
-            stage_id=plan.stage_id,
-            graph_checksum=plan.graph_checksum,
-            plan_id=plan.plan_id,
-            plan_version=plan.version,
+            plan,
+            sequence=3,
             task_id=instance.task_id,
             task_instance_id=instance.task_instance_id,
             attempt=instance.attempt,
             input_checksum=instance.task_definition_checksum,
-            sequence=3,
         )
     )
     store.append_event(
-        TaskPlanEvent(
+        TaskPlanEvent.for_plan(
             "TASK_DISPATCHED",
-            run_id=plan.run_id,
-            workflow_id=plan.workflow_id,
-            stage_id=plan.stage_id,
-            graph_checksum=plan.graph_checksum,
-            plan_id=plan.plan_id,
-            plan_version=plan.version,
+            plan,
+            sequence=4,
             task_id=instance.task_id,
             task_instance_id=instance.task_instance_id,
             attempt=instance.attempt,
             input_checksum=instance.task_definition_checksum,
-            sequence=4,
         )
     )
     store.update_projection(replace(projection, last_sequence=4))
     result = TaskResultRecord(
         run_id=plan.run_id,
-        workflow_id=plan.workflow_id,
         stage_id=plan.stage_id,
         plan_id=plan.plan_id,
         plan_version=plan.version,
@@ -1128,6 +1060,17 @@ def test_replay_uses_only_recorded_evidence_and_matches_projection_checksum():
             item.binding_checksum for item in plan.tasks if item.task_id == instance.task_id
         ),
         status=TaskLifecycle.SUCCEEDED,
+        schema_version=TASK_PLAN_RESULT_SCHEMA_V3,
+        graph_checksum=instance.graph_checksum,
+        graph_id=instance.graph_id,
+        graph_version=instance.graph_version,
+        graph_ref=instance.graph_ref,
+        graph_schema_version=instance.graph_schema_version,
+        compiler_version=instance.compiler_version,
+        condition_policy_version=instance.condition_policy_version,
+        stage_binding_checksum=instance.stage_binding_checksum,
+        stage_identity_schema=instance.stage_identity_schema,
+        stage_identity_checksum=instance.stage_identity_checksum,
         result_ref="result://structure",
         output_refs=("artifact://structure",),
         output_roles=("analysis.structure",),

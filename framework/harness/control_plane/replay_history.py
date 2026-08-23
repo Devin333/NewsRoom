@@ -30,42 +30,36 @@ from framework.events.runtime.history import (
     HistoryEventPolicy,
     HistoryVerifier,
 )
-from framework.harness.control_plane.activity import HARNESS_ACTIVITY_CONTRACT
 from framework.harness.control_plane.event import HarnessEvent
-from framework.harness.control_plane.decision import HarnessDecision
+from framework.harness.graph.decision import HarnessGraphDecision
+from framework.harness.control_plane.graph_state import HarnessGraphState
+from framework.harness.graph.model import NormalizedHarnessGraph
 from framework.harness.control_plane.graph_runtime import (
     HARNESS_GRAPH_COMMIT_SCHEMA,
     HARNESS_GRAPH_PROJECTION_RECORD_SCHEMA,
 )
 from framework.harness.control_plane.transition import (
-    HARNESS_POLICY_VERSION,
-    HARNESS_REDUCER_VERSION,
-    HARNESS_TRANSITION_DATA_SCHEMA,
-    HARNESS_TRANSITION_EVENT_TYPE,
-    HarnessTransitionCommitted,
-    HarnessStateProjection,
-    workflow_checksum,
-    workflow_version,
+    HARNESS_GRAPH_CONTROL_POLICY_VERSION,
+    HARNESS_GRAPH_HISTORY_SCHEMA,
+    HARNESS_GRAPH_PROJECTION_HISTORY_SCHEMA,
+    HARNESS_GRAPH_REDUCER_VERSION,
 )
 from framework.harness.quality.verdict import gate_result_evidence
 
 
 HARNESS_HISTORY_HANDLER_ID = "harness-control-plane"
 HARNESS_HISTORY_POLICY_ID = "harness-control-policy"
-HARNESS_HISTORY_SCHEMA_ID = "newsroom.harness-event"
-HARNESS_GRAPH_HISTORY_SCHEMA_ID = "newsroom.harness-graph-control-commit"
-HARNESS_GRAPH_PROJECTION_HISTORY_SCHEMA_ID = (
-    "newsroom.harness-graph-projection-record"
-)
-HARNESS_TRANSITION_HISTORY_SCHEMA_ID = "newsroom.harness-transition"
-HARNESS_EVENT_HISTORY_WORKFLOW_ID = "harness-events"
-HARNESS_EVENT_HISTORY_WORKFLOW_VERSION = "1"
-HARNESS_ACTIVITY_HISTORY_WORKFLOW_ID = "harness-worker-activity"
-HARNESS_DECISION_INPUT_SCHEMA = "newsroom.harness-decision-input/v1"
-HARNESS_DECISION_WORKFLOW_ID = "harness-scheduler"
+HARNESS_HISTORY_SCHEMA_ID = "newsroom.harness-graph-event"
+HARNESS_GRAPH_HISTORY_SCHEMA_ID = HARNESS_GRAPH_HISTORY_SCHEMA.removesuffix("/v1")
+HARNESS_GRAPH_PROJECTION_HISTORY_SCHEMA_ID = HARNESS_GRAPH_PROJECTION_HISTORY_SCHEMA.removesuffix("/v1")
+HARNESS_EVENT_HISTORY_GRAPH_ID = "harness-events"
+HARNESS_EVENT_HISTORY_GRAPH_VERSION = "1"
+HARNESS_GRAPH_ACTIVITY_HISTORY_GRAPH_ID = "harness-graph-activity"
+HARNESS_DECISION_INPUT_SCHEMA = "newsroom.harness-graph-decision-input/v3"
 
 _ACTIVITY_KIND_BY_TYPE = {
     "artifact": ReplayActivityKind.PUBLICATION,
+    "function": ReplayActivityKind.TOOL,
     "clock": ReplayActivityKind.CLOCK,
     "email": ReplayActivityKind.EMAIL,
     "external_database": ReplayActivityKind.EXTERNAL_DATABASE,
@@ -87,16 +81,18 @@ _ACTIVITY_KIND_BY_TYPE = {
 
 def harness_decision_history(
     *,
-    workflow_id: str,
-    workflow_version: str,
+    graph_id: str,
+    graph_version: str,
     command_ordinal: int,
     decision_input: Mapping[str, Any],
-    decision: HarnessDecision,
+    decision: HarnessGraphDecision,
     causation_id: str,
     expected_activity: ReplayActivityDescriptor | None = None,
     recorded_activity_ref: PayloadReference | None = None,
 ) -> DeterministicHistoryRecord:
     normalized = _decision_input(decision_input)
+    if not isinstance(decision, HarnessGraphDecision):
+        raise TypeError("decision must be HarnessGraphDecision")
     snapshot_activity = normalized["expected_activity"]
     policy_activity = (
         None if expected_activity is None else expected_activity.to_dict()
@@ -112,13 +108,13 @@ def harness_decision_history(
     return DeterministicHistoryRecord(
         policy=HistoryEventPolicy(
             handler_id=HARNESS_HISTORY_HANDLER_ID,
-            handler_version=HARNESS_REDUCER_VERSION,
-            workflow_id=workflow_id,
-            workflow_version=workflow_version,
+            handler_version=HARNESS_GRAPH_REDUCER_VERSION,
+            graph_id=graph_id,
+            graph_version=graph_version,
             policy_id=HARNESS_HISTORY_POLICY_ID,
-            policy_version=HARNESS_POLICY_VERSION,
+            policy_version=HARNESS_GRAPH_CONTROL_POLICY_VERSION,
             schema_id=HARNESS_HISTORY_SCHEMA_ID,
-            schema_version="newsroom.harness-event/v1",
+            schema_version="newsroom.harness-graph-event/v1",
             expected_activity=expected_activity,
             recorded_activity_ref=recorded_activity_ref,
         ),
@@ -128,7 +124,7 @@ def harness_decision_history(
                 command_ordinal=command_ordinal,
                 decision_input=normalized,
                 decision_projection=_decision_projection(decision),
-                workflow_version=workflow_version,
+                graph_version=graph_version,
                 causation_id=causation_id,
             ),
         ),
@@ -138,6 +134,7 @@ def harness_decision_history(
 def harness_decision_input_snapshot(
     *,
     state: Any,
+    graph: NormalizedHarnessGraph | None = None,
     command_ordinal: int,
     causation_id: str,
     gate_results: Sequence[Any] = (),
@@ -148,52 +145,36 @@ def harness_decision_input_snapshot(
     side_effect_failure: Mapping[str, Any] | None = None,
     side_effect_state_refs: Mapping[str, Any] | None = None,
 ) -> Mapping[str, Any]:
-    workflow = state.run_spec.workflow
-    terminal_policy = workflow.terminal_side_effect_policy
-    current_step = next(
-        (
-            step
-            for step in workflow.steps
-            if step.step_id == state.current_step_id
-        ),
-        None,
+    if not isinstance(state, HarnessGraphState):
+        raise TypeError("state must be HarnessGraphState")
+    if graph is None:
+        graph = getattr(state, "graph", None)
+    if not isinstance(graph, NormalizedHarnessGraph):
+        raise TypeError("graph must be NormalizedHarnessGraph")
+    if state.graph_ref.checksum != graph.checksum:
+        raise ValueError("state and graph checksums do not match")
+    graph_id = graph.graph_id
+    graph_version = graph.graph_version
+    graph_checksum = graph.checksum
+    current_node_instance_id = _current_node_instance_id(state)
+    current_node = _node_for_instance(state, current_node_instance_id)
+    current_node_id = None if current_node is None else current_node.get("node_id")
+    current_definition = _graph_node_for_instance(graph, current_node)
+    current_policy = (
+        current_definition.to_dict()
+        if current_definition is not None
+        else {}
     )
-    current_policy: dict[str, Any] = {}
-    if current_step is not None:
-        current_policy = {
-            "worker_type": current_step.worker_type.value,
-            "approval_required": bool(
-                current_step.metadata.get("approval_required")
-            ),
-            "repair_step_id": (
-                current_step.retry_policy.repair_step_id
-                or current_step.metadata.get("repair_step_id")
-            ),
-            **current_step.retry_policy.to_dict(),
-        }
-        if current_step.side_effect_handler is not None:
-            current_policy["side_effect_handler"] = current_step.side_effect_handler.to_dict()
-    if terminal_policy is not None:
-        # Keep the durable decision projection bounded.  The complete policy
-        # remains part of the workflow checksum and is reconstructed from the
-        # caller's exact workflow spec during recovery; embedding its full
-        # serialization here can push canonical event extensions over the
-        # 8 KiB limit when a side-effect decision is also present.
-        current_policy["terminal_side_effect_policy"] = {
-            "reference": terminal_policy.reference,
-            "checksum": checksum_for(terminal_policy.to_dict()),
-            "handler": terminal_policy.handler.to_dict(),
-            "kind": terminal_policy.kind,
-        }
+    if current_node_id is not None:
+        current_policy["repair_node_ids"] = _repair_node_ids_for_source(
+            graph,
+            source_node_id=str(current_node_id),
+        )
+    _reject_legacy_repair_step_authority(current_policy)
     if side_effect_authorization is not None:
         current_policy["side_effect_authorization"] = dict(side_effect_authorization)
     if side_effect_failure is not None:
         current_policy["side_effect_failure"] = dict(side_effect_failure)
-    current_routing_rules = tuple(
-        rule
-        for rule in workflow.routing_rules
-        if rule.from_step == state.current_step_id
-    )
     routing_values: dict[str, Any] = {
         "quality_verdict.passed": (
             None if quality_verdict is None else quality_verdict.passed
@@ -201,45 +182,54 @@ def harness_decision_input_snapshot(
         "quality_verdict.score": (
             None if quality_verdict is None else quality_verdict.score
         ),
+        "run.lifecycle": state.lifecycle.value,
+        "run.outcome": state.outcome.value,
+        "node.outcome": None if current_node is None else current_node.get("status"),
     }
-    routing_values.update(_routing_snapshot_values(state, current_routing_rules))
+    if current_node is not None:
+        for output_key, output_ref in current_node.get("output_refs", {}).items():
+            routing_values[f"node.outputs.{output_key}"] = output_ref
+    graph_outputs = state.metadata.get("outputs", {})
+    if isinstance(graph_outputs, Mapping):
+        for output_key, output_ref in graph_outputs.items():
+            routing_values[f"graph.outputs.{output_key}"] = output_ref
     snapshot = {
         "schema": HARNESS_DECISION_INPUT_SCHEMA,
         "command_ordinal": command_ordinal,
         "causation_id": causation_id,
-        "run_id": state.run_spec.run_id,
-        "workflow_id": workflow.workflow_id,
-        "workflow_version": workflow_version(state.run_spec),
-        "workflow_checksum": workflow_checksum(state.run_spec),
-        "entry_step_id": workflow.entry_step_id,
-        "step_order": _decision_step_order(
-            workflow.step_ids,
-            current_step_id=state.current_step_id,
-            bounded=terminal_policy is not None,
-        ),
-        "current_step_policy": current_policy,
-        "routing_rules": tuple(rule.to_dict() for rule in current_routing_rules),
+        "run_id": state.run_id,
+        "graph_id": graph_id,
+        "graph_version": graph_version,
+        "graph_checksum": graph_checksum,
+        "entry_node_ids": tuple(graph.entry_node_ids),
+        "graph_nodes": tuple(node.to_dict() for node in graph.nodes),
+        "graph_edges": tuple(edge.to_dict() for edge in graph.edges),
+        "current_node_policy": current_policy,
         # Decision replay must bind to the same canonical state projection
         # that is persisted in Harness transitions.  The full in-memory state
         # may contain raw worker/effect metadata which the safe durable
         # projection intentionally omits; hashing it here would make a
         # restarted run produce a different completion input.
-        "before_state_checksum": HarnessStateProjection.from_state(state).checksum,
-        "run_status": state.status.value,
-        "current_step_id": state.current_step_id,
-        "turn_count": state.turn_count,
-        "replan_count": state.replan_count,
-        "worker_call_count": state.worker_call_count,
-        "step_states": tuple(
-            _decision_step_state_projection(step, side_effect_state_refs=side_effect_state_refs)
-            for step in state.step_states
-            if step.step_id == state.current_step_id
+        "before_state_checksum": getattr(state, "projection_checksum", None)
+        or checksum_for(state.to_dict()),
+        "run_status": state.lifecycle.value,
+        "current_node_instance_id": current_node_instance_id,
+        "current_node_id": current_node_id,
+        "turn_count": _graph_budget_used(state, "turns"),
+        "replan_count": _graph_budget_used(state, "replans"),
+        "worker_call_count": _graph_budget_used(state, "worker_calls"),
+        "node_instances": tuple(
+            _decision_node_instance_projection(
+                node,
+                side_effect_state_refs=side_effect_state_refs,
+            )
+            for node in state.node_instances
         ),
-        "budget": state.run_spec.budget.to_dict(),
+        "budget": _graph_budget_projection(state),
         "gate_results": tuple(
             _gate_decision_evidence(
                 result,
-                bounded=terminal_policy is not None,
+                bounded=graph.terminal_policy is not None,
             )
             for result in gate_results
         ),
@@ -257,17 +247,125 @@ def harness_decision_input_snapshot(
     return _decision_input(snapshot)
 
 
-def _decision_step_state_projection(
-    step: Any,
+def _current_node_instance_id(state: HarnessGraphState) -> str | None:
+    active = tuple(state.active_activities)
+    if active:
+        return active[0].node_instance_id
+    active_nodes = tuple(node for node in state.node_instances if node.is_running or node.is_waiting or node.is_ready)
+    if active_nodes:
+        return active_nodes[0].instance_id
+    return None
+
+
+def _graph_budget_used(state: HarnessGraphState, name: str) -> int:
+    counter = state.budgets.get(name)
+    return 0 if counter is None else counter.used
+
+
+def _graph_budget_projection(state: HarnessGraphState) -> Mapping[str, Any]:
+    counters = state.budgets.to_dict()
+    limits = {
+        item["name"]: item["limit"]
+        for item in counters["counters"]
+    }
+    return {
+        **counters,
+        "max_turns": limits.get("turns", 0),
+        "max_replans": limits.get("replans", 0),
+        "max_worker_calls": limits.get("worker_calls", 0),
+        "max_retries_per_step": limits.get("retries", 0),
+    }
+
+
+def _node_for_instance(
+    state: HarnessGraphState,
+    node_instance_id: str | None,
+) -> Mapping[str, Any] | None:
+    if node_instance_id is None:
+        return None
+    for node in state.node_instances:
+        if node.instance_id == node_instance_id:
+            return node.to_dict()
+    return None
+
+
+def _graph_node_for_instance(
+    graph: NormalizedHarnessGraph,
+    node: Mapping[str, Any] | None,
+) -> Any | None:
+    if node is None:
+        return None
+    node_id = node.get("node_id")
+    return next((item for item in graph.nodes if item.node_id == node_id), None)
+
+
+def _repair_node_ids_for_source(
+    graph: NormalizedHarnessGraph,
+    *,
+    source_node_id: str,
+) -> dict[str, str]:
+    """Project checksum-bound Graph repair routes for one source node."""
+
+    routes: dict[str, str] = {}
+    for reference in graph.repair_refs:
+        if reference.source_node_id != source_node_id:
+            continue
+        for trigger in reference.triggers:
+            existing = routes.get(trigger)
+            if existing is not None and existing != reference.repair_node_id:
+                raise ValueError("Graph repair route is ambiguous")
+            routes[trigger] = reference.repair_node_id
+    return dict(sorted(routes.items()))
+
+
+def _reject_legacy_repair_step_authority(policy: Mapping[str, Any]) -> None:
+    """Legacy leaf repair targets cannot enter the Graph replay contract."""
+
+    if policy.get("repair_step_id") is not None:
+        raise ValueError("Graph replay rejects legacy repair_step_id")
+    metadata = policy.get("metadata")
+    if not isinstance(metadata, Mapping):
+        return
+    if metadata.get("repair_step_id") is not None:
+        raise ValueError("Graph replay rejects legacy repair_step_id")
+    retry_policy = metadata.get("retry_policy")
+    if isinstance(retry_policy, Mapping) and retry_policy.get("repair_step_id") is not None:
+        raise ValueError("Graph replay rejects legacy repair_step_id")
+
+
+def _repair_node_id(
+    policy: Mapping[str, Any],
+    *,
+    trigger: str,
+) -> str | None:
+    _reject_legacy_repair_step_authority(policy)
+    routes = policy.get("repair_node_ids", {})
+    if not isinstance(routes, Mapping):
+        raise ValueError("Graph replay repair_node_ids must be an object")
+    target = routes.get(trigger)
+    if target is None:
+        return None
+    if not isinstance(target, str) or not target.strip():
+        raise ValueError("Graph replay repair node id is invalid")
+    return target
+
+
+def _decision_node_instance_projection(
+    node: Any,
     *,
     side_effect_state_refs: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
+    raw = node.to_dict()
+    step_status = raw.get("step_status")
     projection = {
-        "step_id": step.step_id,
-        "status": step.status.value,
-        "attempts": step.attempts,
-        "replans": step.replans,
-        "approval_granted": bool(step.metadata.get("approval_granted")),
+        "node_instance_id": node.instance_id,
+        "node_id": node.identity.node_id,
+        "step_id": node.step_id,
+        "status": node.status.value,
+        "step_status": step_status,
+        "attempts": node.attempt,
+        "replans": node.replans,
+        "approval_granted": bool(node.metadata.get("approval_granted")),
     }
     for key in (
         "approval_evidence_ref",
@@ -280,7 +378,7 @@ def _decision_step_state_projection(
         value = (
             side_effect_state_refs.get(key)
             if side_effect_state_refs is not None and key in side_effect_state_refs
-            else step.metadata.get(key)
+            else node.metadata.get(key)
         )
         if value is not None:
             projection[key] = value
@@ -311,32 +409,17 @@ def _gate_decision_evidence(
     }
 
 
-def _decision_step_order(
-    step_ids: Sequence[str],
-    *,
-    current_step_id: str | None,
-    bounded: bool,
-) -> tuple[str, ...]:
-    order = tuple(str(step_id) for step_id in step_ids)
-    if not bounded or current_step_id not in order:
-        return order
-    index = order.index(current_step_id)
-    # Current plus immediate fallback successor is sufficient for the replay
-    # kernel.  Explicit routing rules remain projected independently.
-    return order[index : index + 2]
-
-
 def harness_event_history(event: HarnessEvent, *, data_schema: str) -> DeterministicHistoryRecord:
     if not isinstance(event, HarnessEvent):
         raise TypeError("event must be HarnessEvent")
     return DeterministicHistoryRecord(
         policy=HistoryEventPolicy(
             handler_id=HARNESS_HISTORY_HANDLER_ID,
-            handler_version=HARNESS_REDUCER_VERSION,
-            workflow_id=HARNESS_EVENT_HISTORY_WORKFLOW_ID,
-            workflow_version=HARNESS_EVENT_HISTORY_WORKFLOW_VERSION,
+            handler_version=HARNESS_GRAPH_REDUCER_VERSION,
+            graph_id=HARNESS_EVENT_HISTORY_GRAPH_ID,
+            graph_version=HARNESS_EVENT_HISTORY_GRAPH_VERSION,
             policy_id=HARNESS_HISTORY_POLICY_ID,
-            policy_version=HARNESS_POLICY_VERSION,
+            policy_version=HARNESS_GRAPH_CONTROL_POLICY_VERSION,
             schema_id=HARNESS_HISTORY_SCHEMA_ID,
             schema_version=data_schema,
         ),
@@ -358,11 +441,11 @@ def harness_graph_history(*, data_schema: str) -> DeterministicHistoryRecord:
     return DeterministicHistoryRecord(
         policy=HistoryEventPolicy(
             handler_id=HARNESS_HISTORY_HANDLER_ID,
-            handler_version=HARNESS_REDUCER_VERSION,
-            workflow_id=HARNESS_EVENT_HISTORY_WORKFLOW_ID,
-            workflow_version=HARNESS_EVENT_HISTORY_WORKFLOW_VERSION,
+            handler_version=HARNESS_GRAPH_REDUCER_VERSION,
+            graph_id=HARNESS_EVENT_HISTORY_GRAPH_ID,
+            graph_version=HARNESS_EVENT_HISTORY_GRAPH_VERSION,
             policy_id=HARNESS_HISTORY_POLICY_ID,
-            policy_version=HARNESS_POLICY_VERSION,
+            policy_version=HARNESS_GRAPH_CONTROL_POLICY_VERSION,
             schema_id=schema_id,
             schema_version=data_schema,
         ),
@@ -371,44 +454,60 @@ def harness_graph_history(*, data_schema: str) -> DeterministicHistoryRecord:
 
 
 def harness_transition_history(
-    transition: HarnessTransitionCommitted,
+    transition: Any,
 ) -> DeterministicHistoryRecord:
-    if not isinstance(transition, HarnessTransitionCommitted):
-        raise TypeError("transition must be HarnessTransitionCommitted")
+    """Build a history policy for a Graph commit; legacy transitions are rejected."""
+    schema = getattr(transition, "schema_version", None)
+    if schema != HARNESS_GRAPH_COMMIT_SCHEMA:
+        raise ValueError("legacy Harness transition history is not supported")
     return DeterministicHistoryRecord(
         policy=HistoryEventPolicy(
             handler_id=HARNESS_HISTORY_HANDLER_ID,
-            handler_version=transition.reducer_version,
-            workflow_id=transition.state.workflow_id,
-            workflow_version=transition.state.workflow_version,
+            handler_version=HARNESS_GRAPH_REDUCER_VERSION,
+            graph_id=HARNESS_EVENT_HISTORY_GRAPH_ID,
+            graph_version=HARNESS_EVENT_HISTORY_GRAPH_VERSION,
             policy_id=HARNESS_HISTORY_POLICY_ID,
-            policy_version=transition.policy_version,
-            schema_id=HARNESS_TRANSITION_HISTORY_SCHEMA_ID,
-            schema_version=transition.schema_version,
+            policy_version=HARNESS_GRAPH_CONTROL_POLICY_VERSION,
+            schema_id=HARNESS_GRAPH_HISTORY_SCHEMA_ID,
+            schema_version=schema,
         ),
         commands=(),
     )
 
 
-def harness_activity_history(
+def harness_graph_activity_history(
     record: Any,
+    *,
+    graph_activity: Any,
 ) -> DeterministicHistoryRecord:
+    """Build replay history for a Graph-native activity result.
+
+    The secure payload store remains shared with generic replay activities, but
+    the history policy is explicitly Graph-owned and never carries a flat
+    ``step_id`` activity descriptor.
+    """
+
     from framework.events.runtime.activities import RecordedActivityWrite
+    from framework.harness.control_plane.graph_runtime import HarnessGraphActivity
 
     if not isinstance(record, RecordedActivityWrite):
         raise TypeError("record must be RecordedActivityWrite")
-    activity = record.record.activity
+    if not isinstance(graph_activity, HarnessGraphActivity):
+        raise TypeError("graph_activity must be HarnessGraphActivity")
+    descriptor = record.record.activity
+    if descriptor.activity_id != graph_activity.activity_id:
+        raise ValueError("record and graph activity identities must match")
     return DeterministicHistoryRecord(
         policy=HistoryEventPolicy(
             handler_id=HARNESS_HISTORY_HANDLER_ID,
-            handler_version=HARNESS_REDUCER_VERSION,
-            workflow_id=HARNESS_ACTIVITY_HISTORY_WORKFLOW_ID,
-            workflow_version=activity.contract_version,
+            handler_version=HARNESS_GRAPH_REDUCER_VERSION,
+            graph_id=HARNESS_GRAPH_ACTIVITY_HISTORY_GRAPH_ID,
+            graph_version=graph_activity.activity_ref.version,
             policy_id=HARNESS_HISTORY_POLICY_ID,
-            policy_version=HARNESS_POLICY_VERSION,
-            schema_id=HARNESS_HISTORY_SCHEMA_ID,
-            schema_version="newsroom.harness-event/v1",
-            expected_activity=activity,
+            policy_version=HARNESS_GRAPH_CONTROL_POLICY_VERSION,
+            schema_id=HARNESS_GRAPH_HISTORY_SCHEMA_ID,
+            schema_version="newsroom.harness-graph-event/v1",
+            expected_activity=descriptor,
             recorded_activity_ref=record.recorded_ref,
         ),
         commands=(),
@@ -431,7 +530,7 @@ def harness_expected_commands(
             command_ordinal=int(decision_input["command_ordinal"]),
             decision_input=decision_input,
             decision_projection=semantic,
-            workflow_version=str(decision_input["workflow_version"]),
+            graph_version=str(decision_input["graph_version"]),
             causation_id=str(decision_input["causation_id"]),
         ),
     )
@@ -443,17 +542,18 @@ def harness_decision_kernel(
 ) -> Mapping[str, Any]:
     value = _decision_input(decision_input)
     status = str(value["run_status"])
-    step_id = _optional_string(value.get("current_step_id"))
-    run_id = str(value["run_id"])
-    steps = tuple(value["step_states"])
+    node_instance_id = _optional_string(value.get("current_node_instance_id"))
+    current_node_id = _optional_string(value.get("current_node_id"))
+    steps = tuple(value["node_instances"])
     current = None
-    for step in steps:
-        if isinstance(step, Mapping) and step.get("step_id") == step_id:
-            current = step
+    for node in steps:
+        if isinstance(node, Mapping) and node.get("node_instance_id") == node_instance_id:
+            current = node
             break
-    step_status = None if current is None else str(current["status"])
+    step_status = None if current is None else str(current.get("step_status") or current["status"])
     budget = value["budget"]
-    policy = value["current_step_policy"]
+    policy = value["current_node_policy"]
+    _reject_legacy_repair_step_authority(policy)
     gates = tuple(value["gate_results"])
     verdict = value.get("quality_verdict")
     worker = _resolved_worker_semantics(activity_result)
@@ -468,8 +568,6 @@ def harness_decision_kernel(
             failure["effect_ref"] = effect_ref
         return {
             "decision_type": "fail_run",
-            "step_id": step_id,
-            "target_step_id": None,
             "reason": f"side-effect failure: {code}",
             "payload": {"side_effect_failure": failure},
         }
@@ -483,8 +581,9 @@ def harness_decision_kernel(
         reason = "run is already terminal: " + status
     elif status == "created":
         decision_type = "start_step"
-        step_id = str(value["entry_step_id"])
-        target = step_id
+        target_node = str(value["entry_node_ids"][0])
+        node_instance_id = None
+        target = target_node
         reason = "start entry step"
     elif status == "waiting_approval" or step_status == "waiting_approval":
         if approval_outcome == "approved":
@@ -547,10 +646,13 @@ def harness_decision_kernel(
             decision_type = "retry_step"
             reason = worker.get("error") or "worker failed with retryable status"
             payload = {"backoff_seconds": policy.get("backoff_seconds", 0.0)}
-        elif policy.get("repair_step_id"):
+        elif (repair_node_id := _repair_node_id(
+            policy,
+            trigger="worker_failure_after_retry_exhaustion",
+        )) is not None:
             decision_type = "route_to_repair"
-            target = str(policy["repair_step_id"])
-            reason = worker.get("error") or "worker failed; route to configured repair step"
+            target = repair_node_id
+            reason = worker.get("error") or "worker failed; route to configured repair node"
         else:
             decision_type = "fail_run"
             reason = worker.get("error") or "worker failed and retry budget is exhausted"
@@ -564,10 +666,13 @@ def harness_decision_kernel(
             isinstance(verdict, Mapping) and not bool(verdict["passed"])
         ):
             decision_type = "complete_step"
-        elif policy.get("repair_step_id"):
+        elif (repair_node_id := _repair_node_id(
+            policy,
+            trigger="verification_failure",
+        )) is not None:
             decision_type = "route_to_repair"
-            target = str(policy["repair_step_id"])
-            reason = "verification failed; route to repair step"
+            target = repair_node_id
+            reason = "verification failed; route to repair node"
         elif _can_replan(value, current):
             decision_type = "replan_step"
             reason = "verification failed"
@@ -584,10 +689,10 @@ def harness_decision_kernel(
         target = _selected_route(value, worker)
         if target is None:
             decision_type = "complete_run"
-            reason = "workflow has no next step"
+            reason = "Graph has no next activity"
         else:
             decision_type = "route_to_step"
-            reason = "explicit routing rule or workflow order selected next step"
+            reason = "explicit Graph edge selected next node"
     elif step_status == "halted":
         decision_type = "halt_run"
     elif step_status == "failed":
@@ -610,8 +715,8 @@ def harness_decision_kernel(
         }
     return {
         "decision_type": decision_type,
-        "step_id": step_id,
-        "target_step_id": target,
+        "node_instance_id": node_instance_id,
+        "target_node_id": target,
         "reason": reason,
         "payload": payload,
     }
@@ -629,20 +734,21 @@ def _decision_input(value: Mapping[str, Any]) -> Mapping[str, Any]:
         "command_ordinal",
         "causation_id",
         "run_id",
-        "workflow_id",
-        "workflow_version",
-        "workflow_checksum",
-        "entry_step_id",
-        "step_order",
-        "current_step_policy",
-        "routing_rules",
+        "graph_id",
+        "graph_version",
+        "graph_checksum",
+        "entry_node_ids",
+        "graph_nodes",
+        "graph_edges",
+        "current_node_policy",
         "before_state_checksum",
         "run_status",
-        "current_step_id",
+        "current_node_instance_id",
+        "current_node_id",
         "turn_count",
         "replan_count",
         "worker_call_count",
-        "step_states",
+        "node_instances",
         "budget",
         "gate_results",
         "quality_verdict",
@@ -658,14 +764,14 @@ def _decision_input(value: Mapping[str, Any]) -> Mapping[str, Any]:
     if approval_outcome not in {None, "approved", "cancelled"}:
         raise ValueError("unsupported Harness approval outcome")
     if approval_outcome is not None:
-        current_step_id = normalized["current_step_id"]
+        current_node_instance_id = normalized["current_node_instance_id"]
         current_step_status = None
-        for step in normalized["step_states"]:
+        for node in normalized["node_instances"]:
             if (
-                isinstance(step, Mapping)
-                and step.get("step_id") == current_step_id
+                isinstance(node, Mapping)
+                and node.get("node_instance_id") == current_node_instance_id
             ):
-                current_step_status = step.get("status")
+                current_step_status = node.get("step_status") or node.get("status")
                 break
         if (
             normalized["run_status"] != "waiting_approval"
@@ -682,21 +788,21 @@ def _decision_command(
     command_ordinal: int,
     decision_input: Mapping[str, Any],
     decision_projection: Mapping[str, Any],
-    workflow_version: str,
+    graph_version: str,
     causation_id: str,
 ) -> DeterministicCommand:
     target = (
-        decision_projection.get("target_step_id")
-        or decision_projection.get("step_id")
+        decision_projection.get("target_node_id")
+        or decision_projection.get("node_id")
         or "run"
     )
     return DeterministicCommand(
         ordinal=command_ordinal,
         kind=str(decision_projection["decision_type"]),
         target=target,
-        handler_version=HARNESS_REDUCER_VERSION,
-        workflow_version=workflow_version,
-        policy_version=HARNESS_POLICY_VERSION,
+        handler_version=HARNESS_GRAPH_REDUCER_VERSION,
+        graph_version=graph_version,
+        policy_version=HARNESS_GRAPH_CONTROL_POLICY_VERSION,
         input_refs=(
             "urn:newsroom:harness-decision-input:"
             + str(command_ordinal),
@@ -711,12 +817,28 @@ def _decision_command(
     )
 
 
-def _decision_projection(decision: HarnessDecision) -> dict[str, Any]:
+def _decision_projection(decision: HarnessGraphDecision) -> dict[str, Any]:
+    if not isinstance(decision, HarnessGraphDecision):
+        raise TypeError("decision must be HarnessGraphDecision")
+    decision_type = {
+        "activate_node": "start_step",
+        "enter_step_phase": "plan_step",
+        "dispatch_activity": "execute_step",
+        "verify_activity_result": "verify_step",
+        "complete_node": "complete_step",
+        "retry_node": "retry_step",
+        "replan_node": "replan_step",
+        "route_to_repair": "route_to_repair",
+        "wait_node": "wait_for_approval",
+        "complete_run": "complete_run",
+        "halt_run": "halt_run",
+    }.get(decision.decision_type.value, decision.decision_type.value)
     return _semantic_decision_projection(
         {
-        "decision_type": decision.decision_type.value,
-        "step_id": decision.step_id,
-        "target_step_id": decision.target_step_id,
+        "decision_type": decision_type,
+        "node_id": decision.node_id,
+        "node_instance_id": decision.node_instance_id,
+        "target_node_id": decision.target_node_ids[0] if decision.target_node_ids else None,
         "payload": decision.payload,
         }
     )
@@ -738,8 +860,9 @@ def _semantic_decision_projection(
                 safe_payload[key] = payload[key]
     return {
         "decision_type": str(value["decision_type"]),
-        "step_id": value.get("step_id"),
-        "target_step_id": value.get("target_step_id"),
+        "target_node_id": value.get("target_node_id"),
+        "node_id": value.get("node_id"),
+        "node_instance_id": value.get("node_instance_id"),
         "payload": safe_payload,
     }
 
@@ -827,129 +950,64 @@ def _selected_route(
     value: Mapping[str, Any],
     worker: Mapping[str, Any] | None,
 ) -> str | None:
-    current_step = _optional_string(value.get("current_step_id"))
+    current_node = _optional_string(value.get("current_node_id"))
+    if current_node is None:
+        current_instance = _optional_string(value.get("current_node_instance_id"))
+        for node in value["node_instances"]:
+            if isinstance(node, Mapping) and node.get("node_instance_id") == current_instance:
+                current_node = _optional_string(node.get("node_id"))
+                break
     routing_values = dict(value["routing_values"])
     routing_values["worker_result.status"] = (
         None if worker is None else worker.get("status")
     )
-    for rule in value["routing_rules"]:
-        if rule.get("from_step") != current_step:
+    for edge in value["graph_edges"]:
+        if edge.get("source_id") != current_node:
             continue
-        if _routing_rule_matches(rule, routing_values):
-            return str(rule["to_step"])
-    order_items: list[str] = []
-    for item in value["step_order"]:
-        order_items.append(str(item))
-    order = tuple(order_items)
-    if current_step not in order:
-        return None
-    index = order.index(current_step) + 1
-    return None if index >= len(order) else order[index]
+        condition = edge.get("condition")
+        if condition is None or _graph_edge_condition_matches(condition, routing_values):
+            return str(edge["target_id"])
+    return None
 
 
-def _routing_rule_matches(
-    rule: Mapping[str, Any],
+def _graph_edge_condition_matches(
+    condition: Mapping[str, Any],
     values: Mapping[str, Any],
 ) -> bool:
-    kind = str(rule.get("kind"))
-    condition = rule.get("condition", {})
-    if kind == "always" and not condition:
+    if not condition:
         return True
-    if kind == "on_status":
-        expected = condition.get("status", condition.get("equals"))
-        return values.get("worker_result.status") == expected
-    if kind == "on_verdict":
-        if "passed" in condition and values.get(
-            "quality_verdict.passed"
-        ) != condition["passed"]:
-            return False
-        score = values.get("quality_verdict.score")
-        if "min_score" in condition and (
-            not isinstance(score, int | float)
-            or score < condition["min_score"]
-        ):
-            return False
-        if "max_score" in condition and (
-            not isinstance(score, int | float)
-            or score > condition["max_score"]
-        ):
-            return False
-        return True
-    path = condition.get("path", condition.get("field"))
+    kind = condition.get("kind")
+    if kind == "all":
+        return all(
+            isinstance(item, Mapping) and _graph_edge_condition_matches(item, values)
+            for item in condition["conditions"]
+        )
+    if kind == "any":
+        return any(
+            isinstance(item, Mapping) and _graph_edge_condition_matches(item, values)
+            for item in condition["conditions"]
+        )
+    if kind != "predicate":
+        return False
+    path = condition.get("path")
     if not isinstance(path, str):
-        return not condition
+        return False
     actual = values.get(path)
-    if "exists" in condition:
-        return (actual is not None) is bool(condition["exists"])
-    if "equals" in condition:
-        return actual == condition["equals"]
-    if "not_equals" in condition:
-        return actual != condition["not_equals"]
-    if "in" in condition:
-        return actual in condition["in"]
-    if "not_in" in condition:
-        return actual not in condition["not_in"]
-    if "gte" in condition and not _numeric_compare(actual, condition["gte"], "gte"):
-        return False
-    if "gt" in condition and not _numeric_compare(actual, condition["gt"], "gt"):
-        return False
-    if "lte" in condition and not _numeric_compare(actual, condition["lte"], "lte"):
-        return False
-    if "lt" in condition and not _numeric_compare(actual, condition["lt"], "lt"):
-        return False
-    return True
-
-
-def _routing_snapshot_values(state: Any, rules: Sequence[Any]) -> dict[str, Any]:
-    paths: set[str] = set()
-    for rule in rules:
-        _collect_routing_paths(rule.condition, paths)
-    values: dict[str, Any] = {}
-    for path in sorted(paths):
-        if path.startswith("state.inputs."):
-            values[path] = _nested_value(
-                state.run_spec.inputs,
-                path.removeprefix("state.inputs."),
-            )
-        elif path.startswith("state.outputs."):
-            outputs = state.metadata.get("outputs", {})
-            values[path] = _nested_value(
-                outputs if isinstance(outputs, Mapping) else {},
-                path.removeprefix("state.outputs."),
-            )
-        elif path.startswith("state.step_status."):
-            step_id = path.removeprefix("state.step_status.")
-            values[path] = next(
-                (
-                    step.status.value
-                    for step in state.step_states
-                    if step.step_id == step_id
-                ),
-                None,
-            )
-    return values
-
-
-def _collect_routing_paths(value: Any, paths: set[str]) -> None:
-    if not isinstance(value, Mapping):
-        return
-    path = value.get("path", value.get("field"))
-    if isinstance(path, str):
-        paths.add(path)
-    for key in ("all", "any"):
-        clauses = value.get(key, ())
-        if isinstance(clauses, list | tuple):
-            for clause in clauses:
-                _collect_routing_paths(clause, paths)
-
-
-def _nested_value(value: Mapping[str, Any], dotted_path: str) -> Any:
-    current: Any = value
-    for segment in dotted_path.split("."):
-        if not isinstance(current, Mapping):
-            return None
-        current = current.get(segment)
-    return current
+    operator = condition.get("operator")
+    expected = condition.get("expected")
+    if operator == "exists":
+        return (actual is not None) is bool(expected)
+    if operator == "equals":
+        return actual == expected
+    if operator == "not_equals":
+        return actual != expected
+    if operator == "in":
+        return actual in expected
+    if operator == "not_in":
+        return actual not in expected
+    if operator in {"gte", "gt", "lte", "lt"}:
+        return _numeric_compare(actual, expected, operator)
+    return False
 
 
 def _numeric_compare(actual: Any, expected: Any, operation: str) -> bool:
@@ -1005,30 +1063,29 @@ class HarnessReplayActivityResolver(ReplayActivityResolverPort):
 
 def build_harness_history_verifier(
     *,
-    workflow_id: str,
-    workflow_version: str,
+    graph_id: str,
+    graph_version: str,
     activity_store: RecordedActivityStorePort | None = None,
     secure_activity_store: RecordedActivityStorePort | None = None,
     activity_versions: Sequence[ReplayActivityHandlerVersion] = (),
 ) -> HistoryVerifier:
     versions = ExactVersionRegistry()
     registrations = {
-        ("workflow", str(workflow_id), str(workflow_version)),
+        ("graph", str(graph_id), str(graph_version)),
         (
-            "workflow",
-            HARNESS_EVENT_HISTORY_WORKFLOW_ID,
-            HARNESS_EVENT_HISTORY_WORKFLOW_VERSION,
+            "graph",
+            HARNESS_EVENT_HISTORY_GRAPH_ID,
+            HARNESS_EVENT_HISTORY_GRAPH_VERSION,
         ),
         (
-            "workflow",
-            HARNESS_ACTIVITY_HISTORY_WORKFLOW_ID,
-            HARNESS_ACTIVITY_CONTRACT,
+            "policy",
+            HARNESS_HISTORY_POLICY_ID,
+            HARNESS_GRAPH_CONTROL_POLICY_VERSION,
         ),
-        ("policy", HARNESS_HISTORY_POLICY_ID, HARNESS_POLICY_VERSION),
         (
             "schema",
             HARNESS_HISTORY_SCHEMA_ID,
-            "newsroom.harness-event/v1",
+            "newsroom.harness-graph-event/v1",
         ),
         (
             "schema",
@@ -1040,11 +1097,6 @@ def build_harness_history_verifier(
             HARNESS_GRAPH_PROJECTION_HISTORY_SCHEMA_ID,
             HARNESS_GRAPH_PROJECTION_RECORD_SCHEMA,
         ),
-        (
-            "schema",
-            HARNESS_TRANSITION_HISTORY_SCHEMA_ID,
-            HARNESS_TRANSITION_DATA_SCHEMA,
-        ),
     }
     for kind, component_id, version in sorted(registrations):
         versions.register(
@@ -1054,7 +1106,7 @@ def build_harness_history_verifier(
         ExactVersionRegistration(
             "reducer",
             HARNESS_HISTORY_HANDLER_ID,
-            HARNESS_REDUCER_VERSION,
+            HARNESS_GRAPH_REDUCER_VERSION,
             harness_expected_commands,
         )
     )
@@ -1093,8 +1145,8 @@ def harness_activity_kind(activity_type: str) -> ReplayActivityKind:
 
 
 __all__ = [
-    "HARNESS_ACTIVITY_HISTORY_WORKFLOW_ID",
-    "HARNESS_EVENT_HISTORY_WORKFLOW_ID",
+    "HARNESS_GRAPH_ACTIVITY_HISTORY_GRAPH_ID",
+    "HARNESS_EVENT_HISTORY_GRAPH_ID",
     "HARNESS_HISTORY_HANDLER_ID",
     "HARNESS_HISTORY_POLICY_ID",
     "HARNESS_GRAPH_HISTORY_SCHEMA_ID",
@@ -1103,7 +1155,7 @@ __all__ = [
     "harness_decision_history",
     "harness_decision_input_snapshot",
     "harness_decision_kernel",
-    "harness_activity_history",
+    "harness_graph_activity_history",
     "harness_activity_kind",
     "harness_event_history",
     "harness_graph_history",

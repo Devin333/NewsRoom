@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import hashlib
-
 from framework.harness.context.assembler import ContextAssembler
 from framework.harness.context.budget import ContextBudgetEstimator
 from framework.harness.context.cache import ContextCachePolicyBuilder
@@ -17,9 +15,14 @@ from framework.harness.context.gates import (
     ContextSegmentOrderGate,
     ContextStablePrefixGate,
 )
-from framework.harness.context.models import ContextBudget, ContextCompressionSummary, ContextEnvelope, ContextSnapshot
+from framework.harness.context.models import (
+    ContextBudget,
+    ContextCompressionSummary,
+    ContextEnvelope,
+    ContextGraphIdentity,
+    ContextSnapshot,
+)
 from framework.harness.context.snapshot import ContextSnapshotStore
-from framework.shared.json import stable_json_dumps
 
 
 class FakeContextAssembler(ContextAssembler):
@@ -31,8 +34,19 @@ class FakeContextAssembler(ContextAssembler):
         request = {"budget": ContextBudget.safe_default(), **dict(context_request)}
         if "segments" not in request and ("stable_prefix" in request or "dynamic_tail" in request):
             token_estimate = int(request.get("token_estimate", 0))
-            envelope = ContextEnvelope(
+            raw_identity = request.get("graph_identity")
+            graph_identity = (
+                raw_identity
+                if isinstance(raw_identity, ContextGraphIdentity)
+                else ContextGraphIdentity.from_dict(raw_identity)
+            )
+            envelope = ContextEnvelope.for_graph(
                 envelope_id=str(request.get("envelope_id", f"context://fake/{len(self.events) + 1}")),
+                graph_identity=graph_identity,
+                task_execution_identity=request.get("task_execution_identity"),
+                phase=str(request.get("phase", "EXECUTE")),
+                worker_id=str(request.get("worker_id", "fake-context-worker")),
+                worker_type=str(request.get("worker_type", "function")),
                 stable_prefix=dict(request.get("stable_prefix", {})),
                 dynamic_tail=dict(request.get("dynamic_tail", {})),
                 artifact_refs=tuple(request.get("artifact_refs", ())),
@@ -72,14 +86,17 @@ class FakeContextSnapshotStore:
         refs = envelope.artifact_refs + envelope.memory_refs + envelope.evidence_refs
         if not refs:
             refs = (f"context://{envelope.envelope_id}",)
-        checksum = hashlib.sha256(stable_json_dumps({"refs": refs, "tokens": envelope.token_estimate}).encode()).hexdigest()
-        snapshot = ContextSnapshot(
-            snapshot_id=f"snapshot://fake/{len(self.snapshots) + 1}",
-            envelope_id=envelope.envelope_id,
+        snapshot_id = f"snapshot://fake/{len(self.snapshots) + 1}"
+        bound_envelope = envelope.bind_snapshot_ref(snapshot_id)
+        snapshot = ContextSnapshot.for_graph_envelope(
+            snapshot_id=snapshot_id,
+            envelope=bound_envelope,
             refs=refs,
-            token_estimate=envelope.token_estimate,
-            cache_key=f"context:{envelope.envelope_id}:{checksum[:12]}",
-            checksum=f"sha256:{checksum}",
+            segment_refs=tuple(
+                segment.content_ref for segment in bound_envelope.segments
+            ),
+            assembled_prompt_ref=f"artifact://assembled-context/{bound_envelope.envelope_id}",
+            cache_key=f"context:{bound_envelope.envelope_id}",
             metadata={"payload_saved": False},
         )
         self.snapshots[snapshot.snapshot_id] = snapshot

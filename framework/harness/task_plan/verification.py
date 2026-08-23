@@ -16,7 +16,6 @@ from framework.harness.artifacts import ArtifactReferenceVerifierPort
 from framework.harness.context.models import ContextEnvelope
 from framework.harness.control_plane.errors import HarnessValidationError
 from framework.harness.subagents.transcript import (
-    SUBAGENT_ATTEMPT_IDENTITY_SCHEMA_V2,
     SUBAGENT_ATTEMPT_IDENTITY_SCHEMA_V3,
     SubAgentAttemptIdentity,
     SubAgentOutputDocument,
@@ -44,6 +43,7 @@ from framework.harness.workers.result import (
     HarnessWorkerResult,
     HarnessWorkerStatus,
 )
+from framework.shared.graph_identity import GraphExecutionIdentity
 
 
 SUBAGENT_ATTEMPT_EVIDENCE_TYPE = "subagent_attempt"
@@ -200,6 +200,7 @@ class TaskPlanResultVerificationRequest:
     task: ResolvedTaskSpec
     instance: TaskInstance
     worker_result: HarnessWorkerResult
+    execution_identity: GraphExecutionIdentity | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.plan, ValidatedTaskPlan):
@@ -211,6 +212,20 @@ class TaskPlanResultVerificationRequest:
         if not isinstance(self.worker_result, HarnessWorkerResult):
             raise TypeError("worker_result must be HarnessWorkerResult")
         _require_plan_task_instance_identity(self.plan, self.task, self.instance)
+        if self.execution_identity is not None:
+            if not isinstance(self.execution_identity, GraphExecutionIdentity):
+                raise TypeError("execution_identity must be GraphExecutionIdentity")
+            if (
+                self.execution_identity.run_id != self.plan.run_id
+                or self.execution_identity.graph_id != self.plan.graph_id
+                or self.execution_identity.graph_version != self.plan.graph_version
+                or self.execution_identity.graph_ref != self.plan.graph_ref
+                or self.execution_identity.graph_checksum != self.plan.graph_checksum
+            ):
+                raise HarnessValidationError(
+                    "TaskPlan verification execution identity is outside its accepted Graph",
+                    code="task_plan_execution_identity_mismatch",
+                )
 
 
 class TaskPlanResultVerifier:
@@ -269,6 +284,7 @@ class TaskPlanResultVerifier:
             plan=plan,
             task=task,
             instance=instance,
+            execution_identity=request.execution_identity,
         )
 
         if result.status is not HarnessWorkerStatus.SUCCEEDED:
@@ -343,6 +359,7 @@ class TaskPlanResultVerifier:
         plan: ValidatedTaskPlan,
         task: ResolvedTaskSpec,
         instance: TaskInstance,
+        execution_identity: GraphExecutionIdentity | None,
     ) -> tuple[SubAgentTranscriptReceipt | None, SubAgentOutputDocument | None]:
         entries = tuple(
             item
@@ -361,6 +378,11 @@ class TaskPlanResultVerifier:
                 "subagent TaskPlan verification requires a transcript store",
                 code="task_plan_subagent_transcript_store_required",
             )
+        if execution_identity is None:
+            raise HarnessValidationError(
+                "subagent TaskPlan verification requires physical Graph identity",
+                code="task_plan_execution_identity_required",
+            )
         if len(entries) != 1:
             raise HarnessValidationError(
                 "subagent TaskPlan result requires exactly one attempt receipt",
@@ -373,6 +395,7 @@ class TaskPlanResultVerifier:
         identity = transcript.identity
         if (
             not _subagent_identity_matches_plan(identity, plan, task, instance)
+            or not _subagent_identity_matches_execution(identity, execution_identity)
             or identity.invocation_id != receipt.invocation_id
             or output.identity != identity
         ):
@@ -521,15 +544,13 @@ def task_plan_subagent_attempt_identity(
         "invocation_id": invocation_id,
         "parent_run_id": plan.run_id,
         "child_run_id": child_run_id,
-        "workflow_id": plan.workflow_id,
         "stage_id": plan.stage_id,
         "task_id": instance.task_id,
         "task_instance_id": instance.task_instance_id,
         "attempt": instance.attempt,
         "subagent_id": subagent_id,
     }
-    if plan.is_graph_only:
-        expected_context_fields = {
+    expected_context_fields = {
             "parent_run_id": plan.run_id,
             "graph_id": plan.graph_id,
             "graph_version": plan.graph_version,
@@ -550,19 +571,31 @@ def task_plan_subagent_attempt_identity(
             "task_instance_id": instance.task_instance_id,
             "attempt": instance.attempt,
         }
-        if (
-            not isinstance(context_pack, ContextEnvelope)
-            or not context_pack.is_graph_only
-            or context_pack.phase != "EXECUTE"
-            or not context_pack.matches_graph_fields(expected_context_fields)
-            or context_pack.checksum is None
-        ):
-            raise HarnessValidationError(
-                "Graph-only SubAgent attempt requires its exact execution context",
-                code="task_plan_result_identity_mismatch",
-            )
-        common.update(
-            {
+    if (
+        not isinstance(context_pack, ContextEnvelope)
+        or not context_pack.is_graph_only
+        or context_pack.phase != "EXECUTE"
+        or not context_pack.matches_graph_fields(expected_context_fields)
+        or context_pack.checksum is None
+    ):
+        raise HarnessValidationError(
+            "Graph-only SubAgent attempt requires its exact execution context",
+            code="task_plan_result_identity_mismatch",
+        )
+    graph_identity = context_pack.graph_identity
+    if (
+        graph_identity is None
+        or graph_identity.node_id is None
+        or graph_identity.node_instance_id is None
+        or graph_identity.activity_id is None
+        or graph_identity.activity_attempt is None
+    ):
+        raise HarnessValidationError(
+            "Graph-only SubAgent attempt requires physical Graph identity",
+            code="task_plan_execution_identity_required",
+        )
+    common.update(
+        {
                 "schema_version": SUBAGENT_ATTEMPT_IDENTITY_SCHEMA_V3,
                 "graph_id": plan.graph_id,
                 "graph_version": plan.graph_version,
@@ -580,8 +613,12 @@ def task_plan_subagent_attempt_identity(
                 "task_definition_checksum": definition.task_definition_checksum,
                 "context_envelope_id": context_pack.envelope_id,
                 "context_envelope_checksum": context_pack.checksum,
-            }
-        )
+                "node_id": graph_identity.node_id,
+                "node_instance_id": graph_identity.node_instance_id,
+                "activity_id": graph_identity.activity_id,
+                "activity_attempt": graph_identity.activity_attempt,
+        }
+    )
     return SubAgentAttemptIdentity(**common)
 
 
@@ -598,11 +635,8 @@ def _subagent_identity_matches_plan(
         or identity.task_instance_id != instance.task_instance_id
         or identity.attempt != instance.attempt
         or identity.subagent_id != task.subagent_id
-        or identity.is_graph_only != plan.is_graph_only
     ):
         return False
-    if not plan.is_graph_only:
-        return identity.workflow_id == plan.workflow_id
     graph_fields = (
         "graph_id",
         "graph_version",
@@ -615,13 +649,11 @@ def _subagent_identity_matches_plan(
         "stage_identity_schema",
         "stage_identity_checksum",
     )
-    if identity.workflow_id is not None or not all(
+    if not all(
         getattr(identity, field_name) == getattr(plan, field_name)
         for field_name in graph_fields
     ):
         return False
-    if identity.schema_version == SUBAGENT_ATTEMPT_IDENTITY_SCHEMA_V2:
-        return True
     if identity.schema_version != SUBAGENT_ATTEMPT_IDENTITY_SCHEMA_V3:
         return False
     return (
@@ -629,6 +661,23 @@ def _subagent_identity_matches_plan(
         and identity.plan_version == plan.version
         and identity.plan_checksum == plan.plan_checksum
         and identity.task_definition_checksum == task.task_definition_checksum
+    )
+
+
+def _subagent_identity_matches_execution(
+    identity: SubAgentAttemptIdentity,
+    execution_identity: GraphExecutionIdentity,
+) -> bool:
+    return (
+        identity.parent_run_id == execution_identity.run_id
+        and identity.graph_id == execution_identity.graph_id
+        and identity.graph_version == execution_identity.graph_version
+        and identity.graph_ref == execution_identity.graph_ref
+        and identity.graph_checksum == execution_identity.graph_checksum
+        and identity.node_id == execution_identity.node_id
+        and identity.node_instance_id == execution_identity.node_instance_id
+        and identity.activity_id == execution_identity.activity_id
+        and identity.activity_attempt == execution_identity.attempt
     )
 
 

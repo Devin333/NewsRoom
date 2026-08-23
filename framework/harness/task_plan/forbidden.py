@@ -31,7 +31,7 @@ FORBIDDEN_CANDIDATE_FIELDS = frozenset(
         "graph_patch",
         "graph_route",
         "halt",
-        "halt_workflow",
+        "halt_graph",
         "handler",
         "handler_ref",
         "hidden_prompt",

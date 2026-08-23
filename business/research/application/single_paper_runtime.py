@@ -2201,7 +2201,6 @@ class ResearchSinglePaperRuntime:
             node_id=activity_context.activity.node_id,
             node_instance_id=activity_context.activity.node_instance_id,
             activity_id=activity_context.activity.activity_id,
-            step_id="publish_artifacts",
             worker_result_ref=(
                 f"worker-result://{workspace.request.run_id}/publish_artifacts/{attempt}"
             ),
@@ -2423,7 +2422,6 @@ class _CompatibilityResearchArtifactBundleHandler:
             node_id=intent.node_id,
             node_instance_id=intent.node_instance_id,
             activity_id=intent.activity_id,
-            step_id=intent.step_id,
             terminal_action=intent.terminal_action,
             attempt=intent.attempt,
             candidate_refs=candidate_refs,
@@ -2493,7 +2491,6 @@ class _CompatibilityResearchArtifactBundleHandler:
             node_id=intent.node_id,
             node_instance_id=intent.node_instance_id,
             activity_id=intent.activity_id,
-            step_id=intent.step_id,
             terminal_action=intent.terminal_action,
             attempt=intent.attempt,
             candidate_refs=tuple(

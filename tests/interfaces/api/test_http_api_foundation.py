@@ -13,12 +13,12 @@ from framework.events.errors import EventStoreUnavailableError
 from interfaces.api import create_app
 from interfaces.api.app import _api_token_from_env
 from interfaces.events import AuditEmitter, InMemoryAuditSink
-from interfaces.services.run_inspection_service import RunInspectionService
+from interfaces.services.run_inspection_service import GraphRunInspectionService
 from infrastructure.storage.persistence import ReportRecord
-from tests.fixtures.workflow_runs import write_canonical_terminal_run
+from tests.fixtures.graph_runs import write_graph_terminal_run
 
 
-RESEARCH_WORKFLOW_ID = "research.paper_analysis"
+RESEARCH_GRAPH_ID = "research.paper_analysis"
 
 
 def test_health_uses_common_envelope() -> None:
@@ -391,26 +391,26 @@ def test_get_report_returns_report_detail() -> None:
 def test_list_reports_returns_report_catalog() -> None:
     client = TestClient(create_app(report_service_factory=lambda: _FakeReportService()))
 
-    response = client.get(f"/api/v1/reports?limit=1&workflow_id={RESEARCH_WORKFLOW_ID}")
+    response = client.get(f"/api/v1/reports?limit=1&graph_id={RESEARCH_GRAPH_ID}")
     payload = response.json()
 
     assert response.status_code == 200
     assert payload["success"] is True
-    assert payload["data"]["workflow_id"] == RESEARCH_WORKFLOW_ID
+    assert payload["data"]["graph_id"] == RESEARCH_GRAPH_ID
     assert payload["data"]["report_count"] == 1
     assert payload["data"]["reports"][0]["report_id"] == "report-1"
-    assert payload["data"]["reports"][0]["workflow_id"] == RESEARCH_WORKFLOW_ID
+    assert payload["data"]["reports"][0]["graph_id"] == RESEARCH_GRAPH_ID
 
 
-def test_list_reports_returns_report_catalog_for_research_workflow_family() -> None:
+def test_list_reports_returns_report_catalog_for_graph_id() -> None:
     client = TestClient(create_app(report_service_factory=lambda: _FakeReportService()))
 
-    response = client.get("/api/v1/reports?limit=1&workflow_family=research")
+    response = client.get(f"/api/v1/reports?limit=1&graph_id={RESEARCH_GRAPH_ID}")
     payload = response.json()
 
     assert response.status_code == 200
     assert payload["success"] is True
-    assert payload["data"]["workflow_family"] == "research"
+    assert payload["data"]["graph_id"] == RESEARCH_GRAPH_ID
     assert payload["data"]["report_count"] == 1
 
 
@@ -702,7 +702,7 @@ def test_entity_report_matches_return_matches() -> None:
     client = TestClient(create_app(entity_service_factory=lambda: _FakeEntityService()))
 
     response = client.get(
-        f"/api/v1/entities/company:openai/report-matches?limit=1&workflow_id={RESEARCH_WORKFLOW_ID}"
+        f"/api/v1/entities/company:openai/report-matches?limit=1&graph_id={RESEARCH_GRAPH_ID}"
     )
     payload = response.json()
 
@@ -713,17 +713,17 @@ def test_entity_report_matches_return_matches() -> None:
     assert payload["data"]["matches"][0]["matched_aliases"] == ["OpenAI", "ChatGPT"]
 
 
-def test_entity_report_matches_accepts_workflow_family() -> None:
+def test_entity_report_matches_accepts_graph_id() -> None:
     client = TestClient(create_app(entity_service_factory=lambda: _FakeEntityService()))
 
     response = client.get(
-        "/api/v1/entities/company:openai/report-matches?limit=1&workflow_family=daily"
+        f"/api/v1/entities/company:openai/report-matches?limit=1&graph_id={RESEARCH_GRAPH_ID}"
     )
     payload = response.json()
 
     assert response.status_code == 200
     assert payload["success"] is True
-    assert payload["data"]["workflow_family"] == "daily"
+    assert payload["data"]["graph_id"] == RESEARCH_GRAPH_ID
     assert payload["data"]["match_count"] == 1
 
 
@@ -819,9 +819,9 @@ def test_mcp_capabilities_returns_manifest() -> None:
 
 
 def test_runs_list_returns_runs() -> None:
-    client = TestClient(create_app(run_inspection_service_factory=lambda: _FakeRunInspectionService()))
+    client = TestClient(create_app(graph_run_inspection_service_factory=lambda: _FakeGraphRunInspectionService()))
 
-    response = client.get("/api/v1/runs")
+    response = client.get("/api/v2/graph-runs")
     payload = response.json()
 
     assert response.status_code == 200
@@ -831,9 +831,9 @@ def test_runs_list_returns_runs() -> None:
 
 
 def test_run_catalog_health_returns_health() -> None:
-    client = TestClient(create_app(run_inspection_service_factory=lambda: _FakeRunInspectionService()))
+    client = TestClient(create_app(graph_run_inspection_service_factory=lambda: _FakeGraphRunInspectionService()))
 
-    response = client.get("/api/v1/runs/catalog/health")
+    response = client.get("/api/v2/graph-runs/catalog/health")
     payload = response.json()
 
     assert response.status_code == 200
@@ -842,31 +842,31 @@ def test_run_catalog_health_returns_health() -> None:
 
 
 def test_run_compare_returns_comparison() -> None:
-    client = TestClient(create_app(run_inspection_service_factory=lambda: _FakeRunInspectionService()))
+    client = TestClient(create_app(graph_run_inspection_service_factory=lambda: _FakeGraphRunInspectionService()))
 
-    response = client.get("/api/v1/runs/compare?base_run_id=run-1&target_run_id=run-2")
+    response = client.get("/api/v2/graph-runs/compare?base_run_id=run-1&target_run_id=run-2")
     payload = response.json()
 
     assert response.status_code == 200
     assert payload["success"] is True
-    assert payload["data"]["comparison"]["same_workflow"] is True
+    assert payload["data"]["comparison"]["same_graph"] is True
 
 
 def test_run_detail_missing_uses_unified_error() -> None:
-    client = TestClient(create_app(run_inspection_service_factory=lambda: _MissingRunInspectionService()))
+    client = TestClient(create_app(graph_run_inspection_service_factory=lambda: _MissingGraphRunInspectionService()))
 
-    response = client.get("/api/v1/runs/missing")
+    response = client.get("/api/v2/graph-runs/missing")
     payload = response.json()
 
     assert response.status_code == 404
     assert payload["success"] is False
-    assert payload["error"]["code"] == "run_not_found"
+    assert payload["error"]["code"] == "graph_run_not_found"
 
 
 def test_run_events_returns_events() -> None:
-    client = TestClient(create_app(run_inspection_service_factory=lambda: _FakeRunInspectionService()))
+    client = TestClient(create_app(graph_run_inspection_service_factory=lambda: _FakeGraphRunInspectionService()))
 
-    response = client.get("/api/v1/runs/run-1/events?limit=1")
+    response = client.get("/api/v2/graph-runs/run-1/events?limit=1")
     payload = response.json()
 
     assert response.status_code == 200
@@ -876,35 +876,20 @@ def test_run_events_returns_events() -> None:
 
 
 def test_run_events_invalid_limit_uses_unified_error() -> None:
-    client = TestClient(create_app(run_inspection_service_factory=lambda: _FakeRunInspectionService()))
+    client = TestClient(create_app(graph_run_inspection_service_factory=lambda: _FakeGraphRunInspectionService()))
 
-    response = client.get("/api/v1/runs/run-1/events?limit=0")
+    response = client.get("/api/v2/graph-runs/run-1/events?limit=0")
     payload = response.json()
 
     assert response.status_code == 400
     assert payload["success"] is False
-    assert payload["error"]["code"] == "invalid_run_events_request"
-
-
-def test_run_progress_streams_redacted_sse_frames() -> None:
-    client = TestClient(create_app(run_inspection_service_factory=lambda: _FakeRunInspectionService()))
-
-    response = client.get("/api/v1/runs/run-1/progress")
-    body = response.text
-
-    assert response.status_code == 200
-    assert response.headers["content-type"].startswith("text/event-stream")
-    assert "event: run.progress\n" in body
-    assert "event: run.progress.done\n" in body
-    assert '"run_id": "run-1"' in body
-    assert "[redacted]" in body
-    assert "hidden-token" not in body
+    assert payload["error"]["code"] == "invalid_graph_run_events_request"
 
 
 def test_run_events_stream_uses_event_types_and_done_frame() -> None:
-    client = TestClient(create_app(run_inspection_service_factory=lambda: _FakeRunInspectionService()))
+    client = TestClient(create_app(graph_run_inspection_service_factory=lambda: _FakeGraphRunInspectionService()))
 
-    response = client.get("/api/v1/runs/run-1/events/stream?limit=1")
+    response = client.get("/api/v2/graph-runs/run-1/events/stream?limit=1")
     body = response.text
 
     assert response.status_code == 200
@@ -917,34 +902,10 @@ def test_run_events_stream_uses_event_types_and_done_frame() -> None:
     assert "hidden-token" not in body
 
 
-def test_run_progress_invalid_limit_uses_unified_error() -> None:
-    client = TestClient(create_app(run_inspection_service_factory=lambda: _FakeRunInspectionService()))
-
-    response = client.get("/api/v1/runs/run-1/progress?limit=0")
-    payload = response.json()
-
-    assert response.status_code == 400
-    assert payload["success"] is False
-    assert payload["error"]["code"] == "invalid_run_progress_request"
-
-
-def test_run_progress_missing_events_uses_unified_error() -> None:
-    client = TestClient(
-        create_app(run_inspection_service_factory=lambda: _MissingRunInspectionService())
-    )
-
-    response = client.get("/api/v1/runs/missing/progress")
-    payload = response.json()
-
-    assert response.status_code == 404
-    assert payload["success"] is False
-    assert payload["error"]["code"] == "run_progress_not_found"
-
-
 def test_run_replay_returns_bundle() -> None:
-    client = TestClient(create_app(run_inspection_service_factory=lambda: _FakeRunInspectionService()))
+    client = TestClient(create_app(graph_run_inspection_service_factory=lambda: _FakeGraphRunInspectionService()))
 
-    response = client.get("/api/v1/runs/run-1/replay")
+    response = client.get("/api/v2/graph-runs/run-1/replay")
     payload = response.json()
 
     assert response.status_code == 200
@@ -954,25 +915,25 @@ def test_run_replay_returns_bundle() -> None:
 
 
 def test_run_replay_missing_uses_unified_error() -> None:
-    client = TestClient(create_app(run_inspection_service_factory=lambda: _MissingRunInspectionService()))
+    client = TestClient(create_app(graph_run_inspection_service_factory=lambda: _MissingGraphRunInspectionService()))
 
-    response = client.get("/api/v1/runs/missing/replay")
+    response = client.get("/api/v2/graph-runs/missing/replay")
     payload = response.json()
 
     assert response.status_code == 404
     assert payload["success"] is False
-    assert payload["error"]["code"] == "run_not_found"
+    assert payload["error"]["code"] == "graph_run_not_found"
 
 
 def test_run_replay_invalid_uses_unified_error() -> None:
-    client = TestClient(create_app(run_inspection_service_factory=lambda: _InvalidReplayInspectionService()))
+    client = TestClient(create_app(graph_run_inspection_service_factory=lambda: _InvalidReplayInspectionService()))
 
-    response = client.get("/api/v1/runs/bad/replay")
+    response = client.get("/api/v2/graph-runs/bad/replay")
     payload = response.json()
 
     assert response.status_code == 400
     assert payload["success"] is False
-    assert payload["error"]["code"] == "invalid_run_replay_request"
+    assert payload["error"]["code"] == "invalid_graph_replay_request"
 
 
 def test_run_replay_integrity_errors_use_stable_http_contracts() -> None:
@@ -985,10 +946,10 @@ def test_run_replay_integrity_errors_use_stable_http_contracts() -> None:
     for error_type, expected_status, expected_code in cases:
         service = _FailingRunReplayService(error_type("run replay verification failed"))
         client = TestClient(
-            create_app(run_inspection_service_factory=lambda service=service: service)
+            create_app(graph_run_inspection_service_factory=lambda service=service: service)
         )
 
-        response = client.get("/api/v1/runs/run-1/replay")
+        response = client.get("/api/v2/graph-runs/run-1/replay")
         payload = response.json()
 
         assert response.status_code == expected_status
@@ -998,9 +959,9 @@ def test_run_replay_integrity_errors_use_stable_http_contracts() -> None:
 
 
 def test_run_diagnostics_returns_diagnostics() -> None:
-    client = TestClient(create_app(run_inspection_service_factory=lambda: _FakeRunInspectionService()))
+    client = TestClient(create_app(graph_run_inspection_service_factory=lambda: _FakeGraphRunInspectionService()))
 
-    response = client.get("/api/v1/runs/run-1/diagnostics")
+    response = client.get("/api/v2/graph-runs/run-1/diagnostics")
     payload = response.json()
 
     assert response.status_code == 200
@@ -1009,9 +970,9 @@ def test_run_diagnostics_returns_diagnostics() -> None:
 
 
 def test_run_health_returns_health() -> None:
-    client = TestClient(create_app(run_inspection_service_factory=lambda: _FakeRunInspectionService()))
+    client = TestClient(create_app(graph_run_inspection_service_factory=lambda: _FakeGraphRunInspectionService()))
 
-    response = client.get("/api/v1/runs/run-1/health")
+    response = client.get("/api/v2/graph-runs/run-1/health")
     payload = response.json()
 
     assert response.status_code == 200
@@ -1022,16 +983,16 @@ def test_run_health_returns_health() -> None:
 @pytest.mark.parametrize(
     "path",
     [
-        "/api/v1/runs/run-1/replay",
-        "/api/v1/runs/run-1/diagnostics",
-        "/api/v1/runs/run-1/health",
-        "/api/v1/runs/compare?base_run_id=run-1&target_run_id=run-2",
+        "/api/v2/graph-runs/run-1/replay",
+        "/api/v2/graph-runs/run-1/diagnostics",
+        "/api/v2/graph-runs/run-1/health",
+        "/api/v2/graph-runs/compare?base_run_id=run-1&target_run_id=run-2",
     ],
 )
 def test_run_derived_reads_return_explicit_store_unavailable(path) -> None:
     client = TestClient(
         create_app(
-            run_inspection_service_factory=_UnavailableDerivedRunInspectionService,
+            graph_run_inspection_service_factory=_UnavailableDerivedGraphRunInspectionService,
             audit_emitter_factory=None,
         )
     )
@@ -1046,42 +1007,10 @@ def test_run_derived_reads_return_explicit_store_unavailable(path) -> None:
     assert "database-host" not in response.text
 
 
-def test_run_replay_api_reads_real_files_and_redacts(tmp_path) -> None:
-    write_canonical_terminal_run(
-        tmp_path,
-        events=[
-            {
-                "event_type": "workflow_started",
-                "run_id": "run-1",
-                "occurred_at": "2026-05-14T01:00:00Z",
-                "payload": {"token": "hidden"},
-            }
-        ],
-        extra_artifacts={
-            "report_json": (
-                "report.json",
-                json.dumps({"title": "Report", "api_key": "hidden"}).encode("utf-8"),
-            )
-        },
-    )
-    client = TestClient(
-        create_app(run_inspection_service_factory=lambda: RunInspectionService(tmp_path))
-    )
-
-    response = client.get("/api/v1/runs/run-1/replay")
-    payload = response.json()
-    artifacts = {artifact["artifact_key"]: artifact for artifact in payload["data"]["artifacts"]}
-
-    assert response.status_code == 200
-    assert payload["data"]["event_count"] == 1
-    assert payload["data"]["events"][0]["payload"]["token"] == "[redacted]"
-    assert artifacts["report_json"]["content"]["api_key"] == "[redacted]"
-
-
 def test_artifact_list_returns_artifacts() -> None:
     client = TestClient(create_app(artifact_service_factory=lambda: _FakeArtifactService()))
 
-    response = client.get("/api/v1/runs/run-1/artifacts")
+    response = client.get("/api/v2/graph-runs/run-1/artifacts")
     payload = response.json()
 
     assert response.status_code == 200
@@ -1093,7 +1022,7 @@ def test_artifact_list_returns_artifacts() -> None:
 def test_artifact_missing_uses_unified_error() -> None:
     client = TestClient(create_app(artifact_service_factory=lambda: _MissingArtifactService()))
 
-    response = client.get("/api/v1/runs/run-1/artifacts/missing")
+    response = client.get("/api/v2/graph-runs/run-1/artifacts/missing")
     payload = response.json()
 
     assert response.status_code == 404
@@ -1112,17 +1041,12 @@ def test_artifact_detail_integrity_errors_use_stable_http_contracts() -> None:
         service = _FailingArtifactService(error_type("artifact verification failed"))
         client = TestClient(create_app(artifact_service_factory=lambda service=service: service))
 
-        responses = [
-            client.get("/api/v1/runs/run-1/artifacts/output"),
-            client.get("/api/v1/artifacts/output?run_id=run-1"),
-        ]
-
-        for response in responses:
-            payload = response.json()
-            assert response.status_code == expected_status
-            assert payload["success"] is False
-            assert payload["data"] is None
-            assert payload["error"]["code"] == expected_code
+        response = client.get("/api/v2/graph-runs/run-1/artifacts/output")
+        payload = response.json()
+        assert response.status_code == expected_status
+        assert payload["success"] is False
+        assert payload["data"] is None
+        assert payload["error"]["code"] == expected_code
 
 
 class _FakeResearchService:
@@ -1158,14 +1082,14 @@ class _FakeReportService:
             raise ValueError(f"invalid report id: {report_id}")
         return self.latest_report()
 
-    def list_reports(self, *, limit, workflow_id=None, workflow_family=None):
+    def list_reports(self, *, limit, graph_id=None, graph_ids=None):
         if limit <= 0:
             raise ValueError("limit must be greater than zero")
         return _FakeResult(
             {
                 "limit": limit,
-                "workflow_id": workflow_id,
-                "workflow_family": workflow_family,
+                "graph_id": graph_id,
+                "graph_ids": graph_ids,
                 "report_count": 1,
                 "reports": [
                     {
@@ -1175,7 +1099,7 @@ class _FakeReportService:
                         "finished_at": "2026-05-11T01:00:00Z",
                         "title": "Daily Intelligence",
                         "quality_score": 0.9,
-                        "workflow_id": RESEARCH_WORKFLOW_ID,
+                        "graph_id": RESEARCH_GRAPH_ID,
                         "manifest_path": ".newsroom/runs/run-1/manifest.json",
                         "report_json_path": ".newsroom/runs/run-1/report.json",
                         "report_markdown_path": ".newsroom/runs/run-1/report.md",
@@ -1579,7 +1503,7 @@ class _FakeEntityService:
     def delete_entity(self, entity_id):
         return True
 
-    def match_reports(self, entity_id, *, limit, workflow_id=None, workflow_family=None):
+    def match_reports(self, entity_id, *, limit, graph_id=None, graph_ids=None):
         return _FakeResult(
             {
                 "entity": {
@@ -1593,8 +1517,8 @@ class _FakeEntityService:
                     "updated_at": "2026-05-11T00:00:00Z",
                 },
                 "limit": limit,
-                "workflow_id": workflow_id,
-                "workflow_family": workflow_family,
+                "graph_id": graph_id,
+                "graph_ids": graph_ids,
                 "match_count": 1,
                 "matches": [
                     {
@@ -1602,7 +1526,7 @@ class _FakeEntityService:
                         "run_id": "run-1",
                         "title": "Daily Intelligence: OpenAI",
                         "finished_at": "2026-05-11T00:00:00Z",
-                        "workflow_id": RESEARCH_WORKFLOW_ID,
+                        "graph_id": RESEARCH_GRAPH_ID,
                         "matched_aliases": ["OpenAI", "ChatGPT"],
                         "match_count": 2,
                         "quality_score": 0.9,
@@ -1753,8 +1677,8 @@ class _FakeMCPService:
         )
 
 
-class _FakeRunInspectionService:
-    def list_runs(self, *, limit):
+class _FakeGraphRunInspectionService:
+    def list_runs(self, *, limit, offset=0, status=None, graph_id=None):
         return _FakeResult(
             {
                 "run_count": 1,
@@ -1762,8 +1686,8 @@ class _FakeRunInspectionService:
                     {
                         "run_id": "run-1",
                         "status": "succeeded",
-                        "workflow_id": "daily",
-                        "workflow_version": "0.1.0",
+                        "graph_id": "research.paper-analysis",
+                        "graph_version": "1.0.0",
                         "profile": "live-offline",
                         "started_at": "2026-05-11T01:00:00Z",
                         "finished_at": None,
@@ -1785,7 +1709,16 @@ class _FakeRunInspectionService:
             }
         )
 
-    def get_run_events(self, run_id, *, limit=None):
+    def get_run_events(
+        self,
+        run_id,
+        *,
+        event_type=None,
+        step_id=None,
+        limit=None,
+        offset=0,
+        sequence_cursor=None,
+    ):
         if limit is not None and limit <= 0:
             raise ValueError("limit must be greater than zero")
         events = [
@@ -1809,6 +1742,20 @@ class _FakeRunInspectionService:
                 "events": events,
                 "events_path": f".newsroom/runs/{run_id}/events.jsonl",
             }
+        )
+
+    def get_run_events_for_sse(
+        self,
+        run_id,
+        *,
+        limit=None,
+        sequence_cursor=None,
+        last_event_id=None,
+    ):
+        return self.get_run_events(
+            run_id,
+            limit=limit,
+            sequence_cursor=sequence_cursor or last_event_id,
         )
 
     def replay_run(self, run_id):
@@ -1872,7 +1819,7 @@ class _FakeRunInspectionService:
                 "base_run_id": base_run_id,
                 "target_run_id": target_run_id,
                 "comparison": {
-                    "same_workflow": True,
+                    "same_graph": True,
                     "status_changed": False,
                     "has_behavioral_change": False,
                 },
@@ -1880,7 +1827,7 @@ class _FakeRunInspectionService:
         )
 
 
-class _MissingRunInspectionService:
+class _MissingGraphRunInspectionService:
     def get_run(self, run_id):
         raise FileNotFoundError(f"run not found: {run_id}")
 
@@ -1896,7 +1843,7 @@ class _MissingRunInspectionService:
     def compare_runs(self, base_run_id, target_run_id):
         raise FileNotFoundError(f"run not found: {base_run_id}")
 
-    def list_runs(self, *, limit):
+    def list_runs(self, *, limit, offset=0, status=None, graph_id=None):
         return _FakeResult({"run_count": 0, "runs": []})
 
     def get_catalog_health(self):
@@ -1916,7 +1863,7 @@ class _FailingRunReplayService:
         raise self.error
 
 
-class _UnavailableDerivedRunInspectionService:
+class _UnavailableDerivedGraphRunInspectionService:
     def replay_run(self, run_id):
         self._raise()
 

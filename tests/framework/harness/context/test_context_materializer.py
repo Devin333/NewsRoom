@@ -20,7 +20,7 @@ from framework.harness import (
 def _request(**overrides: object) -> ContextMaterializationRequest:
     values: dict[str, object] = {
         "run_id": "run-1",
-        "step_id": "step-1",
+        "stage_id": "step-1",
         "task_binding_ref": "task://current",
         "policy_revision": "policy-v1",
         "physical_profile_revision": "profile-v1",
@@ -380,8 +380,8 @@ def test_legacy_segments_are_grouped_by_type_without_using_summary_body() -> Non
     assert "legacy summary body" not in str(first.to_dict())
     assert [group.group_kind for group in first.groups] == [
         ContextGroupKind.SYSTEM_INSTRUCTION,
-        ContextGroupKind.WORKFLOW_CONTRACT,
-        ContextGroupKind.WORKFLOW_CONTRACT,
+        ContextGroupKind.GRAPH_CONTRACT,
+        ContextGroupKind.GRAPH_CONTRACT,
         ContextGroupKind.RUN_STATE,
         ContextGroupKind.EVIDENCE,
         ContextGroupKind.CURRENT_TASK,

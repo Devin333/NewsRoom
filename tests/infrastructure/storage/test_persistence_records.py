@@ -1,10 +1,10 @@
 import json
 from datetime import UTC, datetime
+from enum import Enum
+from dataclasses import dataclass
 
 import pytest
 
-from framework.workflow.runtime.run_result import RunResult
-from framework.specs import WorkflowStatus
 from business.foundation.models.report_output import BlockedReport, FinalReport
 from business.layers.relation.evidence import EvidenceBundle, EvidenceItem, VerifiedClaim, VerifiedFindings
 from business.layers.analysis.quality import QualityGateMetrics, ReportQualitySummary
@@ -21,7 +21,7 @@ from infrastructure.storage.persistence import (
     ReportRecord,
     RunPersistenceBatch,
     RunPersistenceInput,
-    WorkflowRunRecord,
+    GraphRunRecord,
     claim_records_from_result,
     evidence_item_records_from_result,
     persist_run_input,
@@ -33,8 +33,26 @@ from infrastructure.storage.persistence import (
     run_persistence_input_from_output,
     run_persistence_input_from_result,
     source_item_records_from_result,
-    workflow_run_record_from_result,
+    graph_run_record_from_result,
 )
+
+
+class _Status(str, Enum):
+    SUCCEEDED = "succeeded"
+    BLOCKED = "blocked"
+
+
+@dataclass
+class _GraphResult:
+    run_id: str
+    graph_id: str
+    graph_version: str
+    status: _Status
+    output: dict
+    artifact_dir: str | None = None
+    manifest_path: str | None = None
+    events_path: str | None = None
+    error: dict | None = None
 
 
 def test_storage_record_contracts_roundtrip_with_stable_dict_output() -> None:
@@ -115,11 +133,11 @@ def test_claim_record_contract_supports_review_statuses_roundtrip() -> None:
         assert ClaimRecord.from_dict(claim.to_dict()).to_dict() == claim.to_dict()
 
 
-def test_workflow_and_report_record_contracts_roundtrip_with_stable_dict_output() -> None:
-    workflow = WorkflowRunRecord(
+def test_graph_and_report_record_contracts_roundtrip_with_stable_dict_output() -> None:
+    graph = GraphRunRecord(
         run_id="run-1",
-        workflow_id="daily",
-        workflow_version="1",
+        graph_id="daily.graph",
+        graph_version="1",
         status="succeeded",
         profile="live-offline",
         artifact_dir="runs/run-1",
@@ -140,12 +158,12 @@ def test_workflow_and_report_record_contracts_roundtrip_with_stable_dict_output(
         manifest_path="runs/run-1/manifest.json",
     )
 
-    assert WorkflowRunRecord.from_dict(workflow.to_dict()).to_dict() == workflow.to_dict()
+    assert GraphRunRecord.from_dict(graph.to_dict()).to_dict() == graph.to_dict()
     assert ReportRecord.from_dict(report.to_dict()).to_dict() == report.to_dict()
-    assert set(workflow.to_dict()) >= {
+    assert set(graph.to_dict()) >= {
         "run_id",
-        "workflow_id",
-        "workflow_version",
+        "graph_id",
+        "graph_version",
         "status",
         "profile",
         "artifact_dir",
@@ -167,6 +185,18 @@ def test_workflow_and_report_record_contracts_roundtrip_with_stable_dict_output(
     }
 
 
+def test_graph_run_record_rejects_legacy_identity_payload() -> None:
+    with pytest.raises(ValueError, match="legacy_workflow_identity_not_supported"):
+        GraphRunRecord.from_dict(
+            {
+                "run_id": "run-1",
+                "workflow_id": "daily",
+                "workflow_version": "1",
+                "status": "succeeded",
+            }
+        )
+
+
 
 
 def test_local_json_persistence_adapter_report_reads_return_canonical_contract(tmp_path) -> None:
@@ -179,7 +209,8 @@ def test_local_json_persistence_adapter_report_reads_return_canonical_contract(t
         json.dumps(
             {
                 "run_id": "run-1",
-                "workflow_id": "daily",
+                "graph_id": "daily.graph",
+                "graph_version": "1",
                 "status": "succeeded",
                 "finished_at": "2026-05-11T00:00:00Z",
                 "quality_score": 0.9,
@@ -197,12 +228,12 @@ def test_local_json_persistence_adapter_report_reads_return_canonical_contract(t
     assert detail.report_id == "run-1:final"
     assert summary.report_id == "run-1:final"
     assert detail.to_dict()["report_json"]["title"] == "Daily"
-    assert summary.to_dict()["workflow_id"] == "daily"
-    result = RunResult(
+    assert summary.to_dict()["graph_id"] == "daily.graph"
+    result = _GraphResult(
         run_id="run-1",
-        workflow_id="daily",
-        workflow_version="1",
-        status=WorkflowStatus.SUCCEEDED,
+        graph_id="daily.graph",
+        graph_version="1",
+        status=_Status.SUCCEEDED,
         output={
             "report_quality_summary": ReportQualitySummary(
                 quality_score=0.9,
@@ -231,7 +262,7 @@ def test_local_json_persistence_adapter_report_reads_return_canonical_contract(t
         events_path="runs/run-1/events.jsonl",
     )
 
-    record = workflow_run_record_from_result(result, profile="live-offline")
+    record = graph_run_record_from_result(result, profile="live-offline")
 
     assert record.run_id == "run-1"
     assert record.status == "succeeded"
@@ -241,11 +272,11 @@ def test_local_json_persistence_adapter_report_reads_return_canonical_contract(t
 
 
 def test_report_record_from_result_extracts_final_report() -> None:
-    result = RunResult(
+    result = _GraphResult(
         run_id="run-1",
-        workflow_id="daily",
-        workflow_version="1",
-        status=WorkflowStatus.SUCCEEDED,
+        graph_id="daily.graph",
+        graph_version="1",
+        status=_Status.SUCCEEDED,
         output={
             "final_report": FinalReport(
                 title="Daily",
@@ -291,11 +322,11 @@ def test_report_record_from_result_extracts_final_report() -> None:
 
 
 def test_record_builders_extract_report_and_quality_records_from_projected_daily_output() -> None:
-    result = RunResult(
+    result = _GraphResult(
         run_id="run-projected",
-        workflow_id="daily",
-        workflow_version="1",
-        status=WorkflowStatus.SUCCEEDED,
+        graph_id="daily.graph",
+        graph_version="1",
+        status=_Status.SUCCEEDED,
         output={
             "final_report": FinalReport(
                 title="Projected Daily",
@@ -392,7 +423,7 @@ def test_record_builders_extract_report_and_quality_records_from_projected_daily
         "unsupported_claims_count": 1,
         "evidence_bundle_id": "bundle-1",
     }
-    assert batch.workflow_run.metrics["report_quality_summary"]["decision"] == "pass"
+    assert batch.graph_run.metrics["report_quality_summary"]["decision"] == "pass"
     assert batch.quality_result.decision == "pass"
     assert batch.quality_result.quality_score == 0.9
     assert batch.quality_result.citation_coverage_score == 0.84
@@ -410,11 +441,11 @@ def test_run_persistence_input_from_output_consumes_projected_view_without_mutat
         sections=[],
         source_urls=[],
     )
-    result = RunResult(
+    result = _GraphResult(
         run_id="run-output-view",
-        workflow_id="daily",
-        workflow_version="1",
-        status=WorkflowStatus.SUCCEEDED,
+        graph_id="daily.graph",
+        graph_version="1",
+        status=_Status.SUCCEEDED,
         output={"report.final": final_report},
     )
 
@@ -429,12 +460,31 @@ def test_run_persistence_input_from_output_consumes_projected_view_without_mutat
     assert input_model.profile == "live-offline"
 
 
+def test_run_persistence_input_requires_graph_identity() -> None:
+    result = type(
+        "Result",
+        (),
+        {
+            "run_id": "run-without-graph",
+            "status": _Status.SUCCEEDED,
+            "output": {},
+            "artifact_dir": None,
+            "manifest_path": None,
+            "events_path": None,
+            "error": None,
+        },
+    )()
+
+    with pytest.raises(ValueError, match="graph identity is required"):
+        run_persistence_input_from_result(result)
+
+
 def test_report_record_from_result_preserves_blocked_report_status() -> None:
-    result = RunResult(
+    result = _GraphResult(
         run_id="run-blocked",
-        workflow_id="daily",
-        workflow_version="1",
-        status=WorkflowStatus.BLOCKED,
+        graph_id="daily.graph",
+        graph_version="1",
+        status=_Status.BLOCKED,
         output={
             "blocked_report": BlockedReport(
                 title="Blocked Daily",
@@ -467,11 +517,11 @@ def test_report_record_from_result_preserves_blocked_report_status() -> None:
 def test_local_json_persistence_adapter_writes_records(tmp_path) -> None:
     repository = LocalJsonPersistenceAdapter(tmp_path)
 
-    repository.save_workflow_run(
-        WorkflowRunRecord(
+    repository.save_graph_run(
+        GraphRunRecord(
             run_id="run-1",
-            workflow_id="daily",
-            workflow_version="1",
+            graph_id="daily.graph",
+            graph_version="1",
             status="succeeded",
             profile="live-offline",
             metrics={"quality_score": 1.0},
@@ -488,7 +538,7 @@ def test_local_json_persistence_adapter_writes_records(tmp_path) -> None:
         )
     )
 
-    workflow_path = tmp_path / "_records" / "workflow_runs" / "run-1.json"
+    workflow_path = tmp_path / "_records" / "graph_runs" / "run-1.json"
     report_path = tmp_path / "_records" / "reports" / "run-1_final.json"
     assert workflow_path.exists()
     assert report_path.exists()
@@ -503,16 +553,16 @@ def test_local_json_persistence_adapter_preserves_record_when_write_fails(
     monkeypatch,
 ) -> None:
     repository = LocalJsonPersistenceAdapter(tmp_path)
-    repository.save_workflow_run(
-        WorkflowRunRecord(
+    repository.save_graph_run(
+        GraphRunRecord(
             run_id="run-1",
-            workflow_id="daily",
-            workflow_version="1",
+            graph_id="daily.graph",
+            graph_version="1",
             status="succeeded",
             profile="live-offline",
         )
     )
-    workflow_path = tmp_path / "_records" / "workflow_runs" / "run-1.json"
+    workflow_path = tmp_path / "_records" / "graph_runs" / "run-1.json"
     original_payload = json.loads(workflow_path.read_text(encoding="utf-8"))
 
     def fail_after_partial_write(payload, handle, **kwargs):
@@ -525,11 +575,11 @@ def test_local_json_persistence_adapter_preserves_record_when_write_fails(
     )
 
     with pytest.raises(RuntimeError, match="simulated write failure"):
-        repository.save_workflow_run(
-            WorkflowRunRecord(
+        repository.save_graph_run(
+            GraphRunRecord(
                 run_id="run-1",
-                workflow_id="daily",
-                workflow_version="1",
+                graph_id="daily.graph",
+                graph_version="1",
                 status="failed",
                 profile="live-offline",
             )
@@ -561,7 +611,7 @@ def test_run_persistence_batch_from_result_collects_final_state_records() -> Non
     batch = run_persistence_batch_from_result(_storage_run_result(), profile="live-offline")
 
     assert isinstance(batch, RunPersistenceBatch)
-    assert batch.workflow_run.run_id == "run-1"
+    assert batch.graph_run.run_id == "run-1"
     assert batch.report is None
     assert batch.source_items[0].source_item_id == "raw-1"
     assert batch.evidence_items[0].evidence_id == "ev-1"
@@ -577,7 +627,7 @@ def test_persist_run_result_uses_repository_batch_boundary_when_available() -> N
 
     assert repository.migrated is True
     assert len(repository.batches) == 1
-    assert repository.batches[0].workflow_run.run_id == "run-1"
+    assert repository.batches[0].graph_run.run_id == "run-1"
     assert repository.individual_writes == []
 
 
@@ -589,7 +639,7 @@ def test_persist_run_input_uses_explicit_record_input_boundary() -> None:
 
     assert repository.migrated is True
     assert len(repository.batches) == 1
-    assert repository.batches[0].workflow_run.run_id == "run-1"
+    assert repository.batches[0].graph_run.run_id == "run-1"
     assert repository.individual_writes == []
 
 
@@ -693,14 +743,14 @@ class _BatchRepository:
     def save_run_records(self, batch: RunPersistenceBatch) -> None:
         self.batches.append(batch)
 
-    def save_workflow_run(self, record) -> None:
-        self.individual_writes.append("workflow_run")
+    def save_graph_run(self, record) -> None:
+        self.individual_writes.append("graph_run")
 
     def save_report(self, record) -> None:
         self.individual_writes.append("report")
 
 
-def _storage_run_result() -> RunResult:
+def _storage_run_result() -> _GraphResult:
     evidence_bundle = EvidenceBundle(
         bundle_id="daily",
         items=[
@@ -715,11 +765,11 @@ def _storage_run_result() -> RunResult:
             )
         ],
     )
-    return RunResult(
+    return _GraphResult(
         run_id="run-1",
-        workflow_id="daily",
-        workflow_version="1",
-        status=WorkflowStatus.SUCCEEDED,
+        graph_id="daily.graph",
+        graph_version="1",
+        status=_Status.SUCCEEDED,
         output={
             "raw_items": [
                 {

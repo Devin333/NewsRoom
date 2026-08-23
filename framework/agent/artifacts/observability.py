@@ -136,9 +136,8 @@ _ALLOWED_DIMENSION_VALUES: Final = {
     ),
     "publisher": frozenset(
         {
-            "artifact_step",
+            "graph",
             "local",
-            "workflow",
             SAFE_FALLBACK_LABEL,
         }
     ),
@@ -146,9 +145,9 @@ _ALLOWED_DIMENSION_VALUES: Final = {
         {
             "artifact_store",
             "filesystem",
+            "graph",
             "local",
-            "strict_workflow",
-            "workflow",
+            "strict_graph",
             SAFE_FALLBACK_LABEL,
         }
     ),

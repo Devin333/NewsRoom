@@ -24,7 +24,7 @@ def test_llm_contract_models_have_single_concrete_definitions() -> None:
 
 
 def test_framework_routing_has_no_business_predicate_keys() -> None:
-    routing_root = FRAMEWORK_ROOT / "workflow" / "routing"
+    routing_root = FRAMEWORK_ROOT / "harness" / "graph"
     forbidden = ("source_unavailable", "editor_review", "report_quality_summary", "validation_metrics")
     violations: list[str] = []
     for path in routing_root.rglob("*.py"):
@@ -53,29 +53,4 @@ def test_worker_runtime_does_not_depend_on_in_memory_queue() -> None:
 
 
 def test_workflow_executor_is_thin_runtime_orchestrator() -> None:
-    path = FRAMEWORK_ROOT / "workflow" / "runtime" / "executor.py"
-    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
-    execute_nodes = [
-        node for node in ast.walk(tree)
-        if isinstance(node, ast.FunctionDef) and node.name == "execute"
-    ]
-    assert len(execute_nodes) == 1
-    execute_node = execute_nodes[0]
-
-    assert execute_node.end_lineno - execute_node.lineno + 1 <= 250
-
-    forbidden = (
-        "_run_step_with_retries",
-        "_run_step_attempt",
-        "_write_checkpoint",
-        "_write_llm_call_artifacts",
-        "_workflow_metrics_payload",
-        "_write_step_policy_input_artifact",
-        "_write_step_policy_terminal_artifact",
-    )
-    definitions = {
-        node.name
-        for node in ast.walk(tree)
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
-    }
-    assert definitions.isdisjoint(forbidden)
+    assert not (FRAMEWORK_ROOT / "workflow" / "runtime" / "executor.py").exists()

@@ -76,12 +76,7 @@ class HarnessGraphActivityOutputAttemptResult:
 
 
 class HarnessAdmittedGraphActivityOutputAdapter:
-    """Inactive adapter proving admission-before-lease ordering for Graph output.
-
-    The adapter is intentionally not a ``HarnessGraphActivityDispatcherPort``.
-    Gate A's inactive physical executor composes it; production composition must
-    still provide durable resource/result bindings before Gate B activation.
-    """
+    """Admission-before-lease boundary for production Graph node output."""
 
     def __init__(
         self,
@@ -254,11 +249,7 @@ class HarnessAdmittedGraphActivityOutputAdapter:
 
 
 class HarnessCommittedNodeOutputInputResolver:
-    """Inactive resolver for Graph-declared committed-output receipt inputs.
-
-    Production composition must not install this resolver until the live Graph
-    activity executor uses the durable node-output resource required by Gate B.
-    """
+    """Resolve Graph-declared committed-output receipt inputs."""
 
     def __init__(self, *, resource: HarnessNodeOutputResourcePort) -> None:
         if not isinstance(resource, HarnessNodeOutputResourcePort):

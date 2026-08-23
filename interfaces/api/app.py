@@ -66,10 +66,14 @@ from interfaces.services.mcp_service import MCPApplicationService
 from interfaces.services.project_service import ProjectApplicationService
 from interfaces.services.research_service import ResearchApplicationService
 from interfaces.services.report_service import ReportApplicationService
-from interfaces.services.run_inspection_service import RunInspectionService
-from interfaces.services.run_inspection_factory import run_inspection_service_from_env
+from interfaces.services.run_inspection_service import GraphRunInspectionService
+from interfaces.services.run_inspection_factory import (
+    graph_run_inspection_service_from_env,
+)
 from interfaces.services.run_event_sse import run_events_sse_frames as _durable_run_events_sse_frames
-from interfaces.services.run_operation_service import RunOperationApplicationService
+from interfaces.services.run_operation_service import (
+    GraphRunOperationApplicationService,
+)
 from interfaces.services.run_service import RunApplicationService
 from interfaces.services.schedule_service import ScheduleApplicationService
 from interfaces.services.source_service import SourceApplicationService
@@ -82,7 +86,7 @@ from interfaces.services.artifact_service import ArtifactInspectionService
 
 WorkerServiceFactory = Callable[[], WorkerApplicationService]
 RunServiceFactory = Callable[[], RunApplicationService]
-RunOperationServiceFactory = Callable[[], RunOperationApplicationService]
+GraphRunOperationServiceFactory = Callable[[], GraphRunOperationApplicationService]
 ReportServiceFactory = Callable[[], ReportApplicationService]
 MemoryServiceFactory = Callable[[], MemoryApplicationService]
 DiagnosticServiceFactory = Callable[[], DiagnosticApplicationService]
@@ -93,7 +97,7 @@ MCPServiceFactory = Callable[[], MCPApplicationService]
 EventOperatorServiceFactory = Callable[[ActorContext], EventOperatorApplicationService]
 HarnessGraphServiceFactory = Callable[[ActorContext], HarnessGraphApplicationService]
 HarnessWaitServiceFactory = Callable[[ActorContext], HarnessWaitApplicationService]
-RunInspectionServiceFactory = Callable[[], RunInspectionService]
+GraphRunInspectionServiceFactory = Callable[[], GraphRunInspectionService]
 ArtifactInspectionServiceFactory = Callable[[], ArtifactInspectionService]
 StorageServiceFactory = Callable[[], StorageApplicationService]
 ScheduleServiceFactory = Callable[[], ScheduleApplicationService]
@@ -109,7 +113,7 @@ def create_app(
     *,
     worker_service_factory: WorkerServiceFactory = WorkerApplicationService,
     run_service_factory: RunServiceFactory = RunApplicationService,
-    run_operation_service_factory: RunOperationServiceFactory = RunOperationApplicationService,
+    graph_run_operation_service_factory: GraphRunOperationServiceFactory = GraphRunOperationApplicationService,
     report_service_factory: ReportServiceFactory = ReportApplicationService,
     memory_service_factory: MemoryServiceFactory = MemoryApplicationService,
     diagnostic_service_factory: DiagnosticServiceFactory = DiagnosticApplicationService,
@@ -118,7 +122,7 @@ def create_app(
     subscription_service_factory: SubscriptionServiceFactory = SubscriptionApplicationService,
     mcp_service_factory: MCPServiceFactory = MCPApplicationService,
     event_operator_service_factory: EventOperatorServiceFactory = event_operator_service_from_actor,
-    run_inspection_service_factory: RunInspectionServiceFactory = run_inspection_service_from_env,
+    graph_run_inspection_service_factory: GraphRunInspectionServiceFactory = graph_run_inspection_service_from_env,
     artifact_service_factory: ArtifactInspectionServiceFactory = ArtifactInspectionService,
     storage_service_factory: StorageServiceFactory = StorageApplicationService,
     schedule_service_factory: ScheduleServiceFactory = ScheduleApplicationService,
@@ -334,14 +338,14 @@ def create_app(
         event_operator_service_factory=event_operator_service_factory,
         worker_service_factory=worker_service_factory,
         run_service_factory=run_service_factory,
-        run_operation_service_factory=run_operation_service_factory,
+        graph_run_operation_service_factory=graph_run_operation_service_factory,
         report_service_factory=report_service_factory,
         memory_service_factory=memory_service_factory,
         diagnostic_service_factory=diagnostic_service_factory,
         source_service_factory=source_service_factory,
         entity_service_factory=entity_service_factory,
         subscription_service_factory=subscription_service_factory,
-        run_inspection_service_factory=run_inspection_service_factory,
+        graph_run_inspection_service_factory=graph_run_inspection_service_factory,
         artifact_service_factory=artifact_service_factory,
         storage_service_factory=storage_service_factory,
         approval_service_factory=approval_service_factory,
@@ -350,7 +354,7 @@ def create_app(
     services = build_api_services(
         worker_service_factory=worker_service_factory,
         run_service_factory=run_service_factory,
-        run_operation_service_factory=run_operation_service_factory,
+        graph_run_operation_service_factory=graph_run_operation_service_factory,
         report_service_factory=report_service_factory,
         memory_service_factory=memory_service_factory,
         diagnostic_service_factory=diagnostic_service_factory,
@@ -359,7 +363,7 @@ def create_app(
         subscription_service_factory=subscription_service_factory,
         mcp_service_factory=resolved_mcp_service_factory,
         event_operator_service_factory=event_operator_service_factory,
-        run_inspection_service_factory=run_inspection_service_factory,
+        graph_run_inspection_service_factory=graph_run_inspection_service_factory,
         artifact_service_factory=artifact_service_factory,
         storage_service_factory=storage_service_factory,
         schedule_service_factory=schedule_service_factory,
@@ -415,14 +419,14 @@ def _mcp_service_factory(
     event_operator_service_factory: EventOperatorServiceFactory,
     worker_service_factory: WorkerServiceFactory,
     run_service_factory: RunServiceFactory,
-    run_operation_service_factory: RunOperationServiceFactory,
+    graph_run_operation_service_factory: GraphRunOperationServiceFactory,
     report_service_factory: ReportServiceFactory,
     memory_service_factory: MemoryServiceFactory,
     diagnostic_service_factory: DiagnosticServiceFactory,
     source_service_factory: SourceServiceFactory,
     entity_service_factory: EntityServiceFactory,
     subscription_service_factory: SubscriptionServiceFactory,
-    run_inspection_service_factory: RunInspectionServiceFactory,
+    graph_run_inspection_service_factory: GraphRunInspectionServiceFactory,
     artifact_service_factory: ArtifactInspectionServiceFactory,
     storage_service_factory: StorageServiceFactory,
     approval_service_factory: ApprovalServiceFactory,
@@ -436,14 +440,14 @@ def _mcp_service_factory(
             event_operator_service_factory=event_operator_service_factory,
             worker_service_factory=worker_service_factory,
             run_service_factory=run_service_factory,
-            run_operation_service_factory=run_operation_service_factory,
+            graph_run_operation_service_factory=graph_run_operation_service_factory,
             report_service_factory=report_service_factory,
             memory_service_factory=memory_service_factory,
             diagnostic_service_factory=diagnostic_service_factory,
             source_service_factory=source_service_factory,
             entity_service_factory=entity_service_factory,
             subscription_service_factory=subscription_service_factory,
-            run_inspection_service_factory=run_inspection_service_factory,
+            graph_run_inspection_service_factory=graph_run_inspection_service_factory,
             artifact_service_factory=artifact_service_factory,
             storage_service_factory=storage_service_factory,
             approval_service_factory=approval_service_factory,
@@ -840,7 +844,7 @@ def _required_api_permission(method: str, path: str) -> str | None:
         return "read:reports"
     if resource == "events":
         return "events:read" if method == "GET" else "events:operate"
-    if resource == "runs":
+    if resource in {"runs", "graph-runs"}:
         if (
             method == "POST"
             and len(parts) == 7

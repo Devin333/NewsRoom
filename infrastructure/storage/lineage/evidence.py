@@ -2,15 +2,19 @@ from __future__ import annotations
 
 from typing import Any
 
+from framework.shared.graph_identity import GraphRunIdentity
 from infrastructure.storage.lineage.models import LineageRef
 
 
 def lineage_refs_from_evidence_bundle(
     bundle: Any,
     *,
-    run_id: str,
-    workflow_id: str | None = None,
+    graph_identity: GraphRunIdentity,
 ) -> list[LineageRef]:
+    if not isinstance(graph_identity, GraphRunIdentity):
+        raise TypeError("graph_identity must be GraphRunIdentity")
+    run_id = graph_identity.run_id
+    identity_metadata = {"graph_identity": graph_identity.to_dict()}
     payload = _to_dict(bundle)
     refs: dict[str, LineageRef] = {}
     evidence_ids: list[str] = []
@@ -22,7 +26,7 @@ def lineage_refs_from_evidence_bundle(
         source_lineage = dict((item.get("metadata") or {}).get("source_lineage") or {})
         metadata = {
             "bundle_id": payload.get("bundle_id"),
-            "workflow_id": workflow_id,
+            **identity_metadata,
             "evidence_title": item.get("title"),
         }
         _add_ref(
@@ -35,6 +39,7 @@ def lineage_refs_from_evidence_bundle(
                 target_id=evidence_id,
                 relation_type="source_url_to_evidence",
                 metadata=metadata,
+                graph_identity=graph_identity,
             )
             if source_url
             else None,
@@ -55,6 +60,7 @@ def lineage_refs_from_evidence_bundle(
                     target_id=evidence_id,
                     relation_type=relation_type,
                     metadata={**metadata, "source_lineage": source_lineage},
+                    graph_identity=graph_identity,
                 )
                 if value
                 else None,
@@ -69,7 +75,8 @@ def lineage_refs_from_evidence_bundle(
                 target_type="evidence",
                 target_id=evidence_id,
                 relation_type="bundle_to_evidence",
-                metadata={"workflow_id": workflow_id},
+                metadata=identity_metadata,
+                graph_identity=graph_identity,
             ),
         )
     for claim in payload.get("candidate_claims") or []:
@@ -91,9 +98,10 @@ def lineage_refs_from_evidence_bundle(
                     relation_type="evidence_to_claim",
                     metadata={
                         "bundle_id": payload.get("bundle_id"),
-                        "workflow_id": workflow_id,
+                        **identity_metadata,
                         "claim_text": claim.get("text"),
                     },
+                    graph_identity=graph_identity,
                 ),
             )
     report_id = str(payload.get("report_id") or payload.get("bundle_id") or run_id)
@@ -107,7 +115,8 @@ def lineage_refs_from_evidence_bundle(
                 target_type="report",
                 target_id=report_id,
                 relation_type="claim_to_report",
-                metadata={"bundle_id": payload.get("bundle_id"), "workflow_id": workflow_id},
+                metadata={"bundle_id": payload.get("bundle_id"), **identity_metadata},
+                graph_identity=graph_identity,
             ),
         )
     return list(refs.values())

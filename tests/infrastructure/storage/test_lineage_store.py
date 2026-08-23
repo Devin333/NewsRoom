@@ -5,6 +5,7 @@ import pytest
 
 from business.layers.relation.evidence import EvidenceBundle, EvidenceItem
 from framework.agent.artifacts import ArtifactPathError
+from framework.shared.graph_identity import GraphRunIdentity
 from infrastructure.storage.lineage import LineageRef, LocalJsonLineageStore, lineage_refs_from_evidence_bundle
 
 
@@ -104,7 +105,16 @@ def test_lineage_refs_from_evidence_bundle_extracts_source_lineage() -> None:
     ]
     bundle_payload["report_id"] = "run-1:final"
 
-    refs = lineage_refs_from_evidence_bundle(bundle_payload, run_id="run-1", workflow_id="daily")
+    refs = lineage_refs_from_evidence_bundle(
+        bundle_payload,
+        graph_identity=GraphRunIdentity(
+            run_id="run-1",
+            graph_id="research.paper-analysis",
+            graph_version="v2",
+            graph_ref="research.paper-analysis@v2",
+            graph_checksum="sha256:" + "0" * 64,
+        ),
+    )
 
     source_pairs = {(ref.source_type, ref.source_id) for ref in refs}
     assert source_pairs >= {
@@ -118,6 +128,10 @@ def test_lineage_refs_from_evidence_bundle_extracts_source_lineage() -> None:
     }
     assert any(ref.target_type == "claim" and ref.target_id == "claim-1" for ref in refs)
     assert any(ref.target_type == "report" and ref.target_id == "run-1:final" for ref in refs)
+    assert all(ref.graph_identity is not None for ref in refs)
+    assert {ref.graph_identity.graph_ref for ref in refs} == {
+        "research.paper-analysis@v2"
+    }
 
 
 

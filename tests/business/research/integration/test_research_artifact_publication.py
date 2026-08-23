@@ -18,6 +18,18 @@ from framework.harness import (
     InMemoryHarnessEventPort,
     RunOutcome,
 )
+from framework.events.canonical import checksum_for
+from framework.harness.control_plane.activity_execution import (
+    HarnessGraphActivityTaskContext,
+)
+from framework.harness.control_plane.graph_runtime import HarnessGraphActivity
+from framework.harness.graph.model import HarnessContractKind, HarnessContractReference
+from framework.harness.graph.reference import HarnessGraphReference
+from framework.harness.graph.versioning import (
+    GRAPH_ONLY_NORMALIZED_HARNESS_GRAPH_SCHEMA,
+    HARNESS_CONDITION_POLICY_VERSION,
+    HARNESS_GRAPH_ONLY_COMPILER_VERSION,
+)
 
 from business.research.application.single_paper_runtime import (
     AnalyzePaperRequest,
@@ -33,6 +45,7 @@ from tests.business.research.fakes import (
     FakeResearchLLMWorker,
     FakeResearchRAGRuntime,
     FakeResearchSourceProvider,
+    in_memory_node_output_resource_factory,
 )
 
 
@@ -193,7 +206,7 @@ def test_terminal_manifest_recovery_reuses_effect_id_without_repeating_workers(
     ) is None
     assert first_handlers[0].commit_calls == 1
     worker_event_count_before_restart = sum(
-        event.event_type is HarnessEventType.WORKER_RESULT_RECORDED
+        event.event_type is HarnessEventType.GRAPH_WORKER_RESULT_RECORDED
         for event in event_port.events
         if event.run_id == run_id
     )
@@ -246,7 +259,7 @@ def test_terminal_manifest_recovery_reuses_effect_id_without_repeating_workers(
     assert outcome.disposition is HarnessSideEffectDisposition.ACCEPTED
     assert outcome.effect_id == first_terminal_decision.effect_id
     assert sum(
-        event.event_type is HarnessEventType.WORKER_RESULT_RECORDED
+        event.event_type is HarnessEventType.GRAPH_WORKER_RESULT_RECORDED
         for event in event_port.events
         if event.run_id == run_id
     ) == worker_event_count_before_restart
@@ -318,7 +331,7 @@ def test_terminal_member_failure_keeps_run_non_successful_and_public_refs_hidden
         artifact_port.read_artifact(f"artifact://{run_id}/research-analysis")
 
 
-def test_cleanup_failure_does_not_mask_primary_post_run_exception(
+def test_cleanup_failure_does_not_mask_terminal_graph_failure(
     tmp_path: Path,
 ) -> None:
     run_id = "research-publication-cleanup-secondary-failure"
@@ -346,15 +359,12 @@ def test_cleanup_failure_does_not_mask_primary_post_run_exception(
         artifact_handler_factory=_CleanupFailureHandler,
     )
     try:
-        with pytest.raises(RuntimeError, match="primary-worker-failure") as raised:
-            runtime.run(_request(run_id))
+        result = runtime.run(_request(run_id))
     finally:
         side_effect_store.close()
 
-    assert any(
-        "cleanup failed" in note
-        for note in getattr(raised.value, "__notes__", ())
-    )
+    assert result.status == "failed"
+    assert result.succeeded is False
 
 
 def test_candidate_worker_registry_cannot_reach_commit_capabilities(
@@ -410,14 +420,14 @@ def test_candidate_worker_registry_cannot_reach_commit_capabilities(
 
 
 @pytest.mark.parametrize("attempt", [1, 2, 3])
-def test_publish_intent_uses_harness_activity_attempt(attempt: int) -> None:
+def test_publish_intent_uses_graph_activity_attempt(attempt: int) -> None:
     workspace = _ResearchRunWorkspace(
         request=_request(f"research-publication-attempt-{attempt}"),
         context_assembler=ContextAssembler(),
     )
 
     result = ResearchSinglePaperRuntime._publish_artifacts(
-        {"harness_activity": {"attempt": attempt}},
+        {"harness_graph_activity": _graph_activity_task_context(attempt)},
         workspace,
     )
 
@@ -437,13 +447,13 @@ def test_publish_intent_uses_harness_activity_attempt(attempt: int) -> None:
     )
 
 
-def test_publish_intent_rejects_missing_harness_activity_identity() -> None:
+def test_publish_intent_rejects_missing_graph_activity_identity() -> None:
     workspace = _ResearchRunWorkspace(
         request=_request("research-publication-missing-attempt"),
         context_assembler=ContextAssembler(),
     )
 
-    with pytest.raises(Exception, match="Harness activity identity"):
+    with pytest.raises(Exception, match="Graph activity identity"):
         ResearchSinglePaperRuntime._publish_artifacts({}, workspace)
 
 
@@ -494,6 +504,7 @@ def _runtime(
         event_port_factory=lambda _run_id: event_port or InMemoryHarnessEventPort(),
         side_effect_store=side_effect_store,
         artifact_handler_factory=artifact_handler_factory,
+        node_output_resource_factory=in_memory_node_output_resource_factory,
     )
 
 
@@ -505,6 +516,35 @@ def _request(run_id: str) -> AnalyzePaperRequest:
         user_id="user-publication",
         memory_namespace="research:user:user-publication",
     )
+
+
+def _graph_activity_task_context(attempt: int) -> dict[str, Any]:
+    graph_ref = HarnessGraphReference(
+        graph_id="research.graph",
+        schema_version=GRAPH_ONLY_NORMALIZED_HARNESS_GRAPH_SCHEMA,
+        compiler_version=HARNESS_GRAPH_ONLY_COMPILER_VERSION,
+        condition_policy_version=HARNESS_CONDITION_POLICY_VERSION,
+        checksum=checksum_for({"graph": "research.graph", "version": "2"}),
+        graph_ref=HarnessContractReference(HarnessContractKind.GRAPH, "research.graph", "2"),
+    )
+    activity = HarnessGraphActivity(
+        run_id="research-publication-attempt",
+        graph_ref=graph_ref,
+        node_id="publish_artifacts",
+        node_instance_id=f"publish_artifacts:{attempt}",
+        step_ref=HarnessContractReference(HarnessContractKind.STEP, "publish_artifacts", "1"),
+        worker_ref=HarnessContractReference(HarnessContractKind.WORKER, "research.publish-artifacts", "1"),
+        activity_ref=HarnessContractReference(HarnessContractKind.ACTIVITY, "harness.publish-artifacts", "1"),
+        attempt=attempt,
+        input_ref=checksum_for({"run_id": "research-publication-attempt"}),
+        causal_decision_checksum=checksum_for({"decision": "publish"}),
+        causal_decision_sequence=attempt,
+        fencing_generation=1,
+    )
+    return HarnessGraphActivityTaskContext(
+        activity=activity,
+        graph_checkpoint_ref=f"checkpoint://research-publication-attempt/{attempt}",
+    ).to_dict()
 
 
 def _reachable_objects(root: Any) -> tuple[Any, ...]:

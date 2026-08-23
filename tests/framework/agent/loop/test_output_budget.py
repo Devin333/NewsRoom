@@ -91,7 +91,7 @@ def test_agent_loop_blocks_oversized_output_before_normalizer() -> None:
         llm_client=llm,
         tool_executor=ToolExecutor(ToolRegistry()),
         output_normalizer=raising_normalizer,
-    ).run(agent, {"topic": "budget"}, [], run_id="run-budget")
+    ).run(agent, {"topic": "budget"}, [], run_id="run-budget", standalone=True)
 
     assert normalizer_called is False
     assert result.success is False

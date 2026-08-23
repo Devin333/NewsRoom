@@ -1,21 +1,25 @@
 from __future__ import annotations
 
-from framework.harness import ContextSnapshot, ContextSnapshotReplayReader
+from framework.harness import (
+    ContextEnvelope,
+    ContextSnapshotStore,
+)
+from tests.framework.harness.context.test_context_models import _graph_identity
 
 
 def test_context_snapshot_replay_uses_refs_without_reassembling_context() -> None:
-    snapshot = ContextSnapshot(
-        snapshot_id="context-snapshot://1",
+    envelope = ContextEnvelope.for_graph(
         envelope_id="context://run/collect",
-        refs=("source://paper#method", "artifact://context-summary"),
-        token_estimate=120,
-        cache_key="context:stable:abc",
-        checksum="sha256:abc",
-        segment_refs=("segment://evidence-memory",),
-        assembled_prompt_ref="artifact://prompt",
+        graph_identity=_graph_identity(),
+        phase="EXECUTE",
+        worker_id="context-worker",
+        worker_type="function",
     )
+    store = ContextSnapshotStore()
+    bound_envelope, snapshot = store.save_bound(envelope)
 
-    replay = ContextSnapshotReplayReader().replay_snapshot(snapshot)
+    replay = store.replay(snapshot.snapshot_id)
 
-    assert replay["refs"] == ["source://paper#method", "artifact://context-summary"]
-    assert replay["side_effects_replayed"] is False
+    assert replay == bound_envelope
+    assert snapshot.refs
+    assert snapshot.assembled_prompt_ref.startswith("artifact://assembled-context/")

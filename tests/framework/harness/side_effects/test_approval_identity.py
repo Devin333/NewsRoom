@@ -119,3 +119,32 @@ def test_terminal_approval_evidence_matches_without_physical_identity() -> None:
 def test_partial_physical_identity_is_rejected() -> None:
     with pytest.raises(HarnessValidationError, match="physical Graph activity fields"):
         _request(activity_id=None)
+
+
+def test_active_approval_wire_does_not_emit_step_id() -> None:
+    request = _request()
+    evidence = HarnessSideEffectApprovalEvidence(
+        approval_ref=checksum_for("worker-approval"),
+        run_id=request.run_id,
+        graph_id=request.graph_id,
+        graph_version=request.graph_version,
+        graph_ref=request.graph_ref,
+        graph_checksum=request.graph_checksum,
+        node_id=request.node_id,
+        node_instance_id=request.node_instance_id,
+        activity_id=request.activity_id,
+        attempt=request.attempt,
+        effect_id=request.effect_id,
+        candidate_checksum=request.candidate_checksum,
+        identity_scope_ref=request.identity_scope_ref,
+        subject_scope_ref=request.subject_scope_ref,
+        decision_version=request.decision_version,
+    )
+
+    assert "step_id" not in request.to_dict()
+    assert "step_id" not in evidence.to_dict()
+
+
+def test_active_approval_rejects_step_id_authority() -> None:
+    with pytest.raises(HarnessValidationError, match="retired step_id"):
+        _request(step_id="publish")

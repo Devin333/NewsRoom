@@ -35,14 +35,14 @@ class ReportSearchResultSet:
 class ReportListResultSet:
     limit: int
     reports: list[Any]
-    workflow_id: str | None = None
-    workflow_family: str | None = None
+    graph_id: str | None = None
+    graph_ids: tuple[str, ...] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "limit": self.limit,
-            "workflow_id": self.workflow_id,
-            "workflow_family": self.workflow_family,
+            "graph_id": self.graph_id,
+            "graph_ids": list(self.graph_ids) if self.graph_ids is not None else None,
             "report_count": len(self.reports),
             "reports": [report.to_dict() for report in self.reports],
         }
@@ -107,21 +107,23 @@ class ReportApplicationService:
         self,
         *,
         limit: int = 20,
-        workflow_id: str | None = None,
-        workflow_family: str | None = None,
+        graph_id: str | None = None,
+        graph_ids: tuple[str, ...] | None = None,
     ) -> ReportListResultSet:
         if limit <= 0:
             raise ValueError("limit must be greater than zero")
-        if workflow_id and workflow_family:
-            raise ValueError("workflow_id and workflow_family are mutually exclusive")
+        if graph_id and graph_ids:
+            raise ValueError("graph_id and graph_ids are mutually exclusive")
+        if graph_ids is not None and not graph_ids:
+            raise ValueError("graph_ids must not be empty")
         return ReportListResultSet(
             limit=limit,
-            workflow_id=workflow_id,
-            workflow_family=workflow_family,
+            graph_id=graph_id,
+            graph_ids=graph_ids,
             reports=self.repository.list_reports(
                 limit=limit,
-                workflow_id=workflow_id,
-                workflow_ids=None,
+                graph_id=graph_id,
+                graph_ids=graph_ids,
             ),
         )
 

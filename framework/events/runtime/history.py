@@ -32,7 +32,7 @@ if TYPE_CHECKING:
 
 
 _VERSION_COMPONENT_KINDS = frozenset(
-    {"workflow", "reducer", "policy", "schema", "activity_handler"}
+    {"graph", "reducer", "policy", "schema", "activity_handler"}
 )
 DETERMINISTIC_HISTORY_RECORD_SCHEMA = "newsroom.deterministic-history/v1"
 DETERMINISTIC_HISTORY_EXTENSION = "deterministic_history"
@@ -153,7 +153,7 @@ class DeterministicCommand:
     kind: str
     target: str
     handler_version: str
-    workflow_version: str
+    graph_version: str
     policy_version: str
     input_refs: tuple[str, ...]
     input_checksums: tuple[str, ...]
@@ -169,7 +169,7 @@ class DeterministicCommand:
             "kind",
             "target",
             "handler_version",
-            "workflow_version",
+            "graph_version",
             "policy_version",
         ):
             object.__setattr__(
@@ -218,7 +218,7 @@ class DeterministicCommand:
             "kind": self.kind,
             "target": self.target,
             "handler_version": self.handler_version,
-            "workflow_version": self.workflow_version,
+            "graph_version": self.graph_version,
             "policy_version": self.policy_version,
             "input_refs": list(self.input_refs),
             "input_checksums": list(self.input_checksums),
@@ -234,7 +234,7 @@ class DeterministicCommand:
     def version_projection(self) -> tuple[str, str, str]:
         return (
             self.handler_version,
-            self.workflow_version,
+            self.graph_version,
             self.policy_version,
         )
 
@@ -248,7 +248,7 @@ class DeterministicCommand:
             "kind",
             "target",
             "handler_version",
-            "workflow_version",
+            "graph_version",
             "policy_version",
             "input_refs",
             "input_checksums",
@@ -268,7 +268,7 @@ class DeterministicCommand:
             kind=value.get("kind"),
             target=value.get("target"),
             handler_version=value.get("handler_version"),
-            workflow_version=value.get("workflow_version"),
+            graph_version=value.get("graph_version"),
             policy_version=value.get("policy_version"),
             input_refs=_string_tuple(value.get("input_refs"), "input_refs"),
             input_checksums=_string_tuple(
@@ -528,8 +528,8 @@ DeterministicHistoryHandler: TypeAlias = Callable[
 class HistoryEventPolicy:
     handler_id: str
     handler_version: str
-    workflow_id: str
-    workflow_version: str
+    graph_id: str
+    graph_version: str
     policy_id: str
     policy_version: str
     schema_id: str
@@ -541,8 +541,8 @@ class HistoryEventPolicy:
         for field_name in (
             "handler_id",
             "handler_version",
-            "workflow_id",
-            "workflow_version",
+            "graph_id",
+            "graph_version",
             "policy_id",
             "policy_version",
             "schema_id",
@@ -570,8 +570,8 @@ class HistoryEventPolicy:
         return {
             "handler_id": self.handler_id,
             "handler_version": self.handler_version,
-            "workflow_id": self.workflow_id,
-            "workflow_version": self.workflow_version,
+            "graph_id": self.graph_id,
+            "graph_version": self.graph_version,
             "policy_id": self.policy_id,
             "policy_version": self.policy_version,
             "schema_id": self.schema_id,
@@ -593,8 +593,8 @@ class HistoryEventPolicy:
         allowed = {
             "handler_id",
             "handler_version",
-            "workflow_id",
-            "workflow_version",
+            "graph_id",
+            "graph_version",
             "policy_id",
             "policy_version",
             "schema_id",
@@ -612,8 +612,8 @@ class HistoryEventPolicy:
         return cls(
             handler_id=value.get("handler_id"),
             handler_version=value.get("handler_version"),
-            workflow_id=value.get("workflow_id"),
-            workflow_version=value.get("workflow_version"),
+            graph_id=value.get("graph_id"),
+            graph_version=value.get("graph_version"),
             policy_id=value.get("policy_id"),
             policy_version=value.get("policy_version"),
             schema_id=value.get("schema_id"),
@@ -1059,7 +1059,7 @@ class HistoryVerifier:
         migrations: list[ReplayVersion] = []
         current = history
         resolved_keys: set[tuple[str, str, str]] = set()
-        for component_kind in ("workflow", "policy", "schema", "reducer"):
+        for component_kind in ("graph", "policy", "schema", "reducer"):
             component_id, version = _history_component(current.policy, component_kind)
             key = (component_kind, component_id, version)
             if key in resolved_keys:
@@ -1141,8 +1141,8 @@ def _history_component(
     policy: HistoryEventPolicy,
     component_kind: str,
 ) -> tuple[str, str]:
-    if component_kind == "workflow":
-        return policy.workflow_id, policy.workflow_version
+    if component_kind == "graph":
+        return policy.graph_id, policy.graph_version
     if component_kind == "policy":
         return policy.policy_id, policy.policy_version
     if component_kind == "schema":

@@ -1,6 +1,4 @@
-from framework.events.bus import InMemoryEventBus
 from framework.events.application import (
-    EventMigrationAssessmentApplicationPort,
     GRAPH_EVENT_HISTORY_DIAGNOSTIC_SCHEMA,
     GRAPH_EVENT_PROJECTION_REQUEST_SCHEMA,
     GraphEventHistoryDiagnostic,
@@ -9,8 +7,7 @@ from framework.events.application import (
     GraphEventProjectionApplicationRequest,
     GraphEventProjectionApplicationResult,
     GraphEventProjectionApplicationStatus,
-    InactiveGraphEventProjectionAdapter,
-    ReadOnlyEventMigrationAssessmentAdapter,
+    DurableGraphEventProjectionAdapter,
 )
 from framework.events.canonical import (
     DEFAULT_MAX_EXTENSION_BYTES,
@@ -29,7 +26,6 @@ from framework.events.canonical import (
     normalize_canonical_json,
     thaw_canonical_json,
 )
-from framework.events.envelope import EventEnvelope
 from framework.events.errors import (
     EventCanonicalizationError,
     EventConsumerIdempotencyError,
@@ -68,9 +64,6 @@ from framework.events.errors import (
     EventUnknownSchemaError,
     EventUpcastError,
 )
-from framework.events.event import Event, EventType
-from framework.events.filters import EventFilter
-from framework.events.ordering import EventOrderingPolicy
 from framework.events.ports import (
     ConsumerCheckpointStorePort,
     DeadLetterStorePort,
@@ -94,22 +87,23 @@ from framework.events.projection import (
     EventProjection,
     EventProjectionExporter,
     GraphEventContext,
+    GraphEventExecutionVersion,
     GraphEventProjection,
     GraphEventProjectionExporter,
-    GraphRunIdentity,
     graph_event_context,
     project_canonical_event,
     project_graph_event,
+)
+from framework.shared.graph_identity import (
+    GraphExecutionIdentity,
+    GraphRunIdentity,
+    GraphStageIdentity,
 )
 from framework.events.graph_phase import (
     GRAPH_PHASE_TRANSITION_SCHEMA,
     GraphExecutionPhase,
     GraphPhaseBoundary,
     GraphPhaseTransitionRecord,
-)
-from framework.events.recorder import (
-    EventRecorderProtocol,
-    InMemoryEventRecorder,
 )
 from framework.events.runtime import (
     AppendResult,
@@ -313,7 +307,6 @@ from framework.events.subscriber import (
     DropAuthorizationRule,
     DurableEventConsumer,
     EventProcessingError,
-    EventSubscriber,
     PermanentEventProcessingError,
     StaticDropAuthorizationPolicy,
     TransientEventProcessingError,
@@ -324,6 +317,7 @@ from framework.events.trace import (
     MAX_TRACESTATE_BYTES,
     REDACTED_TRACE_VALUE,
     TRACE_EVENT_SCHEMA_VERSION,
+    TRACE_CONTEXT_SCHEMA_VERSION,
     TRACE_METADATA_SCHEMA_VERSION,
     TraceContext,
     TraceEvent,
@@ -442,8 +436,6 @@ __all__ = [
     "DropAuthorizationRule",
     "EffectIdempotencyStrategy",
     "EffectIdempotencyCapability",
-    "Event",
-    "EventMigrationAssessmentApplicationPort",
     "EventCandidate",
     "EventCanonicalizationError",
     "EventConsumerIdempotencyError",
@@ -464,14 +456,11 @@ __all__ = [
     "EventRetirementCancellationCollisionError",
     "EventRetirementCancellationError",
     "EventDeliveryLedgerPort",
-    "EventEnvelope",
     "EventExtensionLimitError",
-    "EventFilter",
     "EventIdentityCollisionError",
     "EventIncompleteHistoryError",
     "EventInboxStorePort",
     "EventIntegrityError",
-    "EventOrderingPolicy",
     "EventProcessingError",
     "EventProjection",
     "EventProjectionExporter",
@@ -485,7 +474,6 @@ __all__ = [
     "ReplayCheckpointCollisionError",
     "ReplayCheckpointCorruptionError",
     "EventReaderPort",
-    "EventRecorderProtocol",
     "EventReplayError",
     "EventReplayMismatchError",
     "EventReservedFieldError",
@@ -510,10 +498,8 @@ __all__ = [
     "EventStreamVersionConflictError",
     "EventSubscriptionPositionError",
     "EventSubscriptionNotFoundError",
-    "EventSubscriber",
     "EventSubscriberError",
     "EventTimeError",
-    "EventType",
     "EventUnknownSchemaError",
     "EventUnitOfWorkPort",
     "ExtractedSpanContext",
@@ -539,9 +525,9 @@ __all__ = [
     "GraphPhaseBoundary",
     "GraphPhaseTransitionRecord",
     "GraphRunIdentity",
-    "InMemoryEventBus",
-    "InMemoryEventRecorder",
-    "InactiveGraphEventProjectionAdapter",
+    "GraphExecutionIdentity",
+    "GraphStageIdentity",
+    "DurableGraphEventProjectionAdapter",
     "InboxEntry",
     "InboxKey",
     "InboxTransactionCapability",
@@ -647,7 +633,6 @@ __all__ = [
     "ReplayVersion",
     "ResolvedReplayActivity",
     "REDACTED_TRACE_VALUE",
-    "ReadOnlyEventMigrationAssessmentAdapter",
     "RetryPolicy",
     "RetryPlan",
     "RetryPlanner",
@@ -681,6 +666,7 @@ __all__ = [
     "TRACEPARENT_HEADER",
     "TRACESTATE_HEADER",
     "TRACE_EVENT_SCHEMA_VERSION",
+    "TRACE_CONTEXT_SCHEMA_VERSION",
     "TRACE_METADATA_SCHEMA_VERSION",
     "TelemetryAttributePolicy",
     "TelemetryBackend",

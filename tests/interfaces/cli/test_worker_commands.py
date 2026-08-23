@@ -77,7 +77,7 @@ def test_news_cli_worker_run_once_json(monkeypatch, capsys) -> None:
     assert exit_code == 0
     assert payload["processed"] is True
     assert payload["task_id"] == "task-1"
-    assert payload["workflow_run_id"] == "workflow-1"
+    assert payload["graph_identity"] is None
     assert payload["reclaimed"] is False
     assert _FakeWorkerService.run_once_calls[-1]["reclaim_stale_ms"] is None
 
@@ -345,7 +345,7 @@ class _FakeRunOnceResult:
             "task_type": "memory.reindex",
             "success": True,
             "task_status": "succeeded",
-            "workflow_run_id": "workflow-1",
+            "graph_identity": None,
             "error_type": None,
             "error_message": None,
         }
@@ -371,7 +371,7 @@ class _FakeLoopResult:
                 "task_type": None,
                 "success": None,
                 "task_status": None,
-                "workflow_run_id": None,
+                "graph_identity": None,
                 "error_type": None,
                 "error_message": None,
             },

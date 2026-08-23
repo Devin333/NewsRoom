@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
@@ -8,19 +8,14 @@ from typing import Any, Protocol, runtime_checkable
 
 from framework.events.canonical import StoredEvent, checksum_for, thaw_canonical_json
 from framework.events.errors import EventContractError
-from framework.events.migration import (
-    EventMigrationDryRun,
-    MigrationDryRunReport,
-    MigrationSourceRecord,
-)
 from framework.events.ports import EventReaderPort
 from framework.events.projection import (
     GRAPH_EVENT_CONTEXT_EXTENSION,
     GraphEventProjection,
     GraphEventProjectionExporter,
-    GraphRunIdentity,
     graph_event_context,
 )
+from framework.shared.graph_identity import GraphRunIdentity
 from framework.events.runtime.models import (
     MAX_PAGE_LIMIT,
     EventPage,
@@ -380,36 +375,22 @@ class GraphEventProjectionApplicationPort(Protocol):
         request: GraphEventProjectionApplicationRequest,
     ) -> GraphEventProjectionApplicationResult: ...
 
-
-@runtime_checkable
-class EventMigrationAssessmentApplicationPort(Protocol):
-    def assess_event_migration(
+    def verify_graph_history(
         self,
-        records: Iterable[MigrationSourceRecord],
+        request: GraphEventProjectionApplicationRequest,
         *,
-        fail_fast: bool = False,
-    ) -> MigrationDryRunReport: ...
+        event_count: int,
+        checksum: str,
+    ) -> GraphEventProjectionApplicationResult: ...
 
 
-class ReadOnlyEventMigrationAssessmentAdapter:
-    """Read-only adapter for detached migration records; it owns no writer."""
+class DurableGraphEventProjectionAdapter:
+    """Project one checksum-bound Graph history through the event port.
 
-    def __init__(self, scanner: EventMigrationDryRun | None = None) -> None:
-        if scanner is not None and not isinstance(scanner, EventMigrationDryRun):
-            raise TypeError("scanner must be EventMigrationDryRun")
-        self._scanner = scanner or EventMigrationDryRun()
-
-    def assess_event_migration(
-        self,
-        records: Iterable[MigrationSourceRecord],
-        *,
-        fail_fast: bool = False,
-    ) -> MigrationDryRunReport:
-        return self._scanner.scan(records, fail_fast=fail_fast)
-
-
-class InactiveGraphEventProjectionAdapter:
-    """Gate A adapter that is deliberately absent from live composition."""
+    The adapter owns the application boundary for Graph projections. It never
+    appends events or infers orchestration identity; empty, legacy-shaped, or
+    conflicting history is returned as a typed history-only diagnostic.
+    """
 
     def __init__(
         self,
@@ -512,6 +493,78 @@ class InactiveGraphEventProjectionAdapter:
                 target=request.target,
                 tenant_id=request.tenant_id,
                 through_sequence=through_sequence,
+            )
+        except _GraphHistoryDiagnosticSignal as signal:
+            return self._history_only_result(request, signal.diagnostic)
+        return GraphEventProjectionApplicationResult(
+            request=request,
+            status=GraphEventProjectionApplicationStatus.PROJECTED,
+            projection=projection,
+        )
+
+    def verify_graph_history(
+        self,
+        request: GraphEventProjectionApplicationRequest,
+        *,
+        event_count: int,
+        checksum: str,
+    ) -> GraphEventProjectionApplicationResult:
+        """Verify an existing Graph projection against durable history."""
+
+        if not isinstance(request, GraphEventProjectionApplicationRequest):
+            raise TypeError(
+                "request must be GraphEventProjectionApplicationRequest"
+            )
+        if isinstance(event_count, bool) or not isinstance(event_count, int):
+            raise TypeError("event_count must be an integer")
+        durable_high_watermark = _optional_positive_int(
+            self._reader.get_stream_high_watermark(
+                request.stream_id,
+                tenant_id=request.tenant_id,
+            ),
+            "durable_high_watermark",
+        )
+        through_sequence = request.through_sequence
+        if through_sequence is None:
+            through_sequence = durable_high_watermark
+        if through_sequence is None:
+            if event_count != 0:
+                raise EventContractError(
+                    "empty Graph event history cannot contain projection rows"
+                )
+            return self._history_only_result(
+                request,
+                GraphEventHistoryDiagnostic(
+                    graph_identity=request.graph_identity,
+                    tenant_id=request.tenant_id,
+                    high_watermark=None,
+                    code=GraphEventHistoryDiagnosticCode.EMPTY_HISTORY,
+                ),
+            )
+        if durable_high_watermark is None or through_sequence > durable_high_watermark:
+            raise EventContractError(
+                "requested Graph event projection exceeds durable history"
+            )
+        validating_reader = _GraphHistoryValidatingReader(
+            reader=self._reader,
+            expected=request.graph_identity,
+            tenant_id=request.tenant_id,
+            high_watermark=through_sequence,
+        )
+        exporter = GraphEventProjectionExporter(
+            reader=validating_reader,
+            schema_catalog=self._schema_catalog,
+            security_projector=self._security_projector,
+            page_size=self._page_size,
+        )
+        try:
+            projection = exporter.verify_existing(
+                stream_id=request.stream_id,
+                target=request.target,
+                tenant_id=request.tenant_id,
+                high_watermark=through_sequence,
+                event_count=event_count,
+                checksum=checksum,
             )
         except _GraphHistoryDiagnosticSignal as signal:
             return self._history_only_result(request, signal.diagnostic)
@@ -648,12 +701,7 @@ def _diagnostic_for_event(
         event.extensions.get(GRAPH_EVENT_CONTEXT_EXTENSION)
     )
     observed_schema = _observed_context_schema(raw_context)
-    if (
-        event.business_context.workflow_id is not None
-        or event.business_context.step_id is not None
-    ):
-        code = GraphEventHistoryDiagnosticCode.ORCHESTRATION_ALIAS_PRESENT
-    elif not isinstance(raw_context, Mapping):
+    if not isinstance(raw_context, Mapping):
         code = GraphEventHistoryDiagnosticCode.GRAPH_CONTEXT_MISSING
     else:
         try:
@@ -733,9 +781,8 @@ def _graph_identity_from_dict(value: Any) -> GraphRunIdentity:
             "run_id",
             "graph_id",
             "graph_version",
-            "graph_schema_version",
-            "compiler_version",
-            "normalized_graph_checksum",
+            "graph_ref",
+            "graph_checksum",
         },
         "Graph run identity",
     )
@@ -743,9 +790,8 @@ def _graph_identity_from_dict(value: Any) -> GraphRunIdentity:
         run_id=payload["run_id"],
         graph_id=payload["graph_id"],
         graph_version=payload["graph_version"],
-        graph_schema_version=payload["graph_schema_version"],
-        compiler_version=payload["compiler_version"],
-        normalized_graph_checksum=payload["normalized_graph_checksum"],
+        graph_ref=payload["graph_ref"],
+        graph_checksum=payload["graph_checksum"],
     )
 
 
@@ -760,7 +806,6 @@ def _exact_mapping(
 
 
 __all__ = [
-    "EventMigrationAssessmentApplicationPort",
     "GRAPH_EVENT_HISTORY_DIAGNOSTIC_SCHEMA",
     "GRAPH_EVENT_PROJECTION_REQUEST_SCHEMA",
     "GraphEventHistoryDiagnostic",
@@ -769,8 +814,5 @@ __all__ = [
     "GraphEventProjectionApplicationRequest",
     "GraphEventProjectionApplicationResult",
     "GraphEventProjectionApplicationStatus",
-    "InactiveGraphEventProjectionAdapter",
-    "MigrationDryRunReport",
-    "MigrationSourceRecord",
-    "ReadOnlyEventMigrationAssessmentAdapter",
+    "DurableGraphEventProjectionAdapter",
 ]

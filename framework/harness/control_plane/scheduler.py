@@ -61,7 +61,10 @@ from framework.harness.graph.activity import (
     HarnessRetryPolicy,
     HarnessStepSpec,
 )
-from framework.harness.graph.versioning import HARNESS_WORKER_ACTIVITY_SCHEMA
+from framework.harness.graph.versioning import (
+    GRAPH_ONLY_NORMALIZED_HARNESS_GRAPH_SCHEMA,
+    HARNESS_WORKER_ACTIVITY_SCHEMA,
+)
 
 
 _STEP_GRAPH_DECISION_TYPES = MappingProxyType(
@@ -74,7 +77,9 @@ _STEP_GRAPH_DECISION_TYPES = MappingProxyType(
         StepLifecycleTransitionType.REPLAN_STEP: HarnessGraphDecisionType.REPLAN_NODE,
         StepLifecycleTransitionType.ROUTE_TO_REPAIR: HarnessGraphDecisionType.ROUTE_TO_REPAIR,
         StepLifecycleTransitionType.WAIT_FOR_APPROVAL: HarnessGraphDecisionType.WAIT_NODE,
-        StepLifecycleTransitionType.BLOCK_STEP: HarnessGraphDecisionType.WAIT_NODE,
+        # A worker-reported block has no Graph Wait registration. Treat it as a
+        # terminal safety halt; Graph waits are represented only by Wait nodes.
+        StepLifecycleTransitionType.BLOCK_STEP: HarnessGraphDecisionType.HALT_RUN,
         StepLifecycleTransitionType.FAIL_STEP: HarnessGraphDecisionType.FAIL_NODE,
         StepLifecycleTransitionType.HALT_STEP: HarnessGraphDecisionType.HALT_RUN,
     }
@@ -1319,14 +1324,22 @@ def _validate_graph_step_input(
     )
     if expected_step_ref != definition.step_ref:
         mismatches.append("input.step_ref")
-    expected_worker_ref = HarnessContractReference(
-        HarnessContractKind.WORKER,
-        str(step.metadata.get("worker_id", step.step_id)),
-        str(step.metadata.get("worker_version", "1")),
+    graph_only = graph.schema_version == GRAPH_ONLY_NORMALIZED_HARNESS_GRAPH_SCHEMA
+    expected_worker_ref = (
+        definition.worker_ref
+        if graph_only
+        else HarnessContractReference(
+            HarnessContractKind.WORKER,
+            str(step.metadata.get("worker_id", step.step_id)),
+            str(step.metadata.get("worker_version", "1")),
+        )
     )
     if expected_worker_ref != definition.worker_ref:
         mismatches.append("worker_ref")
-    if _activity_reference(step) != definition.activity_ref:
+    expected_activity_ref = (
+        definition.activity_ref if graph_only else _activity_reference(step)
+    )
+    if expected_activity_ref != definition.activity_ref:
         mismatches.append("activity_ref")
     if _gate_references(step) != definition.gate_refs:
         mismatches.append("gate_refs")

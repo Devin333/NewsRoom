@@ -148,5 +148,5 @@ def test_retention_policy_keeps_manifest_request_indefinitely() -> None:
 
     assert policy.retention_days_for("manifest") is None
     assert policy.retention_days_for("request") is None
-    assert policy.retention_days_for("workflow_spec") is None
+    assert policy.retention_days_for("graph_spec") is None
     assert policy.retention_days_for("pause") is None

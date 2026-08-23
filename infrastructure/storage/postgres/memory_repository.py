@@ -168,13 +168,13 @@ class PostgresIntelligenceMemoryRepository:
                 """
                 INSERT INTO memory_decisions (
                     decision_id, decision_type, target_type, target_id, decision,
-                    reason, run_id, workflow_id, agent_id, input_features,
+                    reason, run_id, graph_id, graph_version, graph_ref, graph_checksum, agent_id, input_features,
                     output_scores, metadata_json, created_at
                 )
                 VALUES (
                     %s, %s, %s, %s, %s,
-                    %s, %s, %s, %s, %s::jsonb,
-                    %s::jsonb, %s::jsonb, %s
+                    %s, %s, %s, %s, %s,
+                    %s, %s, %s::jsonb, %s::jsonb, %s
                 )
                 ON CONFLICT (decision_id) DO UPDATE SET
                     decision_type = EXCLUDED.decision_type,
@@ -183,7 +183,10 @@ class PostgresIntelligenceMemoryRepository:
                     decision = EXCLUDED.decision,
                     reason = EXCLUDED.reason,
                     run_id = EXCLUDED.run_id,
-                    workflow_id = EXCLUDED.workflow_id,
+                    graph_id = EXCLUDED.graph_id,
+                    graph_version = EXCLUDED.graph_version,
+                    graph_ref = EXCLUDED.graph_ref,
+                    graph_checksum = EXCLUDED.graph_checksum,
                     agent_id = EXCLUDED.agent_id,
                     input_features = EXCLUDED.input_features,
                     output_scores = EXCLUDED.output_scores,
@@ -198,7 +201,10 @@ class PostgresIntelligenceMemoryRepository:
                     decision.decision,
                     decision.reason,
                     decision.run_id,
-                    decision.workflow_id,
+                    decision.graph_id,
+                    decision.graph_version,
+                    decision.graph_ref,
+                    decision.graph_checksum,
                     decision.agent_id,
                     _json(decision.input_features),
                     _json(decision.output_scores),
@@ -445,7 +451,7 @@ class PostgresIntelligenceMemoryRepository:
             """
             SELECT
                 decision_id, decision_type, target_type, target_id, decision,
-                reason, run_id, workflow_id, agent_id, input_features,
+                reason, run_id, graph_id, graph_version, graph_ref, graph_checksum, agent_id, input_features,
                 output_scores, created_at, metadata_json
             FROM memory_decisions
             WHERE
@@ -657,7 +663,7 @@ class PostgresIntelligenceMemoryRepository:
             """
             SELECT
                 decision_id, decision_type, target_type, target_id, decision,
-                reason, run_id, workflow_id, agent_id, input_features,
+                reason, run_id, graph_id, graph_version, graph_ref, graph_checksum, agent_id, input_features,
                 output_scores, created_at, metadata_json
             FROM memory_decisions
             WHERE target_type = %s AND target_id = %s
@@ -867,12 +873,15 @@ def _decision_from_row(row: tuple[Any, ...]) -> DecisionMemory:
         decision=str(row[4]),
         reason=row[5],
         run_id=str(row[6]),
-        workflow_id=row[7],
-        agent_id=row[8],
-        input_features=_dict_or_empty(row[9]),
-        output_scores=_dict_or_empty(row[10]),
-        created_at=_dt(row[11]) or datetime.now(UTC),
-        metadata=_dict_or_empty(row[12]),
+        graph_id=row[7],
+        graph_version=row[8],
+        graph_ref=row[9],
+        graph_checksum=row[10],
+        agent_id=row[11],
+        input_features=_dict_or_empty(row[12]),
+        output_scores=_dict_or_empty(row[13]),
+        created_at=_dt(row[14]) or datetime.now(UTC),
+        metadata=_dict_or_empty(row[15]),
     )
 
 

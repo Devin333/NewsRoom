@@ -42,6 +42,7 @@ from tests.business.research.fakes import (
     FakeResearchLLMWorker,
     FakeResearchRAGRuntime,
     FakeResearchSourceProvider,
+    in_memory_node_output_resource_factory,
 )
 from tests.interfaces.research_fixtures import (
     FakeAnalyzeUseCase,
@@ -529,6 +530,7 @@ def test_research_service_queries_survive_durable_store_reconstruction(
         rag_runtime=FakeResearchRAGRuntime(),
         artifact_port=FakeArtifactPort(),
         event_port_factory=lambda _run_id: InMemoryHarnessEventPort(),
+        node_output_resource_factory=in_memory_node_output_resource_factory,
     )
     result = AnalyzePaperUseCase(runtime).analyze(
         AnalyzePaperRequest(

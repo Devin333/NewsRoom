@@ -55,7 +55,7 @@ def _snapshot(
     snapshot = ContextGroupMaterializer().materialize(
         ContextMaterializationRequest(
             run_id="run-exec-1",
-            step_id="step-1",
+            stage_id="step-1",
             task_binding_ref="task://current",
             policy_revision=policy.policy_revision,
             physical_profile_revision="profile-exec-v1",
@@ -72,7 +72,7 @@ def _snapshot(
         return snapshot
     return ContextSemanticSnapshot(
         run_id=snapshot.run_id,
-        step_id=snapshot.step_id,
+        stage_id=snapshot.stage_id,
         task_binding_ref=snapshot.task_binding_ref,
         groups=(*snapshot.groups, *extra_groups),
         policy_revision=snapshot.policy_revision,

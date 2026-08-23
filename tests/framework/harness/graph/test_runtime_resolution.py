@@ -187,22 +187,17 @@ def test_resolver_uses_checksum_bound_graph_worker_type() -> None:
 
 
 def test_resolver_rejects_terminal_policy_without_frozen_snapshot() -> None:
-    graph = _graph(
-        (_node("collect"),),
-        terminal_policy_ref=_ref(
-            HarnessContractKind.TERMINAL_POLICY,
-            "publication",
-            "4",
-        ),
-    )
-
     with pytest.raises(HarnessValidationError) as captured:
-        HarnessGraphRuntimeResolver(
-            _authority(worker_ids=("collect",))
-        ).resolve(graph)
+        _graph(
+            (_node("collect"),),
+            terminal_policy_ref=_ref(
+                HarnessContractKind.TERMINAL_POLICY,
+                "publication",
+                "4",
+            ),
+        )
 
-    assert captured.value.code == "terminal_policy_snapshot_missing"
-    assert captured.value.details["reference"] == "publication@4"
+    assert captured.value.code == "graph_terminal_policy_snapshot_missing"
 
 
 def test_resolver_rejects_terminal_gate_not_guaranteed_on_every_path() -> None:
@@ -239,6 +234,13 @@ def _graph(
     terminal_policy: HarnessTerminalSideEffectPolicy | None = None,
 ) -> NormalizedHarnessGraph:
     graph_id = "runtime-resolution"
+    if terminal_policy is None and terminal_policy_ref is None:
+        terminal_policy = _terminal_policy(inherited_gate_refs=())
+        terminal_policy_ref = _ref(
+            HarnessContractKind.TERMINAL_POLICY,
+            terminal_policy.policy_id,
+            terminal_policy.version,
+        )
     if terminal_policy is not None:
         terminal_policy_ref = _ref(
             HarnessContractKind.TERMINAL_POLICY,
@@ -250,9 +252,10 @@ def _graph(
     )
     return NormalizedHarnessGraph(
         graph_id=graph_id,
-        workflow_id=graph_id,
-        workflow_version="1",
-        workflow_ref=_ref(HarnessContractKind.WORKFLOW, graph_id, "1"),
+        graph_version="1",
+        graph_ref=_ref(HarnessContractKind.GRAPH, graph_id, "1"),
+        definition_schema_version=HARNESS_GRAPH_DEFINITION_SCHEMA,
+        definition_checksum="sha256:" + "d" * 64,
         nodes=nodes,
         edges=(),
         entry_node_ids=entry_node_ids or executable_ids[:1],
@@ -278,9 +281,6 @@ def _graph_v2(
         graph_ref=_ref(HarnessContractKind.GRAPH, graph_id, "1"),
         definition_schema_version=HARNESS_GRAPH_DEFINITION_SCHEMA,
         definition_checksum="sha256:" + "b" * 64,
-        workflow_id=None,
-        workflow_version=None,
-        workflow_ref=None,
         nodes=nodes,
         edges=(),
         entry_node_ids=executable_ids[:1],
@@ -397,8 +397,8 @@ def _authority(
                 _Activity(),
             ),
         ),
-        gate_registry=gate_registry,
-        side_effect_registry=side_effect_registry,
+        gate_registry=gate_registry or _gate_registry(),
+        side_effect_registry=side_effect_registry or _terminal_side_effect_registry(),
     )
 
 

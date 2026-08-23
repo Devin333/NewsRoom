@@ -3127,9 +3127,7 @@ def _condition_context(
         else None
     )
     if source_instance is None:
-        source_node_id = node.metadata.get("legacy_source_step_id")
-        if not isinstance(source_node_id, str):
-            source_node_id = _single_dependency_source(graph, node.node_id)
+        source_node_id = _single_dependency_source(graph, node.node_id)
         source_instance = _source_instance_for_control(
             state,
             source_node_id,

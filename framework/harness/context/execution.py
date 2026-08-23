@@ -225,7 +225,7 @@ class ContextCompactionActionExecutor:
             )
         result_snapshot = ContextSemanticSnapshot(
             run_id=source_snapshot.run_id,
-            step_id=source_snapshot.step_id,
+            stage_id=source_snapshot.stage_id,
             task_binding_ref=source_snapshot.task_binding_ref,
             groups=tuple(current_groups),
             policy_revision=source_snapshot.policy_revision,

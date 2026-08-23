@@ -16,12 +16,15 @@ from framework.harness.task_plan import (
     TaskLifecycle,
     TaskOutputContract,
     TaskPlanCheckpoint,
-    TASK_PLAN_CHECKPOINT_SCHEMA_V1,
+    TASK_PLAN_CHECKPOINT_SCHEMA_V2,
     TaskPlanEvent,
+    TASK_PLAN_RESULT_SCHEMA_V3,
     TaskPlanPolicy,
     TaskPlanRecoveryService,
     TaskPlanReplayReducer,
-    TASK_PLAN_REPLAY_REDUCER_VERSION_V1,
+    TaskPlanStageIdentity,
+    TaskPlanQueueProjection,
+    TASK_PLAN_REPLAY_REDUCER_VERSION_V2,
     TaskPlanValidationContext,
     TaskPlanValidator,
     TaskResultRecord,
@@ -49,6 +52,11 @@ class _NeverCalledWorker:
     def execute(self, task):
         self.calls += 1
         return HarnessWorkerResult(status="succeeded", candidate_result_ref="result://unexpected")
+
+
+class _EmptyQueueReader:
+    def read_task_plan_queue(self, *, queue_name, task_instance_ids):
+        return ()
 
 
 def _history_fixture():
@@ -80,7 +88,7 @@ def _history_fixture():
         aggregate_task_budget=TaskBudget(max_turns=2, max_output_tokens=128),
     )
     stage_binding = build_task_plan_stage_binding(
-        workflow_id="recovery-workflow",
+        graph_id="recovery-graph",
         stage_id=policy.stage_id,
         policy_ref=policy.exact_ref,
         required_output_roles=policy.required_output_roles,
@@ -119,12 +127,9 @@ def _history_fixture():
         budget_request=TaskBudget(max_turns=1, max_output_tokens=64),
         retry_policy=TaskRetryPolicy(max_attempts=2),
     )
-    candidate = PlanCandidate(
+    candidate = PlanCandidate.for_stage(
+        stage_identity=TaskPlanStageIdentity("recovery-run", stage_binding),
         candidate_id="recovery-candidate",
-        run_id="recovery-run",
-        workflow_id="recovery-workflow",
-        stage_id="dynamic_stage",
-        graph_checksum=stage_binding.graph_checksum,
         input_context_refs=("document",),
         tasks=(task,),
         required_output_roles=("analysis.result",),
@@ -150,21 +155,16 @@ def _history_fixture():
 
 
 def _lifecycle_event(event_type, sequence, plan, instance, *, input_checksum=None, output_refs=(), payload=None):
-    return TaskPlanEvent(
+    return TaskPlanEvent.for_plan(
         event_type,
-        run_id=plan.run_id,
-        workflow_id=plan.workflow_id,
-        stage_id=plan.stage_id,
-        graph_checksum=plan.graph_checksum,
-        plan_id=plan.plan_id,
-        plan_version=plan.version,
+        plan,
+        sequence=sequence,
         task_id=instance.task_id,
         task_instance_id=instance.task_instance_id,
         attempt=instance.attempt,
         input_checksum=input_checksum or instance.task_definition_checksum,
         output_refs=output_refs,
         payload=payload or {},
-        sequence=sequence,
     )
 
 
@@ -172,7 +172,6 @@ def _result(plan, instance):
     definition = plan.tasks[0]
     return TaskResultRecord(
         run_id=plan.run_id,
-        workflow_id=plan.workflow_id,
         stage_id=plan.stage_id,
         plan_id=plan.plan_id,
         plan_version=plan.version,
@@ -183,6 +182,17 @@ def _result(plan, instance):
         task_checksum=instance.task_definition_checksum,
         binding_checksum=definition.binding_checksum,
         status=TaskLifecycle.SUCCEEDED,
+        schema_version=TASK_PLAN_RESULT_SCHEMA_V3,
+        graph_checksum=instance.graph_checksum,
+        graph_id=instance.graph_id,
+        graph_version=instance.graph_version,
+        graph_ref=instance.graph_ref,
+        graph_schema_version=instance.graph_schema_version,
+        compiler_version=instance.compiler_version,
+        condition_policy_version=instance.condition_policy_version,
+        stage_binding_checksum=instance.stage_binding_checksum,
+        stage_identity_schema=instance.stage_identity_schema,
+        stage_identity_checksum=instance.stage_identity_checksum,
         result_ref="result://recover-task",
         output_refs=("artifact://recover-task",),
         output_roles=("analysis.result",),
@@ -208,13 +218,13 @@ def test_checkpoint_roundtrip_and_missing_queue_projection_recovery_are_offline(
     )
     restored = TaskPlanCheckpoint.from_dict(checkpoint.to_dict())
 
-    assert report.reducer_version == TASK_PLAN_REPLAY_REDUCER_VERSION_V1
+    assert report.reducer_version == TASK_PLAN_REPLAY_REDUCER_VERSION_V2
     assert report.replay_checksum == (
-        "sha256:e5ad569f4c4aaf92dd634a4041399751491d52c4485e6e3c736b732840e3cb98"
+        "sha256:18c0511a902fb5a79192707c49f7a60dcf6e49a6d4e171e4dfd68c49b4f7c243"
     )
-    assert checkpoint.schema_version == TASK_PLAN_CHECKPOINT_SCHEMA_V1
+    assert checkpoint.schema_version == TASK_PLAN_CHECKPOINT_SCHEMA_V2
     assert checkpoint.checkpoint_checksum == (
-        "sha256:b4147439158783492ae0efaa23b48cb32b64896815c2688c430c772b9aac0d66"
+        "sha256:0315bace88a0008939dd612f2c7662a66f56eea2e0c0f5143525cc2fcc4815b7"
     )
     assert set(checkpoint.to_dict()) == {
         "accepted_output_refs",
@@ -222,11 +232,17 @@ def test_checkpoint_roundtrip_and_missing_queue_projection_recovery_are_offline(
         "aggregate_checksum",
         "aggregate_ref",
         "budget_snapshot",
-        "checkpoint_checksum",
-        "checkpoint_id",
-        "created_at",
-        "event_history_checksum",
-        "graph_checksum",
+            "checkpoint_checksum",
+            "checkpoint_id",
+            "compiler_version",
+            "condition_policy_version",
+            "created_at",
+            "event_history_checksum",
+            "graph_checksum",
+            "graph_id",
+            "graph_ref",
+            "graph_schema_version",
+            "graph_version",
         "last_sequence",
         "pending_terminal_results",
         "plan_checksum",
@@ -240,12 +256,14 @@ def test_checkpoint_roundtrip_and_missing_queue_projection_recovery_are_offline(
         "replay_checksum",
         "retry_counts",
         "run_id",
-        "schema_version",
-        "stage_id",
-        "workflow_id",
-    }
+            "schema_version",
+            "stage_binding_checksum",
+            "stage_id",
+            "stage_identity_checksum",
+            "stage_identity_schema",
+        }
 
-    recovery = TaskPlanRecoveryService().recover(
+    recovery = TaskPlanRecoveryService(queue_reader=_EmptyQueueReader()).recover(
         (plan,),
         events,
         checkpoint=restored,
@@ -257,28 +275,22 @@ def test_checkpoint_roundtrip_and_missing_queue_projection_recovery_are_offline(
     queue_task = recovery.missing_queue_projections[0]
     assert queue_task.task_id == instance.task_instance_id
     assert queue_task.payload == {}
-    assert queue_task.metadata["fencing_token"] == instance.fencing_token
+    assert TaskPlanQueueProjection.from_task(queue_task).matches_instance(instance)
     assert worker.calls == 0
 
 
 def test_legacy_replay_rejects_plan_history_with_changed_graph_checksum():
-    plan, events, _ = _history_fixture()
-    changed_graph_plan = replace(
-        plan,
-        plan_id="recover-plan-2",
-        version=2,
-        parent_plan_id=plan.plan_id,
-        graph_checksum="sha256:" + "f" * 64,
-    )
-
     with pytest.raises(HarnessValidationError) as captured:
-        TaskPlanReplayReducer().replay(
-            (plan, changed_graph_plan),
-            events,
-            require_latest_plan=False,
+        plan, _, _ = _history_fixture()
+        replace(
+            plan,
+            plan_id="recover-plan-2",
+            version=2,
+            parent_plan_id=plan.plan_id,
+            graph_checksum="sha256:" + "f" * 64,
         )
 
-    assert captured.value.code == "task_plan_replay_identity_mismatch"
+    assert captured.value.code == "task_plan_stage_identity_checksum_invalid"
 
 
 def test_recovery_preserves_committed_result_until_terminal_event_without_redispatch():
@@ -313,7 +325,7 @@ def test_recovery_preserves_committed_result_until_terminal_event_without_redisp
         )
     assert captured.value.code == "task_plan_replay_terminal_event_missing"
 
-    recovery = TaskPlanRecoveryService().recover(
+    recovery = TaskPlanRecoveryService(queue_reader=_EmptyQueueReader()).recover(
         (plan,),
         events_before_terminal,
         results=(result,),
@@ -391,27 +403,22 @@ def test_recovery_quarantines_terminal_failure_without_durable_halt() -> None:
     )
 
     with pytest.raises(HarnessValidationError) as missing_halt:
-        TaskPlanRecoveryService().recover((plan,), events, results=(result,))
+        TaskPlanRecoveryService(queue_reader=_EmptyQueueReader()).recover((plan,), events, results=(result,))
     assert missing_halt.value.code == "task_plan_recovery_halt_missing"
     assert worker.calls == 0
 
-    halted = TaskPlanEvent(
+    halted = TaskPlanEvent.for_plan(
         "TASK_PLAN_HALTED",
-        run_id=plan.run_id,
-        workflow_id=plan.workflow_id,
-        stage_id=plan.stage_id,
-        graph_checksum=plan.graph_checksum,
-        plan_id=plan.plan_id,
-        plan_version=plan.version,
+        plan,
+        sequence=8,
         reason_code="terminal_failure",
         payload={
             "diagnostic_ref": canonical_payload_checksum(
                 {"reason_code": "terminal_failure"}
             )
         },
-        sequence=8,
     )
-    recovery = TaskPlanRecoveryService().recover(
+    recovery = TaskPlanRecoveryService(queue_reader=_EmptyQueueReader()).recover(
         (plan,),
         (*events, halted),
         results=(result,),
@@ -456,12 +463,9 @@ def test_replay_fails_closed_for_missing_result_and_tampered_event_checksum():
 
 def test_replay_requires_patch_document_and_binds_it_to_the_next_plan_version():
     plan, base_events, _ = _history_fixture()
-    patch = PlanPatch(
+    patch = PlanPatch.for_plan(
+        plan,
         patch_id="recovery-patch",
-        run_id=plan.run_id,
-        stage_id=plan.stage_id,
-        base_plan_id=plan.plan_id,
-        base_plan_version=plan.version,
         reason_code="repair",
         source_candidate_ref="candidate://recovery-patch",
         operations=(
@@ -479,30 +483,20 @@ def test_replay_requires_patch_document_and_binds_it_to_the_next_plan_version():
         source_candidate_ref=patch.patch_checksum,
         accepted_at="2026-08-01T00:00:02Z",
     )
-    patch_event = TaskPlanEvent(
+    patch_event = TaskPlanEvent.for_plan(
         "PLAN_PATCH_ACCEPTED",
-        run_id=plan.run_id,
-        workflow_id=plan.workflow_id,
-        stage_id=plan.stage_id,
-        graph_checksum=plan.graph_checksum,
-        plan_id=plan.plan_id,
-        plan_version=plan.version,
+        plan,
+        sequence=3,
         input_checksum=patch.patch_checksum,
         reason_code=patch.reason_code,
         payload={"patch_ref": patch.patch_checksum},
-        sequence=3,
     )
-    plan_event = TaskPlanEvent(
+    plan_event = TaskPlanEvent.for_plan(
         "PLAN_ACCEPTED",
-        run_id=patched.run_id,
-        workflow_id=patched.workflow_id,
-        stage_id=patched.stage_id,
-        graph_checksum=patched.graph_checksum,
-        plan_id=patched.plan_id,
-        plan_version=patched.version,
+        patched,
+        sequence=4,
         input_checksum=patched.plan_checksum,
         payload={"plan_ref": patched.plan_checksum, "policy_ref": patched.policy_ref},
-        sequence=4,
     )
     events = (*base_events, patch_event, plan_event)
     replay = TaskPlanReplayReducer().replay(
@@ -515,7 +509,7 @@ def test_replay_requires_patch_document_and_binds_it_to_the_next_plan_version():
         patches=(patch,),
         require_terminal_events=True,
     )
-    recovery = TaskPlanRecoveryService().recover(
+    recovery = TaskPlanRecoveryService(queue_reader=_EmptyQueueReader()).recover(
         (plan, patched),
         events,
         patches=(patch,),
@@ -558,14 +552,10 @@ def test_replay_binds_aggregate_checksum_to_recorded_branch_evidence():
         }
     )
     aggregate_ref = f"task-plan-aggregate:{aggregate_checksum}"
-    aggregate_event = TaskPlanEvent(
+    aggregate_event = TaskPlanEvent.for_plan(
         "STAGE_OUTPUT_AGGREGATED",
-        run_id=plan.run_id,
-        workflow_id=plan.workflow_id,
-        stage_id=plan.stage_id,
-        graph_checksum=plan.graph_checksum,
-        plan_id=plan.plan_id,
-        plan_version=plan.version,
+        plan,
+        sequence=3,
         input_checksum=aggregate_checksum,
         output_refs=tuple(output_refs_by_role.values()),
         payload={
@@ -575,19 +565,13 @@ def test_replay_binds_aggregate_checksum_to_recorded_branch_evidence():
             "result_refs": list(result_refs),
             "branch_refs": list(branch_refs),
         },
-        sequence=3,
     )
-    verified_event = TaskPlanEvent(
+    verified_event = TaskPlanEvent.for_plan(
         "TASK_PLAN_VERIFIED",
-        run_id=plan.run_id,
-        workflow_id=plan.workflow_id,
-        stage_id=plan.stage_id,
-        graph_checksum=plan.graph_checksum,
-        plan_id=plan.plan_id,
-        plan_version=plan.version,
+        plan,
+        sequence=4,
         input_checksum=aggregate_checksum,
         output_refs=tuple(output_refs_by_role.values()),
-        sequence=4,
     )
     report = TaskPlanReplayReducer().replay(
         (plan,), (*base_events, aggregate_event, verified_event)

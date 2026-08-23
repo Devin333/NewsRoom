@@ -16,7 +16,7 @@ from infrastructure.external.sources.models import SourceError, SourceHealth, So
 from infrastructure.storage.local_json import ReportNotFoundError
 from infrastructure.storage.postgres.migrations import load_migration_sql
 from infrastructure.storage.records import ClaimRecord, EvidenceItemRecord, QualityResultRecord, ReportDetailRecord, ReportSummaryRecord, SourceItemRecord
-from infrastructure.storage.persistence import ReportRecord, RunPersistenceBatch, WorkflowRunRecord
+from infrastructure.storage.persistence import GraphRunRecord, ReportRecord, RunPersistenceBatch
 
 
 ConnectionFactory = Callable[[], Any]
@@ -34,8 +34,8 @@ class PostgresRepository:
                 _cursor_execute(cursor, sql)
             connection.commit()
 
-    def save_workflow_run(self, record: WorkflowRunRecord) -> None:
-        self._execute_with_cursor(self._insert_workflow_run, record)
+    def save_graph_run(self, record: GraphRunRecord) -> None:
+        self._execute_with_cursor(self._insert_graph_run, record)
 
     def save_report(self, record: ReportRecord) -> None:
         self._execute_with_cursor(self._insert_report, record)
@@ -55,7 +55,7 @@ class PostgresRepository:
     def save_run_records(self, batch: RunPersistenceBatch) -> None:
         with self._connection_factory() as connection:
             with connection.cursor() as cursor:
-                self._insert_workflow_run(cursor, batch.workflow_run)
+                self._insert_graph_run(cursor, batch.graph_run)
                 if batch.report is not None:
                     self._insert_report(cursor, batch.report)
                 for source_item in batch.source_items:
@@ -168,29 +168,33 @@ class PostgresRepository:
         self,
         *,
         limit: int = 20,
-        workflow_id: str | None = None,
-        workflow_ids: tuple[str, ...] | None = None,
+        graph_id: str | None = None,
+        graph_ids: tuple[str, ...] | None = None,
     ) -> list[ReportSummaryRecord]:
         if limit <= 0:
             raise ValueError("limit must be greater than zero")
+        if graph_id and graph_ids:
+            raise ValueError("graph_id and graph_ids are mutually exclusive")
+        if graph_ids is not None and not graph_ids:
+            raise ValueError("graph_ids must not be empty")
         where = ""
         params: tuple[Any, ...]
-        if workflow_id:
-            where = "WHERE wr.workflow_id = %s"
-            params = (workflow_id, limit)
-        elif workflow_ids:
-            placeholders = ", ".join(["%s"] * len(workflow_ids))
-            where = f"WHERE wr.workflow_id IN ({placeholders})"
-            params = (*workflow_ids, limit)
+        if graph_id:
+            where = "WHERE gr.graph_id = %s"
+            params = (graph_id, limit)
+        elif graph_ids:
+            placeholders = ", ".join(["%s"] * len(graph_ids))
+            where = f"WHERE gr.graph_id IN ({placeholders})"
+            params = (*graph_ids, limit)
         else:
             params = (limit,)
         sql = f"""
         SELECT
             r.report_id, r.run_id, r.status, r.title, r.quality_score,
             r.citation_coverage_score, r.manifest_path, r.updated_at,
-            wr.workflow_id
+            gr.graph_id, gr.graph_version
         FROM reports r
-        LEFT JOIN workflow_runs wr ON wr.run_id = r.run_id
+        LEFT JOIN graph_runs gr ON gr.run_id = r.run_id
         {where}
         ORDER BY r.updated_at DESC
         LIMIT %s
@@ -202,8 +206,10 @@ class PostgresRepository:
         sql = """
         SELECT
             r.report_id, r.run_id, r.status, r.title, r.quality_score,
-            r.citation_coverage_score, r.manifest_path, r.updated_at
+            r.citation_coverage_score, r.manifest_path, r.updated_at,
+            gr.graph_id, gr.graph_version
         FROM reports r
+        LEFT JOIN graph_runs gr ON gr.run_id = r.run_id
         WHERE
             COALESCE(r.title, '') ILIKE %s
             OR COALESCE(r.report_markdown, '') ILIKE %s
@@ -251,10 +257,10 @@ class PostgresRepository:
         """
         return [_dict_or_empty(row[0]) for row in self._fetch_all(sql, (run_id,))]
 
-    def _insert_workflow_run(self, cursor: Any, record: WorkflowRunRecord) -> None:
+    def _insert_graph_run(self, cursor: Any, record: GraphRunRecord) -> None:
         sql = """
-        INSERT INTO workflow_runs (
-            run_id, workflow_id, workflow_version, status, profile,
+        INSERT INTO graph_runs (
+            run_id, graph_id, graph_version, status, profile,
             artifact_dir, manifest_path, events_path, error, metrics
         )
         VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s::jsonb)
@@ -271,8 +277,8 @@ class PostgresRepository:
             sql,
             (
                 record.run_id,
-                record.workflow_id,
-                record.workflow_version,
+                record.graph_id,
+                record.graph_version,
                 record.status,
                 record.profile,
                 record.artifact_dir,
@@ -581,6 +587,8 @@ def _search_record_from_row(row: tuple[Any, ...]) -> ReportSummaryRecord:
         citation_coverage_score=row[5],
         manifest_path=row[6],
         finished_at=_timestamp(row[7]),
+        graph_id=row[8],
+        graph_version=row[9],
     )
 
 
@@ -594,7 +602,8 @@ def _list_record_from_row(row: tuple[Any, ...]) -> ReportSummaryRecord:
         citation_coverage_score=row[5],
         manifest_path=row[6],
         finished_at=_timestamp(row[7]),
-        workflow_id=row[8],
+        graph_id=row[8],
+        graph_version=row[9],
     )
 
 

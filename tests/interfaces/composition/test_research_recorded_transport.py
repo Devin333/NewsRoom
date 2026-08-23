@@ -32,7 +32,11 @@ from infrastructure.research import (
     FilesystemResearchRunStore,
     StructuredResearchCandidateWorker,
 )
-from infrastructure.storage.indexing import GraphStorageIndexSnapshot
+from infrastructure.storage.indexing import (
+    GraphStorageIndexIdentity,
+    GraphStorageIndexSnapshot,
+    LocalGraphStorageIndexStore,
+)
 from interfaces.api.app import create_app
 from interfaces.cli.commands import mcp as mcp_commands
 from interfaces.composition import research as research_composition
@@ -638,6 +642,37 @@ def test_explicit_low_rag_replan_budget_halts_and_persists(
         assert result.rag_context.metadata["budget"]["max_replans"] == 0
         assert result.rag_context.metadata["budget_snapshot"]["replans_used"] == 0
         assert result.rag_context.gap_report.missing_information
+        halted_manifest_path = (
+            settings.artifact.root
+            / "recorded-production-low-rag-budget"
+            / "manifest.json"
+        )
+        halted_manifest = json.loads(
+            halted_manifest_path.read_text(encoding="utf-8")
+        )
+        assert halted_manifest["schema_version"] == (
+            "newsroom.graph-terminal-manifest/v2"
+        )
+        assert halted_manifest["status"] == "halted"
+        assert halted_manifest["publication"] is None
+        halted_identity = GraphStorageIndexIdentity.from_manifest(
+            service._analyze_use_case._runtime.artifact_port.read_terminal_manifest(
+                "recorded-production-low-rag-budget"
+            )
+        )
+        halted_snapshot = LocalGraphStorageIndexStore(
+            settings.artifact.root / "graph-index"
+        ).read(halted_identity)
+        assert halted_snapshot.identity.run_id == "recorded-production-low-rag-budget"
+        assert halted_snapshot.identity.manifest_hash == halted_manifest[
+            "manifest_hash"
+        ]
+        assert halted_snapshot.artifact_records
+        assert halted_snapshot.event_records
+        reread_snapshot = LocalGraphStorageIndexStore(
+            settings.artifact.root / "graph-index"
+        ).read(halted_identity)
+        assert reread_snapshot.snapshot_checksum == halted_snapshot.snapshot_checksum
         halted_rag_entry = next(
             entry
             for entry in result.transcript.entries()

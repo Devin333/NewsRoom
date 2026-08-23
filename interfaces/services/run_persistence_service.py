@@ -3,7 +3,6 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Callable
 
-from framework import RunResult
 from infrastructure.storage.persistence import RunPersistenceInput
 
 
@@ -26,7 +25,7 @@ class RunPersistenceApplicationService:
         repository.migrate()
         return repository
 
-    def persist_prepared_result(self, repository, result: RunResult, *, profile: str) -> None:
+    def persist_prepared_result(self, repository, result: object, *, profile: str) -> None:
         self.persist_result(
             repository,
             result,
@@ -43,7 +42,7 @@ class RunPersistenceApplicationService:
             migrate=False,
         )
 
-    def persist_result_after_migration(self, result: RunResult, *, profile: str) -> None:
+    def persist_result_after_migration(self, result: object, *, profile: str) -> None:
         repository = self.prepare_repository()
         self.persist_prepared_result(repository, result, profile=profile)
 

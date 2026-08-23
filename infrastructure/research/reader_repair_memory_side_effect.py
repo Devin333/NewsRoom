@@ -23,7 +23,6 @@ from business.research.ports.repair_memory import (
     READER_REPAIR_MEMORY_EFFECT_KIND,
     READER_REPAIR_MEMORY_HANDLER_REF,
     READER_REPAIR_MEMORY_SCHEMA_VERSION,
-    READER_REPAIR_MEMORY_STEP_ID,
     ReaderRepairMemoryCandidateProjection,
     ReaderRepairMemoryCommitPort,
     ReaderRepairMemoryCommitReceipt,
@@ -102,7 +101,6 @@ class ReaderRepairMemorySideEffectHandler:
             node_id=intent.node_id,
             node_instance_id=intent.node_instance_id,
             activity_id=intent.activity_id,
-            step_id=intent.step_id,
             terminal_action=intent.terminal_action,
             attempt=intent.attempt,
             candidate_refs=intent.candidate_refs,
@@ -158,7 +156,6 @@ class ReaderRepairMemorySideEffectHandler:
             node_id=intent.node_id,
             node_instance_id=intent.node_instance_id,
             activity_id=intent.activity_id,
-            step_id=intent.step_id,
             terminal_action=intent.terminal_action,
             attempt=intent.attempt,
             candidate_refs=intent.candidate_refs,
@@ -196,7 +193,6 @@ class ReaderRepairMemorySideEffectHandler:
         for decision in self.side_effect_store.list_decisions(run_id=intent.run_id):
             if (
                 decision.origin is not HarnessSideEffectOrigin.WORKER
-                or decision.step_id != READER_REPAIR_MEMORY_STEP_ID
                 or decision.kind != READER_REPAIR_MEMORY_EFFECT_KIND
                 or str(decision.handler) != READER_REPAIR_MEMORY_HANDLER_REF
                 or decision.identity_scope_ref != intent.identity_scope_ref

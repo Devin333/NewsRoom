@@ -43,8 +43,8 @@ def test_new_attempt_history_requires_scope_identity_and_has_no_generic_fence() 
     context = AttemptContext.create(
         attempt_id="attempt-1",
         operation_id="step:one",
-        operation_kind="workflow_step",
-        idempotency_key="workflow:one",
+        operation_kind="graph_step",
+        idempotency_key="graph:one",
         local_attempt_no=1,
         local_budget=LocalRetryBudget(max_attempts=2),
         admission_details={
@@ -141,8 +141,8 @@ def test_rejection_payload_omits_attempt_identity_and_schema_accepts_it() -> Non
     payload = attempt_rejection_event_payload(
         execution_id="run-1",
         operation_id="step:one",
-        operation_kind="workflow_step",
-        idempotency_key="workflow:one",
+        operation_kind="graph_step",
+        idempotency_key="graph:one",
         reason_code="attempt_deadline_admission_rejected",
         admission=admission,
     )

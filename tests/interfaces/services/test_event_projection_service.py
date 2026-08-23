@@ -9,10 +9,26 @@ from framework.events import (
     BusinessContext,
     EventCandidate,
     EventPage,
+    GRAPH_EVENT_CONTEXT_EXTENSION,
+    GraphEventContext,
+    GraphEventExecutionVersion,
+    GraphRunIdentity,
+    GraphStageIdentity,
     ProducerIdentity,
     StoredEvent,
     StreamSequenceCursor,
     default_event_schema_catalog,
+)
+from framework.harness.artifacts import (
+    GraphTerminalArtifact,
+    GraphTerminalManifest,
+    GraphTerminalManifestV2,
+)
+from framework.harness.graph import HarnessGraphCompiler
+from framework.harness.graph.execution_versions import GraphExecutionVersionManifest
+from business.research.graphs import build_paper_analysis_graph_definition
+from infrastructure.storage.artifacts.graph_terminal import (
+    FilesystemGraphTerminalArtifactStore,
 )
 from framework.events.errors import EventStoreUnavailableError
 from interfaces.services.event_projection_service import (
@@ -118,6 +134,8 @@ def test_rebuild_uses_exact_requested_watermark_during_concurrent_append(tmp_pat
         authorizer=_Authorizer(),
         artifact_root=tmp_path,
         schema_catalog=default_event_schema_catalog(),
+        terminal_manifest_reader=_ManifestReader(tmp_path),
+        graph_identity=_identity(),
         page_size=1,
     )
 
@@ -145,13 +163,15 @@ def test_rebuild_uses_exact_requested_watermark_during_concurrent_append(tmp_pat
     assert reader.write_calls == 0
 
 
-def test_explicit_empty_prefix_does_not_turn_into_latest_projection(tmp_path) -> None:
+def test_unspecified_prefix_uses_the_durable_graph_watermark(tmp_path) -> None:
     reader = _Reader([_event(1), _event(2)])
     service = EventProjectionService(
         reader=reader,
         authorizer=_Authorizer(),
         artifact_root=tmp_path,
         schema_catalog=default_event_schema_catalog(),
+        terminal_manifest_reader=_ManifestReader(tmp_path),
+        graph_identity=_identity(),
     )
 
     result = service.rebuild_run_projection(
@@ -160,10 +180,10 @@ def test_explicit_empty_prefix_does_not_turn_into_latest_projection(tmp_path) ->
         authorization=_authorization(),
     )
 
-    assert result.projection.path.read_bytes() == b""
-    assert result.projection.high_watermark is None
+    assert result.projection.path.read_bytes()
+    assert result.projection.high_watermark == 2
     assert result.durable_high_watermark == 2
-    assert reader.requests == []
+    assert reader.requests
     assert reader.write_calls == 0
 
 
@@ -178,6 +198,8 @@ def test_unavailable_rebuild_preserves_existing_projection(tmp_path) -> None:
         authorizer=_Authorizer(),
         artifact_root=tmp_path,
         schema_catalog=default_event_schema_catalog(),
+        terminal_manifest_reader=_ManifestReader(tmp_path),
+        graph_identity=_identity(),
     )
 
     result = service.rebuild_run_projection(
@@ -201,6 +223,8 @@ def test_projection_status_verifies_file_before_reporting_running_or_stale(
         authorizer=_Authorizer(),
         artifact_root=tmp_path,
         schema_catalog=default_event_schema_catalog(),
+        terminal_manifest_reader=_ManifestReader(tmp_path),
+        graph_identity=_identity(),
     )
     authorization = _authorization()
     projection = service.rebuild_run_projection(
@@ -246,6 +270,8 @@ def test_projection_path_cannot_be_overridden_or_escape_artifact_root(tmp_path) 
         authorizer=_Authorizer(),
         artifact_root=tmp_path / "runs",
         schema_catalog=default_event_schema_catalog(),
+        terminal_manifest_reader=_ManifestReader(tmp_path),
+        graph_identity=_identity(),
     )
 
     with pytest.raises(TypeError, match="unexpected keyword argument 'target'"):
@@ -271,6 +297,8 @@ def test_projection_status_rejects_corrupt_file_and_partial_metadata(tmp_path) -
         authorizer=_Authorizer(),
         artifact_root=tmp_path,
         schema_catalog=default_event_schema_catalog(),
+        terminal_manifest_reader=_ManifestReader(tmp_path),
+        graph_identity=_identity(),
     )
     projection = service.rebuild_run_projection(
         "run-projection-service",
@@ -308,6 +336,8 @@ def test_projection_status_rejects_missing_projection_artifact(tmp_path) -> None
         authorizer=_Authorizer(),
         artifact_root=tmp_path,
         schema_catalog=default_event_schema_catalog(),
+        terminal_manifest_reader=_ManifestReader(tmp_path),
+        graph_identity=_identity(),
     )
 
     with pytest.raises(EventProjectionConflictError, match="artifact_missing"):
@@ -327,6 +357,8 @@ def test_projection_status_rejects_projection_ahead_of_durable_stream(tmp_path) 
         authorizer=_Authorizer(),
         artifact_root=tmp_path,
         schema_catalog=default_event_schema_catalog(),
+        terminal_manifest_reader=_ManifestReader(tmp_path),
+        graph_identity=_identity(),
     )
 
     with pytest.raises(EventProjectionConflictError, match="ahead_of_durable"):
@@ -345,30 +377,32 @@ def test_projection_status_requires_boolean_active_flag_and_authorizes_it(
 ) -> None:
     authorizer = _Authorizer()
     service = EventProjectionService(
-        reader=_Reader([]),
+        reader=_Reader([_event(1)]),
         authorizer=authorizer,
         artifact_root=tmp_path,
         schema_catalog=default_event_schema_catalog(),
+        terminal_manifest_reader=_ManifestReader(tmp_path),
+        graph_identity=_identity(),
     )
     projection = service.rebuild_run_projection(
         "run-projection-service",
-        requested_high_watermark=None,
+        requested_high_watermark=1,
         authorization=_authorization(),
     ).projection
 
     with pytest.raises(TypeError, match="must be a boolean"):
         service.get_run_projection_status(
             "run-projection-service",
-            projection_high_watermark=None,
-            projection_event_count=0,
+            projection_high_watermark=1,
+            projection_event_count=1,
             projection_checksum=projection.checksum,
             run_is_active=1,
             authorization=_authorization(),
         )
     status = service.get_run_projection_status(
         "run-projection-service",
-        projection_high_watermark=None,
-        projection_event_count=0,
+        projection_high_watermark=1,
+        projection_event_count=1,
         projection_checksum=projection.checksum,
         run_is_active=True,
         authorization=_authorization(),
@@ -388,6 +422,8 @@ def test_manifest_owned_projection_status_binds_tenant_and_server_metadata(
         authorizer=authorizer,
         artifact_root=tmp_path,
         schema_catalog=default_event_schema_catalog(),
+        terminal_manifest_reader=_ManifestReader(tmp_path),
+        graph_identity=_identity(),
     )
     authorization = _authorization()
     projection = service.rebuild_run_projection(
@@ -417,6 +453,8 @@ def test_manifest_without_tenant_uses_nonempty_tenant_scoped_stream_evidence(
         authorizer=_Authorizer(),
         artifact_root=tmp_path,
         schema_catalog=default_event_schema_catalog(),
+        terminal_manifest_reader=_ManifestReader(tmp_path),
+        graph_identity=_identity(),
     )
     projection = service.rebuild_run_projection(
         "run-projection-service",
@@ -433,20 +471,15 @@ def test_manifest_without_tenant_uses_nonempty_tenant_scoped_stream_evidence(
     assert status.status is EventProjectionStatus.CURRENT
 
 
-def test_manifest_without_tenant_fails_closed_for_empty_stream(tmp_path) -> None:
+def test_missing_terminal_manifest_is_not_available(tmp_path) -> None:
     service = EventProjectionService(
         reader=_Reader([]),
         authorizer=_Authorizer(),
         artifact_root=tmp_path,
         schema_catalog=default_event_schema_catalog(),
+        terminal_manifest_reader=_ManifestReader(tmp_path),
+        graph_identity=_identity(),
     )
-    projection = service.rebuild_run_projection(
-        "run-projection-service",
-        requested_high_watermark=None,
-        authorization=_authorization(),
-    ).projection
-    _write_projection_manifest(tmp_path, projection)
-
     with pytest.raises(EventProjectionNotFoundError, match="not available"):
         service.get_run_projection_status_from_manifest(
             "run-projection-service",
@@ -461,6 +494,8 @@ def test_manifest_projection_cross_tenant_is_hidden_as_not_found(tmp_path) -> No
         authorizer=_Authorizer(),
         artifact_root=tmp_path,
         schema_catalog=default_event_schema_catalog(),
+        terminal_manifest_reader=_ManifestReader(tmp_path),
+        graph_identity=_identity(),
     )
     projection = service.rebuild_run_projection(
         "run-projection-service",
@@ -482,24 +517,59 @@ def _write_projection_manifest(
     *,
     tenant_id: str | None = None,
 ) -> None:
-    payload = {
-        "run_id": "run-projection-service",
-        "status": "succeeded",
-        "event_projection": {
-            "path": "events.jsonl",
+    manifest_tenant = tenant_id or "tenant-a"
+    identity = _identity()
+    execution_versions = _execution_versions()
+    artifact = GraphTerminalArtifact(
+        artifact_key="event_projection",
+        artifact_id="event_projection",
+        ref="artifact://run-projection-service/event_projection",
+        relative_path="events.jsonl",
+        content_checksum=projection.checksum,
+        byte_size=projection.path.stat().st_size,
+        media_type="application/x-ndjson",
+        node_id="graph",
+        attempt_id="projection-1",
+        required_for_replay=True,
+        required_for_publication=True,
+        metadata={
+            "schema_version": "newsroom.graph-event-projection-artifact/v1",
+            "graph_identity": identity.to_dict(),
+            "graph_execution_version": projection.execution_version.to_dict(),
+            "tenant_id": manifest_tenant,
             "stream_id": projection.stream_id,
             "high_watermark": projection.high_watermark,
             "event_count": projection.event_count,
             "checksum": projection.checksum,
+            "content_checksum": projection.checksum,
         },
-        "event_projection_high_watermark": projection.high_watermark,
-        "event_projection_checksum": projection.checksum,
-        "event_count": projection.event_count,
-    }
-    if tenant_id is not None:
-        payload["tenant_id"] = tenant_id
-    manifest = artifact_root / "run-projection-service" / "manifest.json"
-    manifest.write_text(json.dumps(payload), encoding="utf-8")
+    )
+    manifest = GraphTerminalManifestV2(
+        terminal=GraphTerminalManifest(
+            tenant_id=manifest_tenant,
+            run_id="run-projection-service",
+            graph_id=execution_versions.graph_id,
+            graph_version=execution_versions.graph_version,
+            graph_schema_version=(
+                execution_versions.normalized_graph_schema_version
+            ),
+            compiler_version=execution_versions.compiler_version,
+            normalized_graph_checksum=(
+                execution_versions.normalized_graph_checksum
+            ),
+            status="succeeded",
+            started_at=NOW,
+            completed_at=NOW + timedelta(seconds=10),
+            terminal_state_ref="sha256:" + "b" * 64,
+            checkpoint_ref="graph-state://run-projection-service/" + "b" * 64,
+            terminal_node_ids=execution_versions.terminal_node_ids,
+            gate_evidence_refs=("sha256:" + "c" * 64,),
+            artifacts=(artifact,),
+            publication=None,
+        ),
+        execution_versions=execution_versions,
+    )
+    _ManifestReader(artifact_root).write_terminal_manifest(manifest)
 
 
 def _authorization() -> EventAuthorizationContext:
@@ -510,39 +580,96 @@ def _authorization() -> EventAuthorizationContext:
     )
 
 
+class _ManifestReader:
+    def __init__(self, root) -> None:
+        self.store = FilesystemGraphTerminalArtifactStore(root)
+
+    def read_terminal_manifest(self, run_id: str):
+        return self.store.read_terminal_manifest(run_id)
+
+    def write_terminal_manifest(self, manifest):
+        return self.store.write_terminal_manifest(manifest)
+
+    def replace_terminal_manifest(self, manifest, *, expected_manifest_hash: str):
+        return self.store.replace_terminal_manifest(
+            manifest,
+            expected_manifest_hash=expected_manifest_hash,
+        )
+
+
+def _identity() -> GraphRunIdentity:
+    execution_versions = _execution_versions()
+    return GraphRunIdentity(
+        run_id="run-projection-service",
+        graph_id=execution_versions.graph_id,
+        graph_version=execution_versions.graph_version,
+        graph_ref=(
+            f"{execution_versions.graph_id}@{execution_versions.graph_version}"
+        ),
+        graph_checksum=execution_versions.normalized_graph_checksum,
+    )
+
+
+def _execution_versions() -> GraphExecutionVersionManifest:
+    graph = HarnessGraphCompiler().compile(
+        build_paper_analysis_graph_definition()
+    ).graph
+    return GraphExecutionVersionManifest.from_normalized_graph(graph)
+
+
 def _event(sequence: int) -> StoredEvent:
-    first = sequence == 1
+    identity = _identity()
     candidate = EventCandidate(
         event_id=f"evt-projection-{sequence}",
-        event_type="workflow_started" if first else "step_started",
-        data_schema="newsroom.workflow-event/v1",
-        source="io.newsroom.workflow.runtime",
+        event_type=(
+            "harness_graph_initialized"
+            if sequence == 1
+            else "harness_graph_decision_committed"
+        ),
+        data_schema="newsroom.harness-graph-control-commit/v1",
+        source="io.newsroom.harness.control-plane",
         occurred_at=NOW + timedelta(seconds=sequence),
         stream_id="run:run-projection-service",
         correlation_id="run-projection-service",
         business_context=BusinessContext(
-            run_id="run-projection-service",
-            workflow_id="workflow-projection",
-            step_id=None if first else f"step-{sequence}",
+            run_id=identity.run_id,
+            graph_id=identity.graph_id,
+            graph_version=identity.graph_version,
+            graph_ref=identity.graph_ref,
+            graph_checksum=identity.graph_checksum,
+            stage_id=None if sequence == 1 else "analyze",
+            node_instance_id=None if sequence == 1 else "analyze:1",
         ),
         producer=ProducerIdentity(
-            component="framework.workflow.runtime",
+            component="framework.harness.control_plane",
             version="1",
         ),
-        payload=(
-            {
-                "workflow_id": "workflow-projection",
-                "workflow_version": "1",
-                "profile": "test",
-            }
-            if first
-            else {
-                "step_id": f"step-{sequence}",
-                "step_type": "function",
-                "attempt": 1,
-                "max_attempts": 1,
-            }
-        ),
+        payload={"commit": {"sequence": sequence}},
+        extensions={
+            GRAPH_EVENT_CONTEXT_EXTENSION: GraphEventContext(
+                identity=identity,
+                execution_version=GraphEventExecutionVersion(
+                    graph_schema_version=(
+                        _execution_versions().normalized_graph_schema_version
+                    ),
+                    compiler_version=_execution_versions().compiler_version,
+                    normalized_graph_checksum=identity.graph_checksum,
+                ),
+                stage_identity=(
+                    GraphStageIdentity(
+                        run_id=identity.run_id,
+                        graph_id=identity.graph_id,
+                        graph_version=identity.graph_version,
+                        graph_ref=identity.graph_ref,
+                        graph_checksum=identity.graph_checksum,
+                        node_id="analyze",
+                        node_instance_id="analyze:1",
+                    )
+                    if sequence != 1
+                    else None
+                ),
+            ).to_dict()
+        },
         tenant_id="tenant-a",
     )
     return StoredEvent(

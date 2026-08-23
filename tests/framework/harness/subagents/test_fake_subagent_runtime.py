@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+from dataclasses import replace
+
 import pytest
 
 from framework.harness import (
-    ContextEnvelope,
     FakeSubAgentRuntime,
     FakeSubAgentWorker,
     HarnessValidationError,
@@ -26,11 +27,9 @@ def test_subagent_result_rejects_illegal_flow_output_from_worker() -> None:
 
 
 def test_fake_subagent_runtime_can_simulate_sibling_private_context_attempt() -> None:
+    runtime = FakeSubAgentRuntime(fake_subagent_spec())
     with pytest.raises(HarnessValidationError):
-        runtime = FakeSubAgentRuntime(fake_subagent_spec())
-        runtime.build_invocation(
-            context=ContextEnvelope(
-                envelope_id="context://unsafe",
-                dynamic_tail={"sibling_private_notes": ["private"]},
-            )
+        replace(
+            runtime.build_invocation(),
+            schema_version="newsroom.subagent-invocation/v2",
         )

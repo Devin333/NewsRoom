@@ -18,7 +18,7 @@ from framework.harness.control_plane.graph_state import (
     HarnessNodeInstanceState,
 )
 from framework.harness.control_plane.policy import HarnessBudgetSnapshot
-from framework.harness.control_plane.state import HarnessStepState, HarnessStepStatus
+from framework.harness.control_plane.state import HarnessStepStatus
 from framework.harness.quality.verdict import HarnessQualityVerdict
 from framework.harness.graph.canonical import (
     canonical_checksum,
@@ -40,7 +40,6 @@ _CHECKSUM_PATTERN = re.compile(r"^sha256:[0-9a-f]{64}$")
 
 
 class StepLifecycleBindingMode(StrEnum):
-    LEGACY_UNBOUND = "legacy_unbound"
     GRAPH_BOUND = "graph_bound"
 
 
@@ -65,9 +64,7 @@ class StepLifecycleState:
     attempts: int = 0
     replans: int = 0
     error: str | None = None
-    binding_mode: StepLifecycleBindingMode | str = (
-        StepLifecycleBindingMode.LEGACY_UNBOUND
-    )
+    binding_mode: StepLifecycleBindingMode | str = StepLifecycleBindingMode.GRAPH_BOUND
     step_ref: HarnessContractReference | None = None
     node_instance_id: str | None = None
     last_event_sequence: int | None = None
@@ -117,80 +114,55 @@ class StepLifecycleState:
                 "Step lifecycle evidence references must be unique",
                 code="duplicate_step_lifecycle_evidence",
             )
-        if binding_mode is StepLifecycleBindingMode.LEGACY_UNBOUND:
-            if (
-                step_ref is not None
-                or node_instance_id is not None
-                or last_event_sequence is not None
-                or evidence_refs
-            ):
-                raise HarnessValidationError(
-                    "Legacy Step lifecycle state cannot carry graph identity",
-                    code="ambiguous_step_lifecycle_binding",
-                )
-        else:
-            if not isinstance(step_ref, HarnessContractReference):
-                raise HarnessValidationError(
-                    "Graph-bound Step lifecycle state requires exact step_ref",
-                    code="missing_step_lifecycle_identity",
-                )
-            if step_ref.contract_kind is not HarnessContractKind.STEP:
-                raise HarnessValidationError(
-                    "Graph-bound step_ref must reference a Step contract",
-                    code="step_lifecycle_identity_mismatch",
-                )
-            if not _step_reference_matches_id(step_ref, self.step_id):
-                raise HarnessValidationError(
-                    "Graph-bound step_ref does not match step_id",
-                    code="step_lifecycle_identity_mismatch",
-                )
-            if node_instance_id is None or last_event_sequence is None:
-                raise HarnessValidationError(
-                    "Graph-bound Step lifecycle state requires node and sequence identity",
-                    code="missing_step_lifecycle_identity",
-                )
-            _nonnegative_int(
-                last_event_sequence,
-                "step_lifecycle_state.last_event_sequence",
+        if not isinstance(step_ref, HarnessContractReference):
+            raise HarnessValidationError(
+                "Graph-bound Step lifecycle state requires exact step_ref",
+                code="missing_step_lifecycle_identity",
             )
-            if (
-                self.status
-                in {
-                    HarnessStepStatus.RUNNING,
-                    HarnessStepStatus.VERIFYING,
-                    HarnessStepStatus.RETRYING,
-                }
-                and self.attempts < 1
-            ):
-                raise HarnessValidationError(
-                    "Active graph-bound Step phase requires a positive attempt",
-                    code="invalid_step_lifecycle_attempt_state",
-                )
-            for evidence in evidence_refs:
-                _validate_evidence_binding(
-                    evidence,
-                    node_instance_id=node_instance_id,
-                    attempt=self.attempts,
-                    last_event_sequence=last_event_sequence,
-                )
+        if step_ref.contract_kind is not HarnessContractKind.STEP:
+            raise HarnessValidationError(
+                "Graph-bound step_ref must reference a Step contract",
+                code="step_lifecycle_identity_mismatch",
+            )
+        if not _step_reference_matches_id(step_ref, self.step_id):
+            raise HarnessValidationError(
+                "Graph-bound step_ref does not match step_id",
+                code="step_lifecycle_identity_mismatch",
+            )
+        if node_instance_id is None or last_event_sequence is None:
+            raise HarnessValidationError(
+                "Graph-bound Step lifecycle state requires node and sequence identity",
+                code="missing_step_lifecycle_identity",
+            )
+        _nonnegative_int(
+            last_event_sequence,
+            "step_lifecycle_state.last_event_sequence",
+        )
+        if (
+            self.status
+            in {
+                HarnessStepStatus.RUNNING,
+                HarnessStepStatus.VERIFYING,
+                HarnessStepStatus.RETRYING,
+            }
+            and self.attempts < 1
+        ):
+            raise HarnessValidationError(
+                "Active graph-bound Step phase requires a positive attempt",
+                code="invalid_step_lifecycle_attempt_state",
+            )
+        for evidence in evidence_refs:
+            _validate_evidence_binding(
+                evidence,
+                node_instance_id=node_instance_id,
+                attempt=self.attempts,
+                last_event_sequence=last_event_sequence,
+            )
         object.__setattr__(self, "binding_mode", binding_mode)
         object.__setattr__(self, "step_ref", step_ref)
         object.__setattr__(self, "node_instance_id", node_instance_id)
         object.__setattr__(self, "last_event_sequence", last_event_sequence)
         object.__setattr__(self, "evidence_refs", evidence_refs)
-
-    @classmethod
-    def from_legacy(cls, state: HarnessStepState) -> StepLifecycleState:
-        if not isinstance(state, HarnessStepState):
-            raise TypeError("state must be HarnessStepState")
-        return cls(
-            step_id=state.step_id,
-            status=state.status,
-            attempts=state.attempts,
-            replans=state.replans,
-            error=state.error,
-            binding_mode=StepLifecycleBindingMode.LEGACY_UNBOUND,
-        )
 
     @classmethod
     def from_node_instance(
@@ -624,9 +596,7 @@ class StepLifecycleObservations:
     quality_verdict: StepQualityObservation | None = None
     approval_granted: bool = False
     approval_evidence: HarnessAttemptEvidenceReference | None = None
-    binding_mode: StepLifecycleBindingMode | str = (
-        StepLifecycleBindingMode.LEGACY_UNBOUND
-    )
+    binding_mode: StepLifecycleBindingMode | str = StepLifecycleBindingMode.GRAPH_BOUND
     node_instance_id: str | None = None
     attempt: int | None = None
     last_event_sequence: int | None = None
@@ -683,60 +653,48 @@ class StepLifecycleObservations:
         accepted_evidence = self._accepted_evidence_values(
             gate_results=gate_results,
         )
-        if binding_mode is StepLifecycleBindingMode.LEGACY_UNBOUND:
-            if (
-                node_instance_id is not None
-                or attempt is not None
-                or last_event_sequence is not None
-                or accepted_evidence
-            ):
-                raise HarnessValidationError(
-                    "Legacy observations cannot carry graph-bound evidence",
-                    code="ambiguous_step_lifecycle_binding",
-                )
-        else:
-            if (
-                node_instance_id is None
-                or attempt is None
-                or last_event_sequence is None
-            ):
-                raise HarnessValidationError(
-                    "Graph-bound observations require node, attempt, and sequence identity",
-                    code="missing_step_observation_identity",
-                )
-            _nonnegative_int(attempt, "step_lifecycle_observations.attempt")
-            _nonnegative_int(
-                last_event_sequence,
-                "step_lifecycle_observations.last_event_sequence",
+        if (
+            node_instance_id is None
+            or attempt is None
+            or last_event_sequence is None
+        ):
+            raise HarnessValidationError(
+                "Graph-bound observations require node, attempt, and sequence identity",
+                code="missing_step_observation_identity",
             )
-            if self.worker_result is not None:
-                _require_bound_observation(
-                    self.worker_result.accepted_evidence,
-                    label="worker",
-                )
-            for gate_result in gate_results:
-                _require_bound_observation(
-                    gate_result.accepted_evidence,
-                    label="Gate",
-                )
-                _require_exact_gate_observation(gate_result)
-            if self.quality_verdict is not None:
-                _require_bound_observation(
-                    self.quality_verdict.accepted_evidence,
-                    label="quality",
-                )
-            if self.approval_granted:
-                _require_bound_observation(
-                    self.approval_evidence,
-                    label="approval",
-                )
-            for evidence in accepted_evidence:
-                _validate_evidence_binding(
-                    evidence,
-                    node_instance_id=node_instance_id,
-                    attempt=attempt,
-                    last_event_sequence=last_event_sequence,
-                )
+        _nonnegative_int(attempt, "step_lifecycle_observations.attempt")
+        _nonnegative_int(
+            last_event_sequence,
+            "step_lifecycle_observations.last_event_sequence",
+        )
+        if self.worker_result is not None:
+            _require_bound_observation(
+                self.worker_result.accepted_evidence,
+                label="worker",
+            )
+        for gate_result in gate_results:
+            _require_bound_observation(
+                gate_result.accepted_evidence,
+                label="Gate",
+            )
+            _require_exact_gate_observation(gate_result)
+        if self.quality_verdict is not None:
+            _require_bound_observation(
+                self.quality_verdict.accepted_evidence,
+                label="quality",
+            )
+        if self.approval_granted:
+            _require_bound_observation(
+                self.approval_evidence,
+                label="approval",
+            )
+        for evidence in accepted_evidence:
+            _validate_evidence_binding(
+                evidence,
+                node_instance_id=node_instance_id,
+                attempt=attempt,
+                last_event_sequence=last_event_sequence,
+            )
         object.__setattr__(self, "binding_mode", binding_mode)
         object.__setattr__(self, "node_instance_id", node_instance_id)
         object.__setattr__(self, "attempt", attempt)
@@ -789,33 +747,6 @@ class StepLifecycleObservations:
     @property
     def accepted_evidence(self) -> tuple[HarnessAttemptEvidenceReference, ...]:
         return self._accepted_evidence_values()
-
-    @classmethod
-    def from_legacy(
-        cls,
-        *,
-        worker_result: HarnessWorkerResult | None = None,
-        gate_results: tuple[HarnessGateResult, ...] = (),
-        quality_verdict: HarnessQualityVerdict | None = None,
-        approval_granted: bool = False,
-    ) -> StepLifecycleObservations:
-        return cls(
-            worker_result=(
-                None
-                if worker_result is None
-                else StepWorkerObservation.from_worker_result(worker_result)
-            ),
-            gate_results=tuple(
-                StepGateObservation.from_gate_result(result) for result in gate_results
-            ),
-            quality_verdict=(
-                None
-                if quality_verdict is None
-                else StepQualityObservation.from_verdict(quality_verdict)
-            ),
-            approval_granted=approval_granted,
-            binding_mode=StepLifecycleBindingMode.LEGACY_UNBOUND,
-        )
 
     @classmethod
     def for_node(
@@ -911,9 +842,7 @@ class StepLifecycleTransition:
     reason: str | None = None
     payload: Mapping[str, Any] = field(default_factory=dict)
     lifecycle_version: str = HARNESS_STEP_LIFECYCLE_VERSION
-    binding_mode: StepLifecycleBindingMode | str = (
-        StepLifecycleBindingMode.LEGACY_UNBOUND
-    )
+    binding_mode: StepLifecycleBindingMode | str = StepLifecycleBindingMode.GRAPH_BOUND
     step_ref: HarnessContractReference | None = None
     node_instance_id: str | None = None
     attempt: int | None = None
@@ -994,53 +923,40 @@ class StepLifecycleTransition:
                 "Step transition evidence references must be unique",
                 code="duplicate_step_transition_evidence",
             )
-        if binding_mode is StepLifecycleBindingMode.LEGACY_UNBOUND:
-            if (
-                step_ref is not None
-                or node_instance_id is not None
-                or attempt is not None
-                or last_event_sequence is not None
-                or evidence_refs
-            ):
-                raise HarnessValidationError(
-                    "Legacy Step transition cannot carry graph identity",
-                    code="ambiguous_step_lifecycle_binding",
-                )
-        else:
-            if not isinstance(step_ref, HarnessContractReference):
-                raise HarnessValidationError(
-                    "Graph-bound transition requires exact step_ref",
-                    code="missing_step_lifecycle_identity",
-                )
-            if (
-                step_ref.contract_kind is not HarnessContractKind.STEP
-                or not _step_reference_matches_id(step_ref, step_id)
-            ):
-                raise HarnessValidationError(
-                    "Graph-bound transition step_ref does not match step_id",
-                    code="step_lifecycle_identity_mismatch",
-                )
-            if (
-                node_instance_id is None
-                or attempt is None
-                or last_event_sequence is None
-            ):
-                raise HarnessValidationError(
-                    "Graph-bound transition requires node, attempt, and sequence identity",
-                    code="missing_step_lifecycle_identity",
-                )
-            _nonnegative_int(attempt, "step_transition.attempt")
-            _nonnegative_int(
-                last_event_sequence,
-                "step_transition.last_event_sequence",
+        if not isinstance(step_ref, HarnessContractReference):
+            raise HarnessValidationError(
+                "Graph-bound transition requires exact step_ref",
+                code="missing_step_lifecycle_identity",
             )
-            for evidence in evidence_refs:
-                _validate_evidence_binding(
-                    evidence,
-                    node_instance_id=node_instance_id,
-                    attempt=attempt,
-                    last_event_sequence=last_event_sequence,
-                )
+        if (
+            step_ref.contract_kind is not HarnessContractKind.STEP
+            or not _step_reference_matches_id(step_ref, step_id)
+        ):
+            raise HarnessValidationError(
+                "Graph-bound transition step_ref does not match step_id",
+                code="step_lifecycle_identity_mismatch",
+            )
+        if (
+            node_instance_id is None
+            or attempt is None
+            or last_event_sequence is None
+        ):
+            raise HarnessValidationError(
+                "Graph-bound transition requires node, attempt, and sequence identity",
+                code="missing_step_lifecycle_identity",
+            )
+        _nonnegative_int(attempt, "step_transition.attempt")
+        _nonnegative_int(
+            last_event_sequence,
+            "step_transition.last_event_sequence",
+        )
+        for evidence in evidence_refs:
+            _validate_evidence_binding(
+                evidence,
+                node_instance_id=node_instance_id,
+                attempt=attempt,
+                last_event_sequence=last_event_sequence,
+            )
         object.__setattr__(self, "transition_type", transition_type)
         object.__setattr__(self, "step_id", step_id)
         object.__setattr__(self, "reason_code", reason_code)
@@ -1185,30 +1101,27 @@ class StepLifecycleStateMachine:
         if status in {HarnessStepStatus.SUCCEEDED, HarnessStepStatus.SKIPPED}:
             return None
         if status is HarnessStepStatus.WAITING_APPROVAL:
-            if observations.binding_mode is StepLifecycleBindingMode.GRAPH_BOUND:
-                if observations.approval_evidence is None:
-                    return None
-                if not observations.approval_granted:
-                    return None
-                exhausted = _turn_budget_transition(
-                    state,
-                    budget,
-                    observations=observations,
-                )
-                if exhausted is not None:
-                    return exhausted
+            if observations.approval_evidence is None or not observations.approval_granted:
                 return _transition(
-                    StepLifecycleTransitionType.VERIFY_STEP,
+                    StepLifecycleTransitionType.WAIT_FOR_APPROVAL,
                     state,
-                    "approval_granted_verify",
-                    reason="Harness approval granted",
+                    "step_waiting_for_approval",
+                    reason="step is waiting for approval",
                     observations=observations,
                 )
-            return _transition(
-                StepLifecycleTransitionType.WAIT_FOR_APPROVAL,
+            exhausted = _turn_budget_transition(
                 state,
-                "step_waiting_for_approval",
-                reason="step is waiting for approval",
+                budget,
+                observations=observations,
+            )
+            if exhausted is not None:
+                return exhausted
+            return _transition(
+                StepLifecycleTransitionType.VERIFY_STEP,
+                state,
+                "approval_granted_verify",
+                reason="Harness approval granted",
+                observations=observations,
             )
         if status is HarnessStepStatus.HALTED:
             return _transition(
@@ -1449,9 +1362,7 @@ class StepLifecycleStateMachine:
     ) -> StepLifecycleTransition:
         gate_results = observations.gate_results
         quality_verdict = observations.quality_verdict
-        if state.binding_mode is StepLifecycleBindingMode.GRAPH_BOUND and (
-            gate_results or quality_verdict is not None
-        ):
+        if gate_results or quality_verdict is not None:
             _require_declared_gate_observation(
                 policy.declared_gate_reference,
                 gate_results,
@@ -1536,14 +1447,10 @@ def _transition(
         reason_code=reason_code,
         reason=reason,
         payload={} if payload is None else payload,
-        binding_mode=state.binding_mode,
+        binding_mode=StepLifecycleBindingMode.GRAPH_BOUND,
         step_ref=state.step_ref,
         node_instance_id=state.node_instance_id,
-        attempt=(
-            state.attempt
-            if state.binding_mode is StepLifecycleBindingMode.GRAPH_BOUND
-            else None
-        ),
+        attempt=state.attempt,
         last_event_sequence=state.last_event_sequence,
         evidence_refs=evidence_refs,
     )
@@ -1611,8 +1518,6 @@ def _validate_state_observation_binding(
             "Step lifecycle state and observations use different binding modes",
             code="step_lifecycle_binding_mode_mismatch",
         )
-    if state.binding_mode is StepLifecycleBindingMode.LEGACY_UNBOUND:
-        return
     if observations.node_instance_id != state.node_instance_id:
         raise HarnessValidationError(
             "Step observations belong to another node instance",

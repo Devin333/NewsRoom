@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Protocol
 
 from framework.events.canonical import checksum_for
+from framework.events.application import DurableGraphEventProjectionAdapter
 from framework.events.ports import EventStorePort
 from framework.events.runtime.authorization import (
     RetirementCancellationAuthorizationDecision,
@@ -31,6 +32,9 @@ from interfaces.services.event_reader_service import (
     EventPermission,
 )
 from interfaces.services.event_replay_service import EventReplayService
+from infrastructure.storage.artifacts.graph_terminal import (
+    FilesystemGraphTerminalArtifactStore,
+)
 
 
 EVENTS_READ_PERMISSION = "events:read"
@@ -285,6 +289,13 @@ def build_event_operator_service(
             authorizer=authorizer,
             artifact_root=Path(artifact_root),
             schema_catalog=event_storage.schema_catalog,
+            projection=DurableGraphEventProjectionAdapter(
+                reader=store,
+                schema_catalog=event_storage.schema_catalog,
+            ),
+            terminal_manifest_reader=FilesystemGraphTerminalArtifactStore(
+                artifact_root
+            ),
         ),
     )
 

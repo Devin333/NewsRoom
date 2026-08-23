@@ -314,7 +314,6 @@ class FakeSkillEvolutionPort:
             subject_scope_ref=checksum_for(
                 {"skill_name": candidate.base_version.skill_name}
             ),
-            step_id="skill_evolution.release",
             node_id=node_id,
             node_instance_id=node_instance_id,
             activity_id=activity_id,
@@ -352,7 +351,6 @@ class FakeSkillEvolutionPort:
             node_id=intent.node_id,
             node_instance_id=intent.node_instance_id,
             activity_id=intent.activity_id,
-            step_id=intent.step_id,
             attempt=intent.attempt,
             worker_result_ref=intent.worker_result_ref,
             gate_refs=("skill_promotion@1",),

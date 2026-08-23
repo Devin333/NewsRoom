@@ -172,8 +172,8 @@ def test_durable_storage_factory_composes_event_and_replay_stores_on_same_sqlite
     assert isinstance(composition, DurableEventStorage)
     assert isinstance(composition.event_store, SQLiteEventStore)
     assert composition.event_runtime is not None
-    assert composition.schema_catalog.current_schema("workflow_started") == (
-        "newsroom.workflow-event/v1"
+    assert composition.schema_catalog.current_schema("harness_graph_initialized") == (
+        "newsroom.harness-graph-control-commit/v1"
     )
     assert isinstance(composition.replay_checkpoint_store, SQLiteReplayCheckpointStore)
     assert composition.activity_store is None

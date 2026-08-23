@@ -1,15 +1,43 @@
-# pyright: reportUnsupportedDunderAll=false
-"""Agent runtime implementation."""
+"""Agent runtime namespace.
 
-from framework.agent.diagnostics import *  # noqa: F401,F403
-from framework.agent.loop import *  # noqa: F401,F403
-from framework.agent.messages import *  # noqa: F401,F403
-from framework.agent.models import *  # noqa: F401,F403
-from framework.agent.runtime import *  # noqa: F401,F403
-from framework.agent.skill_call import *  # noqa: F401,F403
-from framework.agent.skill_context import *  # noqa: F401,F403
-from framework.agent.skill_observation import *  # noqa: F401,F403
-from framework.agent.skill_selection import *  # noqa: F401,F403
-from framework.agent.subagents import *  # noqa: F401,F403
+The package deliberately avoids importing every Agent subsystem at package
+initialization time.  Artifact and Tool modules are also imported by Agent
+models, so eager wildcard exports create a circular import before the runtime
+can be admitted.  Public names remain available through a small lazy resolver.
+"""
 
-__all__ = [name for name in globals() if not name.startswith("_")]
+from __future__ import annotations
+
+from importlib import import_module
+from typing import Any
+
+
+_LAZY_MODULES = (
+    "framework.agent.diagnostics",
+    "framework.agent.loop",
+    "framework.agent.messages",
+    "framework.agent.models",
+    "framework.agent.runtime",
+    "framework.agent.skill_call",
+    "framework.agent.skill_context",
+    "framework.agent.skill_observation",
+    "framework.agent.skill_selection",
+    "framework.agent.subagents",
+)
+
+
+def __getattr__(name: str) -> Any:
+    for module_name in _LAZY_MODULES:
+        module = import_module(module_name)
+        if hasattr(module, name):
+            value = getattr(module, name)
+            globals()[name] = value
+            return value
+    raise AttributeError(name)
+
+
+def __dir__() -> list[str]:
+    return sorted(set(globals()) | {name for name in ()})
+
+
+__all__: list[str] = []

@@ -11,16 +11,10 @@ from framework.events.canonical import (
     thaw_canonical_json,
 )
 from framework.events.errors import EventStoreCorruptionError
-from framework.harness.control_plane.activity import (
-    HARNESS_ACTIVITY_EXTENSION,
-    HarnessActivity,
-)
+from framework.events.projection import GRAPH_EVENT_CONTEXT_EXTENSION, GraphEventContext
+from framework.harness.control_plane.graph_runtime import HarnessGraphActivity
 from framework.harness.control_plane.errors import HarnessValidationError
-from framework.harness.control_plane.transition import (
-    HARNESS_EVENT_SOURCE,
-    HARNESS_TRANSITION_EVENT_TYPE,
-    HarnessTransitionCommitted,
-)
+from framework.harness.control_plane.event import HARNESS_EVENT_SOURCE
 from framework.shared.json import stable_json_dumps, to_jsonable
 from framework.shared.time import format_datetime, parse_datetime, utc_now
 
@@ -30,7 +24,7 @@ class HarnessEventLogEntry:
     run_id: str
     event_type: str
     event_id: str | None = None
-    step_id: str | None = None
+    node_id: str | None = None
     status_before: str | None = None
     status_after: str | None = None
     decision: dict[str, Any] | None = None
@@ -74,7 +68,7 @@ class HarnessEventLogEntry:
         event_id = self.event_id or _stable_event_id(
             self.run_id,
             self.event_type,
-            self.step_id,
+            self.node_id,
             metadata,
             self.timestamp,
         )
@@ -88,7 +82,7 @@ class HarnessEventLogEntry:
         return {
             "event_id": self.event_id,
             "run_id": self.run_id,
-            "step_id": self.step_id,
+            "node_id": self.node_id,
             "event_type": self.event_type,
             "status_before": self.status_before,
             "status_after": self.status_after,
@@ -136,23 +130,18 @@ def event_log_entry_from_harness_event(event: Any, *, phase_index: int | None = 
     payload = event.to_dict() if hasattr(event, "to_dict") else dict(event)
     metadata = dict(payload.get("metadata", {}))
     event_payload = dict(payload.get("payload", {}))
-    transition_state = _transition_state(
-        str(payload.get("event_type")),
-        event_payload,
-    )
     metadata.update(event_payload if isinstance(event_payload, dict) else {"payload": event_payload})
     if phase_index is not None:
         metadata["phase_index"] = phase_index
     return HarnessEventLogEntry(
         event_id=payload.get("event_id"),
         run_id=str(payload.get("run_id")),
-        step_id=payload.get("step_id"),
+        node_id=payload.get("node_id"),
         event_type=str(payload.get("event_type")),
         status_before=metadata.get("status_before") or event_payload.get("status_before"),
         status_after=(
             metadata.get("status_after")
             or event_payload.get("status_after")
-            or transition_state.get("status")
         ),
         decision=event_payload if str(payload.get("event_type")) == "decision_recorded" else None,
         worker_type=event_payload.get("worker_type") if isinstance(event_payload, dict) else None,
@@ -163,7 +152,7 @@ def event_log_entry_from_harness_event(event: Any, *, phase_index: int | None = 
 
 
 def event_log_entry_from_stored_event(event: StoredEvent) -> HarnessEventLogEntry:
-    """Build the legacy Harness read model from one canonical stored fact."""
+    """Build the Graph Harness read model from one canonical stored fact."""
 
     if not isinstance(event, StoredEvent):
         raise TypeError("event must be StoredEvent")
@@ -176,12 +165,8 @@ def event_log_entry_from_stored_event(event: StoredEvent) -> HarnessEventLogEntr
     event_payload = thaw_canonical_json(event.payload or {})
     if not isinstance(event_payload, dict):
         raise HarnessValidationError("stored Harness payload must be an object")
-    if event.event_type == HARNESS_TRANSITION_EVENT_TYPE:
-        event_payload = HarnessTransitionCommitted.from_stored_event(
-            event
-        ).to_payload()
-    elif event.data_schema != "newsroom.harness-event/v1":
-        raise EventStoreCorruptionError("stored Harness event schema is invalid")
+    if event.data_schema != "newsroom.harness-graph-event/v1":
+        raise EventStoreCorruptionError("stored Graph event schema is invalid")
     harness_extension = thaw_canonical_json(event.extensions.get("harness", {}))
     if not isinstance(harness_extension, dict):
         raise HarnessValidationError("stored Harness extension must be an object")
@@ -196,11 +181,14 @@ def event_log_entry_from_stored_event(event: StoredEvent) -> HarnessEventLogEntr
         "canonical_source": event.source,
         "canonical_data_schema": event.data_schema,
     }
-    transition_state = _transition_state(event.event_type, event_payload)
     return HarnessEventLogEntry(
         event_id=event.event_id,
         run_id=run_id,
-        step_id=event.business_context.step_id,
+        node_id=_stored_harness_node_id(
+            event,
+            _stored_graph_context(event),
+            run_id=run_id,
+        ),
         event_type=event.event_type,
         status_before=_optional_text(
             transition_metadata.get("status_before", event_payload.get("status_before"))
@@ -208,7 +196,7 @@ def event_log_entry_from_stored_event(event: StoredEvent) -> HarnessEventLogEntr
         status_after=_optional_text(
             transition_metadata.get(
                 "status_after",
-                event_payload.get("status_after", transition_state.get("status")),
+                event_payload.get("status_after"),
             )
         ),
         decision=event_payload if event.event_type == "decision_recorded" else None,
@@ -232,22 +220,52 @@ def event_log_entry_from_stored_event(event: StoredEvent) -> HarnessEventLogEntr
     )
 
 
+def _stored_harness_node_id(
+    event: StoredEvent,
+    context: GraphEventContext,
+    *,
+    run_id: str,
+) -> str | None:
+    if context.identity.run_id != run_id:
+        raise EventStoreCorruptionError(
+            "stored Harness event graph context run identity conflicts"
+        )
+    if context.node_id is not None:
+        return context.node_id
+    subject = event.subject
+    if subject is None or subject == run_id:
+        return None
+    return subject
+
+
+def _stored_graph_context(event: StoredEvent) -> GraphEventContext:
+    raw = thaw_canonical_json(event.extensions.get(GRAPH_EVENT_CONTEXT_EXTENSION))
+    if not isinstance(raw, Mapping):
+        raise EventStoreCorruptionError("stored Harness event graph context is missing")
+    try:
+        return GraphEventContext.from_dict(raw)
+    except (TypeError, ValueError) as exc:
+        raise EventStoreCorruptionError(
+            "stored Harness event graph context is invalid"
+        ) from exc
+
+
 def _stable_event_id(
     run_id: str,
     event_type: str,
-    step_id: str | None,
+    node_id: str | None,
     metadata: Mapping[str, Any],
     timestamp: Any,
 ) -> str:
     payload = {
         "run_id": run_id,
         "event_type": event_type,
-        "step_id": step_id,
+        "node_id": node_id,
         "metadata": metadata,
         "timestamp": format_datetime(timestamp),
     }
     digest = hashlib.sha256(stable_json_dumps(payload).encode()).hexdigest()[:16]
-    return f"harness-event://{run_id}/{digest}"
+    return f"graph-event://{run_id}/{digest}"
 
 
 def _optional_text(value: Any) -> str | None:
@@ -268,23 +286,19 @@ def _optional_int(value: Any) -> int | None:
         return None
 
 
-def _transition_state(
-    event_type: str,
-    payload: Mapping[str, Any],
-) -> Mapping[str, Any]:
-    if event_type != HARNESS_TRANSITION_EVENT_TYPE:
-        return {}
-    state = payload.get("state")
-    if not isinstance(state, Mapping):
-        raise HarnessValidationError("Harness transition event requires a state projection")
-    return state
-
-
 def _stored_activity_projection(event: StoredEvent) -> dict[str, Any]:
     if event.payload_ref is None:
+        if event.event_type == "graph_worker_result_recorded":
+            raise EventStoreCorruptionError(
+                "Graph activity result is missing its recorded payload reference"
+            )
         return {}
+    if event.event_type != "graph_worker_result_recorded":
+        raise EventStoreCorruptionError(
+            "stored Harness payload reference is not a Graph activity result"
+        )
     extension = thaw_canonical_json(
-        event.extensions.get(HARNESS_ACTIVITY_EXTENSION, {})
+        event.extensions.get("harness_graph_activity", {})
     )
     if not isinstance(extension, Mapping):
         raise HarnessValidationError(
@@ -296,18 +310,21 @@ def _stored_activity_projection(event: StoredEvent) -> dict[str, Any]:
             "stored Harness activity descriptor is missing"
         )
     try:
-        activity = HarnessActivity.from_dict(activity_value)
+        activity = HarnessGraphActivity.from_dict(activity_value)
     except (HarnessValidationError, TypeError, ValueError) as exc:
         raise HarnessValidationError(
-            "stored Harness activity descriptor is invalid"
+            "stored Graph activity descriptor is invalid"
         ) from exc
     return {
         "activity_id": activity.activity_id,
-        "activity_type": activity.activity_type,
+        "activity_type": activity.activity_ref.exact_ref,
         "activity_attempt": activity.attempt,
         "activity_status": _optional_text(extension.get("status")),
-        "input_ref": activity.input_checksum,
+        "input_ref": activity.input_ref,
         "output_ref": event.payload_ref.expected_checksum,
+        "activity_checksum": activity.activity_checksum,
+        "graph_ref": activity.graph_ref.to_dict(),
+        "node_instance_id": activity.node_instance_id,
     }
 
 

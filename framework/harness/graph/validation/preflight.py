@@ -24,7 +24,6 @@ from framework.harness.graph.validation.semantic import validate_semantics
 from framework.harness.graph.validation.structural import validate_structure
 from framework.harness.graph.versioning import (
     GRAPH_ONLY_NORMALIZED_HARNESS_GRAPH_SCHEMA,
-    NORMALIZED_HARNESS_GRAPH_SCHEMA,
 )
 
 
@@ -73,13 +72,10 @@ class HarnessGraphPreflight:
 
     @staticmethod
     def _require_executable_schema(graph: NormalizedHarnessGraph) -> None:
-        if graph.schema_version not in {
-            NORMALIZED_HARNESS_GRAPH_SCHEMA,
-            GRAPH_ONLY_NORMALIZED_HARNESS_GRAPH_SCHEMA,
-        }:
+        if graph.schema_version != GRAPH_ONLY_NORMALIZED_HARNESS_GRAPH_SCHEMA:
             raise HarnessValidationError(
-                "unsupported normalized graph schema",
-                code="unsupported_graph_schema",
+                "production Graph preflight accepts only the Graph-only schema",
+                code="legacy_graph_admission_rejected",
                 details={
                     "contract_kind": "normalized_graph",
                     "schema": str(graph.schema_version),
@@ -259,9 +255,7 @@ def _task_plan_step_metadata(node: HarnessExecutableNode) -> Mapping[str, object
     value = node.metadata.get("step_metadata")
     if isinstance(value, Mapping):
         return value
-    # Accept the early normalized-graph shape for read compatibility. New
-    # compiler output always nests HarnessStepSpec.metadata under step_metadata.
-    return node.metadata
+    return {}
 
 
 def _is_exact_reference(value: object) -> bool:

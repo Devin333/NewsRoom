@@ -44,6 +44,7 @@ from interfaces.services.research_service import (
     ResearchApplicationService,
     ResearchServiceError,
 )
+from tests.business.research.fakes import in_memory_node_output_resource_factory
 
 
 _NOW = datetime(2026, 7, 19, tzinfo=UTC)
@@ -411,6 +412,7 @@ def _shared_production_service(
             )
         ),
         context_max_input_tokens=8_192,
+        node_output_resource_factory=in_memory_node_output_resource_factory,
     )
     return (
         ResearchApplicationService(
@@ -449,7 +451,7 @@ def _execute_concurrently(
             request=request,
             response=response,
             result=record.result,
-            context_pack=rag_runtime.last_context_pack,
+            context_pack=rag_runtime.context_pack_for_run(request.run_id),
         )
 
     with ThreadPoolExecutor(max_workers=len(requests)) as executor:
@@ -665,6 +667,7 @@ def _rag_result_from_scoped_chunks(
         context_tokens_used=sum(len(item.summary.split()) for item in candidates),
         worker_calls_used=1,
     )
+    graph_identity = spec.graph_identity.to_dict()
     pack = RAGContextPack(
         pack_id=f"rag-context://{spec.session_id}",
         query=spec.goal.question,
@@ -676,21 +679,19 @@ def _rag_result_from_scoped_chunks(
         artifact_refs=(f"artifact://{spec.run_id}/rag-context-pack",),
         evidence_trace=(
             {
+                **graph_identity,
+                "graph_identity": graph_identity,
                 "status": "accepted",
-                "run_id": spec.run_id,
                 "session_id": spec.session_id,
-                "workflow_id": spec.workflow_id,
-                "step_id": spec.step_id,
                 "evidence_ids": [item.evidence_id for item in candidates],
             },
         ),
         gap_report={},
         budget_snapshot=snapshot,
         metadata={
-            "run_id": spec.run_id,
+            **graph_identity,
+            "graph_identity": graph_identity,
             "session_id": spec.session_id,
-            "workflow_id": spec.workflow_id,
-            "step_id": spec.step_id,
             **actor,
         },
     )

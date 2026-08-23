@@ -1,13 +1,15 @@
 from __future__ import annotations
 
+import pytest
+
 from business.research.graphs import (
     build_dynamic_paper_analysis_graph_definition,
 )
+from framework.harness.control_plane.errors import HarnessValidationError
 from framework.harness.graph import (
     GRAPH_ONLY_NORMALIZED_HARNESS_GRAPH_SCHEMA,
     HARNESS_CONDITION_POLICY_VERSION,
-    HARNESS_GRAPH_COMPILER_VERSION,
-    NORMALIZED_HARNESS_GRAPH_SCHEMA,
+    HARNESS_GRAPH_ONLY_COMPILER_VERSION,
     HarnessContractKind,
     HarnessContractReference,
     HarnessGraphCompiler,
@@ -15,19 +17,10 @@ from framework.harness.graph import (
 )
 
 
-def test_legacy_graph_reference_wire_contract_is_unchanged() -> None:
-    reference = HarnessGraphReference(
-        graph_id="legacy.graph",
-        workflow_ref=HarnessContractReference(
-            HarnessContractKind.WORKFLOW,
-            "legacy.workflow",
-            "1",
-        ),
-        schema_version=NORMALIZED_HARNESS_GRAPH_SCHEMA,
-        compiler_version=HARNESS_GRAPH_COMPILER_VERSION,
-        condition_policy_version=HARNESS_CONDITION_POLICY_VERSION,
-        checksum="sha256:" + "1" * 64,
-    )
+_RETIRED_NORMALIZED_GRAPH_SCHEMA = "newsroom.harness-normalized-graph/v1"
+
+
+def test_live_graph_reference_rejects_legacy_v1_wire_contract() -> None:
     payload = {
         "graph_id": "legacy.graph",
         "workflow_ref": {
@@ -35,14 +28,15 @@ def test_legacy_graph_reference_wire_contract_is_unchanged() -> None:
             "contract_id": "legacy.workflow",
             "version": "1",
         },
-        "schema_version": NORMALIZED_HARNESS_GRAPH_SCHEMA,
-        "compiler_version": HARNESS_GRAPH_COMPILER_VERSION,
+        "schema_version": _RETIRED_NORMALIZED_GRAPH_SCHEMA,
+        "compiler_version": HARNESS_GRAPH_ONLY_COMPILER_VERSION,
         "condition_policy_version": HARNESS_CONDITION_POLICY_VERSION,
         "checksum": "sha256:" + "1" * 64,
     }
 
-    assert reference.to_dict() == payload
-    assert HarnessGraphReference.from_dict(payload) == reference
+    with pytest.raises(HarnessValidationError) as captured:
+        HarnessGraphReference.from_dict(payload)
+    assert captured.value.code == "legacy_graph_schema_forbidden"
 
 
 def test_graph_only_reference_round_trips_exact_compiler_identity() -> None:

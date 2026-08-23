@@ -60,6 +60,7 @@ def test_agent_loop_result_contains_standard_trajectory_with_tool_observation() 
         {"topic": "agent memory"},
         registry.export_schema_for_llm(agent.agent_id, agent.resolved_tool_policy()),
         run_id="run-trajectory",
+        standalone=True,
     )
 
     payload = result.to_dict()

@@ -511,7 +511,7 @@ class HarnessWaitApplicationService:
                 raise
             raise HarnessWaitRequestError(str(exc), code=exc.code) from exc
         driven = binding.control_plane.recover_and_run(binding.run_spec)
-        state = driven.graph_state or accepted
+        state = driven.state
         scope = cause.scope
         return HarnessWaitOperationResult(
             operation=operation,

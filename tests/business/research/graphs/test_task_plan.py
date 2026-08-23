@@ -44,6 +44,7 @@ from framework.harness.task_plan import (
     TaskResultRecord,
     TaskPlanScheduler,
     TaskPlanStageBinding,
+    TaskPlanStageIdentity,
     TaskPlanValidationContext,
     TaskPlanValidator,
     ValidatedTaskPlan,
@@ -276,7 +277,7 @@ def test_graph_only_candidate_validates_to_graph_only_plan() -> None:
     assert all(
         event.schema_version == TASK_PLAN_EVENT_SCHEMA_V2 for event in events
     )
-    assert all(event.workflow_id is None for event in events)
+    assert all(event.graph_id == request.stage_identity.graph_id for event in events)
     assert all(
         event.matches_contract_identity(candidate if index == 0 else plan)
         for index, event in enumerate(events)
@@ -591,13 +592,27 @@ def _valid_outline() -> dict[str, object]:
 
 
 def _accepted_results() -> tuple[TaskResultRecord, ...]:
+    graph = HarnessGraphCompiler().compile(
+        build_dynamic_paper_analysis_graph_definition()
+    ).graph
+    stage_binding = TaskPlanStageBinding(graph, RESEARCH_DYNAMIC_STAGE_ID)
+    stage_identity = TaskPlanStageIdentity("research-run", stage_binding)
     results = []
     for capability in RESEARCH_DYNAMIC_CAPABILITIES:
         suffix = capability.rsplit(".", 1)[-1]
         results.append(
             TaskResultRecord(
                 run_id="research-run",
-                workflow_id="research.paper_analysis.dynamic",
+                graph_checksum=stage_identity.graph_checksum,
+                graph_id=stage_identity.graph_id,
+                graph_version=stage_identity.graph_version,
+                graph_ref=stage_identity.graph_ref,
+                graph_schema_version=stage_identity.graph_schema_version,
+                compiler_version=stage_identity.compiler_version,
+                condition_policy_version=stage_identity.condition_policy_version,
+                stage_binding_checksum=stage_identity.stage_binding_checksum,
+                stage_identity_schema=stage_identity.schema_version,
+                stage_identity_checksum=stage_identity.identity_checksum,
                 stage_id="dynamic_analysis_stage",
                 plan_id="research-plan",
                 plan_version=1,

@@ -19,7 +19,10 @@ from business.research.reader_repair.repair_context import ReaderRepairContextBu
 from business.research.reader_repair.repair_gates import ReaderRepairGateSuite
 from business.research.ports import ReaderRepairMemoryPort
 from business.research.reader_repair.repair_memory import InMemoryReaderRepairMemory, ReaderRepairMemoryService
-from business.research.graphs.reader_repair import build_reader_repair_subagent_specs
+from business.research.graphs.reader_repair import (
+    build_reader_repair_context_graph_identity,
+    build_reader_repair_subagent_specs,
+)
 
 
 class ReaderRepairPreconditionError(ValueError):
@@ -123,8 +126,10 @@ class ReaderRepairService:
 
         context_result = self.context_builder.assemble_for_subagent(
             context_pack=context_pack,
-            run_id=run_id,
-            step_id="propose_repair_candidate",
+            graph_identity=build_reader_repair_context_graph_identity(
+                run_id=run_id,
+                stage_id="propose_repair_candidate",
+            ),
             subagent_id="reader_repair_proposer",
             role="proposer",
         )

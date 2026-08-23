@@ -6,10 +6,12 @@ UTC = _tz.utc
 from hashlib import sha256
 from typing import Any
 
+from framework.shared.graph_identity import GraphRunIdentity
+
 
 @dataclass(frozen=True)
 class RelationLineageRef:
-    run_id: str
+    graph_identity: GraphRunIdentity
     source_type: str
     source_id: str
     target_type: str
@@ -20,6 +22,8 @@ class RelationLineageRef:
     metadata: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
+        if not isinstance(self.graph_identity, GraphRunIdentity):
+            raise TypeError("graph_identity must be GraphRunIdentity")
         object.__setattr__(self, "created_at", _parse_datetime(self.created_at))
         object.__setattr__(self, "metadata", dict(self.metadata or {}))
         if self.lineage_id is None:
@@ -28,7 +32,7 @@ class RelationLineageRef:
     def to_dict(self) -> dict[str, Any]:
         return {
             "lineage_id": self.lineage_id,
-            "run_id": self.run_id,
+            "graph_identity": self.graph_identity.to_dict(),
             "source_type": self.source_type,
             "source_id": self.source_id,
             "target_type": self.target_type,
@@ -42,7 +46,7 @@ class RelationLineageRef:
     def from_dict(cls, payload: dict[str, Any]) -> "RelationLineageRef":
         return cls(
             lineage_id=str(payload["lineage_id"]),
-            run_id=str(payload["run_id"]),
+            graph_identity=GraphRunIdentity.from_dict(payload["graph_identity"]),
             source_type=str(payload["source_type"]),
             source_id=str(payload["source_id"]),
             target_type=str(payload["target_type"]),
@@ -52,11 +56,16 @@ class RelationLineageRef:
             metadata=dict(payload.get("metadata") or {}),
         )
 
+    @property
+    def run_id(self) -> str:
+        return self.graph_identity.run_id
+
 
 def _stable_lineage_id(ref: RelationLineageRef) -> str:
     payload = "|".join(
         [
-            ref.run_id,
+            ref.graph_identity.graph_ref,
+            ref.graph_identity.graph_checksum,
             ref.source_type,
             ref.source_id,
             ref.target_type,

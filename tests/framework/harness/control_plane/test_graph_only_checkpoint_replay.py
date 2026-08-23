@@ -36,21 +36,17 @@ from framework.harness.control_plane.scheduler import (
 from framework.harness.control_plane.graph_state import (
     HarnessGraphState,
 )
-from framework.harness.control_plane.state import HarnessRunSpec
+from framework.harness.control_plane.state import HarnessRunSpec, run_spec_checksum
 from framework.harness.control_plane.step_lifecycle import (
     StepLifecycleBudget,
     StepLifecycleObservations,
 )
-from framework.harness.control_plane.transition import run_spec_checksum
 from framework.harness.graph import (
     GRAPH_ONLY_HARNESS_GRAPH_CHECKPOINT_SCHEMA,
     GRAPH_ONLY_HARNESS_GRAPH_DECISION_SCHEMA,
     GRAPH_ONLY_HARNESS_GRAPH_STATE_SCHEMA,
     GRAPH_ONLY_NORMALIZED_HARNESS_GRAPH_SCHEMA,
-    HARNESS_GRAPH_CHECKPOINT_SCHEMA,
-    HARNESS_GRAPH_DECISION_SCHEMA,
     HARNESS_GRAPH_ONLY_COMPILER_VERSION,
-    HARNESS_GRAPH_STATE_SCHEMA,
     HarnessContractKind,
     HarnessContractReference,
     HarnessGraphCompiler,
@@ -66,15 +62,17 @@ from framework.harness.graph import (
 from framework.harness.graph.validation import HarnessGraphPreflightPolicy
 from framework.harness.graph.reference import HarnessGraphReference
 from framework.harness.side_effects.models import HarnessTerminalSideEffectPolicy
-from framework.harness.workflow.spec import HarnessWorkflowSpec
 
 
 _NOW = datetime(2026, 8, 17, tzinfo=UTC)
+_RETIRED_GRAPH_CHECKPOINT_SCHEMA = "newsroom.harness-graph-checkpoint/v1"
+_RETIRED_GRAPH_DECISION_SCHEMA = "newsroom.harness-graph-decision/v1"
+_RETIRED_GRAPH_STATE_SCHEMA = "newsroom.harness-graph-state/v1"
 
 
 def test_graph_only_crash_recovery_and_checkpoint_replay_are_self_contained() -> None:
-    step, graph = _compiled_graph()
-    run_spec = _run_spec("graph-only-recovery", step)
+    step, definition, graph = _compiled_graph()
+    run_spec = _run_spec("graph-only-recovery", definition)
     spec_checksum = run_spec_checksum(run_spec)
     port = InMemoryHarnessGraphTransitionPort()
     runtime = HarnessGraphControlPlaneRuntime(port)
@@ -137,18 +135,18 @@ def test_graph_only_crash_recovery_and_checkpoint_replay_are_self_contained() ->
     assert "workflow_ref" not in _mapping_keys(checkpoint_payload)
     assert HarnessGraphCheckpointReader().read(checkpoint_payload) == checkpoint
     with pytest.raises(HarnessValidationError) as state_schema:
-        replace(initial, schema_version=HARNESS_GRAPH_STATE_SCHEMA)
+        replace(initial, schema_version=_RETIRED_GRAPH_STATE_SCHEMA)
     with pytest.raises(HarnessValidationError) as checkpoint_schema:
-        replace(checkpoint, schema_version=HARNESS_GRAPH_CHECKPOINT_SCHEMA)
+        replace(checkpoint, schema_version=_RETIRED_GRAPH_CHECKPOINT_SCHEMA)
 
-    assert state_schema.value.code == "graph_state_schema_mismatch"
-    assert checkpoint_schema.value.code == "graph_checkpoint_schema_mismatch"
+    assert state_schema.value.code == "unsupported_graph_state_schema"
+    assert checkpoint_schema.value.code == "unsupported_graph_checkpoint_schema"
 
 
 def test_graph_only_replay_rejects_a_changed_gate_version_without_worker_calls() -> None:
-    step, graph = _compiled_graph(gate_ref="AnalysisGate@1")
-    _, changed_graph = _compiled_graph(gate_ref="AnalysisGate@2")
-    run_spec = _run_spec("graph-only-gate-pinning", step)
+    step, definition, graph = _compiled_graph(gate_ref="AnalysisGate@1")
+    _, _, changed_graph = _compiled_graph(gate_ref="AnalysisGate@2")
+    run_spec = _run_spec("graph-only-gate-pinning", definition)
     spec_checksum = run_spec_checksum(run_spec)
     port = InMemoryHarnessGraphTransitionPort()
     runtime = HarnessGraphControlPlaneRuntime(port)
@@ -219,7 +217,7 @@ def test_graph_only_replay_rejects_a_changed_gate_version_without_worker_calls()
 
 
 def test_graph_only_missing_terminal_evidence_is_quarantined() -> None:
-    _, graph = _compiled_graph()
+    _, _, graph = _compiled_graph()
     graph_ref = graph.graph_ref
     terminal_policy_ref = graph.terminal_policy_ref
     assert graph_ref is not None
@@ -255,21 +253,21 @@ def test_graph_only_missing_terminal_evidence_is_quarantined() -> None:
         payload={"outcome": "succeeded"},
     )
     with pytest.raises(HarnessValidationError) as decision_schema:
-        replace(valid, schema_version=HARNESS_GRAPH_DECISION_SCHEMA)
-    assert decision_schema.value.code == "graph_decision_schema_mismatch"
+        replace(valid, schema_version=_RETIRED_GRAPH_DECISION_SCHEMA)
+    assert decision_schema.value.code == "legacy_graph_schema_forbidden"
 
 
 def test_graph_only_reference_rejects_legacy_identity_and_unknown_versions() -> None:
-    _, graph = _compiled_graph()
+    _, _, graph = _compiled_graph()
     reference = HarnessGraphReference.from_graph(graph)
     payload = reference.to_dict()
     mixed = {
         **payload,
-        "workflow_ref": HarnessContractReference(
-            HarnessContractKind.WORKFLOW,
-            "legacy-workflow",
-            "1",
-        ).to_dict(),
+        "workflow_ref": {
+            "kind": "workflow",
+            "id": "legacy-workflow",
+            "version": "1",
+        },
     }
     unknown_compiler = {
         **payload,
@@ -296,7 +294,7 @@ def test_graph_only_reference_rejects_legacy_identity_and_unknown_versions() -> 
 def _compiled_graph(
     *,
     gate_ref: str = "AnalysisGate@1",
-) -> tuple[HarnessStepSpec, NormalizedHarnessGraph]:
+) -> tuple[HarnessStepSpec, HarnessGraphDefinition, NormalizedHarnessGraph]:
     step = HarnessStepSpec(
         "analyze",
         HarnessWorkerType.FUNCTION,
@@ -347,17 +345,11 @@ def _compiled_graph(
             not_required_evidence_ref=checksum_for("publication-not-required"),
         ),
     )
-    return step, HarnessGraphCompiler().compile(definition).graph
+    return step, definition, HarnessGraphCompiler().compile(definition).graph
 
 
-def _run_spec(run_id: str, step: HarnessStepSpec) -> HarnessRunSpec:
-    workflow = HarnessWorkflowSpec(
-        workflow_id="graph-only.recovery",
-        steps=(step,),
-        entry_step_id=step.step_id,
-        graph=HarnessGraphSpec("graph-only.recovery", StepRef(step.step_id)),
-    )
-    return HarnessRunSpec(run_id, workflow, created_at=_NOW)
+def _run_spec(run_id: str, definition: HarnessGraphDefinition) -> HarnessRunSpec:
+    return HarnessRunSpec(run_id, graph=definition, created_at=_NOW)
 
 
 def _step_input(

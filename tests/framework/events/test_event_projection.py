@@ -10,8 +10,10 @@ from framework.events import (
     EventCandidate,
     EventPage,
     GraphEventContext,
+    GraphEventExecutionVersion,
     GraphEventProjectionExporter,
     GraphRunIdentity,
+    GraphStageIdentity,
     ProducerIdentity,
     StoredEvent,
     StreamSequenceCursor,
@@ -121,6 +123,7 @@ def test_graph_projection_is_bound_to_one_exact_graph_identity(tmp_path) -> None
     assert all("workflow_id" not in row for row in rows)
     assert all("step_id" not in row for row in rows)
     assert all("workflow_id" not in row["business_context"] for row in rows)
+    assert all(row["business_context"]["graph_ref"] == "research.paper-analysis@1" for row in rows)
     assert rows[0]["node_id"] is None
     assert rows[1]["node_id"] == "analyze"
     assert rows[1]["node_instance_id"] == "analyze:1"
@@ -186,18 +189,37 @@ def test_graph_projection_rejects_conflicting_identity_without_replacing_target(
     assert list(tmp_path.glob(".events.jsonl.*.tmp")) == []
 
 
-def test_graph_projection_rejects_missing_context_and_workflow_alias(tmp_path) -> None:
+def test_graph_projection_rejects_conflicting_execution_version_without_replacing_target(
+    tmp_path,
+) -> None:
+    target = tmp_path / "events.jsonl"
+    target.write_bytes(b"previous-complete-projection\n")
+    exporter = GraphEventProjectionExporter(
+        reader=_Reader(
+            [
+                _graph_event(1),
+                _graph_event(2, with_node=True, compiler_version="4"),
+            ]
+        ),
+        schema_catalog=default_event_schema_catalog(),
+    )
+
+    with pytest.raises(EventContractError, match="conflicting Graph execution version"):
+        exporter.export(
+            stream_id=f"run:{RUN_ID}",
+            target=target,
+            tenant_id="tenant-a",
+        )
+
+    assert target.read_bytes() == b"previous-complete-projection\n"
+
+
+def test_graph_projection_rejects_missing_context(tmp_path) -> None:
     missing_context = _graph_event(1, include_context=False)
-    aliased = _graph_event(1, workflow_id="legacy-workflow")
 
     with pytest.raises(EventContractError, match="context extension is required"):
         project_graph_event(
             missing_context,
-            schema_catalog=default_event_schema_catalog(),
-        )
-    with pytest.raises(EventContractError, match="legacy orchestration identity aliases"):
-        project_graph_event(
-            aliased,
             schema_catalog=default_event_schema_catalog(),
         )
     assert not (tmp_path / "events.jsonl").exists()
@@ -225,7 +247,7 @@ def test_graph_projection_rejects_unknown_context_fields_and_moving_versions() -
 
     context = _graph_context()
     context["graph_version"] = "latest"
-    with pytest.raises(EventContractError, match="must be an exact version"):
+    with pytest.raises(EventContractError, match=r"must be (an )?exact"):
         GraphEventContext.from_dict(context)
 
     context = _graph_context()
@@ -253,7 +275,7 @@ def test_graph_projection_rejects_empty_uninitialized_stream(tmp_path) -> None:
 
 
 def test_canonical_projection_is_domain_neutral_and_checksum_bound() -> None:
-    event = _graph_event(1, workflow_id="historical-workflow", include_context=False)
+    event = _graph_event(1, include_context=False)
 
     row = project_canonical_event(
         event,
@@ -262,7 +284,7 @@ def test_canonical_projection_is_domain_neutral_and_checksum_bound() -> None:
 
     assert row["projection_schema"] == CANONICAL_EVENT_PROJECTION_SCHEMA
     assert "workflow_id" not in row
-    assert row["business_context"]["workflow_id"] == "historical-workflow"
+    assert row["business_context"]["graph_id"] == "research.paper-analysis"
     projection_checksum = row.pop("projection_checksum")
     assert projection_checksum == checksum_for(row)
     assert row["source_content_checksum"] == event.content_checksum
@@ -274,14 +296,20 @@ def _graph_identity(*, checksum: str = "sha256:" + "a" * 64) -> GraphRunIdentity
         run_id=RUN_ID,
         graph_id="research.paper-analysis",
         graph_version="1",
-        graph_schema_version="newsroom.normalized-harness-graph/v3",
-        compiler_version="3",
-        normalized_graph_checksum=checksum,
+        graph_ref="research.paper-analysis@1",
+        graph_checksum=checksum,
     )
 
 
 def _graph_context(*, checksum: str = "sha256:" + "a" * 64) -> dict:
-    return GraphEventContext(identity=_graph_identity(checksum=checksum)).to_dict()
+    return GraphEventContext(
+        identity=_graph_identity(checksum=checksum),
+        execution_version=GraphEventExecutionVersion(
+            graph_schema_version="newsroom.normalized-harness-graph/v3",
+            compiler_version="3",
+            normalized_graph_checksum=checksum,
+        ),
+    ).to_dict()
 
 
 def _graph_event(
@@ -289,14 +317,31 @@ def _graph_event(
     *,
     with_node: bool = False,
     graph_checksum: str = "sha256:" + "a" * 64,
+    compiler_version: str = "3",
     include_context: bool = True,
-    workflow_id: str | None = None,
     authorization: str | None = None,
 ) -> StoredEvent:
+    identity = _graph_identity(checksum=graph_checksum)
     context = GraphEventContext(
-        identity=_graph_identity(checksum=graph_checksum),
-        node_id="analyze" if with_node else None,
-        node_instance_id="analyze:1" if with_node else None,
+        identity=identity,
+        execution_version=GraphEventExecutionVersion(
+            graph_schema_version="newsroom.normalized-harness-graph/v3",
+            compiler_version=compiler_version,
+            normalized_graph_checksum=graph_checksum,
+        ),
+        stage_identity=(
+            GraphStageIdentity(
+                run_id=RUN_ID,
+                    graph_id=identity.graph_id,
+                    graph_version=identity.graph_version,
+                    graph_ref=identity.graph_ref,
+                    graph_checksum=identity.graph_checksum,
+                node_id="analyze",
+                node_instance_id="analyze:1",
+            )
+            if with_node
+            else None
+        ),
     )
     extensions: dict[str, object] = (
         {GRAPH_EVENT_CONTEXT_EXTENSION: context.to_dict()}
@@ -319,7 +364,12 @@ def _graph_event(
         correlation_id=RUN_ID,
         business_context=BusinessContext(
             run_id=RUN_ID,
-            workflow_id=workflow_id,
+            graph_id=context.identity.graph_id,
+            graph_version=context.identity.graph_version,
+            graph_ref=f"{context.identity.graph_id}@{context.identity.graph_version}",
+            graph_checksum=context.identity.graph_checksum,
+            stage_id=context.node_id,
+            node_instance_id=context.node_instance_id,
         ),
         producer=ProducerIdentity(
             component="framework.harness.control_plane",

@@ -269,9 +269,7 @@ class HarnessGraphApplicationService:
                 raise
             raise HarnessGraphRequestError(str(exc), code=exc.code) from exc
         driven = binding.control_plane.recover_and_run(binding.run_spec)
-        state = driven.graph_state or binding.control_plane.recover_graph(
-            binding.run_spec
-        )
+        state = driven.state
         return HarnessGraphRunOperationResult(
             operation=accepted.operation_type.value,
             operation_id=accepted.operation_id,

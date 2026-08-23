@@ -22,16 +22,19 @@ from framework.events.telemetry import (
     TelemetryResource,
     default_event_telemetry,
 )
+from framework.shared.graph_identity import (
+    GraphExecutionIdentity,
+    GraphRunIdentity,
+    GraphStageIdentity,
+)
 
 
 CANONICAL_EVENT_PROJECTION_SCHEMA = "newsroom.event-projection/v1"
 GRAPH_EVENT_CONTEXT_EXTENSION = "graph_context"
-GRAPH_EVENT_CONTEXT_SCHEMA = "newsroom.graph-event-context/v1"
-GRAPH_EVENT_PROJECTION_SCHEMA = "newsroom.graph-event-projection/v1"
+GRAPH_EVENT_CONTEXT_SCHEMA = "newsroom.graph-event-context/v2"
+GRAPH_EVENT_PROJECTION_SCHEMA = "newsroom.graph-event-projection/v2"
 
 _CHECKSUM_PATTERN = re.compile(r"sha256:[0-9a-f]{64}\Z")
-_RUN_ID_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,255}\Z")
-_GRAPH_ID_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:+-]{0,511}\Z")
 _MOVING_VERSIONS = frozenset({"current", "default", "latest", "stable"})
 _GRAPH_CONTEXT_FIELDS = frozenset(
     {
@@ -39,11 +42,13 @@ _GRAPH_CONTEXT_FIELDS = frozenset(
         "run_id",
         "graph_id",
         "graph_version",
+        "graph_ref",
+        "graph_checksum",
         "graph_schema_version",
         "compiler_version",
         "normalized_graph_checksum",
-        "node_id",
-        "node_instance_id",
+        "stage_identity",
+        "execution_identity",
     }
 )
 
@@ -58,10 +63,9 @@ class EventProjection:
 
 
 @dataclass(frozen=True, slots=True)
-class GraphRunIdentity:
-    run_id: str
-    graph_id: str
-    graph_version: str
+class GraphEventExecutionVersion:
+    """Pinned compilation details carried alongside canonical Graph identity."""
+
     graph_schema_version: str
     compiler_version: str
     normalized_graph_checksum: str
@@ -69,24 +73,14 @@ class GraphRunIdentity:
     def __post_init__(self) -> None:
         object.__setattr__(
             self,
-            "run_id",
-            _identifier(self.run_id, "run_id", pattern=_RUN_ID_PATTERN),
+            "graph_schema_version",
+            _exact_version(self.graph_schema_version, "graph_schema_version"),
         )
         object.__setattr__(
             self,
-            "graph_id",
-            _identifier(self.graph_id, "graph_id", pattern=_GRAPH_ID_PATTERN),
-        )
-        for field_name in (
-            "graph_version",
-            "graph_schema_version",
             "compiler_version",
-        ):
-            object.__setattr__(
-                self,
-                field_name,
-                _exact_version(getattr(self, field_name), field_name),
-            )
+            _exact_version(self.compiler_version, "compiler_version"),
+        )
         object.__setattr__(
             self,
             "normalized_graph_checksum",
@@ -98,9 +92,6 @@ class GraphRunIdentity:
 
     def to_dict(self) -> dict[str, str]:
         return {
-            "run_id": self.run_id,
-            "graph_id": self.graph_id,
-            "graph_version": self.graph_version,
             "graph_schema_version": self.graph_schema_version,
             "compiler_version": self.compiler_version,
             "normalized_graph_checksum": self.normalized_graph_checksum,
@@ -110,46 +101,128 @@ class GraphRunIdentity:
 @dataclass(frozen=True, slots=True)
 class GraphEventContext:
     identity: GraphRunIdentity
-    node_id: str | None = None
-    node_instance_id: str | None = None
+    execution_version: GraphEventExecutionVersion
+    stage_identity: GraphStageIdentity | None = None
+    execution_identity: GraphExecutionIdentity | None = None
     schema: str = GRAPH_EVENT_CONTEXT_SCHEMA
 
     def __post_init__(self) -> None:
         if not isinstance(self.identity, GraphRunIdentity):
             raise TypeError("identity must be GraphRunIdentity")
+        if not isinstance(self.execution_version, GraphEventExecutionVersion):
+            raise TypeError("execution_version must be GraphEventExecutionVersion")
         if self.schema != GRAPH_EVENT_CONTEXT_SCHEMA:
             raise EventContractError("graph event context schema is unsupported")
-        node_id = _optional_text(self.node_id, "node_id")
-        node_instance_id = _optional_text(self.node_instance_id, "node_instance_id")
-        if (node_id is None) != (node_instance_id is None):
+        if self.execution_version.normalized_graph_checksum != self.identity.graph_checksum:
             raise EventContractError(
-                "graph event context requires node_id and node_instance_id together"
+                "graph event execution checksum conflicts with Graph identity"
             )
-        object.__setattr__(self, "node_id", node_id)
-        object.__setattr__(self, "node_instance_id", node_instance_id)
+        execution_identity = self.execution_identity
+        stage_identity = self.stage_identity
+        if stage_identity is not None and not isinstance(stage_identity, GraphStageIdentity):
+            raise TypeError("stage_identity must be GraphStageIdentity or None")
+        if stage_identity is not None and stage_identity.run_identity != self.identity:
+            raise EventContractError(
+                "graph stage identity conflicts with Graph run identity"
+            )
+        if execution_identity is not None:
+            if not isinstance(execution_identity, GraphExecutionIdentity):
+                raise TypeError(
+                    "execution_identity must be GraphExecutionIdentity or None"
+                )
+            if execution_identity.run_identity != self.identity:
+                raise EventContractError(
+                    "graph event execution identity conflicts with Graph run identity"
+                )
+            if stage_identity is not None:
+                raise EventContractError(
+                    "graph event context cannot carry both stage and execution identity"
+                )
 
-    def to_dict(self) -> dict[str, str | None]:
+    @property
+    def node_id(self) -> str | None:
+        identity = self.execution_identity or self.stage_identity
+        return None if identity is None else identity.node_id
+
+    @property
+    def node_instance_id(self) -> str | None:
+        identity = self.execution_identity or self.stage_identity
+        return None if identity is None else identity.node_instance_id
+
+    @property
+    def activity_id(self) -> str | None:
+        identity = self.execution_identity
+        return None if identity is None else identity.activity_id
+
+    @property
+    def attempt(self) -> int | None:
+        identity = self.execution_identity
+        return None if identity is None else identity.attempt
+
+    def to_dict(self) -> dict[str, Any]:
         return {
             "schema": self.schema,
             **self.identity.to_dict(),
-            "node_id": self.node_id,
-            "node_instance_id": self.node_instance_id,
+            **self.execution_version.to_dict(),
+            "execution_identity": (
+                None
+                if self.execution_identity is None
+                else self.execution_identity.to_dict()
+            ),
+            "stage_identity": (
+                None
+                if self.stage_identity is None
+                else self.stage_identity.to_dict()
+            ),
         }
 
     @classmethod
     def from_dict(cls, value: Mapping[str, Any]) -> GraphEventContext:
         payload = _exact_mapping(value, _GRAPH_CONTEXT_FIELDS, "graph event context")
-        return cls(
-            identity=GraphRunIdentity(
+        try:
+            identity = GraphRunIdentity(
                 run_id=payload["run_id"],
                 graph_id=payload["graph_id"],
                 graph_version=payload["graph_version"],
+                graph_ref=payload["graph_ref"],
+                graph_checksum=payload["graph_checksum"],
+            )
+        except (TypeError, ValueError) as error:
+            raise EventContractError(str(error)) from error
+        raw_stage_identity = payload["stage_identity"]
+        if raw_stage_identity is not None and not isinstance(raw_stage_identity, Mapping):
+            raise EventContractError("graph event stage_identity must be an object")
+        try:
+            stage_identity = (
+                None
+                if raw_stage_identity is None
+                else GraphStageIdentity.from_dict(raw_stage_identity)
+            )
+        except (TypeError, ValueError) as error:
+            raise EventContractError(str(error)) from error
+        raw_execution_identity = payload["execution_identity"]
+        if raw_execution_identity is not None and not isinstance(
+            raw_execution_identity,
+            Mapping,
+        ):
+            raise EventContractError("graph event execution_identity must be an object")
+        try:
+            execution_identity = (
+                None
+                if raw_execution_identity is None
+                else GraphExecutionIdentity.from_dict(raw_execution_identity)
+            )
+        except (TypeError, ValueError) as error:
+            raise EventContractError(str(error)) from error
+        return cls(
+            identity=identity,
+            execution_version=GraphEventExecutionVersion(
                 graph_schema_version=payload["graph_schema_version"],
                 compiler_version=payload["compiler_version"],
                 normalized_graph_checksum=payload["normalized_graph_checksum"],
             ),
-            node_id=payload["node_id"],
-            node_instance_id=payload["node_instance_id"],
+            stage_identity=stage_identity,
+            execution_identity=execution_identity,
             schema=payload["schema"],
         )
 
@@ -157,10 +230,17 @@ class GraphEventContext:
 @dataclass(frozen=True, slots=True)
 class GraphEventProjection(EventProjection):
     graph_identity: GraphRunIdentity
+    execution_version: GraphEventExecutionVersion
 
     def __post_init__(self) -> None:
         if not isinstance(self.graph_identity, GraphRunIdentity):
             raise TypeError("graph_identity must be GraphRunIdentity")
+        if not isinstance(self.execution_version, GraphEventExecutionVersion):
+            raise TypeError("execution_version must be GraphEventExecutionVersion")
+        if self.execution_version.normalized_graph_checksum != self.graph_identity.graph_checksum:
+            raise EventContractError(
+                "graph event projection execution checksum conflicts with Graph identity"
+            )
         if self.stream_id != f"run:{self.graph_identity.run_id}":
             raise EventContractError(
                 "graph event projection stream conflicts with Graph run identity"
@@ -186,6 +266,7 @@ class _GraphProjectionSession(_ProjectionSession):
         self._graph_exporter = exporter
         self._stream_id = stream_id
         self.identity: GraphRunIdentity | None = None
+        self.execution_version: GraphEventExecutionVersion | None = None
 
     def project(self, event: StoredEvent) -> dict[str, Any]:
         context = graph_event_context(event)
@@ -198,6 +279,12 @@ class _GraphProjectionSession(_ProjectionSession):
         elif self.identity != context.identity:
             raise EventContractError(
                 "graph event projection contains conflicting Graph identity"
+            )
+        if self.execution_version is None:
+            self.execution_version = context.execution_version
+        elif self.execution_version != context.execution_version:
+            raise EventContractError(
+                "graph event projection contains conflicting Graph execution version"
             )
         return self._graph_exporter.project_event(event)
 
@@ -521,6 +608,10 @@ class GraphEventProjectionExporter(EventProjectionExporter):
             raise EventContractError(
                 "graph event projection requires initialized Graph history"
             )
+        if session.execution_version is None:
+            raise EventContractError(
+                "graph event projection requires initialized Graph execution version"
+            )
         return GraphEventProjection(
             path=path,
             stream_id=stream_id,
@@ -528,6 +619,7 @@ class GraphEventProjectionExporter(EventProjectionExporter):
             event_count=event_count,
             checksum=checksum,
             graph_identity=session.identity,
+            execution_version=session.execution_version,
         )
 
 
@@ -581,9 +673,41 @@ def graph_event_context(event: StoredEvent) -> GraphEventContext:
         raise EventContractError(
             "graph event envelope conflicts with Graph run identity"
         )
-    if business_context.workflow_id is not None or business_context.step_id is not None:
+    expected_ref = (
+        f"{context.identity.graph_id}@{context.identity.graph_version}"
+    )
+    if (
+        business_context.graph_id != context.identity.graph_id
+        or business_context.graph_version != context.identity.graph_version
+        or business_context.graph_ref != expected_ref
+        or business_context.graph_checksum
+        != context.identity.graph_checksum
+    ):
         raise EventContractError(
-            "graph event envelope must not carry legacy orchestration identity aliases"
+            "graph event envelope conflicts with the pinned Graph identity"
+        )
+    if context.stage_identity is not None and (
+        business_context.stage_id != context.node_id
+        or business_context.node_instance_id != context.node_instance_id
+    ):
+        raise EventContractError(
+            "graph event envelope conflicts with the Graph stage identity"
+        )
+    if context.execution_identity is not None and (
+        business_context.stage_id != context.node_id
+        or business_context.node_instance_id != context.node_instance_id
+        or business_context.execution_identity != context.execution_identity
+    ):
+        raise EventContractError(
+            "graph event envelope conflicts with the Graph execution identity"
+        )
+    if (
+        context.stage_identity is None
+        and context.execution_identity is None
+        and business_context.node_instance_id is not None
+    ):
+        raise EventContractError(
+            "run-level Graph event cannot carry a node_instance_id"
         )
     return context
 
@@ -605,6 +729,17 @@ def project_graph_event(
     business_context = event.business_context
     row["business_context"] = {
         "run_id": business_context.run_id,
+        "graph_id": business_context.graph_id,
+        "graph_version": business_context.graph_version,
+        "graph_ref": business_context.graph_ref,
+        "graph_checksum": business_context.graph_checksum,
+        "execution_identity": (
+            None
+            if business_context.execution_identity is None
+            else business_context.execution_identity.to_dict()
+        ),
+        "stage_id": business_context.stage_id,
+        "node_instance_id": business_context.node_instance_id,
         "task_id": business_context.task_id,
         "agent_id": business_context.agent_id,
         "tool_call_id": business_context.tool_call_id,
@@ -616,6 +751,13 @@ def project_graph_event(
             **context.identity.to_dict(),
             "node_id": context.node_id,
             "node_instance_id": context.node_instance_id,
+            "activity_id": context.activity_id,
+            "attempt": context.attempt,
+            "execution_identity": (
+                None
+                if context.execution_identity is None
+                else context.execution_identity.to_dict()
+            ),
             "component": event.producer.component,
             **_trace_projection(event),
         }
@@ -749,9 +891,9 @@ __all__ = [
     "GRAPH_EVENT_CONTEXT_SCHEMA",
     "GRAPH_EVENT_PROJECTION_SCHEMA",
     "GraphEventContext",
+    "GraphEventExecutionVersion",
     "GraphEventProjection",
     "GraphEventProjectionExporter",
-    "GraphRunIdentity",
     "graph_event_context",
     "project_canonical_event",
     "project_graph_event",

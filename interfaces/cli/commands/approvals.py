@@ -35,7 +35,7 @@ def register(subparsers: argparse._SubParsersAction) -> None:
     submit_parser.add_argument("--reason", default=None, help="Reason for approval")
     submit_parser.add_argument("--payload-json", default="{}", help="Approval payload JSON object")
     submit_parser.add_argument("--task-id", default=None, help="Related task id")
-    submit_parser.add_argument("--run-id", default=None, help="Related workflow run id")
+    submit_parser.add_argument("--run-id", default=None, help="Related Graph run id")
     submit_parser.add_argument("--requested-by", default=None, help="Requester id")
     submit_parser.add_argument("--expires-at", default=None, help="Optional expiry as ISO datetime")
     submit_parser.add_argument("--metadata-json", default="{}", help="Approval metadata JSON object")
@@ -51,7 +51,7 @@ def register(subparsers: argparse._SubParsersAction) -> None:
 
     resume_context_parser = approvals_subparsers.add_parser(
         "resume-context",
-        help="Build workflow resume context for a decided approval",
+        help="Build Graph resume context for a decided approval",
     )
     resume_context_parser.add_argument("approval_id", help="Approval id")
     resume_context_parser.add_argument(

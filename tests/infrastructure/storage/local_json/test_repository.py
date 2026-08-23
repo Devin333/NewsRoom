@@ -6,7 +6,7 @@ from framework.agent.artifacts import ArtifactPathError
 from infrastructure.storage.local_json import LocalJsonRepository, ReportNotFoundError
 
 
-RESEARCH_WORKFLOW_ID = "research-paper-analysis"
+RESEARCH_GRAPH_ID = "research.paper-analysis"
 
 
 def _write_report_run(
@@ -15,7 +15,7 @@ def _write_report_run(
     finished_at: str,
     title: str,
     *,
-    workflow_id: str | None = None,
+    graph_id: str | None = None,
     blocked: bool = False,
 ) -> None:
     run_dir = root / run_id
@@ -27,7 +27,8 @@ def _write_report_run(
         json.dumps(
             {
                 "run_id": run_id,
-                "workflow_id": workflow_id,
+                "graph_id": graph_id or "research.paper-analysis",
+                "graph_version": "2",
                 "profile": "live-offline",
                 "status": "succeeded",
                 "finished_at": finished_at,
@@ -153,6 +154,27 @@ def test_local_json_repository_raises_when_missing_report(tmp_path) -> None:
         LocalJsonRepository(tmp_path).latest_report()
 
 
+def test_local_json_repository_rejects_legacy_report_manifest(tmp_path) -> None:
+    run_dir = tmp_path / "legacy"
+    run_dir.mkdir()
+    (run_dir / "report.json").write_text(json.dumps({"title": "Legacy"}), encoding="utf-8")
+    (run_dir / "manifest.json").write_text(
+        json.dumps(
+            {
+                "run_id": "legacy",
+                "workflow_id": "daily",
+                "workflow_version": "1",
+                "status": "succeeded",
+                "artifacts": {"report_json": "report.json"},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="legacy_workflow_identity_not_supported"):
+        LocalJsonRepository(tmp_path).list_reports()
+
+
 def test_local_json_repository_searches_reports(tmp_path) -> None:
     _write_report_run(tmp_path, "old", "2026-05-10T00:00:00Z", "Chip Supply Report")
     _write_report_run(tmp_path, "new", "2026-05-11T00:00:00Z", "AI Policy Report")
@@ -172,36 +194,37 @@ def test_local_json_repository_searches_reports(tmp_path) -> None:
     assert records[0].title == "Blocked Policy Report"
 
 
-def test_local_json_repository_lists_reports_with_workflow_filter(tmp_path) -> None:
+def test_local_json_repository_lists_reports_with_graph_filter(tmp_path) -> None:
     _write_report_run(
         tmp_path,
         "research-old",
         "2026-05-10T00:00:00Z",
         "Old Research Report",
-        workflow_id=RESEARCH_WORKFLOW_ID,
+        graph_id=RESEARCH_GRAPH_ID,
     )
     _write_report_run(
         tmp_path,
         "research-new",
         "2026-05-11T00:00:00Z",
         "New Research Report",
-        workflow_id=RESEARCH_WORKFLOW_ID,
+        graph_id=RESEARCH_GRAPH_ID,
     )
     _write_report_run(
         tmp_path,
         "weekly",
         "2026-05-12T00:00:00Z",
         "Weekly",
-        workflow_id="weekly-intelligence",
+        graph_id="weekly.graph",
     )
 
     records = LocalJsonRepository(tmp_path).list_reports(
         limit=10,
-        workflow_id=RESEARCH_WORKFLOW_ID,
+        graph_id=RESEARCH_GRAPH_ID,
     )
 
     assert [record.run_id for record in records] == ["research-new", "research-old"]
-    assert records[0].workflow_id == RESEARCH_WORKFLOW_ID
+    assert records[0].graph_id == RESEARCH_GRAPH_ID
+    assert records[0].graph_version == "2"
     assert records[0].profile == "live-offline"
 
 
@@ -211,7 +234,7 @@ def test_local_json_repository_lists_blocked_reports(tmp_path) -> None:
         "blocked",
         "2026-05-12T00:00:00Z",
         "Blocked Policy Report",
-        workflow_id=RESEARCH_WORKFLOW_ID,
+        graph_id=RESEARCH_GRAPH_ID,
         blocked=True,
     )
 

@@ -62,7 +62,7 @@ def test_from_env_builds_immutable_defaults_without_creating_storage(
     assert settings.run_store.supported_schema_versions == ("v1", "v2")
     assert settings.run_store.rollback_schema_versions == ("v1", "v2")
     assert settings.run_store.reconciliation_max_runs == 100
-    assert settings.graph_artifact_persistence.mode is GraphArtifactRolloutMode.SHADOW
+    assert settings.graph_artifact_persistence.mode is GraphArtifactRolloutMode.ENFORCE
     assert (
         settings.graph_artifact_persistence.policy_version
         == "graph-artifact-policy@1"
@@ -230,6 +230,9 @@ def test_from_env_normalizes_explicit_graph_artifact_persistence_snapshot(
     ("name", "value"),
     [
         ("NEWS_RESEARCH_GRAPH_ARTIFACT_MODE", "worker_selected"),
+        ("NEWS_RESEARCH_GRAPH_ARTIFACT_MODE", "legacy"),
+        ("NEWS_RESEARCH_GRAPH_ARTIFACT_MODE", "shadow"),
+        ("NEWS_RESEARCH_GRAPH_ARTIFACT_MODE", "read_only"),
         (
             "NEWS_RESEARCH_GRAPH_ARTIFACT_POLICY_VERSION",
             "graph-artifact-policy@2",

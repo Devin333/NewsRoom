@@ -21,9 +21,13 @@ from interfaces.services.harness_wait_service import HarnessWaitApplicationServi
 from interfaces.services.project_service import ProjectApplicationService
 from interfaces.services.research_service import ResearchApplicationService
 from interfaces.services.report_service import ReportApplicationService
-from interfaces.services.run_inspection_service import RunInspectionService
-from interfaces.services.run_inspection_factory import run_inspection_service_from_env
-from interfaces.services.run_operation_service import RunOperationApplicationService
+from interfaces.services.run_inspection_service import GraphRunInspectionService
+from interfaces.services.run_inspection_factory import (
+    graph_run_inspection_service_from_env,
+)
+from interfaces.services.run_operation_service import (
+    GraphRunOperationApplicationService,
+)
 from interfaces.services.run_service import RunApplicationService
 from interfaces.services.schedule_service import ScheduleApplicationService
 from interfaces.services.source_service import SourceApplicationService
@@ -34,7 +38,7 @@ from interfaces.services.worker_service import WorkerApplicationService
 
 WorkerServiceFactory = Callable[[], WorkerApplicationService]
 RunServiceFactory = Callable[[], RunApplicationService]
-RunOperationServiceFactory = Callable[[], RunOperationApplicationService]
+GraphRunOperationServiceFactory = Callable[[], GraphRunOperationApplicationService]
 ReportServiceFactory = Callable[[], ReportApplicationService]
 MemoryServiceFactory = Callable[[], MemoryApplicationService]
 DiagnosticServiceFactory = Callable[[], DiagnosticApplicationService]
@@ -45,7 +49,7 @@ MCPServiceFactory = Callable[[], MCPApplicationService]
 EventOperatorServiceFactory = Callable[[ActorContext], EventOperatorApplicationService]
 HarnessGraphServiceFactory = Callable[[ActorContext], HarnessGraphApplicationService]
 HarnessWaitServiceFactory = Callable[[ActorContext], HarnessWaitApplicationService]
-RunInspectionServiceFactory = Callable[[], RunInspectionService]
+GraphRunInspectionServiceFactory = Callable[[], GraphRunInspectionService]
 ArtifactInspectionServiceFactory = Callable[[], ArtifactInspectionService]
 StorageServiceFactory = Callable[[], StorageApplicationService]
 ScheduleServiceFactory = Callable[[], ScheduleApplicationService]
@@ -59,7 +63,7 @@ ResearchServiceFactory = Callable[[], ResearchApplicationService]
 class ApiServices:
     worker_service_factory: WorkerServiceFactory
     run_service_factory: RunServiceFactory
-    run_operation_service_factory: RunOperationServiceFactory
+    graph_run_operation_service_factory: GraphRunOperationServiceFactory
     report_service_factory: ReportServiceFactory
     memory_service_factory: MemoryServiceFactory
     diagnostic_service_factory: DiagnosticServiceFactory
@@ -68,7 +72,7 @@ class ApiServices:
     subscription_service_factory: SubscriptionServiceFactory
     mcp_service_factory: MCPServiceFactory
     event_operator_service_factory: EventOperatorServiceFactory
-    run_inspection_service_factory: RunInspectionServiceFactory
+    graph_run_inspection_service_factory: GraphRunInspectionServiceFactory
     artifact_service_factory: ArtifactInspectionServiceFactory
     storage_service_factory: StorageServiceFactory
     schedule_service_factory: ScheduleServiceFactory
@@ -97,7 +101,7 @@ def build_api_services(
     *,
     worker_service_factory: WorkerServiceFactory = WorkerApplicationService,
     run_service_factory: RunServiceFactory = RunApplicationService,
-    run_operation_service_factory: RunOperationServiceFactory = RunOperationApplicationService,
+    graph_run_operation_service_factory: GraphRunOperationServiceFactory = GraphRunOperationApplicationService,
     report_service_factory: ReportServiceFactory = ReportApplicationService,
     memory_service_factory: MemoryServiceFactory = MemoryApplicationService,
     diagnostic_service_factory: DiagnosticServiceFactory = DiagnosticApplicationService,
@@ -106,7 +110,7 @@ def build_api_services(
     subscription_service_factory: SubscriptionServiceFactory = SubscriptionApplicationService,
     mcp_service_factory: MCPServiceFactory = MCPApplicationService,
     event_operator_service_factory: EventOperatorServiceFactory = event_operator_service_from_actor,
-    run_inspection_service_factory: RunInspectionServiceFactory = run_inspection_service_from_env,
+    graph_run_inspection_service_factory: GraphRunInspectionServiceFactory = graph_run_inspection_service_from_env,
     artifact_service_factory: ArtifactInspectionServiceFactory = ArtifactInspectionService,
     storage_service_factory: StorageServiceFactory = StorageApplicationService,
     schedule_service_factory: ScheduleServiceFactory = ScheduleApplicationService,
@@ -120,7 +124,7 @@ def build_api_services(
     return ApiServices(
         worker_service_factory=worker_service_factory,
         run_service_factory=run_service_factory,
-        run_operation_service_factory=run_operation_service_factory,
+        graph_run_operation_service_factory=graph_run_operation_service_factory,
         report_service_factory=report_service_factory,
         memory_service_factory=memory_service_factory,
         diagnostic_service_factory=diagnostic_service_factory,
@@ -129,7 +133,7 @@ def build_api_services(
         subscription_service_factory=subscription_service_factory,
         mcp_service_factory=mcp_service_factory,
         event_operator_service_factory=event_operator_service_factory,
-        run_inspection_service_factory=run_inspection_service_factory,
+        graph_run_inspection_service_factory=graph_run_inspection_service_factory,
         artifact_service_factory=artifact_service_factory,
         storage_service_factory=storage_service_factory,
         schedule_service_factory=schedule_service_factory,

@@ -13,7 +13,6 @@ from framework.harness.task_plan.schema import (
     DEFAULT_TASK_PLAN_SCHEMA_REGISTRY,
     GRAPH_ONLY_TASK_PLAN_STAGE_BINDING_SCHEMA,
     GRAPH_ONLY_TASK_PLAN_STAGE_IDENTITY_SCHEMA,
-    TASK_PLAN_STAGE_IDENTITY_SCHEMA,
     TaskPlanContractKind,
 )
 from framework.harness.task_plan.stage_binding import TaskPlanStageBinding
@@ -40,12 +39,13 @@ class TaskPlanStageIdentity:
         run_id = identifier(self.run_id, "run_id")
         if not isinstance(self.stage_binding, TaskPlanStageBinding):
             raise TypeError("stage_binding must be TaskPlanStageBinding")
-        expected_schema = (
-            GRAPH_ONLY_TASK_PLAN_STAGE_IDENTITY_SCHEMA
-            if self.stage_binding.schema_version
-            == GRAPH_ONLY_TASK_PLAN_STAGE_BINDING_SCHEMA
-            else TASK_PLAN_STAGE_IDENTITY_SCHEMA
-        )
+        if self.stage_binding.schema_version != GRAPH_ONLY_TASK_PLAN_STAGE_BINDING_SCHEMA:
+            raise HarnessValidationError(
+                "TaskPlan stage identity requires the live Graph v2 binding schema",
+                code="legacy_task_plan_binding_schema_forbidden",
+                details={"schema_version": self.stage_binding.schema_version},
+            )
+        expected_schema = GRAPH_ONLY_TASK_PLAN_STAGE_IDENTITY_SCHEMA
         schema_version = (
             expected_schema if self.schema_version is None else self.schema_version
         )
@@ -92,27 +92,7 @@ class TaskPlanStageIdentity:
         return self.schema_version == GRAPH_ONLY_TASK_PLAN_STAGE_IDENTITY_SCHEMA
 
     @property
-    def workflow_id(self) -> str:
-        return self.stage_binding.workflow_id
-
-    @property
-    def workflow_ref(self) -> str:
-        if self.is_graph_only:
-            raise HarnessValidationError(
-                "Graph-only TaskPlan identity has no legacy orchestration reference",
-                code="legacy_task_plan_identity_forbidden",
-            )
-        reference = self.stage_binding.graph.workflow_ref
-        assert reference is not None
-        return reference.exact_ref
-
-    @property
     def graph_ref(self) -> str:
-        if not self.is_graph_only:
-            raise HarnessValidationError(
-                "legacy TaskPlan identity has no Graph-only contract reference",
-                code="graph_task_plan_identity_unavailable",
-            )
         reference = self.stage_binding.graph.graph_ref
         assert reference is not None
         return reference.exact_ref
@@ -130,15 +110,7 @@ class TaskPlanStageIdentity:
             "stage_id": self.stage_id,
             "stage_binding_checksum": self.stage_binding_checksum,
         }
-        if self.is_graph_only:
-            payload["graph_ref"] = self.graph_ref
-        else:
-            payload.update(
-                {
-                    "workflow_id": self.workflow_id,
-                    "workflow_ref": self.workflow_ref,
-                }
-            )
+        payload["graph_ref"] = self.graph_ref
         return payload
 
     def to_dict(self) -> dict[str, Any]:

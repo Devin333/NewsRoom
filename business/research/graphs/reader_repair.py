@@ -3,6 +3,10 @@ from __future__ import annotations
 from types import MappingProxyType
 
 from framework.events.canonical import checksum_for
+from framework.harness.context.models import (
+    CONTEXT_GRAPH_TASK_PLAN_STAGE_IDENTITY_SCHEMA_V2,
+    ContextGraphIdentity,
+)
 from framework.harness.control_plane.terminal_failure import (
     HARNESS_GRAPH_TERMINAL_FAILURE_RECORD_SCHEMA,
 )
@@ -11,6 +15,7 @@ from framework.harness.graph import (
     HarnessContractReference,
     HarnessGraphCommittedNodeOutputBinding,
     HarnessGraphDefinition,
+    HarnessGraphCompiler,
     HarnessGraphLeafBinding,
     HarnessGraphRepairBinding,
     HarnessGraphRepairTrigger,
@@ -129,6 +134,55 @@ def build_reader_repair_graph_definition() -> HarnessGraphDefinition:
         terminal_failure_side_effect_policy=(
             build_reader_repair_failure_diagnostic_terminal_policy()
         ),
+    )
+
+
+def build_reader_repair_context_graph_identity(
+    *,
+    run_id: str,
+    stage_id: str,
+) -> ContextGraphIdentity:
+    """Build the exact Graph/stage identity used by Reader Repair contexts."""
+
+    definition = build_reader_repair_graph_definition()
+    activities = {activity.step_id: activity for activity in definition.activities}
+    if stage_id not in activities:
+        raise ValueError(f"Unknown Reader Repair Graph stage: {stage_id}")
+    graph = HarnessGraphCompiler().compile(definition).graph
+    stage_binding_checksum = checksum_for(
+        {
+            "definition_checksum": definition.definition_checksum,
+            "graph_checksum": graph.checksum,
+            "stage_id": stage_id,
+            "activity": activities[stage_id].to_dict(),
+        }
+    )
+    identity_projection = {
+        "schema_version": CONTEXT_GRAPH_TASK_PLAN_STAGE_IDENTITY_SCHEMA_V2,
+        "run_id": run_id,
+        "graph_schema_version": graph.schema_version,
+        "compiler_version": graph.compiler_version,
+        "condition_policy_version": graph.condition_policy_version,
+        "graph_id": graph.graph_id,
+        "graph_version": graph.graph_version,
+        "graph_checksum": graph.checksum,
+        "stage_id": stage_id,
+        "stage_binding_checksum": stage_binding_checksum,
+        "graph_ref": graph.graph_ref.exact_ref,
+    }
+    return ContextGraphIdentity(
+        run_id=run_id,
+        graph_id=graph.graph_id,
+        graph_version=graph.graph_version,
+        graph_ref=graph.graph_ref.exact_ref,
+        graph_schema_version=graph.schema_version,
+        compiler_version=graph.compiler_version,
+        condition_policy_version=graph.condition_policy_version,
+        graph_checksum=graph.checksum,
+        stage_id=stage_id,
+        stage_binding_checksum=stage_binding_checksum,
+        stage_identity_schema=CONTEXT_GRAPH_TASK_PLAN_STAGE_IDENTITY_SCHEMA_V2,
+        stage_identity_checksum=checksum_for(identity_projection),
     )
 
 
@@ -418,6 +472,7 @@ __all__ = [
     "READER_REPAIR_SUBAGENT_IDS",
     "READER_REPAIR_SUBAGENT_WORKER_REFS",
     "build_reader_repair_graph_definition",
+    "build_reader_repair_context_graph_identity",
     "build_reader_repair_failure_diagnostic_terminal_policy",
     "build_reader_repair_memory_terminal_policy",
     "build_reader_repair_subagent_specs",

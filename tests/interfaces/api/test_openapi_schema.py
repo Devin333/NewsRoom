@@ -17,14 +17,15 @@ def test_export_openapi_schema_includes_known_api_routes() -> None:
     assert "/api/v1/boards" not in schema["paths"]
     assert "/api/v1/memory/search" in schema["paths"]
     assert "/api/v1/mcp/capabilities" in schema["paths"]
-    assert "/api/v1/runs/{run_id}/progress" in schema["paths"]
+    assert "/api/v2/graph-runs" in schema["paths"]
+    assert "/api/v2/graph-runs/{run_id}/events/stream" in schema["paths"]
     assert "ResearchAnalyzeRequest" in schema["components"]["schemas"]
     assert "ResearchAskRequest" in schema["components"]["schemas"]
     assert "MemorySearchRequest" in schema["components"]["schemas"]
     assert "ApiResponse" in schema["components"]["schemas"]
     assert "RunResponse" in schema["components"]["schemas"]
-    progress_responses = schema["paths"]["/api/v1/runs/{run_id}/progress"]["get"]["responses"]
-    assert "text/event-stream" in progress_responses["200"]["content"]
+    stream_responses = schema["paths"]["/api/v2/graph-runs/{run_id}/events/stream"]["get"]["responses"]
+    assert "text/event-stream" in stream_responses["200"]["content"]
 
 
 def test_summarize_openapi_schema_counts_paths_and_schemas() -> None:

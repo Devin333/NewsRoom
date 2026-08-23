@@ -10,7 +10,7 @@ def test_vector_memory_store_adapter_writes_and_searches_memory_records() -> Non
         memory_id="mem-1",
         content="Workflow memory runtime uses a vector-backed store.",
         kind=MemoryKind.SEMANTIC,
-        scope=MemoryScope.WORKFLOW,
+        scope=MemoryScope.GRAPH,
         namespace="research.public",
         tenant_id="tenant-1",
         refs={"run_id": "run-1"},
@@ -22,7 +22,7 @@ def test_vector_memory_store_adapter_writes_and_searches_memory_records() -> Non
     results = adapter.search(
         MemoryQuery(
             query="workflow vector memory",
-            scopes=[MemoryScope.WORKFLOW],
+        scopes=[MemoryScope.GRAPH],
             kinds=[MemoryKind.SEMANTIC],
             namespace="research.public",
             tenant_id="tenant-1",
@@ -32,7 +32,7 @@ def test_vector_memory_store_adapter_writes_and_searches_memory_records() -> Non
     wrong_namespace_results = adapter.search(
         MemoryQuery(
             query="workflow vector memory",
-            scopes=[MemoryScope.WORKFLOW],
+        scopes=[MemoryScope.GRAPH],
             kinds=[MemoryKind.SEMANTIC],
             namespace="research.private",
             tenant_id="tenant-1",
@@ -62,7 +62,7 @@ def test_vector_memory_store_adapter_updates_and_deletes_memory_records() -> Non
             memory_id="mem-1",
             content="old vector memory",
             kind=MemoryKind.SEMANTIC,
-            scope=MemoryScope.WORKFLOW,
+        scope=MemoryScope.GRAPH,
             refs={"run_id": "run-1"},
             metadata={"version": 1},
         )

@@ -10,21 +10,14 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
-from enum import StrEnum
 from typing import Any, Protocol
 
 from framework.events.errors import (
     EventIncompleteHistoryError,
     EventReplayMismatchError,
-    EventSchemaError,
     EventStoreCorruptionError,
 )
-from framework.events.schema.catalog import (
-    EventSchemaCatalog,
-    default_event_schema_catalog,
-)
 from framework.harness.control_plane.errors import HarnessValidationError
-from framework.harness.control_plane.event import HarnessEvent, HarnessEventType
 from framework.harness.control_plane.graph_application import (
     HarnessGraphDecisionApplier,
 )
@@ -40,10 +33,8 @@ from framework.harness.control_plane.graph_runtime import (
 )
 from framework.harness.control_plane.graph_state import (
     HarnessGraphState,
-    HarnessLegacyStatusProjection,
 )
 from framework.harness.control_plane.scheduler import HarnessGraphStepSchedulingInput
-from framework.harness.control_plane.state import HarnessStepStatus
 from framework.harness.graph.canonical import canonical_checksum, required_text
 from framework.harness.graph.model import NormalizedHarnessGraph
 from framework.harness.graph.reference import HarnessGraphReference
@@ -51,25 +42,14 @@ from framework.harness.graph.versioning import (
     GRAPH_ONLY_HARNESS_GRAPH_CHECKPOINT_SCHEMA,
     GRAPH_ONLY_HARNESS_GRAPH_STATE_SCHEMA,
     GRAPH_ONLY_NORMALIZED_HARNESS_GRAPH_SCHEMA,
-    HARNESS_GRAPH_COMPILER_VERSION,
-    HARNESS_GRAPH_CHECKPOINT_SCHEMA,
     HARNESS_GRAPH_ONLY_COMPILER_VERSION,
     HARNESS_GRAPH_CONTROL_POLICY_VERSION,
     HARNESS_GRAPH_EVALUATOR_VERSION,
     HARNESS_GRAPH_REDUCER_VERSION,
     HARNESS_GRAPH_RUNTIME_VERSION,
-    HARNESS_GRAPH_STATE_SCHEMA,
     HARNESS_STEP_LIFECYCLE_VERSION,
 )
-from framework.harness.workflow.versioning import (
-    LEGACY_CHECKPOINT_SCHEMA,
-    LEGACY_EVENT_SCHEMA,
-    LEGACY_STATE_SCHEMA,
-)
 from framework.shared.time import ensure_utc, format_datetime, parse_datetime
-
-
-HARNESS_LEGACY_EVENT_EVIDENCE_SCHEMA = "newsroom.harness-legacy-event-evidence/v2"
 
 
 class HarnessGraphCheckpointStore(Protocol):
@@ -136,12 +116,12 @@ class HarnessPinnedDecisionKernel:
             raise TypeError("graph must be NormalizedHarnessGraph")
         if not callable(self.verifier):
             raise TypeError("verifier must be callable")
-        expected_compiler_version = (
-            HARNESS_GRAPH_ONLY_COMPILER_VERSION
-            if self.graph.schema_version
-            == GRAPH_ONLY_NORMALIZED_HARNESS_GRAPH_SCHEMA
-            else HARNESS_GRAPH_COMPILER_VERSION
-        )
+        if self.graph.schema_version != GRAPH_ONLY_NORMALIZED_HARNESS_GRAPH_SCHEMA:
+            raise HarnessValidationError(
+                "pinned decision kernel requires the Graph v2 schema",
+                code="unsupported_graph_schema",
+            )
+        expected_compiler_version = HARNESS_GRAPH_ONLY_COMPILER_VERSION
         compiler_version = (
             expected_compiler_version
             if self.compiler_version is None
@@ -241,7 +221,7 @@ class HarnessGraphCheckpoint:
     projection_checksum: str
     created_at: datetime
     history_evidence_ref: str | None = None
-    schema_version: str = HARNESS_GRAPH_CHECKPOINT_SCHEMA
+    schema_version: str = GRAPH_ONLY_HARNESS_GRAPH_CHECKPOINT_SCHEMA
     reducer_version: str = HARNESS_GRAPH_REDUCER_VERSION
     checkpoint_checksum: str = field(init=False)
 
@@ -279,28 +259,16 @@ class HarnessGraphCheckpoint:
                 "graph checkpoint projection checksum does not match state",
                 code="graph_checkpoint_checksum_mismatch",
             )
-        expected_checkpoint_schema = (
-            GRAPH_ONLY_HARNESS_GRAPH_CHECKPOINT_SCHEMA
-            if self.state.schema_version == GRAPH_ONLY_HARNESS_GRAPH_STATE_SCHEMA
-            else HARNESS_GRAPH_CHECKPOINT_SCHEMA
-        )
-        if self.schema_version not in {
-            HARNESS_GRAPH_CHECKPOINT_SCHEMA,
-            GRAPH_ONLY_HARNESS_GRAPH_CHECKPOINT_SCHEMA,
-        }:
+        if self.state.schema_version != GRAPH_ONLY_HARNESS_GRAPH_STATE_SCHEMA:
             raise HarnessValidationError(
-                "unsupported graph checkpoint schema",
+                "Graph checkpoint requires a Graph v2 state",
+                code="graph_checkpoint_state_schema_mismatch",
+            )
+        if self.schema_version != GRAPH_ONLY_HARNESS_GRAPH_CHECKPOINT_SCHEMA:
+            raise HarnessValidationError(
+                "Graph checkpoint requires the exact v2 checkpoint schema",
                 code="unsupported_graph_checkpoint_schema",
                 details={"schema_version": str(self.schema_version)},
-            )
-        if self.schema_version != expected_checkpoint_schema:
-            raise HarnessValidationError(
-                "graph checkpoint schema does not match its Graph state",
-                code="graph_checkpoint_schema_mismatch",
-                details={
-                    "schema_version": str(self.schema_version),
-                    "expected_schema_version": expected_checkpoint_schema,
-                },
             )
         if self.reducer_version != HARNESS_GRAPH_REDUCER_VERSION:
             raise HarnessValidationError(
@@ -344,11 +312,7 @@ class HarnessGraphCheckpoint:
             projection_checksum=state.projection_checksum,
             created_at=created_at,
             history_evidence_ref=history_evidence_ref,
-            schema_version=(
-                GRAPH_ONLY_HARNESS_GRAPH_CHECKPOINT_SCHEMA
-                if state.schema_version == GRAPH_ONLY_HARNESS_GRAPH_STATE_SCHEMA
-                else HARNESS_GRAPH_CHECKPOINT_SCHEMA
-            ),
+            schema_version=GRAPH_ONLY_HARNESS_GRAPH_CHECKPOINT_SCHEMA,
         )
 
     def checksum_projection(self) -> dict[str, Any]:
@@ -444,7 +408,6 @@ class InMemoryHarnessGraphCheckpointStore:
 class HarnessGraphCheckpointReadResult:
     source_schema: str
     checkpoint: HarnessGraphCheckpoint | None = None
-    applied_upcasters: tuple[str, ...] = ()
     quarantine_reason: str | None = None
 
     @property
@@ -457,8 +420,6 @@ class HarnessGraphStateReadResult:
     source_schema: str
     state: HarnessGraphState | None = None
     source_checksum: str | None = None
-    history_evidence_ref: str | None = None
-    applied_upcasters: tuple[str, ...] = ()
     quarantine_reason: str | None = None
 
     @property
@@ -467,7 +428,7 @@ class HarnessGraphStateReadResult:
 
 
 class HarnessGraphStateReader:
-    """Strict normalized-Graph state reader and legacy cursor upcaster."""
+    """Strict Graph v2 state reader; older schemas are quarantine-only."""
 
     def read(
         self,
@@ -480,10 +441,7 @@ class HarnessGraphStateReader:
                 "graph state must be an object",
                 code="invalid_graph_state_projection",
             )
-        if value.get("schema_version") not in {
-            HARNESS_GRAPH_STATE_SCHEMA,
-            GRAPH_ONLY_HARNESS_GRAPH_STATE_SCHEMA,
-        }:
+        if value.get("schema_version") != GRAPH_ONLY_HARNESS_GRAPH_STATE_SCHEMA:
             raise HarnessValidationError(
                 "graph state requires an explicit supported schema",
                 code="unsupported_graph_state_schema",
@@ -496,130 +454,19 @@ class HarnessGraphStateReader:
             )
         return state
 
-    def upcast_legacy(
-        self,
-        value: Mapping[str, Any],
-        *,
-        rebuilt_state: HarnessGraphState,
-        history_evidence_ref: str,
-    ) -> HarnessGraphStateReadResult:
-        if not isinstance(value, Mapping):
-            raise HarnessValidationError(
-                "legacy Harness state must be an object",
-                code="invalid_legacy_graph_state",
-            )
-        if value.get("schema_version") != LEGACY_STATE_SCHEMA:
-            raise HarnessValidationError(
-                "legacy Harness state schema is unsupported",
-                code="unsupported_legacy_state_schema",
-            )
-        _exact_keys(
-            value,
-            {
-                "schema_version",
-                "run_spec",
-                "status",
-                "step_states",
-                "current_step_id",
-                "turn_count",
-                "replan_count",
-                "worker_call_count",
-                "metadata",
-                "updated_at",
-            },
-            "legacy Harness state",
-        )
-        evidence_ref = _checksum(
-            history_evidence_ref,
-            "history_evidence_ref",
-        )
-        run_spec = _mapping(value["run_spec"], "legacy_state.run_spec")
-        run_id = required_text(run_spec.get("run_id"), "legacy_state.run_id")
-        if rebuilt_state.run_id != run_id:
-            raise HarnessValidationError(
-                "legacy state and rebuilt history belong to different runs",
-                code="graph_state_history_mismatch",
-            )
-        expected_run_spec_ref = rebuilt_state.metadata.get("run_spec_checksum")
-        if (
-            not isinstance(expected_run_spec_ref, str)
-            or canonical_checksum(dict(run_spec)) != expected_run_spec_ref
-        ):
-            raise HarnessValidationError(
-                "legacy state run specification conflicts with rebuilt history",
-                code="graph_state_history_mismatch",
-            )
-        metadata = _mapping(value["metadata"], "legacy_state.metadata")
-        _validate_legacy_state_shape(value, run_spec=run_spec)
-        projection = HarnessLegacyStatusProjection(
-            value["status"],
-            resumable_blocked=metadata.get("resumable_blocked") is True,
-            indeterminate_evidence_ref=metadata.get("indeterminate_evidence_ref"),
-        )
-        if (
-            projection.lifecycle is not rebuilt_state.lifecycle
-            or projection.outcome is not rebuilt_state.outcome
-        ):
-            raise HarnessValidationError(
-                "legacy status conflicts with rebuilt graph history",
-                code="legacy_state_projection_mismatch",
-            )
-        legacy_counters = {
-            "turns": value["turn_count"],
-            "replans": value["replan_count"],
-            "worker_calls": value["worker_call_count"],
-        }
-        for counter_name, raw_used in legacy_counters.items():
-            if (
-                not isinstance(raw_used, int)
-                or isinstance(raw_used, bool)
-                or raw_used < 0
-                or rebuilt_state.budgets.require(counter_name).used != raw_used
-            ):
-                raise HarnessValidationError(
-                    "legacy counters conflict with rebuilt graph history",
-                    code="legacy_state_projection_mismatch",
-                    details={"counter": counter_name},
-                )
-        return HarnessGraphStateReadResult(
-            source_schema=LEGACY_STATE_SCHEMA,
-            state=rebuilt_state,
-            source_checksum=canonical_checksum(dict(value)),
-            history_evidence_ref=evidence_ref,
-            applied_upcasters=(f"{LEGACY_STATE_SCHEMA}->{HARNESS_GRAPH_STATE_SCHEMA}",),
-        )
-
     def read_or_quarantine(
         self,
         value: Mapping[str, Any],
         *,
         expected_graph_ref: HarnessGraphReference | None = None,
-        rebuilt_state: HarnessGraphState | None = None,
-        history_evidence_ref: str | None = None,
     ) -> HarnessGraphStateReadResult:
         source_schema = _source_schema(value)
         try:
-            if source_schema == LEGACY_STATE_SCHEMA:
-                if rebuilt_state is None or history_evidence_ref is None:
-                    raise HarnessValidationError(
-                        "legacy graph state requires rebuilt history evidence",
-                        code="graph_history_evidence_missing",
-                    )
-                result = self.upcast_legacy(
-                    value,
-                    rebuilt_state=rebuilt_state,
-                    history_evidence_ref=history_evidence_ref,
+            if source_schema != GRAPH_ONLY_HARNESS_GRAPH_STATE_SCHEMA:
+                raise HarnessValidationError(
+                    "only Graph state schemas can enter live Graph runtime",
+                    code="legacy_orchestration_not_supported",
                 )
-                if (
-                    expected_graph_ref is not None
-                    and result.state is not None
-                    and result.state.graph_ref != expected_graph_ref
-                ):
-                    raise HarnessValidationError(
-                        "upcast graph state belongs to an incompatible graph",
-                        code="graph_state_graph_mismatch",
-                    )
-                return result
             state = self.read(value, expected_graph_ref=expected_graph_ref)
         except (HarnessValidationError, TypeError, ValueError) as exc:
             return HarnessGraphStateReadResult(
@@ -636,220 +483,8 @@ class HarnessGraphStateReader:
         )
 
 
-class HarnessLegacyEventCategory(StrEnum):
-    INITIALIZATION = "initialization"
-    DECISION = "decision"
-    PROJECTION = "projection"
-    ACTIVITY_RESULT = "activity_result"
-    OBSERVATION = "observation"
-    DIAGNOSTIC = "diagnostic"
-
-
-_LEGACY_EVENT_CATEGORIES = {
-    HarnessEventType.RUN_CREATED: HarnessLegacyEventCategory.INITIALIZATION,
-    HarnessEventType.DECISION_RECORDED: HarnessLegacyEventCategory.DECISION,
-    HarnessEventType.TRANSITION_COMMITTED: HarnessLegacyEventCategory.PROJECTION,
-    HarnessEventType.RUN_STATE_CHANGED: HarnessLegacyEventCategory.PROJECTION,
-    HarnessEventType.STEP_STATE_CHANGED: HarnessLegacyEventCategory.PROJECTION,
-    HarnessEventType.WORKER_RESULT_RECORDED: HarnessLegacyEventCategory.ACTIVITY_RESULT,
-    HarnessEventType.GATE_EVALUATED: HarnessLegacyEventCategory.OBSERVATION,
-    HarnessEventType.PHASE_RECORDED: HarnessLegacyEventCategory.DIAGNOSTIC,
-    HarnessEventType.WORKER_CALLED: HarnessLegacyEventCategory.DIAGNOSTIC,
-    HarnessEventType.CHECKPOINT_CREATED: HarnessLegacyEventCategory.DIAGNOSTIC,
-}
-
-
-@dataclass(frozen=True, slots=True)
-class HarnessLegacyEventEvidence:
-    event_id: str
-    run_id: str
-    stream_sequence: int
-    event_type: HarnessEventType | str
-    category: HarnessLegacyEventCategory | str
-    source_event_checksum: str
-    history_evidence_ref: str
-    occurred_at: datetime
-    source_schema: str = LEGACY_EVENT_SCHEMA
-    schema_version: str = HARNESS_LEGACY_EVENT_EVIDENCE_SCHEMA
-    evidence_checksum: str = field(init=False)
-
-    def __post_init__(self) -> None:
-        object.__setattr__(self, "event_id", required_text(self.event_id, "event_id"))
-        object.__setattr__(self, "run_id", required_text(self.run_id, "run_id"))
-        _positive_int(self.stream_sequence, "stream_sequence")
-        event_type = HarnessEventType(self.event_type)
-        category = HarnessLegacyEventCategory(self.category)
-        if _LEGACY_EVENT_CATEGORIES[event_type] is not category:
-            raise HarnessValidationError(
-                "legacy event category does not match its event type",
-                code="legacy_event_category_mismatch",
-            )
-        if self.source_schema != LEGACY_EVENT_SCHEMA:
-            raise HarnessValidationError(
-                "legacy event evidence uses an unsupported source schema",
-                code="unsupported_legacy_event_schema",
-            )
-        if self.schema_version != HARNESS_LEGACY_EVENT_EVIDENCE_SCHEMA:
-            raise HarnessValidationError(
-                "legacy event evidence schema is unsupported",
-                code="unsupported_legacy_event_evidence_schema",
-            )
-        object.__setattr__(
-            self,
-            "source_event_checksum",
-            _checksum(self.source_event_checksum, "source_event_checksum"),
-        )
-        object.__setattr__(
-            self,
-            "history_evidence_ref",
-            _checksum(self.history_evidence_ref, "history_evidence_ref"),
-        )
-        object.__setattr__(self, "event_type", event_type)
-        object.__setattr__(self, "category", category)
-        object.__setattr__(
-            self, "occurred_at", _datetime(self.occurred_at, "occurred_at")
-        )
-        object.__setattr__(
-            self,
-            "evidence_checksum",
-            canonical_checksum(self.checksum_projection()),
-        )
-
-    def checksum_projection(self) -> dict[str, Any]:
-        return {
-            "schema_version": self.schema_version,
-            "source_schema": self.source_schema,
-            "event_id": self.event_id,
-            "run_id": self.run_id,
-            "stream_sequence": self.stream_sequence,
-            "event_type": self.event_type.value,
-            "category": self.category.value,
-            "source_event_checksum": self.source_event_checksum,
-            "history_evidence_ref": self.history_evidence_ref,
-            "occurred_at": format_datetime(self.occurred_at),
-        }
-
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            **self.checksum_projection(),
-            "evidence_checksum": self.evidence_checksum,
-        }
-
-
-@dataclass(frozen=True, slots=True)
-class HarnessLegacyEventReadResult:
-    source_schema: str
-    evidence: HarnessLegacyEventEvidence | None = None
-    applied_upcasters: tuple[str, ...] = ()
-    quarantine_reason: str | None = None
-
-    @property
-    def quarantined(self) -> bool:
-        return self.quarantine_reason is not None
-
-
-class HarnessLegacyEventReader:
-    """Upcast v1 events to reference-only evidence, never executable commands."""
-
-    def __init__(self, schema_catalog: EventSchemaCatalog | None = None) -> None:
-        if schema_catalog is not None and not isinstance(
-            schema_catalog,
-            EventSchemaCatalog,
-        ):
-            raise TypeError("schema_catalog must be EventSchemaCatalog")
-        self._schema_catalog = schema_catalog or default_event_schema_catalog()
-
-    def upcast(
-        self,
-        value: Mapping[str, Any],
-        *,
-        stream_sequence: int,
-        history_evidence_ref: str,
-        expected_run_id: str | None = None,
-    ) -> HarnessLegacyEventReadResult:
-        if not isinstance(value, Mapping):
-            raise HarnessValidationError(
-                "legacy Harness event must be an object",
-                code="invalid_legacy_event",
-            )
-        if value.get("schema_version") != LEGACY_EVENT_SCHEMA:
-            raise HarnessValidationError(
-                "legacy Harness event schema is unsupported",
-                code="unsupported_legacy_event_schema",
-            )
-        event_value = dict(value)
-        event_value.pop("schema_version")
-        event = HarnessEvent.from_dict(event_value)
-        self._schema_catalog.validate(
-            event.event_type.value,
-            LEGACY_EVENT_SCHEMA,
-            event.payload,
-        )
-        if expected_run_id is not None and event.run_id != required_text(
-            expected_run_id,
-            "expected_run_id",
-        ):
-            raise HarnessValidationError(
-                "legacy event belongs to another run",
-                code="legacy_event_run_mismatch",
-            )
-        evidence_ref = _checksum(history_evidence_ref, "history_evidence_ref")
-        source_checksum = canonical_checksum(dict(value))
-        evidence = HarnessLegacyEventEvidence(
-            event_id=event.event_id or "",
-            run_id=event.run_id,
-            stream_sequence=_positive_int(stream_sequence, "stream_sequence"),
-            event_type=event.event_type,
-            category=_LEGACY_EVENT_CATEGORIES[event.event_type],
-            source_event_checksum=source_checksum,
-            history_evidence_ref=evidence_ref,
-            occurred_at=event.occurred_at,
-        )
-        return HarnessLegacyEventReadResult(
-            source_schema=LEGACY_EVENT_SCHEMA,
-            evidence=evidence,
-            applied_upcasters=(
-                f"{LEGACY_EVENT_SCHEMA}->{HARNESS_LEGACY_EVENT_EVIDENCE_SCHEMA}",
-            ),
-        )
-
-    def read_or_quarantine(
-        self,
-        value: Mapping[str, Any],
-        *,
-        stream_sequence: int,
-        history_evidence_ref: str | None,
-        expected_run_id: str | None = None,
-    ) -> HarnessLegacyEventReadResult:
-        source_schema = _source_schema(value)
-        try:
-            if history_evidence_ref is None:
-                raise HarnessValidationError(
-                    "legacy event requires rebuilt graph history evidence",
-                    code="graph_history_evidence_missing",
-                )
-            return self.upcast(
-                value,
-                stream_sequence=stream_sequence,
-                history_evidence_ref=history_evidence_ref,
-                expected_run_id=expected_run_id,
-            )
-        except (HarnessValidationError, EventSchemaError, TypeError, ValueError) as exc:
-            return HarnessLegacyEventReadResult(
-                source_schema=source_schema,
-                quarantine_reason=(
-                    "legacy_event_schema_validation_failed"
-                    if isinstance(exc, EventSchemaError)
-                    else _quarantine_code(
-                        exc,
-                        fallback="invalid_legacy_event",
-                    )
-                ),
-            )
-
-
 class HarnessGraphCheckpointReader:
-    """Strict normalized-Graph reader plus legacy checkpoint upcaster."""
+    """Strict Graph v2 checkpoint reader; older schemas are quarantine-only."""
 
     def read(
         self,
@@ -863,10 +498,7 @@ class HarnessGraphCheckpointReader:
                 code="invalid_graph_checkpoint",
             )
         schema = value.get("schema_version")
-        if schema not in {
-            HARNESS_GRAPH_CHECKPOINT_SCHEMA,
-            GRAPH_ONLY_HARNESS_GRAPH_CHECKPOINT_SCHEMA,
-        }:
+        if schema != GRAPH_ONLY_HARNESS_GRAPH_CHECKPOINT_SCHEMA:
             raise HarnessValidationError(
                 "checkpoint requires an explicit supported schema",
                 code="unsupported_graph_checkpoint_schema",
@@ -883,130 +515,19 @@ class HarnessGraphCheckpointReader:
             )
         return checkpoint
 
-    def upcast_legacy(
-        self,
-        value: Mapping[str, Any],
-        *,
-        rebuilt_state: HarnessGraphState,
-        last_event_sequence: int,
-        history_evidence_ref: str,
-    ) -> HarnessGraphCheckpointReadResult:
-        if not isinstance(value, Mapping):
-            raise HarnessValidationError(
-                "legacy checkpoint must be an object",
-                code="invalid_legacy_graph_checkpoint",
-            )
-        if value.get("schema_version") != LEGACY_CHECKPOINT_SCHEMA:
-            raise HarnessValidationError(
-                "legacy checkpoint schema is unsupported",
-                code="unsupported_graph_checkpoint_schema",
-                details={"schema_version": str(value.get("schema_version"))},
-            )
-        required = {
-            "schema_version",
-            "checkpoint_id",
-            "run_id",
-            "state",
-            "last_event_id",
-            "checksum",
-            "artifact_refs",
-            "metadata",
-            "created_at",
-        }
-        _exact_keys(value, required, "legacy graph checkpoint")
-        state_value = value["state"]
-        if not isinstance(state_value, Mapping):
-            raise HarnessValidationError(
-                "legacy checkpoint state must be an object",
-                code="invalid_legacy_graph_checkpoint",
-            )
-        run_id = required_text(value["run_id"], "legacy_checkpoint.run_id")
-        if rebuilt_state.run_id != run_id:
-            raise HarnessValidationError(
-                "legacy checkpoint and rebuilt history belong to different runs",
-                code="graph_checkpoint_history_mismatch",
-            )
-        state_upcast = HarnessGraphStateReader().upcast_legacy(
-            {"schema_version": LEGACY_STATE_SCHEMA, **dict(state_value)},
-            rebuilt_state=rebuilt_state,
-            history_evidence_ref=history_evidence_ref,
-        )
-        if state_upcast.state != rebuilt_state:
-            raise HarnessValidationError(
-                "legacy checkpoint state conflicts with rebuilt history",
-                code="legacy_checkpoint_projection_mismatch",
-            )
-        from framework.harness.runtime.checkpoint import checkpoint_checksum
-
-        expected_legacy_checksum = checkpoint_checksum(
-            run_id,
-            dict(state_value),
-            value["last_event_id"],
-        )
-        if value["checksum"] != expected_legacy_checksum:
-            raise HarnessValidationError(
-                "legacy checkpoint checksum is invalid",
-                code="legacy_checkpoint_checksum_mismatch",
-            )
-        checkpoint = HarnessGraphCheckpoint.from_state(
-            value["checkpoint_id"],
-            rebuilt_state,
-            created_at=parse_datetime(value["created_at"]),
-            history_evidence_ref=history_evidence_ref,
-        )
-        if checkpoint.last_event_sequence != _positive_int(
-            last_event_sequence,
-            "last_event_sequence",
-        ):
-            raise HarnessValidationError(
-                "rebuilt history does not end at the declared upcast sequence",
-                code="legacy_checkpoint_sequence_mismatch",
-            )
-        return HarnessGraphCheckpointReadResult(
-            source_schema=LEGACY_CHECKPOINT_SCHEMA,
-            checkpoint=checkpoint,
-            applied_upcasters=(
-                f"{LEGACY_CHECKPOINT_SCHEMA}->{HARNESS_GRAPH_CHECKPOINT_SCHEMA}",
-            ),
-        )
-
     def read_or_quarantine(
         self,
         value: Mapping[str, Any],
         *,
         expected_graph_ref: HarnessGraphReference | None = None,
-        rebuilt_state: HarnessGraphState | None = None,
-        last_event_sequence: int | None = None,
-        history_evidence_ref: str | None = None,
     ) -> HarnessGraphCheckpointReadResult:
         source_schema = _source_schema(value)
         try:
-            if source_schema == LEGACY_CHECKPOINT_SCHEMA:
-                if (
-                    rebuilt_state is None
-                    or last_event_sequence is None
-                    or history_evidence_ref is None
-                ):
-                    raise HarnessValidationError(
-                        "legacy checkpoint requires rebuilt history evidence",
-                        code="graph_history_evidence_missing",
-                    )
-                result = self.upcast_legacy(
-                    value,
-                    rebuilt_state=rebuilt_state,
-                    last_event_sequence=last_event_sequence,
-                    history_evidence_ref=history_evidence_ref,
+            if source_schema != GRAPH_ONLY_HARNESS_GRAPH_CHECKPOINT_SCHEMA:
+                raise HarnessValidationError(
+                    "only Graph checkpoints can enter live Graph runtime",
+                    code="legacy_orchestration_not_supported",
                 )
-                if (
-                    expected_graph_ref is not None
-                    and result.checkpoint is not None
-                    and result.checkpoint.graph_ref != expected_graph_ref
-                ):
-                    raise HarnessValidationError(
-                        "upcast checkpoint belongs to an incompatible graph",
-                        code="graph_checkpoint_graph_mismatch",
-                    )
-                return result
             checkpoint = self.read(
                 value,
                 expected_graph_ref=expected_graph_ref,
@@ -1466,99 +987,6 @@ def _exact_keys(value: Mapping[str, Any], expected: set[str], label: str) -> Non
         )
 
 
-def _mapping(value: Any, field_name: str) -> Mapping[str, Any]:
-    if not isinstance(value, Mapping):
-        raise HarnessValidationError(
-            f"{field_name} must be an object",
-            code="invalid_graph_history_record",
-        )
-    return value
-
-
-def _validate_legacy_state_shape(
-    value: Mapping[str, Any],
-    *,
-    run_spec: Mapping[str, Any],
-) -> None:
-    workflow = _mapping(run_spec.get("workflow"), "legacy_state.workflow")
-    declared_steps_value = workflow.get("steps")
-    if not isinstance(declared_steps_value, (list, tuple)):
-        raise HarnessValidationError(
-            "legacy workflow steps must be an array",
-            code="invalid_legacy_graph_state",
-        )
-    declared_step_ids = tuple(
-        required_text(
-            _mapping(item, "legacy_state.workflow.step").get("step_id"),
-            "legacy_state.workflow.step_id",
-        )
-        for item in declared_steps_value
-    )
-    raw_steps = value["step_states"]
-    if not isinstance(raw_steps, (list, tuple)):
-        raise HarnessValidationError(
-            "legacy step states must be an array",
-            code="invalid_legacy_graph_state",
-        )
-    state_step_ids: list[str] = []
-    for item in raw_steps:
-        step = _mapping(item, "legacy_state.step_state")
-        _exact_keys(
-            step,
-            {
-                "step_id",
-                "status",
-                "attempts",
-                "replans",
-                "output_ref",
-                "error",
-                "metadata",
-                "updated_at",
-            },
-            "legacy Step state",
-        )
-        step_id = required_text(step["step_id"], "legacy_state.step_id")
-        HarnessStepStatus(step["status"])
-        for counter_name in ("attempts", "replans"):
-            counter = step[counter_name]
-            if not isinstance(counter, int) or isinstance(counter, bool) or counter < 0:
-                raise HarnessValidationError(
-                    "legacy Step counters must be non-negative integers",
-                    code="invalid_legacy_graph_state",
-                )
-        for field_name in ("output_ref", "error"):
-            if step[field_name] is not None and not isinstance(step[field_name], str):
-                raise HarnessValidationError(
-                    f"legacy Step {field_name} must be text or null",
-                    code="invalid_legacy_graph_state",
-                )
-        _mapping(step["metadata"], "legacy_state.step_metadata")
-        if parse_datetime(step["updated_at"]) is None:
-            raise HarnessValidationError(
-                "legacy Step updated_at is required",
-                code="invalid_legacy_graph_state",
-            )
-        state_step_ids.append(step_id)
-    if len(state_step_ids) != len(set(state_step_ids)) or set(state_step_ids) != set(
-        declared_step_ids
-    ):
-        raise HarnessValidationError(
-            "legacy Step states do not match the declared workflow",
-            code="invalid_legacy_graph_state",
-        )
-    current_step_id = value["current_step_id"]
-    if current_step_id is not None and current_step_id not in state_step_ids:
-        raise HarnessValidationError(
-            "legacy current_step_id is outside the declared workflow",
-            code="invalid_legacy_graph_state",
-        )
-    if parse_datetime(value["updated_at"]) is None:
-        raise HarnessValidationError(
-            "legacy state updated_at is required",
-            code="invalid_legacy_graph_state",
-        )
-
-
 def _source_schema(value: Any) -> str:
     return str(value.get("schema_version")) if isinstance(value, Mapping) else "unknown"
 
@@ -1636,7 +1064,6 @@ def _datetime(value: Any, field_name: str) -> datetime:
 
 __all__ = [
     "DecisionVerifier",
-    "HARNESS_LEGACY_EVENT_EVIDENCE_SCHEMA",
     "HarnessGraphCheckpoint",
     "HarnessGraphCheckpointReadResult",
     "HarnessGraphCheckpointReader",
@@ -1647,10 +1074,6 @@ __all__ = [
     "HarnessGraphReplayReadResult",
     "HarnessGraphStateReadResult",
     "HarnessGraphStateReader",
-    "HarnessLegacyEventCategory",
-    "HarnessLegacyEventEvidence",
-    "HarnessLegacyEventReadResult",
-    "HarnessLegacyEventReader",
     "HarnessPinnedDecisionKernel",
     "InMemoryHarnessGraphCheckpointStore",
     "graph_history_evidence_ref",

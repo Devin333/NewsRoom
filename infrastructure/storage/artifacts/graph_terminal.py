@@ -26,7 +26,7 @@ from framework.agent.artifacts.stores.fs_safety import (
 from framework.events.canonical import checksum_for
 from framework.harness.artifacts import (
     GraphTerminalArtifact,
-    GraphTerminalManifest,
+    GraphTerminalManifestV2,
     parse_graph_terminal_manifest,
 )
 from framework.shared.hashing import hash_text
@@ -53,7 +53,7 @@ class FilesystemGraphTerminalArtifactReader:
         self.max_manifest_bytes = _positive_int(max_manifest_bytes, "max_manifest_bytes")
         self.max_artifact_bytes = _positive_int(max_artifact_bytes, "max_artifact_bytes")
 
-    def read_terminal_manifest(self, run_id: str) -> GraphTerminalManifest:
+    def read_terminal_manifest(self, run_id: str) -> GraphTerminalManifestV2:
         validated_run_id = validate_artifact_path_segment(run_id, field="run_id")
         path = self._path(validated_run_id, "manifest.json")
         content = self._read_regular_file(
@@ -188,10 +188,10 @@ class FilesystemGraphTerminalArtifactStore(FilesystemGraphTerminalArtifactReader
 
     def write_terminal_manifest(
         self,
-        manifest: GraphTerminalManifest,
-    ) -> GraphTerminalManifest:
-        if not isinstance(manifest, GraphTerminalManifest):
-            raise TypeError("manifest must be GraphTerminalManifest")
+        manifest: GraphTerminalManifestV2,
+    ) -> GraphTerminalManifestV2:
+        if not isinstance(manifest, GraphTerminalManifestV2):
+            raise TypeError("manifest must be GraphTerminalManifestV2")
         with self._locked_run(manifest.run_id):
             try:
                 existing = self.read_terminal_manifest(manifest.run_id)
@@ -208,12 +208,12 @@ class FilesystemGraphTerminalArtifactStore(FilesystemGraphTerminalArtifactReader
 
     def replace_terminal_manifest(
         self,
-        manifest: GraphTerminalManifest,
+        manifest: GraphTerminalManifestV2,
         *,
         expected_manifest_hash: str,
-    ) -> GraphTerminalManifest:
-        if not isinstance(manifest, GraphTerminalManifest):
-            raise TypeError("manifest must be GraphTerminalManifest")
+    ) -> GraphTerminalManifestV2:
+        if not isinstance(manifest, GraphTerminalManifestV2):
+            raise TypeError("manifest must be GraphTerminalManifestV2")
         if not isinstance(expected_manifest_hash, str) or not expected_manifest_hash:
             raise ValueError("expected_manifest_hash is required")
         with self._locked_run(manifest.run_id):
@@ -329,7 +329,7 @@ class FilesystemGraphTerminalArtifactStore(FilesystemGraphTerminalArtifactReader
             )
         return tuple(sorted(artifacts, key=lambda item: item.artifact_key))
 
-    def _write_manifest_unlocked(self, manifest: GraphTerminalManifest) -> None:
+    def _write_manifest_unlocked(self, manifest: GraphTerminalManifestV2) -> None:
         path = self._path(manifest.run_id, "manifest.json")
         verified_atomic_write(
             path,

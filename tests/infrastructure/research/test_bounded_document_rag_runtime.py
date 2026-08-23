@@ -8,6 +8,7 @@ from business.research.application.bounded_document_rag import (
 from business.research.document.chunk_storage import PaperChunkStoreAdapter
 from business.research.domain.common import SourceLineage
 from business.research.domain.document import ResearchDocument, ResearchSection
+from business.research.graphs import build_paper_analysis_context_graph_identity
 from business.research.rag.models import ResearchRetrievalGoal
 from business.research.services.rag_policy import ResearchRAGPolicyBuilder
 from framework.harness.rag.models import RAGBudget
@@ -112,9 +113,10 @@ def _spec(
     budget: RAGBudget | None = None,
 ):
     return ResearchRAGPolicyBuilder().build_session_spec(
-        run_id=run_id,
-        workflow_id="research.paper_analysis",
-        step_id="run_research_rag",
+        graph_identity=build_paper_analysis_context_graph_identity(
+            run_id=run_id,
+            stage_id="run_research_rag",
+        ),
         session_id=session_id,
         goal=ResearchRetrievalGoal(
             goal_id=f"goal-{run_id}",
@@ -238,15 +240,17 @@ def test_real_local_runtime_reports_missing_evidence_without_synthesis(
         key: pack.metadata[key]
         for key in (
             "run_id",
-            "workflow_id",
-            "step_id",
+            "graph_id",
+            "graph_ref",
+            "stage_id",
             "session_id",
             "status",
         )
     } == {
         "run_id": "run-missing",
-        "workflow_id": "research.paper_analysis",
-        "step_id": "run_research_rag",
+        "graph_id": spec.graph_identity.graph_id,
+        "graph_ref": spec.graph_identity.graph_ref,
+        "stage_id": "run_research_rag",
         "session_id": "session-missing",
         "status": "insufficient_evidence",
     }

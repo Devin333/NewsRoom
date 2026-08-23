@@ -41,6 +41,7 @@ from framework.harness.runtime.result_policy import (
 )
 from framework.harness.graph.model import NormalizedHarnessGraph
 from framework.shared.time import ensure_utc, utc_now
+from framework.shared.graph_identity import GraphExecutionIdentity
 from framework.tool.models import (
     ToolCall,
     ToolDefinition,
@@ -705,12 +706,29 @@ def _bind_call_to_activity(
             "Tool call idempotency identity conflicts with its Graph activity",
             code="graph_activity_identity_mismatch",
         )
+    graph_identity = GraphExecutionIdentity(
+        run_id=activity.run_id,
+        graph_id=activity.graph_ref.graph_id,
+        graph_version=activity.graph_ref.identity_version,
+        graph_ref=activity.graph_ref.identity_ref.exact_ref,
+        graph_checksum=activity.graph_ref.checksum,
+        node_id=activity.node_id,
+        node_instance_id=activity.node_instance_id,
+        activity_id=activity.activity_id,
+        attempt=activity.attempt,
+    )
+    if call.graph_identity is not None and call.graph_identity != graph_identity:
+        raise HarnessValidationError(
+            "Tool call Graph identity conflicts with its Graph activity",
+            code="graph_activity_identity_mismatch",
+        )
     return replace(
         call,
         metadata={
             **call.metadata,
             "idempotency_key": activity.idempotency_key,
         },
+        graph_identity=graph_identity,
     )
 
 

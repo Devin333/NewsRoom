@@ -9,7 +9,7 @@ def test_openapi_schema_generates_core_contract() -> None:
 
     assert schema["openapi"].startswith("3.")
     assert schema["info"]["title"] == "NewsRoom API"
-    assert "/api/v1/runs" in schema["paths"]
+    assert "/api/v2/graph-runs" in schema["paths"]
     assert "ApiResponse" in schema["components"]["schemas"]
     assert "schema_version" in schema["components"]["schemas"]["ApiResponse"]["properties"]
 
@@ -26,18 +26,18 @@ def test_openapi_operation_ids_are_unique_and_stable() -> None:
     assert operation_ids
     assert len(operation_ids) == len(set(operation_ids))
     assert "research_papers_analyze" in operation_ids
-    assert "runs_get_events" in operation_ids
+    assert "graph_runs_get_events" in operation_ids
     assert "reports_latest" in operation_ids
     assert "memory_search" in operation_ids
     assert "mcp_catalog" in operation_ids
 
 
-def test_all_api_v1_openapi_operations_have_tags() -> None:
+def test_all_api_openapi_operations_have_tags() -> None:
     schema = export_openapi_schema()
 
     missing_tags = []
     for path, path_item in schema["paths"].items():
-        if not path.startswith("/api/v1/"):
+        if not path.startswith("/api/"):
             continue
         for method, operation in path_item.items():
             if not isinstance(operation, dict):
@@ -52,7 +52,7 @@ def test_json_api_operations_reference_api_response_envelope() -> None:
     schema = export_openapi_schema()
 
     for path, path_item in schema["paths"].items():
-        if path in {"/api/v1/runs/{run_id}/progress", "/api/v1/runs/{run_id}/events/stream"}:
+        if path == "/api/v2/graph-runs/{run_id}/events/stream":
             continue
         for operation in path_item.values():
             if not isinstance(operation, dict):
@@ -61,7 +61,7 @@ def test_json_api_operations_reference_api_response_envelope() -> None:
             json_schema = content.get("application/json", {}).get("schema", {})
             expected = (
                 "#/components/schemas/RunEventsApiResponse"
-                if path == "/api/v1/runs/{run_id}/events"
+                if path == "/api/v2/graph-runs/{run_id}/events"
                 else "#/components/schemas/ApiResponse"
             )
             assert json_schema == {"$ref": expected}, path

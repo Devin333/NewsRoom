@@ -25,7 +25,7 @@ def test_parser_supports_prd_action_shapes() -> None:
 
 def test_observation_planner_and_termination_primitives() -> None:
     observation = ObservationBuilder().from_tool_result(
-        "memory.search",
+        "memory.recall",
         ToolResult(status=ToolStatus.SUCCEEDED, output={"api_key": "secret"}),
     )
     should_stop, reason = TerminationController().should_stop(_State(), AgentLoopPolicy())

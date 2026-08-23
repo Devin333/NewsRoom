@@ -20,7 +20,7 @@ class ReferencePhysicalContext:
 
     def materialize(self, snapshot, *, deployment_id):
         group_tokens = {
-            group.group_id: int(group.semantic_metadata.get("legacy_token_estimate", 2))
+            group.group_id: int(group.semantic_metadata.get("token_estimate", 2))
             for group in snapshot.groups
         }
         return ContextPhysicalMaterialization(

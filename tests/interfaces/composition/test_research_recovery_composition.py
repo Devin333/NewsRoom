@@ -19,7 +19,6 @@ from business.research.application.single_paper_runtime import (
     ResearchSinglePaperRuntime,
 )
 from business.research.ports.artifact_publication import (
-    RESEARCH_ARTIFACT_LEGACY_MANIFEST_VERSION,
     ResearchArtifactReadClaim,
     artifact_evidence_ref,
 )
@@ -56,6 +55,7 @@ from tests.business.research.fakes import (
     FakeResearchLLMWorker,
     FakeResearchRAGRuntime,
     FakeResearchSourceProvider,
+    in_memory_node_output_resource_factory,
 )
 from tests.interfaces.research_fixtures import (
     FakeResearchAnalysisResult,
@@ -133,6 +133,7 @@ def published_recovery_evidence(tmp_path_factory: pytest.TempPathFactory):
         event_port_factory=lambda _run_id: event_port,
         side_effect_store=side_effect_store,
         artifact_handler_factory=handler_factory,
+        node_output_resource_factory=in_memory_node_output_resource_factory,
     )
     run_id = "research-composition-recovery"
     result = runtime.run(
@@ -344,6 +345,7 @@ def test_real_post_creation_exception_commits_scoped_v2_quarantine(
         scoped_event_port_factory=lambda _run_id, _metadata: event_port,
         side_effect_store=side_effect_store,
         artifact_handler_factory=handler_factory,
+        node_output_resource_factory=in_memory_node_output_resource_factory,
     )
     recovery_source = _DurableResearchRunRecoverySource(
         artifact_port=artifact_port,
@@ -430,7 +432,7 @@ def test_real_post_creation_exception_commits_scoped_v2_quarantine(
         side_effect_store.close()
 
 
-def test_legacy_artifact_resolution_uses_strict_accepted_v1_run_scope(
+def test_legacy_artifact_resolution_is_rejected(
     tmp_path: Path,
 ) -> None:
     run_id = "legacy-accepted-run"
@@ -458,7 +460,7 @@ def test_legacy_artifact_resolution_uses_strict_accepted_v1_run_scope(
 
     claim = ResearchArtifactReadClaim(
         run_id=run_id,
-        schema_version=RESEARCH_ARTIFACT_LEGACY_MANIFEST_VERSION,
+        schema_version="newsroom.research-artifact-manifest/v1",
         identity_scope_ref=None,
         subject_scope_ref=None,
         publication_authority_ref=None,
@@ -472,20 +474,8 @@ def test_legacy_artifact_resolution_uses_strict_accepted_v1_run_scope(
     )
 
     resolution = _resolve_research_artifact_run(store, claim=claim)
-    assert resolution.accepted is True
-    assert resolution.identity_scope_ref == record.identity_scope_ref
-    assert _research_artifact_run_is_accepted(store, claim=claim) is True
-    assert _resolve_research_artifact_run(
-        store,
-        claim=replace(claim, artifact_refs=claim.artifact_refs[:-1]),
-    ).accepted is False
-    assert _resolve_research_artifact_run(
-        store,
-        claim=replace(
-            claim,
-            subject_scope_ref=checksum_for({"paper_id": "another-paper"}),
-        ),
-    ).accepted is False
+    assert resolution.accepted is False
+    assert _research_artifact_run_is_accepted(store, claim=claim) is False
 
 
 def test_service_diagnostic_artifact_read_is_quarantine_and_scope_bound(
@@ -550,12 +540,15 @@ def test_service_diagnostic_artifact_read_is_quarantine_and_scope_bound(
     with pytest.raises(ArtifactPublicationVisibilityError) as hidden:
         artifact_port.read_artifact(artifact_ref)
     assert hidden.value.disposition == "staging_only"
-    payload = service.read_diagnostic_artifact(
-        run_id,
-        artifact_ref,
-        actor=actor,
-    )
-    assert payload["payload"] == {"status": "failed", "paper_id": paper_id}
+    with pytest.raises(ResearchServiceError) as diagnostic:
+        service.read_diagnostic_artifact(
+            run_id,
+            artifact_ref,
+            actor=actor,
+        )
+    assert diagnostic.value.details == {
+        "error_type": "ArtifactPublicationVisibilityError"
+    }
     assert artifact_port.list_staged_artifacts(run_id) == staged_before
 
     with pytest.raises(ResearchServiceError) as foreign_scope:

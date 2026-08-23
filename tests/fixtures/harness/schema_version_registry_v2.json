@@ -4,7 +4,7 @@
   "source_contract": "harness-workflow-graph-runtime:1.5",
   "runtime_generation": "newsroom.harness-graph-runtime/v2",
   "contract_schemas": {
-    "graph_dsl": "newsroom.harness-workflow-graph/v1",
+    "graph_dsl": "newsroom.harness-graph-dsl/v1",
     "normalized_graph": "newsroom.harness-normalized-graph/v1",
     "graph_state": "newsroom.harness-graph-state/v1",
     "graph_decision": "newsroom.harness-graph-decision/v1",
@@ -91,7 +91,6 @@
     "legacy_harness_reducer": "newsroom.harness-state-reducer/v1",
     "legacy_harness_control_policy": "newsroom.harness-control-policy/v1",
     "harness_worker_activity": "newsroom.harness-worker-activity/v1",
-    "harness_activity_result": "newsroom.harness-activity-result/v1",
     "deterministic_history": "newsroom.deterministic-history/v1",
     "replay_activity_record": "newsroom.replay-activity-record/v1",
     "side_effect_intent": "newsroom.harness-side-effect-intent/v1",

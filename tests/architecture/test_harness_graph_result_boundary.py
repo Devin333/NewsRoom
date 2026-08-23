@@ -11,6 +11,16 @@ RESULT_BOUNDARY_MODULES = (
 CONTROL_PLANE_MODULE = (
     PROJECT_ROOT / "framework" / "harness" / "control_plane" / "harness.py"
 )
+EXECUTION_CONTRACT_MODULE = (
+    PROJECT_ROOT
+    / "framework"
+    / "harness"
+    / "control_plane"
+    / "activity_execution.py"
+)
+PHYSICAL_EXECUTOR_MODULE = (
+    PROJECT_ROOT / "framework" / "harness" / "runtime" / "activity_executor.py"
+)
 FORBIDDEN_IMPORTS = (
     "business",
     "interfaces",
@@ -75,3 +85,20 @@ def test_graph_result_committer_boundary_has_no_storage_or_business_imports() ->
         not matches_prefix(module, forbidden)
         for module in imported_modules(CONTROL_PLANE_MODULE)
     )
+
+
+def test_control_plane_execution_contract_does_not_import_runtime() -> None:
+    assert EXECUTION_CONTRACT_MODULE.is_file()
+    assert all(
+        not matches_prefix(module, ("framework.harness.runtime",))
+        for module in imported_modules(EXECUTION_CONTRACT_MODULE)
+    )
+
+
+def test_physical_executor_consumes_control_plane_execution_contract() -> None:
+    imported = imported_modules(PHYSICAL_EXECUTOR_MODULE)
+
+    assert "framework.harness.control_plane.activity_execution" in imported
+    source = PHYSICAL_EXECUTOR_MODULE.read_text(encoding="utf-8")
+    assert "class HarnessGraphActivityExecutionInput:" not in source
+    assert "class HarnessGraphActivityTaskContext:" not in source

@@ -6,6 +6,7 @@ from typing import Any
 from framework.agent.models import AgentLoopEventType
 from framework.events.trace import TraceContext, trace_fields
 from framework.llm.structured_output.observability import StructuredOutputEvent
+from framework.shared.graph_identity import GraphExecutionIdentity
 
 
 @dataclass(frozen=True)
@@ -35,9 +36,19 @@ class AgentLoopEventRecorder:
         agent_id: str,
         trace_context: TraceContext | None = None,
         run_id: str | None = None,
+        execution_identity: GraphExecutionIdentity | None = None,
     ) -> None:
         self.agent_id = agent_id
+        if execution_identity is not None and not isinstance(
+            execution_identity, GraphExecutionIdentity
+        ):
+            execution_identity = GraphExecutionIdentity.from_dict(execution_identity)
+        if execution_identity is not None:
+            if run_id is not None and run_id != execution_identity.run_id:
+                raise ValueError("run_id must match execution_identity.run_id")
+            run_id = execution_identity.run_id
         self.run_id = run_id
+        self.execution_identity = execution_identity
         self.trace_context = (
             trace_context.child(agent_id=agent_id)
             if trace_context is not None
@@ -330,11 +341,12 @@ class AgentLoopEventRecorder:
             iteration=iteration,
             payload={
                 **_structured_output_event_payload(
-                verdict,
-                event_type="structured_output_validation_accepted",
-                attempt_ref=str(iteration),
-                budget_disposition="accepted_for_domain_gates",
+                    verdict,
+                    event_type="structured_output_validation_accepted",
+                    attempt_ref=str(iteration),
+                    budget_disposition="accepted_for_domain_gates",
                     run_id=self.run_id,
+                    execution_identity=self.execution_identity,
                 ),
                 "repair_count": max(0, int(repair_count)),
             },
@@ -358,6 +370,7 @@ class AgentLoopEventRecorder:
                     attempt_ref=str(iteration),
                     budget_disposition="repair_authorized",
                     run_id=self.run_id,
+                    execution_identity=self.execution_identity,
                 ),
                 "repair_attempt": repair_attempt,
                 "max_repairs": max_repairs,
@@ -382,6 +395,7 @@ class AgentLoopEventRecorder:
                     attempt_ref=str(iteration),
                     budget_disposition="halt",
                     run_id=self.run_id,
+                    execution_identity=self.execution_identity,
                 ),
                 "stop_reason": stop_reason,
             },
@@ -521,6 +535,7 @@ def _structured_output_event_payload(
     attempt_ref: str,
     budget_disposition: str,
     run_id: str | None,
+    execution_identity: GraphExecutionIdentity | None = None,
 ) -> dict[str, Any]:
     diagnostics = verdict.get("structured_output_diagnostics")
     safe_diagnostics = []
@@ -544,6 +559,7 @@ def _structured_output_event_payload(
     envelope = StructuredOutputEvent(
         event_type=event_type,
         run_id=run_id,
+        execution_identity=execution_identity,
         attempt_ref=attempt_ref,
         schema_digest=(safe_contract or {}).get("schema_digest"),
         schema_revision=(safe_contract or {}).get("schema_revision"),

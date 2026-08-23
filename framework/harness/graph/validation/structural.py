@@ -391,8 +391,6 @@ def _validate_choice_join_pairs(
     for choice in controls.values():
         if choice.node_kind is not HarnessGraphNodeKind.CHOICE:
             continue
-        if "legacy_source_step_id" in choice.metadata:
-            continue
         if joins_by_choice[choice.node_id] != 1:
             diagnostics.append(
                 diagnostic(

@@ -61,7 +61,7 @@ def _snapshot(policy: ContextCompactionPolicy):
     return ContextGroupMaterializer().materialize(
         ContextMaterializationRequest(
             run_id="run-summary-1",
-            step_id="step-1",
+            stage_id="step-1",
             task_binding_ref="task://summary",
             policy_revision=policy.policy_revision,
             physical_profile_revision="profile-summary-v1",

@@ -5,12 +5,6 @@ def test_public_imports_are_available() -> None:
     import framework.events as events
 
     from framework.events import (  # noqa: PLC0415
-        Event,
-        EventEnvelope,
-        EventFilter,
-        EventType,
-        InMemoryEventBus,
-        InMemoryEventRecorder,
         DETERMINISTIC_HISTORY_EXTENSION,
         DeterministicHistoryRecord,
         HistoryCommandMismatchError,
@@ -42,19 +36,19 @@ def test_public_imports_are_available() -> None:
         WholeDocumentReferenceDisposition,
     )
 
-    assert Event is not None
-    assert EventEnvelope is not None
-    assert EventFilter is not None
-    assert EventType is not None
-    assert InMemoryEventBus is not None
-    assert InMemoryEventRecorder is not None
     for retired_name in (
+        "Event",
+        "EventEnvelope",
+        "EventFilter",
         "EventBus",
+        "EventType",
         "EventPublisher",
         "EventRecord",
         "EventRecorder",
         "EventReplay",
         "FunctionEventSubscriber",
+        "InMemoryEventBus",
+        "InMemoryEventRecorder",
     ):
         assert not hasattr(events, retired_name)
     assert DETERMINISTIC_HISTORY_EXTENSION == "deterministic_history"

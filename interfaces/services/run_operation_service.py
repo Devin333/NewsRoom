@@ -1,182 +1,94 @@
+"""Graph run operation application boundary.
+
+The interface layer only submits an idempotent Graph operation to the
+application service.  It never constructs a scheduler, executor, checkpoint,
+or event-store mutation directly.
+"""
+
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
-from collections.abc import Mapping
-from pathlib import Path
 from typing import Any
 
-from framework.agent.artifacts.paths import (
-    resolve_artifact_descendant,
-    validate_artifact_path_segment,
-)
-from framework.workflow.operations import (
-    LocalWorkflowRunOperationService,
-    OperationActor,
-    OperationResult,
-    WorkflowRunOperationService,
+from framework.events.canonical import checksum_for
+from interfaces.models.actor import ActorContext
+from interfaces.services.harness_graph_service import (
+    HarnessGraphApplicationService,
+    HarnessGraphReplayResult,
+    HarnessGraphRunOperationResult,
 )
 
 
-@dataclass(frozen=True)
-class RunOperationApplicationResult:
-    operation: OperationResult
+GraphServiceFactory = Callable[[ActorContext], HarnessGraphApplicationService]
+
+
+@dataclass(frozen=True, slots=True)
+class GraphRunOperationApplicationResult:
+    operation: HarnessGraphRunOperationResult
 
     def to_dict(self) -> dict[str, Any]:
         return self.operation.to_dict()
 
 
-class RunOperationApplicationService:
+class GraphRunOperationApplicationService:
+    """Submit only Graph-owned operations through the Graph application service."""
+
     def __init__(
         self,
-        artifact_root: str | Path = ".newsroom/runs",
-        *,
-        operation_service: WorkflowRunOperationService | None = None,
-        event_env: Mapping[str, str] | None = None,
+        graph_service_factory: GraphServiceFactory | None = None,
     ) -> None:
-        self.artifact_root = Path(artifact_root)
-        self._operation_service = operation_service
-        self._event_env = None if event_env is None else dict(event_env)
+        self._graph_service_factory = graph_service_factory
 
     def cancel_run(
         self,
         run_id: str,
         *,
-        reason: str | None = None,
-        actor_id: str | None = None,
-        metadata: dict[str, Any] | None = None,
-    ) -> RunOperationApplicationResult:
-        self._ensure_run_exists(run_id)
-        operation_service = self._get_operation_service()
-        return RunOperationApplicationResult(
-            operation_service.cancel_run(
+        reason_code: str,
+        actor: ActorContext,
+        cancellation_id: str | None = None,
+    ) -> GraphRunOperationApplicationResult:
+        service = self._service(actor)
+        operation_id = cancellation_id or checksum_for(
+            {
+                "operation": "cancel",
+                "run_id": run_id,
+                "reason_code": reason_code,
+                "actor_id": actor.actor_id,
+            }
+        )
+        return GraphRunOperationApplicationResult(
+            service.cancel_run(
                 run_id,
-                reason or "cancel requested through API",
-                actor=_actor(actor_id, metadata),
+                cancellation_id=operation_id,
+                reason_code=reason_code,
             )
         )
 
-    def rerun_from_step(
+    def replay_run(
         self,
         run_id: str,
         *,
-        step_id: str,
-        actor_id: str | None = None,
-        metadata: dict[str, Any] | None = None,
-    ) -> RunOperationApplicationResult:
-        self._ensure_run_exists(run_id)
-        operation_service = self._get_operation_service()
-        return RunOperationApplicationResult(
-            operation_service.rerun_from_step(
-                run_id,
-                step_id,
-                actor=_actor(actor_id, metadata),
-            )
+        actor: ActorContext,
+        through_sequence: int | None = None,
+    ) -> HarnessGraphReplayResult:
+        return self._service(actor).replay_run(
+            run_id,
+            through_sequence=through_sequence,
         )
 
-    def resume_with_patch(
-        self,
-        run_id: str,
-        *,
-        patch: dict[str, Any],
-        actor_id: str | None = None,
-        metadata: dict[str, Any] | None = None,
-    ) -> RunOperationApplicationResult:
-        self._ensure_run_exists(run_id)
-        operation_service = self._get_operation_service()
-        return RunOperationApplicationResult(
-            operation_service.resume_with_patch(
-                run_id,
-                patch,
-                actor=_actor(actor_id, metadata),
-            )
-        )
-
-    def skip_step(
-        self,
-        run_id: str,
-        *,
-        step_id: str,
-        reason: str | None = None,
-        actor_id: str | None = None,
-        metadata: dict[str, Any] | None = None,
-    ) -> RunOperationApplicationResult:
-        self._ensure_run_exists(run_id)
-        operation_service = self._get_operation_service()
-        return RunOperationApplicationResult(
-            operation_service.skip_step(
-                run_id,
-                step_id,
-                reason or "skip requested through API",
-                actor=_actor(actor_id, metadata),
-            )
-        )
-
-    def mark_blocked_resolved(
-        self,
-        run_id: str,
-        *,
-        reason: str | None = None,
-        resolved_by: str | None = None,
-        resolution_type: str = "manual",
-        actor_id: str | None = None,
-        metadata: dict[str, Any] | None = None,
-    ) -> RunOperationApplicationResult:
-        self._ensure_run_exists(run_id)
-        operation_service = self._get_operation_service()
-        actual_actor_id = actor_id or resolved_by
-        resolution = {
-            "reason": reason or "blocked run resolved through API",
-            "resolved_by": resolved_by or actual_actor_id or "api",
-            "resolution_type": resolution_type,
-            "metadata": dict(metadata or {}),
-        }
-        return RunOperationApplicationResult(
-            operation_service.mark_blocked_resolved(
-                run_id,
-                resolution,
-                actor=_actor(actual_actor_id, metadata),
-            )
-        )
-
-    def _ensure_run_exists(self, run_id: str) -> None:
-        safe_run_id = validate_artifact_path_segment(run_id, field="run_id")
-        run_dir = resolve_artifact_descendant(
-            self.artifact_root,
-            safe_run_id,
-            field="run_id",
-        )
-        manifest_path = resolve_artifact_descendant(
-            run_dir,
-            "manifest.json",
-            field="run manifest path",
-        )
-        if not manifest_path.exists():
-            raise FileNotFoundError(f"run not found: {run_id}")
-
-    def _get_operation_service(self) -> WorkflowRunOperationService:
-        operation_service = self._operation_service
-        if operation_service is not None:
-            return operation_service
-
-        from infrastructure.storage.events.factory import (
-            durable_event_storage_from_env,
-        )
-
-        event_storage = durable_event_storage_from_env(
-            artifact_root=self.artifact_root,
-            env=self._event_env,
-        )
-        operation_service = LocalWorkflowRunOperationService(
-            artifact_root=self.artifact_root,
-            event_runtime=event_storage.event_runtime,
-            event_reader=event_storage.event_store,
-            event_schema_catalog=event_storage.schema_catalog,
-        )
-        self._operation_service = operation_service
-        return operation_service
+    def _service(self, actor: ActorContext) -> HarnessGraphApplicationService:
+        if not isinstance(actor, ActorContext):
+            raise TypeError("actor must be ActorContext")
+        if self._graph_service_factory is None:
+            raise RuntimeError("Graph run operation capability is unavailable")
+        service = self._graph_service_factory(actor)
+        if not isinstance(service, HarnessGraphApplicationService):
+            raise TypeError("graph service factory returned an invalid service")
+        return service
 
 
-def _actor(actor_id: str | None, metadata: dict[str, Any] | None) -> OperationActor | None:
-    if not actor_id:
-        return None
-    return OperationActor(actor_id=actor_id, metadata=dict(metadata or {}))
+__all__ = [
+    "GraphRunOperationApplicationResult",
+    "GraphRunOperationApplicationService",
+]

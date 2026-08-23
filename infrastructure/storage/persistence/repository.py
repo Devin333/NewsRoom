@@ -4,7 +4,6 @@ import os
 from pathlib import Path
 from typing import Any, Protocol
 
-from framework import RunResult
 from infrastructure.storage.records import (
     ClaimRecord,
     EvidenceItemRecord,
@@ -27,8 +26,8 @@ from infrastructure.storage.persistence.record_builders import (
     run_persistence_batch_from_input,
     source_item_records_from_result,
     source_item_records_from_input,
-    workflow_run_record_from_result,
-    workflow_run_record_from_input,
+    graph_run_record_from_result,
+    graph_run_record_from_input,
 )
 from infrastructure.storage.persistence.record_inputs import (
     RunPersistenceInput,
@@ -36,9 +35,9 @@ from infrastructure.storage.persistence.record_inputs import (
     run_persistence_input_from_result,
 )
 from infrastructure.storage.persistence.records import (
+    GraphRunRecord,
     ReportRecord,
     RunPersistenceBatch,
-    WorkflowRunRecord,
 )
 
 
@@ -53,13 +52,13 @@ class PersistenceRepository(Protocol):
         self,
         *,
         limit: int = 20,
-        workflow_id: str | None = None,
-        workflow_ids: tuple[str, ...] | None = None,
+        graph_id: str | None = None,
+        graph_ids: tuple[str, ...] | None = None,
     ) -> list[ReportSummaryRecord]: ...
 
     def search_reports(self, query: str, *, limit: int = 20) -> list[ReportSummaryRecord]: ...
 
-    def save_workflow_run(self, record: WorkflowRunRecord) -> None: ...
+    def save_graph_run(self, record: GraphRunRecord) -> None: ...
 
     def save_report(self, record: ReportRecord) -> None: ...
 
@@ -98,7 +97,7 @@ def repository_from_env(
 
 def persist_run_result(
     repository: PersistenceRepository,
-    result: RunResult,
+    result: Any,
     *,
     profile: str,
     migrate: bool = True,
@@ -123,7 +122,7 @@ def persist_run_input(
         save_batch(batch)
         return
 
-    repository.save_workflow_run(batch.workflow_run)
+    repository.save_graph_run(batch.graph_run)
     if batch.report:
         repository.save_report(batch.report)
     for source_item in batch.source_items:

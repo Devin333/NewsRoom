@@ -562,11 +562,11 @@ def test_effect_identity_is_independent_of_subscription_version_and_generation()
 
 
 def test_nested_subscription_values_are_deeply_immutable_and_strictly_typed() -> None:
-    event_types = {"workflow_started"}
+    event_types = {"graph_started"}
     event_filter = SubscriptionFilter(event_types=event_types)
-    event_types.add("workflow_finished")
+    event_types.add("graph_finished")
 
-    assert event_filter.event_types == frozenset({"workflow_started"})
+    assert event_filter.event_types == frozenset({"graph_started"})
     with pytest.raises(ValueError, match="event_filter"):
         DurableSubscription("projection", 1, "consumer", event_filter={})  # type: ignore[arg-type]
     with pytest.raises(ValueError, match="subscription_id"):

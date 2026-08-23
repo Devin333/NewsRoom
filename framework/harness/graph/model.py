@@ -28,10 +28,8 @@ from framework.harness.graph.dsl import WaitKind, WaitTimeoutPolicy
 from framework.harness.graph.versioning import (
     GRAPH_ONLY_NORMALIZED_HARNESS_GRAPH_SCHEMA,
     HARNESS_CONDITION_POLICY_VERSION,
-    HARNESS_GRAPH_COMPILER_VERSION,
     HARNESS_GRAPH_DEFINITION_SCHEMA,
     HARNESS_GRAPH_ONLY_COMPILER_VERSION,
-    NORMALIZED_HARNESS_GRAPH_SCHEMA,
 )
 
 
@@ -68,7 +66,6 @@ class HarnessGraphEdgeKind(StrEnum):
 
 class HarnessContractKind(StrEnum):
     GRAPH = "graph"
-    WORKFLOW = "workflow"
     STEP = "step"
     WORKER = "worker"
     GATE = "gate"
@@ -1107,9 +1104,6 @@ class HarnessRepairReference:
 @dataclass(frozen=True, slots=True)
 class NormalizedHarnessGraph:
     graph_id: str
-    workflow_id: str | None
-    workflow_version: str | None
-    workflow_ref: HarnessContractReference | None
     nodes: tuple[HarnessGraphNode, ...]
     edges: tuple[HarnessGraphEdge, ...]
     entry_node_ids: tuple[str, ...]
@@ -1127,124 +1121,52 @@ class NormalizedHarnessGraph:
     terminal_policy: HarnessTerminalSideEffectPolicy | None = None
     terminal_failure_policy_ref: HarnessContractReference | None = None
     terminal_failure_policy: HarnessTerminalFailureSideEffectPolicy | None = None
-    schema_version: str = NORMALIZED_HARNESS_GRAPH_SCHEMA
-    compiler_version: str = HARNESS_GRAPH_COMPILER_VERSION
+    schema_version: str = GRAPH_ONLY_NORMALIZED_HARNESS_GRAPH_SCHEMA
+    compiler_version: str = HARNESS_GRAPH_ONLY_COMPILER_VERSION
     condition_policy_version: str = HARNESS_CONDITION_POLICY_VERSION
     checksum: str | None = None
 
     def __post_init__(self) -> None:
         graph_id = required_text(self.graph_id, "graph.graph_id")
-        workflow_id: str | None = None
-        workflow_version: str | None = None
-        graph_version: str | None = None
-        definition_schema_version: str | None = None
-        definition_checksum: str | None = None
-        if self.schema_version == NORMALIZED_HARNESS_GRAPH_SCHEMA:
-            workflow_id = required_text(self.workflow_id, "graph.workflow_id")
-            workflow_version = required_text(
-                self.workflow_version,
-                "graph.workflow_version",
-            )
-            _require_reference_kind(
-                self.workflow_ref,
-                HarnessContractKind.WORKFLOW,
-                "graph.workflow_ref",
-            )
-            assert self.workflow_ref is not None
-            if (
-                self.workflow_ref.contract_id != workflow_id
-                or self.workflow_ref.version != workflow_version
-            ):
-                raise HarnessValidationError(
-                    "workflow_ref must match workflow_id and workflow_version",
-                    code="graph_workflow_reference_mismatch",
-                )
-            graph_only_fields = {
-                "graph_version": self.graph_version,
-                "graph_ref": self.graph_ref,
-                "definition_schema_version": self.definition_schema_version,
-                "definition_checksum": self.definition_checksum,
-            }
-            if any(value is not None for value in graph_only_fields.values()):
-                raise HarnessValidationError(
-                    "legacy normalized graph cannot carry Graph-only identity",
-                    code="graph_identity_schema_mismatch",
-                    details={
-                        "fields": sorted(
-                            key
-                            for key, value in graph_only_fields.items()
-                            if value is not None
-                        )
-                    },
-                )
-            if (
-                self.committed_output_refs
-                or self.repair_refs
-                or self.terminal_failure_policy_ref is not None
-                or self.terminal_failure_policy is not None
-            ):
-                raise HarnessValidationError(
-                    "legacy normalized graph cannot carry Graph-only lineage",
-                    code="graph_lineage_schema_mismatch",
-                )
-            expected_compiler_version = HARNESS_GRAPH_COMPILER_VERSION
-        elif self.schema_version == GRAPH_ONLY_NORMALIZED_HARNESS_GRAPH_SCHEMA:
-            legacy_identity = {
-                "workflow_id": self.workflow_id,
-                "workflow_version": self.workflow_version,
-                "workflow_ref": self.workflow_ref,
-            }
-            if any(value is not None for value in legacy_identity.values()):
-                raise HarnessValidationError(
-                    "Graph-only normalized graph cannot carry legacy orchestration identity",
-                    code="legacy_graph_identity_forbidden",
-                    details={
-                        "fields": sorted(
-                            key
-                            for key, value in legacy_identity.items()
-                            if value is not None
-                        )
-                    },
-                )
-            graph_version = required_text(
-                self.graph_version,
-                "graph.graph_version",
-            )
-            _require_reference_kind(
-                self.graph_ref,
-                HarnessContractKind.GRAPH,
-                "graph.graph_ref",
-            )
-            assert self.graph_ref is not None
-            if (
-                self.graph_ref.contract_id != graph_id
-                or self.graph_ref.version != graph_version
-            ):
-                raise HarnessValidationError(
-                    "graph_ref must match graph_id and graph_version",
-                    code="graph_reference_mismatch",
-                )
-            definition_schema_version = required_text(
-                self.definition_schema_version,
-                "graph.definition_schema_version",
-            )
-            if definition_schema_version != HARNESS_GRAPH_DEFINITION_SCHEMA:
-                raise HarnessValidationError(
-                    "unsupported Graph definition schema",
-                    code="unsupported_graph_definition_schema",
-                    details={"schema_version": definition_schema_version},
-                )
-            definition_checksum = _checksum_text(
-                self.definition_checksum,
-                "graph.definition_checksum",
-            )
-            expected_compiler_version = HARNESS_GRAPH_ONLY_COMPILER_VERSION
-        else:
+        if self.schema_version != GRAPH_ONLY_NORMALIZED_HARNESS_GRAPH_SCHEMA:
             raise HarnessValidationError(
-                "unsupported normalized graph schema",
-                code="unsupported_graph_schema",
+                "only the Graph v2 normalized schema is accepted by the live model",
+                code="legacy_graph_schema_forbidden",
                 details={"schema_version": str(self.schema_version)},
             )
+        graph_version = required_text(
+            self.graph_version,
+            "graph.graph_version",
+        )
+        _require_reference_kind(
+            self.graph_ref,
+            HarnessContractKind.GRAPH,
+            "graph.graph_ref",
+        )
+        assert self.graph_ref is not None
+        if (
+            self.graph_ref.contract_id != graph_id
+            or self.graph_ref.version != graph_version
+        ):
+            raise HarnessValidationError(
+                "graph_ref must match graph_id and graph_version",
+                code="graph_reference_mismatch",
+            )
+        definition_schema_version = required_text(
+            self.definition_schema_version,
+            "graph.definition_schema_version",
+        )
+        if definition_schema_version != HARNESS_GRAPH_DEFINITION_SCHEMA:
+            raise HarnessValidationError(
+                "unsupported Graph definition schema",
+                code="unsupported_graph_definition_schema",
+                details={"schema_version": definition_schema_version},
+            )
+        definition_checksum = _checksum_text(
+            self.definition_checksum,
+            "graph.definition_checksum",
+        )
+        expected_compiler_version = HARNESS_GRAPH_ONLY_COMPILER_VERSION
         nodes = tuple(self.nodes)
         if not nodes or not all(
             isinstance(node, HarnessExecutableNode | HarnessControlNode)
@@ -1353,20 +1275,19 @@ class NormalizedHarnessGraph:
                         ),
                     },
                 )
-        if self.schema_version == GRAPH_ONLY_NORMALIZED_HARNESS_GRAPH_SCHEMA:
-            if self.terminal_policy is None:
-                raise HarnessValidationError(
-                    "Graph-only normalized graph requires its terminal policy snapshot",
-                    code="graph_terminal_policy_snapshot_missing",
-                )
-            if (
-                self.terminal_failure_policy_ref is not None
-                and self.terminal_failure_policy is None
-            ):
-                raise HarnessValidationError(
-                    "Graph-only terminal failure policy reference requires its snapshot",
-                    code="graph_terminal_failure_policy_snapshot_missing",
-                )
+        if self.terminal_policy is None:
+            raise HarnessValidationError(
+                "Graph-only normalized graph requires its terminal policy snapshot",
+                code="graph_terminal_policy_snapshot_missing",
+            )
+        if (
+            self.terminal_failure_policy_ref is not None
+            and self.terminal_failure_policy is None
+        ):
+            raise HarnessValidationError(
+                "Graph-only terminal failure policy reference requires its snapshot",
+                code="graph_terminal_failure_policy_snapshot_missing",
+            )
         if self.compiler_version != expected_compiler_version:
             raise HarnessValidationError(
                 "unsupported graph compiler version",
@@ -1409,8 +1330,6 @@ class NormalizedHarnessGraph:
             sorted(repair_refs, key=lambda reference: reference.binding_id)
         )
         object.__setattr__(self, "graph_id", graph_id)
-        object.__setattr__(self, "workflow_id", workflow_id)
-        object.__setattr__(self, "workflow_version", workflow_version)
         object.__setattr__(self, "graph_version", graph_version)
         object.__setattr__(
             self,
@@ -1482,11 +1401,7 @@ class NormalizedHarnessGraph:
     def identity_ref(self) -> HarnessContractReference:
         """Return the exact declaration identity for this normalized schema."""
 
-        reference = (
-            self.graph_ref
-            if self.schema_version == GRAPH_ONLY_NORMALIZED_HARNESS_GRAPH_SCHEMA
-            else self.workflow_ref
-        )
+        reference = self.graph_ref
         if reference is None:  # pragma: no cover - constructor invariant
             raise AssertionError("normalized graph identity is unavailable")
         return reference
@@ -1519,16 +1434,6 @@ class NormalizedHarnessGraph:
                 None if self.terminal_policy is None else self.terminal_policy.to_dict()
             ),
         }
-        if self.schema_version == NORMALIZED_HARNESS_GRAPH_SCHEMA:
-            assert self.workflow_ref is not None
-            projection.update(
-                {
-                    "workflow_id": self.workflow_id,
-                    "workflow_version": self.workflow_version,
-                    "workflow_ref": self.workflow_ref.to_dict(),
-                }
-            )
-            return projection
         assert self.graph_ref is not None
         projection.update(
             {
@@ -1564,6 +1469,12 @@ class NormalizedHarnessGraph:
     def from_dict(cls, value: Mapping[str, Any]) -> "NormalizedHarnessGraph":
         payload = dict(value)
         schema_version = payload.get("schema_version")
+        if schema_version != GRAPH_ONLY_NORMALIZED_HARNESS_GRAPH_SCHEMA:
+            raise HarnessValidationError(
+                "only the Graph v2 normalized schema is accepted by the live reader",
+                code="legacy_graph_schema_forbidden",
+                details={"schema_version": str(schema_version)},
+            )
         if schema_version == GRAPH_ONLY_NORMALIZED_HARNESS_GRAPH_SCHEMA:
             graph_only_fields = {
                 "schema_version",
@@ -1599,9 +1510,6 @@ class NormalizedHarnessGraph:
                 graph_ref=HarnessContractReference.from_dict(payload["graph_ref"]),
                 definition_schema_version=payload["definition_schema_version"],
                 definition_checksum=payload["definition_checksum"],
-                workflow_id=None,
-                workflow_version=None,
-                workflow_ref=None,
                 nodes=tuple(
                     graph_node_from_dict(item)
                     for item in _array(payload["nodes"], "normalized_graph.nodes")
@@ -1682,119 +1590,6 @@ class NormalizedHarnessGraph:
                 ),
                 checksum=payload["checksum"],
             )
-        if schema_version != NORMALIZED_HARNESS_GRAPH_SCHEMA:
-            raise HarnessValidationError(
-                "unsupported normalized graph schema",
-                code="unsupported_graph_schema",
-                details={"schema_version": str(schema_version)},
-            )
-        expected_fields = {
-            "schema_version",
-            "compiler_version",
-            "condition_policy_version",
-            "graph_id",
-            "workflow_id",
-            "workflow_version",
-            "workflow_ref",
-            "nodes",
-            "edges",
-            "entry_node_ids",
-            "terminal_node_ids",
-            "input_keys",
-            "terminal_output_keys",
-            "compensation_refs",
-            "terminal_policy_ref",
-            "terminal_policy",
-            "checksum",
-        }
-        missing_fields = expected_fields.difference(payload)
-        legacy_missing_fields = (
-            {"terminal_policy"},
-            {"input_keys", "terminal_output_keys", "terminal_policy"},
-        )
-        if missing_fields in legacy_missing_fields:
-            _exact_keys(
-                payload,
-                expected_fields.difference(missing_fields),
-                "legacy normalized graph",
-            )
-            supplied_checksum = payload["checksum"]
-            legacy_projection = {
-                key: item for key, item in payload.items() if key != "checksum"
-            }
-            expected_checksum = canonical_checksum(legacy_projection)
-            if supplied_checksum != expected_checksum:
-                raise HarnessValidationError(
-                    "legacy normalized graph checksum does not match canonical content",
-                    code="graph_checksum_mismatch",
-                    details={
-                        "expected": expected_checksum,
-                        "actual": str(supplied_checksum),
-                    },
-                )
-            payload.setdefault("input_keys", ())
-            payload.setdefault("terminal_output_keys", ())
-            payload["terminal_policy"] = None
-            payload["checksum"] = None
-        _exact_keys(
-            payload,
-            expected_fields,
-            "normalized graph",
-        )
-        return cls(
-            schema_version=payload["schema_version"],
-            compiler_version=payload["compiler_version"],
-            condition_policy_version=payload["condition_policy_version"],
-            graph_id=payload["graph_id"],
-            workflow_id=payload["workflow_id"],
-            workflow_version=payload["workflow_version"],
-            workflow_ref=HarnessContractReference.from_dict(payload["workflow_ref"]),
-            nodes=tuple(
-                graph_node_from_dict(item)
-                for item in _array(payload["nodes"], "normalized_graph.nodes")
-            ),
-            edges=tuple(
-                HarnessGraphEdge.from_dict(item)
-                for item in _array(payload["edges"], "normalized_graph.edges")
-            ),
-            entry_node_ids=tuple(
-                _array(payload["entry_node_ids"], "normalized_graph.entry_node_ids")
-            ),
-            terminal_node_ids=tuple(
-                _array(
-                    payload["terminal_node_ids"], "normalized_graph.terminal_node_ids"
-                )
-            ),
-            input_keys=tuple(
-                _array(payload["input_keys"], "normalized_graph.input_keys")
-            ),
-            terminal_output_keys=tuple(
-                _array(
-                    payload["terminal_output_keys"],
-                    "normalized_graph.terminal_output_keys",
-                )
-            ),
-            compensation_refs=tuple(
-                HarnessCompensationReference.from_dict(item)
-                for item in _array(
-                    payload["compensation_refs"],
-                    "normalized_graph.compensation_refs",
-                )
-            ),
-            terminal_policy_ref=(
-                None
-                if payload["terminal_policy_ref"] is None
-                else HarnessContractReference.from_dict(payload["terminal_policy_ref"])
-            ),
-            terminal_policy=(
-                None
-                if payload["terminal_policy"] is None
-                else HarnessTerminalSideEffectPolicy.from_dict(
-                    payload["terminal_policy"]
-                )
-            ),
-            checksum=payload["checksum"],
-        )
 
 
 def graph_node_from_dict(value: Mapping[str, Any]) -> HarnessGraphNode:

@@ -23,6 +23,7 @@ class SourceHealthCheckTaskHandler:
             task_id=task.task_id,
             success=True,
             status=TaskStatus.SUCCEEDED,
+            execution_scope=task.execution_scope,
             run_status="succeeded",
             output=handler_output(result.to_dict(), run_id=task.payload.get("run_id")),
         )

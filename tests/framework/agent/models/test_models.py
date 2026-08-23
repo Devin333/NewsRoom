@@ -16,13 +16,13 @@ def test_agent_spec_prd_fields_map_to_legacy_runtime_fields() -> None:
         name="Analyst",
         instructions="Return JSON",
         model_route="fast",
-        tool_names=["memory.search"],
+        tool_names=["memory.recall"],
         max_iterations=3,
     )
 
     assert spec.role == "Analyst"
     assert spec.goal == "Return JSON"
-    assert spec.allowed_tools == ["memory.search"]
+    assert spec.allowed_tools == ["memory.recall"]
     assert spec.loop_policy.max_iterations == 3
     assert spec.model_policy["route_id"] == "fast"
     assert AgentSpec.from_dict(spec.to_dict()).to_dict() == spec.to_dict()
@@ -35,7 +35,7 @@ def test_agent_policy_status_action_and_result_prd_helpers() -> None:
     assert AgentLoopStatus.SUCCEEDED.is_terminal() is True
 
     final = AgentAction.final("done")
-    tool_call = AgentAction.tool_call("memory.search", {"query": "ai"})
+    tool_call = AgentAction.tool_call("memory.recall", {"query": "ai"})
     assert final.is_final() is True
     assert final.to_dict()["action_type"] == AgentActionType.FINAL.value
     assert tool_call.is_tool_call() is True

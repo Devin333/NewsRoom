@@ -39,19 +39,13 @@ from framework.harness.task_plan.schema import (
     GRAPH_ONLY_TASK_PLAN_PROJECTION_SCHEMA,
     GRAPH_ONLY_TASK_PROJECTION_SCHEMA,
     GRAPH_ONLY_TASK_PLAN_STAGE_IDENTITY_SCHEMA,
-    TASK_PLAN_PROJECTION_SCHEMA,
-    TASK_PLAN_EVENT_SCHEMA_V1,
     TASK_PLAN_EVENT_SCHEMA_V2,
     TASK_PLAN_EVENT_SCHEMAS,
-    TASK_PROJECTION_SCHEMA,
 )
 
 
-# Compatibility alias: the legacy runtime remains the default writer until
-# production Graph authority is explicitly enabled.
-TASK_PLAN_EVENT_SCHEMA = TASK_PLAN_EVENT_SCHEMA_V1
-TASK_PLAN_RESULT_SCHEMA_V1 = "newsroom.harness-task-plan-result/v1"
-TASK_PLAN_RESULT_SCHEMA_V2 = "newsroom.harness-task-plan-result/v2"
+# Graph v2 is the sole TaskPlan event contract.
+TASK_PLAN_EVENT_SCHEMA = TASK_PLAN_EVENT_SCHEMA_V2
 TASK_PLAN_RESULT_SCHEMA_V3 = "newsroom.harness-task-plan-result/v3"
 TASK_PLAN_EVENT_TYPES = (
     "PLAN_CANDIDATE_BUILT",
@@ -82,7 +76,6 @@ class TaskResultRecord:
     """Durable task result envelope; payload itself remains outside the plan."""
 
     run_id: str
-    workflow_id: str | None
     stage_id: str
     plan_id: str
     plan_version: int
@@ -115,15 +108,11 @@ class TaskResultRecord:
     transcript_checksum: str | None = None
     subagent_output_ref: str | None = None
     subagent_output_checksum: str | None = None
-    schema_version: str = TASK_PLAN_RESULT_SCHEMA_V2
+    schema_version: str = TASK_PLAN_RESULT_SCHEMA_V3
     result_checksum: str = field(init=False)
 
     def __post_init__(self) -> None:
-        if self.schema_version not in {
-            TASK_PLAN_RESULT_SCHEMA_V1,
-            TASK_PLAN_RESULT_SCHEMA_V2,
-            TASK_PLAN_RESULT_SCHEMA_V3,
-        }:
+        if self.schema_version != TASK_PLAN_RESULT_SCHEMA_V3:
             raise HarnessValidationError(
                 "TaskResultRecord schema is unsupported",
                 code="task_plan_result_schema_unsupported",
@@ -132,13 +121,8 @@ class TaskResultRecord:
             object.__setattr__(self, name, identifier(getattr(self, name), name))
         _normalize_task_plan_contract_identity(
             self,
-            legacy_schemas={
-                TASK_PLAN_RESULT_SCHEMA_V1,
-                TASK_PLAN_RESULT_SCHEMA_V2,
-            },
             graph_only_schema=TASK_PLAN_RESULT_SCHEMA_V3,
             graph_only_identity_fields=_GRAPH_ONLY_TASK_RESULT_IDENTITY_FIELDS,
-            legacy_mismatch_code="task_plan_result_identity_schema_mismatch",
         )
         object.__setattr__(self, "plan_version", positive_int(self.plan_version, "plan_version"))
         object.__setattr__(self, "attempt", positive_int(self.attempt, "attempt"))
@@ -188,13 +172,6 @@ class TaskResultRecord:
             self.subagent_output_ref,
             self.subagent_output_checksum,
         )
-        if self.schema_version == TASK_PLAN_RESULT_SCHEMA_V1 and any(
-            item is not None for item in evidence_values
-        ):
-            raise HarnessValidationError(
-                "legacy TaskResultRecord must not carry v2 evidence",
-                code="task_plan_result_invalid",
-            )
         if any(item is not None for item in evidence_values) and not all(
             item is not None for item in evidence_values
         ):
@@ -294,19 +271,14 @@ class TaskResultRecord:
             "verified_gate_refs": list(self.verified_gate_refs),
             "gate_evidence_refs": list(self.gate_evidence_refs),
         }
-        if self.schema_version in {
-            TASK_PLAN_RESULT_SCHEMA_V2,
-            TASK_PLAN_RESULT_SCHEMA_V3,
-        }:
-            payload = {
-                "schema_version": self.schema_version,
-                **payload,
-                "transcript_ref": self.transcript_ref,
-                "transcript_checksum": self.transcript_checksum,
-                "subagent_output_ref": self.subagent_output_ref,
-                "subagent_output_checksum": self.subagent_output_checksum,
-            }
-        return payload
+        return {
+            "schema_version": self.schema_version,
+            **payload,
+            "transcript_ref": self.transcript_ref,
+            "transcript_checksum": self.transcript_checksum,
+            "subagent_output_ref": self.subagent_output_ref,
+            "subagent_output_checksum": self.subagent_output_checksum,
+        }
 
     def to_dict(self, *, include_checksum: bool = True) -> dict[str, Any]:
         payload = self.checksum_projection()
@@ -326,40 +298,21 @@ class TaskResultRecord:
                 "result_checksum",
             }
         )
-        if "schema_version" not in value:
-            payload = exact_keys(
-                value,
-                required=common | {"workflow_id"},
-                model=cls.__name__,
+        if value.get("schema_version") != TASK_PLAN_RESULT_SCHEMA_V3:
+            raise HarnessValidationError(
+                "TaskResultRecord schema is unsupported",
+                code="task_plan_result_schema_unsupported",
             )
-            payload["schema_version"] = TASK_PLAN_RESULT_SCHEMA_V1
-        else:
-            schema_version = value.get("schema_version")
-            if schema_version not in {
-                TASK_PLAN_RESULT_SCHEMA_V2,
-                TASK_PLAN_RESULT_SCHEMA_V3,
-            }:
-                raise HarnessValidationError(
-                    "TaskResultRecord schema is unsupported",
-                    code="task_plan_result_schema_unsupported",
-                )
-            identity_fields = (
-                _GRAPH_ONLY_TASK_RESULT_IDENTITY_FIELDS
-                if schema_version == TASK_PLAN_RESULT_SCHEMA_V3
-                else frozenset({"workflow_id"})
-            )
-            payload = exact_keys(
-                value,
-                required=common
-                | {
-                    "schema_version", "transcript_ref", "transcript_checksum",
-                    "subagent_output_ref", "subagent_output_checksum",
-                }
-                | identity_fields,
-                model=cls.__name__,
-            )
-            if schema_version == TASK_PLAN_RESULT_SCHEMA_V3:
-                payload["workflow_id"] = None
+        payload = exact_keys(
+            value,
+            required=common
+            | {
+                "schema_version", "transcript_ref", "transcript_checksum",
+                "subagent_output_ref", "subagent_output_checksum",
+            }
+            | _GRAPH_ONLY_TASK_RESULT_IDENTITY_FIELDS,
+            model=cls.__name__,
+        )
         supplied = checksum(payload.pop("result_checksum"), "result_checksum")
         result = cls(**payload)
         if supplied != result.result_checksum:
@@ -376,15 +329,10 @@ class TaskResultRecord:
         return (
             self.plan_id == plan.plan_id
             and self.plan_version == plan.version
-            and self.is_graph_only == plan.is_graph_only
             and (self.run_id, self.stage_id) == (plan.run_id, plan.stage_id)
-            and (
-                all(
-                    getattr(self, name) == getattr(plan, name)
-                    for name in _GRAPH_ONLY_TASK_RESULT_IDENTITY_FIELDS
-                )
-                if self.is_graph_only
-                else self.workflow_id == plan.workflow_id
+            and all(
+                getattr(self, name) == getattr(plan, name)
+                for name in _GRAPH_ONLY_TASK_RESULT_IDENTITY_FIELDS
             )
         )
 
@@ -424,7 +372,6 @@ class TaskResultRecord:
             )
         return cls(
             run_id=plan.run_id,
-            workflow_id=plan.workflow_id,
             stage_id=plan.stage_id,
             plan_id=plan.plan_id,
             plan_version=plan.version,
@@ -447,11 +394,7 @@ class TaskResultRecord:
             transcript_checksum=transcript_checksum,
             subagent_output_ref=subagent_output_ref,
             subagent_output_checksum=subagent_output_checksum,
-            schema_version=(
-                TASK_PLAN_RESULT_SCHEMA_V3
-                if plan.is_graph_only
-                else TASK_PLAN_RESULT_SCHEMA_V2
-            ),
+            schema_version=TASK_PLAN_RESULT_SCHEMA_V3,
             **_task_plan_graph_identity_kwargs(plan),
         )
 
@@ -477,39 +420,13 @@ _GRAPH_ONLY_TASK_RESULT_IDENTITY_FIELDS = (
 def _normalize_task_plan_contract_identity(
     model: Any,
     *,
-    legacy_schemas: set[str],
     graph_only_schema: str,
     graph_only_identity_fields: frozenset[str],
-    legacy_mismatch_code: str,
 ) -> None:
-    if model.schema_version in legacy_schemas:
-        object.__setattr__(
-            model,
-            "workflow_id",
-            identifier(model.workflow_id, "workflow_id"),
-        )
-        unexpected = sorted(
-            name
-            for name in graph_only_identity_fields
-            if getattr(model, name) is not None
-        )
-        if unexpected:
-            raise HarnessValidationError(
-                "legacy TaskPlan contract cannot carry Graph-only identity",
-                code=legacy_mismatch_code,
-                details={"unexpected": unexpected},
-            )
-        return
-
     if model.schema_version != graph_only_schema:
         raise HarnessValidationError(
             "TaskPlan contract schema does not select a supported identity",
             code="task_plan_identity_schema_mismatch",
-        )
-    if model.workflow_id is not None:
-        raise HarnessValidationError(
-            "Graph-only TaskPlan contract cannot carry legacy orchestration identity",
-            code="legacy_task_plan_identity_forbidden",
         )
     normalized = {
         "graph_checksum": checksum(model.graph_checksum, "graph_checksum"),
@@ -587,8 +504,6 @@ def _normalize_task_plan_contract_identity(
 
 
 def _task_plan_identity_projection(model: Any) -> dict[str, Any]:
-    if not model.is_graph_only:
-        return {"workflow_id": model.workflow_id}
     return {
         name: getattr(model, name)
         for name in _GRAPH_ONLY_TASK_RESULT_IDENTITY_FIELDS
@@ -598,8 +513,6 @@ def _task_plan_identity_projection(model: Any) -> dict[str, Any]:
 def _task_plan_graph_identity_kwargs(
     value: PlanCandidate | ValidatedTaskPlan,
 ) -> dict[str, Any]:
-    if not value.is_graph_only:
-        return {}
     return {
         name: getattr(value, name)
         for name in _GRAPH_ONLY_TASK_RESULT_IDENTITY_FIELDS
@@ -610,7 +523,6 @@ def _task_plan_graph_identity_kwargs(
 class TaskPlanEvent:
     event_type: str
     run_id: str
-    workflow_id: str | None
     stage_id: str
     graph_checksum: str
     graph_id: str | None = None
@@ -651,10 +563,8 @@ class TaskPlanEvent:
         object.__setattr__(self, "graph_checksum", checksum(self.graph_checksum, "graph_checksum"))
         _normalize_task_plan_contract_identity(
             self,
-            legacy_schemas={TASK_PLAN_EVENT_SCHEMA_V1},
             graph_only_schema=TASK_PLAN_EVENT_SCHEMA_V2,
             graph_only_identity_fields=_GRAPH_ONLY_TASK_PLAN_IDENTITY_FIELDS,
-            legacy_mismatch_code="task_plan_event_identity_schema_mismatch",
         )
         object.__setattr__(self, "plan_id", identifier(self.plan_id, "plan_id") if self.plan_id else None)
         if self.plan_version is not None:
@@ -683,32 +593,23 @@ class TaskPlanEvent:
             "event_type": self.event_type,
             "run_id": self.run_id,
         }
-        if self.is_graph_only:
-            payload.update(
-                {
-                    "graph_id": self.graph_id,
-                    "graph_version": self.graph_version,
-                    "graph_ref": self.graph_ref,
-                    "graph_schema_version": self.graph_schema_version,
-                    "compiler_version": self.compiler_version,
-                    "condition_policy_version": self.condition_policy_version,
-                }
-            )
-        else:
-            payload["workflow_id"] = self.workflow_id
+        payload.update(
+            {
+                "graph_id": self.graph_id,
+                "graph_version": self.graph_version,
+                "graph_ref": self.graph_ref,
+                "graph_schema_version": self.graph_schema_version,
+                "compiler_version": self.compiler_version,
+                "condition_policy_version": self.condition_policy_version,
+            }
+        )
         payload.update(
             {
                 "stage_id": self.stage_id,
                 "graph_checksum": self.graph_checksum,
-                **(
-                    {
-                        "stage_binding_checksum": self.stage_binding_checksum,
-                        "stage_identity_schema": self.stage_identity_schema,
-                        "stage_identity_checksum": self.stage_identity_checksum,
-                    }
-                    if self.is_graph_only
-                    else {}
-                ),
+                "stage_binding_checksum": self.stage_binding_checksum,
+                "stage_identity_schema": self.stage_identity_schema,
+                "stage_identity_checksum": self.stage_identity_checksum,
                 "plan_id": self.plan_id,
                 "plan_version": self.plan_version,
                 "task_id": self.task_id,
@@ -795,19 +696,13 @@ class TaskPlanEvent:
                 "event_checksum",
             }
         )
-        identity = (
-            _GRAPH_ONLY_TASK_PLAN_IDENTITY_FIELDS
-            if schema_version == TASK_PLAN_EVENT_SCHEMA_V2
-            else frozenset({"workflow_id"})
-        )
+        identity = _GRAPH_ONLY_TASK_PLAN_IDENTITY_FIELDS
         payload = exact_keys(
             value,
             required=common | identity,
             model=cls.__name__,
         )
         supplied = checksum(payload.pop("event_checksum"), "event_checksum")
-        if schema_version == TASK_PLAN_EVENT_SCHEMA_V2:
-            payload["workflow_id"] = None
         event = cls(**payload)
         if supplied != event.event_checksum:
             raise HarnessValidationError("TaskPlanEvent checksum does not match canonical content", code="task_plan_checksum_mismatch")
@@ -823,8 +718,6 @@ class TaskPlanEvent:
     ) -> bool:
         if not isinstance(value, (PlanCandidate, ValidatedTaskPlan)):
             raise TypeError("value must be PlanCandidate or ValidatedTaskPlan")
-        if self.is_graph_only != value.is_graph_only:
-            return False
         if (
             self.run_id,
             self.stage_id,
@@ -835,8 +728,6 @@ class TaskPlanEvent:
             value.graph_checksum,
         ):
             return False
-        if not self.is_graph_only:
-            return self.workflow_id == value.workflow_id
         return all(
             getattr(self, name) == getattr(value, name)
             for name in _GRAPH_ONLY_TASK_PLAN_IDENTITY_FIELDS
@@ -881,6 +772,7 @@ class InMemoryTaskPlanStore:
     def append_candidate(self, candidate: PlanCandidate, *, event_type: str = "PLAN_CANDIDATE_BUILT") -> str:
         if not isinstance(candidate, PlanCandidate):
             raise TypeError("candidate must be PlanCandidate")
+        _require_live_graph_only(candidate, "candidate")
         with self._lock:
             existing = self._candidates.get(candidate.candidate_checksum)
             if existing is not None and existing != candidate:
@@ -902,6 +794,7 @@ class InMemoryTaskPlanStore:
     def append_rejected_candidate(self, candidate: PlanCandidate, *, reason_code: str) -> str:
         if not isinstance(candidate, PlanCandidate):
             raise TypeError("candidate must be PlanCandidate")
+        _require_live_graph_only(candidate, "candidate")
         with self._lock:
             existing = self._candidates.get(candidate.candidate_checksum)
             if existing is not None and existing != candidate:
@@ -940,6 +833,7 @@ class InMemoryTaskPlanStore:
     def accept_plan(self, plan: ValidatedTaskPlan) -> str:
         if not isinstance(plan, ValidatedTaskPlan):
             raise TypeError("plan must be ValidatedTaskPlan")
+        _require_live_graph_only(plan, "plan")
         key = (plan.run_id, plan.stage_id, plan.version)
         with self._lock:
             current = self._current_plan(plan.run_id, plan.stage_id)
@@ -975,6 +869,7 @@ class InMemoryTaskPlanStore:
     def append_patch(self, patch: PlanPatch, *, accepted: bool = False) -> str:
         if not isinstance(patch, PlanPatch):
             raise TypeError("patch must be PlanPatch")
+        _require_live_graph_only(patch, "patch")
         with self._lock:
             plan = self._current_plan(patch.run_id, patch.stage_id)
             if plan is None:
@@ -1021,6 +916,8 @@ class InMemoryTaskPlanStore:
 
         if not isinstance(patch, PlanPatch) or not isinstance(plan, ValidatedTaskPlan):
             raise TypeError("patch and plan must use TaskPlan contracts")
+        _require_live_graph_only(patch, "patch")
+        _require_live_graph_only(plan, "plan")
         skip_ids = tuple(sorted(set(identifier(item, "skipped_task_ids") for item in skipped_task_ids)))
         with self._lock:
             current = self._current_plan(patch.run_id, patch.stage_id)
@@ -1110,6 +1007,7 @@ class InMemoryTaskPlanStore:
     def append_result(self, result: TaskResultRecord) -> str:
         if not isinstance(result, TaskResultRecord):
             raise TypeError("result must be TaskResultRecord")
+        _require_live_graph_only(result, "result")
         key = (result.run_id, result.stage_id, result.task_instance_id, result.attempt, result.plan_version)
         with self._lock:
             existing = self._results.get(key)
@@ -1224,6 +1122,7 @@ class InMemoryTaskPlanStore:
     def update_projection(self, projection: TaskPlanProjection) -> None:
         if not isinstance(projection, TaskPlanProjection):
             raise TypeError("projection must be TaskPlanProjection")
+        _require_live_graph_only(projection, "projection")
         with self._lock:
             current = self._projections.get((projection.run_id, projection.stage_id))
             if current is None:
@@ -1266,6 +1165,7 @@ class InMemoryTaskPlanStore:
     def append_event(self, event: TaskPlanEvent) -> str:
         if not isinstance(event, TaskPlanEvent):
             raise TypeError("event must be TaskPlanEvent")
+        _require_live_graph_only(event, "event")
         with self._lock:
             current = self._next_sequence(event.run_id, event.stage_id)
             if event.sequence != current:
@@ -1294,6 +1194,8 @@ class InMemoryTaskPlanStore:
             raise TypeError("event must be TaskPlanEvent")
         if not isinstance(projection, TaskPlanProjection):
             raise TypeError("projection must be TaskPlanProjection")
+        _require_live_graph_only(event, "event")
+        _require_live_graph_only(projection, "projection")
         key = (event.run_id, event.stage_id)
         with self._lock:
             current = self._projections.get(key)
@@ -1360,12 +1262,19 @@ class InMemoryTaskPlanStore:
         self._events.setdefault((event.run_id, event.stage_id), []).append(event)
 
 
+def _require_live_graph_only(value: Any, model: str) -> None:
+    """Reject legacy contracts before they can mutate the live TaskPlan log."""
+
+    if getattr(value, "is_graph_only", False):
+        return
+    raise HarnessValidationError(
+        "live TaskPlan operations require the Graph v2 identity",
+        code="legacy_task_plan_live_write_forbidden",
+        details={"model": model},
+    )
+
+
 def _projection_for_plan(plan: ValidatedTaskPlan, *, sequence: int, previous: TaskPlanProjection | None = None) -> TaskPlanProjection:
-    if previous is not None and previous.is_graph_only != plan.is_graph_only:
-        raise HarnessValidationError(
-            "TaskPlan projection identity schema cannot change across plan versions",
-            code="task_plan_projection_schema_mismatch",
-        )
     previous_by_id = {item.task_id: item for item in previous.tasks} if previous is not None else {}
     states = []
     for item in plan.tasks:
@@ -1378,21 +1287,13 @@ def _projection_for_plan(plan: ValidatedTaskPlan, *, sequence: int, previous: Ta
                     task_id=item.task_id,
                     task_definition_checksum=item.task_definition_checksum,
                     status=TaskLifecycle.PENDING,
-                    schema_version=(
-                        GRAPH_ONLY_TASK_PROJECTION_SCHEMA
-                        if plan.is_graph_only
-                        else TASK_PROJECTION_SCHEMA
-                    ),
+                    schema_version=GRAPH_ONLY_TASK_PROJECTION_SCHEMA,
                 )
             )
-    graph_identity = (
-        {
-            name: getattr(plan, name)
-            for name in _GRAPH_ONLY_TASK_PLAN_IDENTITY_FIELDS
-        }
-        if plan.is_graph_only
-        else {}
-    )
+    graph_identity = {
+        name: getattr(plan, name)
+        for name in _GRAPH_ONLY_TASK_PLAN_IDENTITY_FIELDS
+    }
     return TaskPlanProjection(
         run_id=plan.run_id,
         stage_id=plan.stage_id,
@@ -1404,11 +1305,7 @@ def _projection_for_plan(plan: ValidatedTaskPlan, *, sequence: int, previous: Ta
         tasks=tuple(states),
         consumed_budget=previous.consumed_budget if previous is not None else {},
         last_sequence=sequence,
-        schema_version=(
-            GRAPH_ONLY_TASK_PLAN_PROJECTION_SCHEMA
-            if plan.is_graph_only
-            else TASK_PLAN_PROJECTION_SCHEMA
-        ),
+        schema_version=GRAPH_ONLY_TASK_PLAN_PROJECTION_SCHEMA,
         **graph_identity,
     )
 
@@ -1452,36 +1349,30 @@ def _task_plan_event_identity_kwargs(
 ) -> dict[str, Any]:
     identity: dict[str, Any] = {
         "run_id": value.run_id,
-        "workflow_id": None if value.is_graph_only else value.workflow_id,
         "stage_id": value.stage_id,
         "graph_checksum": value.graph_checksum,
-        "schema_version": (
-            TASK_PLAN_EVENT_SCHEMA_V2
-            if value.is_graph_only
-            else TASK_PLAN_EVENT_SCHEMA_V1
-        ),
+        "schema_version": TASK_PLAN_EVENT_SCHEMA_V2,
     }
-    if value.is_graph_only:
-        graph_identity = {
-            name: getattr(value, name)
-            for name in _GRAPH_ONLY_TASK_PLAN_IDENTITY_FIELDS
-            if name not in {"stage_identity_schema", "stage_identity_checksum"}
+    graph_identity = {
+        name: getattr(value, name)
+        for name in _GRAPH_ONLY_TASK_PLAN_IDENTITY_FIELDS
+        if name not in {"stage_identity_schema", "stage_identity_checksum"}
+    }
+    graph_identity.update(
+        {
+            "stage_identity_schema": (
+                value.schema_version
+                if isinstance(value, TaskPlanStageIdentity)
+                else value.stage_identity_schema
+            ),
+            "stage_identity_checksum": (
+                value.identity_checksum
+                if isinstance(value, TaskPlanStageIdentity)
+                else value.stage_identity_checksum
+            ),
         }
-        graph_identity.update(
-            {
-                "stage_identity_schema": (
-                    value.schema_version
-                    if isinstance(value, TaskPlanStageIdentity)
-                    else value.stage_identity_schema
-                ),
-                "stage_identity_checksum": (
-                    value.identity_checksum
-                    if isinstance(value, TaskPlanStageIdentity)
-                    else value.stage_identity_checksum
-                ),
-            }
-        )
-        identity.update(graph_identity)
+    )
+    identity.update(graph_identity)
     return identity
 
 
@@ -1596,11 +1487,6 @@ def _require_subagent_result_evidence(
         result.subagent_output_checksum,
     )
     if definition.subagent_id is not None:
-        if result.schema_version == TASK_PLAN_RESULT_SCHEMA_V1:
-            raise HarnessValidationError(
-                "legacy subagent result has no durable transcript evidence",
-                code="subagent_transcript_legacy_unavailable",
-            )
         if not all(item is not None for item in evidence):
             raise HarnessValidationError(
                 "subagent task result requires durable transcript evidence",
@@ -1661,11 +1547,7 @@ def _require_projection_transition_identity(
         "plan_checksum",
         "policy_ref",
     )
-    graph_identity_fields = (
-        _GRAPH_ONLY_TASK_PLAN_IDENTITY_FIELDS
-        if current.is_graph_only or proposed.is_graph_only
-        else frozenset()
-    )
+    graph_identity_fields = _GRAPH_ONLY_TASK_PLAN_IDENTITY_FIELDS
     if any(
         getattr(current, name) != getattr(proposed, name)
         for name in (*identity_fields, *graph_identity_fields)
@@ -1697,12 +1579,9 @@ def _require_event_matches_plan(
 __all__ = [
     "InMemoryTaskPlanStore",
     "TASK_PLAN_EVENT_SCHEMA",
-    "TASK_PLAN_EVENT_SCHEMA_V1",
     "TASK_PLAN_EVENT_SCHEMA_V2",
     "TASK_PLAN_EVENT_SCHEMAS",
     "TASK_PLAN_EVENT_TYPES",
-    "TASK_PLAN_RESULT_SCHEMA_V1",
-    "TASK_PLAN_RESULT_SCHEMA_V2",
     "TASK_PLAN_RESULT_SCHEMA_V3",
     "TaskPlanEvent",
     "TaskPlanStorePort",

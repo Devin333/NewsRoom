@@ -22,6 +22,7 @@ from framework.harness.task_plan import (
     TaskPlanPolicy,
     TaskPlanScheduler,
     TaskPlanStageRequest,
+    TaskPlanStageIdentity,
     TaskPlanStageRunner,
     TaskPlanValidator,
     TaskResultRecord,
@@ -105,7 +106,7 @@ def _setup(*, roles=("role",), capabilities=("cap",)):
         aggregate_task_budget=TaskBudget(max_turns=8),
     )
     stage_binding = build_task_plan_stage_binding(
-        workflow_id="workflow",
+        graph_id="graph",
         stage_id=policy.stage_id,
         policy_ref=policy.exact_ref,
         required_output_roles=policy.required_output_roles,
@@ -144,12 +145,9 @@ def _task(task_id: str, capability: str = "cap", role: str = "role", depends_on=
 
 
 def _candidate(stage_binding, tasks, roles=("role",)):
-    return PlanCandidate(
+    return PlanCandidate.for_stage(
+        stage_identity=TaskPlanStageIdentity("run", stage_binding),
         candidate_id="candidate",
-        run_id="run",
-        workflow_id="workflow",
-        stage_id="dynamic_stage",
-        graph_checksum=stage_binding.graph_checksum,
         input_context_refs=("document",),
         tasks=tuple(tasks),
         required_output_roles=roles,
@@ -253,11 +251,16 @@ def test_store_accepts_duplicate_identical_result_once():
     decision = scheduler.next_ready_tasks(store.load_projection("run", "dynamic_stage"), 1, plan=plan, policy=policy, available_input_refs=("document",))
     store.update_projection(scheduler.mark_dispatched(scheduler.reserve_ready_tasks(store.load_projection("run", "dynamic_stage"), decision), decision.task_instances[0]))
     instance = decision.task_instances[0]
-    result = __import__("framework.harness.task_plan.store", fromlist=["TaskResultRecord"]).TaskResultRecord(
-        run_id="run", workflow_id="workflow", stage_id="dynamic_stage", plan_id=plan.plan_id, plan_version=1,
-        task_id="a", task_instance_id=instance.task_instance_id, attempt=1, worker_ref=instance.worker_ref,
-        task_checksum=instance.task_definition_checksum, binding_checksum=plan.tasks[0].binding_checksum,
-        status=TaskLifecycle.SUCCEEDED, result_ref="result://a", output_refs=("artifact://a",), output_roles=("role",), output_schema_ref="schema://result@1",
+    result = TaskResultRecord.for_plan(
+        plan,
+        task_id="a",
+        task_instance_id=instance.task_instance_id,
+        attempt=1,
+        status=TaskLifecycle.SUCCEEDED,
+        result_ref="result://a",
+        output_refs=("artifact://a",),
+        output_roles=("role",),
+        output_schema_ref="schema://result@1",
     )
     assert store.append_result(result) == store.append_result(result)
     assert len(store.results_for("run", "dynamic_stage", plan.plan_id, 1)) == 1
@@ -428,12 +431,9 @@ def test_stage_runner_rejects_policy_drift_before_recording_patch() -> None:
     events_before = store.read_events("run", "dynamic_stage")
     projection_before = store.load_projection("run", "dynamic_stage")
     drifted_policy = replace(policy, max_depth=policy.max_depth + 1)
-    patch = PlanPatch(
+    patch = PlanPatch.for_plan(
+        plan,
         patch_id="policy-drift",
-        run_id="run",
-        stage_id="dynamic_stage",
-        base_plan_id=plan.plan_id,
-        base_plan_version=plan.version,
         reason_code="repair",
         source_candidate_ref="candidate://policy-drift",
         operations=(
@@ -500,7 +500,7 @@ def test_stage_runner_rejects_existing_plan_from_another_frozen_graph() -> None:
     store.accept_plan(plan)
     events_before = store.read_events("run", "dynamic_stage")
     alternate_binding = build_task_plan_stage_binding(
-        workflow_id="workflow",
+        graph_id="graph",
         stage_id=policy.stage_id,
         policy_ref=policy.exact_ref,
         required_output_roles=policy.required_output_roles,
@@ -513,12 +513,9 @@ def test_stage_runner_rejects_existing_plan_from_another_frozen_graph() -> None:
         policy=policy,
         accepted_at="2026-08-01T00:01:00Z",
     )
-    patch = PlanPatch(
+    patch = PlanPatch.for_plan(
+        plan,
         patch_id="wrong-frozen-graph",
-        run_id="run",
-        stage_id="dynamic_stage",
-        base_plan_id=plan.plan_id,
-        base_plan_version=plan.version,
         reason_code="repair",
         source_candidate_ref="candidate://wrong-frozen-graph",
         operations=(

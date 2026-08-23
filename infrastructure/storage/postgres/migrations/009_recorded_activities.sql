@@ -74,26 +74,6 @@ CREATE TABLE IF NOT EXISTS event_activity_records (
             AND updated_at >= created_at)
 );
 
-CREATE TABLE IF NOT EXISTS harness_activity_results (
-    tenant_id                TEXT NOT NULL,
-    tenant_scope             TEXT GENERATED ALWAYS AS (tenant_id) STORED,
-    activity_id              TEXT NOT NULL,
-    security_classification  TEXT NOT NULL,
-    content_type             TEXT NOT NULL,
-    content_checksum         TEXT NOT NULL,
-    size_bytes               BIGINT NOT NULL,
-    ciphertext               BYTEA NOT NULL,
-    created_at               TIMESTAMPTZ NOT NULL DEFAULT now(),
-    PRIMARY KEY (tenant_scope, activity_id),
-    CONSTRAINT ck_harness_activity_results_tenant CHECK (btrim(tenant_id) <> ''),
-    CONSTRAINT ck_harness_activity_results_classification
-        CHECK (security_classification IN ('public', 'internal', 'confidential', 'restricted')),
-    CONSTRAINT ck_harness_activity_results_checksum
-        CHECK (content_checksum ~ '^sha256:[0-9a-f]{64}$'),
-    CONSTRAINT ck_harness_activity_results_content
-        CHECK (size_bytes >= 0 AND octet_length(ciphertext) > 0)
-);
-
 CREATE TABLE IF NOT EXISTS event_activity_access_audit (
     audit_id       BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     tenant_id      TEXT,

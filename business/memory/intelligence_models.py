@@ -296,7 +296,10 @@ class DecisionMemory:
     run_id: str
     reason: str | None = None
     agent_id: str | None = None
-    workflow_id: str | None = None
+    graph_id: str | None = None
+    graph_version: str | None = None
+    graph_ref: str | None = None
+    graph_checksum: str | None = None
     input_features: dict[str, Any] = field(default_factory=dict)
     output_scores: dict[str, Any] = field(default_factory=dict)
     created_at: datetime = field(default_factory=utc_now)
@@ -321,7 +324,10 @@ class DecisionMemory:
             "run_id": self.run_id,
             "reason": self.reason,
             "agent_id": self.agent_id,
-            "workflow_id": self.workflow_id,
+            "graph_id": self.graph_id,
+            "graph_version": self.graph_version,
+            "graph_ref": self.graph_ref,
+            "graph_checksum": self.graph_checksum,
             "input_features": dict(self.input_features),
             "output_scores": dict(self.output_scores),
             "created_at": _dt(self.created_at),

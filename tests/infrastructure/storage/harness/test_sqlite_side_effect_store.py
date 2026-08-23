@@ -75,7 +75,6 @@ def _intent(
     }
     if origin == "worker":
         common.update(
-            step_id="publish_artifacts",
             node_id="publish_artifacts",
             node_instance_id=node_instance_id or f"node:{effect_id}",
             activity_id=f"activity:{node_instance_id or effect_id}",
@@ -120,7 +119,6 @@ def _decision(
         node_instance_id=intent.node_instance_id,
         activity_id=intent.activity_id,
         attempt=intent.attempt,
-        step_id=intent.step_id,
         terminal_action=intent.terminal_action,
         worker_result_ref=intent.worker_result_ref,
         terminal_state_ref=intent.state_checksum,
@@ -156,7 +154,6 @@ def _outcome(
         node_id=decision.node_id,
         node_instance_id=decision.node_instance_id,
         activity_id=decision.activity_id,
-        step_id=decision.step_id,
         terminal_action=decision.terminal_action,
         attempt=decision.attempt,
         disposition=normalized,

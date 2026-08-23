@@ -82,10 +82,10 @@ class RunResponse(BaseModel):
     message: str | None = None
 
 
-class RunListItem(BaseModel):
+class GraphRunListItem(BaseModel):
     run_id: str
-    workflow_id: str | None = None
-    workflow_version: str | None = None
+    graph_id: str | None = None
+    graph_version: str | None = None
     profile: str | None = None
     status: str
     started_at: datetime | None = None
@@ -94,7 +94,8 @@ class RunListItem(BaseModel):
     artifact_dir: str | None = None
 
 
-class RunDetail(RunListItem):
+class GraphRunDetail(GraphRunListItem):
+    manifest: dict[str, Any] = Field(default_factory=dict)
     output_preview: dict[str, Any] = Field(default_factory=dict)
     error: dict[str, Any] | None = None
     metrics: dict[str, Any] = Field(default_factory=dict)
@@ -103,7 +104,8 @@ class RunDetail(RunListItem):
 class RunEventView(BaseModel):
     event_id: str | None = None
     event_type: str
-    step_id: str | None = None
+    node_id: str | None = None
+    node_instance_id: str | None = None
     created_at: datetime | None = None
     payload: dict[str, Any] = Field(default_factory=dict)
 
@@ -128,27 +130,9 @@ class RunEventsApiResponse(ApiResponse):
     data: RunEventsData | None = None
 
 
-class RunOperationRequest(BaseModel):
-    reason: str | None = None
-    actor_id: str | None = None
-    metadata: dict[str, Any] = Field(default_factory=dict)
-
-
-class RunRerunFromStepRequest(RunOperationRequest):
-    step_id: str = Field(min_length=1)
-
-
-class RunResumeWithPatchRequest(RunOperationRequest):
-    patch: dict[str, Any] = Field(default_factory=dict)
-
-
-class RunSkipStepRequest(RunOperationRequest):
-    step_id: str = Field(min_length=1)
-
-
-class RunMarkBlockedResolvedRequest(RunOperationRequest):
-    resolution_type: str = Field(default="manual", min_length=1)
-    resolved_by: str | None = None
+class GraphRunCancellationRequest(BaseModel):
+    reason_code: str = Field(min_length=1)
+    cancellation_id: str | None = Field(default=None, min_length=1)
 
 
 class ReportSummary(BaseModel):

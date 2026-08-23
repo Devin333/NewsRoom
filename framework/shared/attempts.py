@@ -1448,8 +1448,9 @@ class AttemptSupervisor:
                 capacity.release()
                 completed.set()
 
+        caller_context = contextvars.copy_context()
         thread = threading.Thread(
-            target=invoke,
+            target=lambda: caller_context.run(invoke),
             daemon=True,
             name=f"framework-attempt:{context.attempt_id[:12]}",
         )

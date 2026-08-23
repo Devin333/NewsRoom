@@ -81,9 +81,7 @@ def test_internal_code_does_not_import_removed_skill_flat_modules() -> None:
 
 
 def test_workflow_skill_runner_does_not_import_skill_runtime_implementation() -> None:
-    skill_runner_files = [
-        PROJECT_ROOT / "framework" / "workflow" / "runners" / "skill" / "runner.py",
-    ]
+    skill_runner_files = list((PROJECT_ROOT / "framework" / "harness").rglob("*.py"))
     forbidden = {
         "framework.skills.runtime.runner",
         "framework.skills.runtime.executor",

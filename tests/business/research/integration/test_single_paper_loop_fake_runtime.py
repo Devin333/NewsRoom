@@ -4,21 +4,14 @@ from copy import deepcopy
 
 import pytest
 
-from framework.events.canonical import checksum_for
 from framework.harness import (
     FakeArtifactPort,
-    HarnessControlPlane,
     HarnessGraphDecisionType,
-    HarnessGraphStateReader,
-    HarnessLegacyEventReader,
     HarnessValidationError,
     InMemoryHarnessEventPort,
-    project_public_legacy_status,
 )
-from framework.harness.workflow.versioning import LEGACY_EVENT_SCHEMA, LEGACY_STATE_SCHEMA
 
 from business.research.application import AnalyzePaperRequest, AnalyzePaperUseCase
-from business.research.application import single_paper_runtime as runtime_module
 from business.research.application.single_paper_runtime import (
     ResearchAnalysisResult,
     ResearchSinglePaperRuntime,
@@ -33,6 +26,7 @@ from tests.business.research.fakes import (
     FakeResearchLLMWorker,
     FakeResearchRAGRuntime,
     FakeResearchSourceProvider,
+    in_memory_node_output_resource_factory,
 )
 
 
@@ -48,6 +42,10 @@ def _runtime(**overrides):
         event_port_factory=overrides.pop(
             "event_port_factory",
             lambda run_id: InMemoryHarnessEventPort(),
+        ),
+        node_output_resource_factory=overrides.pop(
+            "node_output_resource_factory",
+            in_memory_node_output_resource_factory,
         ),
     )
 
@@ -73,8 +71,8 @@ def test_single_paper_loop_outputs_artifacts_trace_and_transcript() -> None:
     rag_entry = next(
         entry
         for entry in result.transcript.entries()
-        if entry.step_id == "run_research_rag"
-        and entry.metadata["event_type"] == "worker_result_recorded"
+        if entry.node_id == "run_research_rag"
+        and entry.metadata["event_type"] == "graph_worker_result_recorded"
     )
     assert result.rag_context is not None
     rag_metadata = result.rag_context.metadata
@@ -86,22 +84,27 @@ def test_single_paper_loop_outputs_artifacts_trace_and_transcript() -> None:
         rag_metadata["transcript_ref"],
         rag_metadata["context_pack_id"],
     )
+    graph_identity = rag_metadata["graph_identity"]
     assert {
         key: rag_entry.metadata[key]
         for key in (
             "parent_run_id",
-            "parent_workflow_id",
-            "parent_step_id",
-            "workflow_id",
-            "step_id",
+            "parent_graph_id",
+            "parent_graph_version",
+            "parent_graph_ref",
+            "parent_graph_checksum",
+            "parent_stage_id",
+            "graph_identity",
             "session_id",
         )
     } == {
         "parent_run_id": result.run_id,
-        "parent_workflow_id": "research.paper_analysis",
-        "parent_step_id": "run_research_rag",
-        "workflow_id": "research.paper_analysis",
-        "step_id": "run_research_rag",
+        "parent_graph_id": graph_identity["graph_id"],
+        "parent_graph_version": graph_identity["graph_version"],
+        "parent_graph_ref": graph_identity["graph_ref"],
+        "parent_graph_checksum": graph_identity["graph_checksum"],
+        "parent_stage_id": graph_identity["stage_id"],
+        "graph_identity": graph_identity,
         "session_id": rag_metadata["session_id"],
     }
     domain_gate_refs_by_step: dict[str, list[str]] = {}
@@ -115,7 +118,7 @@ def test_single_paper_loop_outputs_artifacts_trace_and_transcript() -> None:
             .get("reference")
         )
         if gate_ref in active_refs:
-            domain_gate_refs_by_step.setdefault(str(event_payload.get("step_id")), []).append(gate_ref)
+            domain_gate_refs_by_step.setdefault(str(event_payload.get("node_id")), []).append(gate_ref)
     assert domain_gate_refs_by_step == {
         "load_paper_source": ["PaperSourceLineageGate@1"],
         "compile_document": ["ResearchDocumentSchemaGate@1"],
@@ -184,9 +187,12 @@ def test_single_paper_analysis_uses_durable_parallel_branches_and_verified_merge
         ("contribution",),
         ("experiments",),
     }
-    refs = result.diagnostics["worker_results"]["verify_claims"]["output"][
-        "analysis_branch_refs"
-    ]
+    verify_claims_result = next(
+        item
+        for item in result.diagnostics["worker_results"].values()
+        if item["node_id"] == "verify_claims"
+    )
+    refs = verify_claims_result["output"]["analysis_branch_refs"]
     assert {(item["producer_node_id"], item["output_key"]) for item in refs} == {
         ("analyze_structure", "structure_candidate"),
         ("analyze_contribution", "contribution_candidate"),
@@ -198,96 +204,6 @@ def test_single_paper_analysis_uses_durable_parallel_branches_and_verified_merge
         "Context snapshots",
         "Deterministic evidence gates",
     ]
-
-
-def test_research_v1_projections_upcast_against_v2_history_without_hiding_artifacts(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    captured: dict[str, object] = {}
-
-    class _CapturingHarnessControlPlane(HarnessControlPlane):
-        def run(self, run_spec):
-            harness_result = super().run(run_spec)
-            captured.update(
-                control_plane=self,
-                run_spec=run_spec,
-                harness_result=harness_result,
-            )
-            return harness_result
-
-    monkeypatch.setattr(
-        runtime_module,
-        "HarnessControlPlane",
-        _CapturingHarnessControlPlane,
-    )
-    artifact_port = FakeArtifactPort()
-    result = AnalyzePaperUseCase(_runtime(artifact_port=artifact_port)).analyze(
-        AnalyzePaperRequest(
-            run_id="research-run-mixed-v1-v2-history",
-            paper_id="paper-harness-001",
-            source_ref="https://arxiv.org/abs/2606.00123",
-            user_id="user-1",
-        )
-    )
-    control_plane = captured["control_plane"]
-    run_spec = captured["run_spec"]
-    harness_result = captured["harness_result"]
-    assert isinstance(control_plane, HarnessControlPlane)
-    graph_state = harness_result.graph_state
-    assert graph_state is not None
-    history_ref = checksum_for(
-        {
-            "run_id": result.run_id,
-            "projection_checksum": graph_state.projection_checksum,
-        }
-    )
-
-    legacy_state = {
-        "schema_version": LEGACY_STATE_SCHEMA,
-        **harness_result.state.to_dict(),
-    }
-    state_read = HarnessGraphStateReader().read_or_quarantine(
-        legacy_state,
-        rebuilt_state=graph_state,
-        history_evidence_ref=history_ref,
-        expected_graph_ref=graph_state.graph_ref,
-    )
-    legacy_event = {
-        "schema_version": LEGACY_EVENT_SCHEMA,
-        **harness_result.events[0].to_dict(),
-    }
-    event_read = HarnessLegacyEventReader().read_or_quarantine(
-        legacy_event,
-        stream_sequence=1,
-        history_evidence_ref=history_ref,
-        expected_run_id=result.run_id,
-    )
-    inspection = control_plane.inspect_graph(run_spec, verify_history=True).to_dict()
-    recovered = control_plane.recover_and_run(run_spec)
-
-    assert not state_read.quarantined
-    assert state_read.state == graph_state
-    assert not event_read.quarantined
-    assert event_read.evidence is not None
-    assert event_read.evidence.run_id == result.run_id
-    assert (
-        project_public_legacy_status(graph_state.lifecycle, graph_state.outcome).value
-        == result.status
-        == "succeeded"
-    )
-    assert inspection["projection_checksum"] == graph_state.projection_checksum
-    assert inspection["replay"]["quarantine_reason"] is None
-    assert recovered.graph_state == graph_state
-    assert set(result.artifact_refs) >= {
-        "research-analysis",
-        "research-reader-payload",
-        "research-paper-card",
-        "research-quality-result",
-    }
-    assert all(
-        artifact_port.read_artifact(reference)["artifact_type"] == artifact_type
-        for artifact_type, reference in result.artifact_refs.items()
-    )
 
 
 def test_analysis_result_persistence_round_trip_preserves_typed_runtime_state() -> None:
@@ -350,6 +266,7 @@ def test_analysis_result_persistence_round_trip_preserves_typed_runtime_state() 
     missing_context_actor["context_envelope"]["metadata"].pop(
         "memory_namespace"
     )
+    missing_context_actor["context_envelope"]["checksum"] = None
     with pytest.raises(ValueError, match="actor scope"):
         ResearchAnalysisResult.from_dict(missing_context_actor)
 
@@ -357,7 +274,7 @@ def test_analysis_result_persistence_round_trip_preserves_typed_runtime_state() 
 def test_rag_transcript_projection_fails_closed_on_identity_mismatch() -> None:
     with pytest.raises(
         ValueError,
-        match="Research RAG transcript workflow_id identity mismatch",
+        match="Research RAG transcript graph_checksum identity mismatch",
     ):
         AnalyzePaperUseCase(
             _runtime(rag_runtime=_MismatchedResearchRAGRuntime())
@@ -503,7 +420,7 @@ def test_real_document_adapter_passes_hash_continuity_gate(compile_path: str) ->
         event.to_dict()
         for event in result.trace.events
         if event.event_type.value == "gate_evaluated"
-        and event.step_id == "compile_document"
+        and event.node_id == "compile_document"
     )
     assert compile_gate["payload"]["passed"] is True
 
@@ -570,7 +487,7 @@ class _MismatchedResearchRAGRuntime(FakeResearchRAGRuntime):
             update={
                 "metadata": {
                     **context.metadata,
-                    "workflow_id": "research.foreign_workflow",
+                    "graph_checksum": "sha256:" + "f" * 64,
                 }
             }
         )

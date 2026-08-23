@@ -114,7 +114,6 @@ def build_reader_repair_memory_worker_result(
         node_id=node_id,
         node_instance_id=node_instance_id,
         activity_id=activity_id,
-        step_id=READER_REPAIR_MEMORY_STEP_ID,
         worker_result_ref=(
             f"worker-result-candidate://{run_id}/"
             f"{READER_REPAIR_MEMORY_STEP_ID}/{attempt}"

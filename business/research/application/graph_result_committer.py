@@ -8,9 +8,7 @@ from typing import Any
 
 from framework.events.canonical import checksum_for
 from framework.harness.control_plane.errors import HarnessValidationError
-from framework.harness.control_plane.event import HarnessEvent, HarnessEventType
 from framework.harness.control_plane.graph_runtime import HarnessGraphActivity
-from framework.harness.ports import HarnessTransitionPort
 from framework.harness.runtime.graph_result_runtime import HarnessGraphResultRuntime
 from framework.harness.runtime.materializer import ResultMaterializer
 from framework.harness.runtime.result_models import (
@@ -28,7 +26,6 @@ from framework.harness.runtime.result_policy import (
     GraphArtifactPersistenceConfig,
     GraphArtifactRolloutMode,
     NodeResultRequest,
-    PersistencePolicy,
 )
 from framework.harness.runtime.subagent_result_adapter import (
     HarnessSubAgentResultAdapter,
@@ -56,15 +53,11 @@ from framework.harness.workers.result import (
     HarnessWorkerResult,
     HarnessWorkerStatus,
 )
-from framework.shared.time import format_datetime
 
 
 RESEARCH_GRAPH_RESULT_ADAPTER_REF = "research.graph-result-adapter@1"
 RESEARCH_GRAPH_RESULT_SCHEMA = "research.graph-node-result@1"
 RESEARCH_WORKER_CANDIDATE_SCHEMA = "newsroom.research-worker-candidate@1"
-RESEARCH_GRAPH_RESULT_SHADOW_SCHEMA = (
-    "newsroom.research-graph-result-shadow-observation/v1"
-)
 _RESEARCH_GRAPH_IDS = frozenset(
     {
         "research.paper_analysis.graph",
@@ -393,7 +386,7 @@ class ResearchGraphResultRequestFactory:
 
 
 class ResearchGraphResultCommitter:
-    """Commit enforced/read-only Research results through the common runtime."""
+    """Commit Research results through the sole live Graph materializer."""
 
     def __init__(
         self,
@@ -414,12 +407,9 @@ class ResearchGraphResultCommitter:
             )
         if not isinstance(config, GraphArtifactPersistenceConfig):
             raise TypeError("config must be GraphArtifactPersistenceConfig")
-        if config.mode not in {
-            GraphArtifactRolloutMode.ENFORCE,
-            GraphArtifactRolloutMode.READ_ONLY,
-        }:
+        if config.mode is not GraphArtifactRolloutMode.ENFORCE:
             raise HarnessValidationError(
-                "Research graph result committer requires enforce or read_only",
+                "Research graph result committer requires enforce mode",
                 code="research_graph_result_rollout_invalid",
             )
         _validate_tenant_scope(tenant_id, tenant_scope_ref)
@@ -468,11 +458,7 @@ class ResearchGraphResultCommitter:
             worker_result=worker_result,
             occurred_at=occurred_at,
         )
-        envelope = (
-            self._materializer.materialize(request).envelope
-            if self._config.mode is GraphArtifactRolloutMode.ENFORCE
-            else self._materializer.require_existing(request)
-        )
+        envelope = self._materializer.materialize(request).envelope
         return self._graph_result_runtime.accept_materialized_result(
             envelope,
             expected_binding=binding,
@@ -488,111 +474,6 @@ class ResearchGraphResultCommitter:
         )
 
 
-class ResearchGraphResultShadowObserver:
-    """Record deterministic dry-run evidence while legacy remains authoritative."""
-
-    def __init__(
-        self,
-        *,
-        graph_result_runtime: HarnessGraphResultRuntime,
-        event_port: HarnessTransitionPort,
-        config: GraphArtifactPersistenceConfig,
-        tenant_id: str,
-        tenant_scope_ref: str,
-        request_factory: ResearchGraphResultRequestFactory | None = None,
-    ) -> None:
-        if not isinstance(graph_result_runtime, HarnessGraphResultRuntime):
-            raise TypeError(
-                "graph_result_runtime must be HarnessGraphResultRuntime"
-            )
-        if not isinstance(event_port, HarnessTransitionPort):
-            raise TypeError("event_port must implement HarnessTransitionPort")
-        if not isinstance(config, GraphArtifactPersistenceConfig):
-            raise TypeError("config must be GraphArtifactPersistenceConfig")
-        if config.mode is not GraphArtifactRolloutMode.SHADOW:
-            raise HarnessValidationError(
-                "Research shadow observer requires shadow rollout mode",
-                code="research_graph_result_rollout_invalid",
-            )
-        _validate_tenant_scope(tenant_id, tenant_scope_ref)
-        if request_factory is not None and not isinstance(
-            request_factory,
-            ResearchGraphResultRequestFactory,
-        ):
-            raise TypeError(
-                "request_factory must be ResearchGraphResultRequestFactory"
-            )
-        self._graph_result_runtime = graph_result_runtime
-        self._event_port = event_port
-        self._config = config
-        self._tenant_id = tenant_id
-        self._tenant_scope_ref = tenant_scope_ref
-        self._request_factory = (
-            request_factory or ResearchGraphResultRequestFactory()
-        )
-        self._policy = PersistencePolicy(config)
-
-    def observe_result(
-        self,
-        *,
-        activity: HarnessGraphActivity,
-        graph: NormalizedHarnessGraph,
-        run_spec_checksum: str,
-        worker_result: HarnessWorkerResult,
-        occurred_at: datetime,
-    ) -> HarnessEvent:
-        binding = self._graph_result_runtime.binding_for_activity(
-            activity_id=activity.activity_id,
-            graph=graph,
-            tenant_id=self._tenant_id,
-            tenant_scope_ref=self._tenant_scope_ref,
-            attempt_id=_research_attempt_id(activity),
-            run_spec_checksum=run_spec_checksum,
-        )
-        request = self._request_factory.build_request(
-            activity=activity,
-            graph=graph,
-            binding=binding,
-            worker_result=worker_result,
-            occurred_at=occurred_at,
-        )
-        evaluation = self._policy.evaluate(request)
-        event = self._event_port.record(
-            HarnessEvent(
-                event_type=HarnessEventType.DECISION_RECORDED,
-                run_id=activity.run_id,
-                step_id=activity.node_id,
-                occurred_at=occurred_at,
-                payload={
-                    "decision_type": "evaluate_result_persistence",
-                    "decided_by": "harness",
-                    "decided_at": format_datetime(occurred_at),
-                    "payload": {
-                        "schema_version": RESEARCH_GRAPH_RESULT_SHADOW_SCHEMA,
-                        "rollout_mode": GraphArtifactRolloutMode.SHADOW.value,
-                        "binding": binding.to_dict(),
-                        "candidate_checksum": request.candidate_checksum,
-                        "candidate_bytes": request.candidate_bytes,
-                        "worker_candidate_ref": worker_result.candidate_result_ref,
-                        "legacy_payload_ref": checksum_for(worker_result.to_dict()),
-                        "artifact_class": request.artifact_class.value,
-                        "retention_class": request.retention_class.value,
-                        "persistence_mode": evaluation.decision.mode.value,
-                        "persistence_reason": evaluation.decision.reason.value,
-                        "policy_version": evaluation.decision.policy_version,
-                        "required": evaluation.decision.required,
-                    },
-                },
-            )
-        )
-        if not isinstance(event, HarnessEvent):
-            raise HarnessValidationError(
-                "Research shadow observation was not durably recorded",
-                code="research_graph_result_shadow_record_failed",
-            )
-        return event
-
-
 class ResearchTaskPlanResultMaterializer(TaskPlanResultVerifierPort):
     """Materialize verified TaskPlan child transcripts before result commit."""
 
@@ -605,22 +486,17 @@ class ResearchTaskPlanResultMaterializer(TaskPlanResultVerifierPort):
         tenant_id: str,
         tenant_scope_ref: str,
         invocation_factory: Callable[
-            [ValidatedTaskPlan, ResolvedTaskSpec, TaskInstance],
+            [ValidatedTaskPlan, ResolvedTaskSpec, TaskInstance, Any],
             SubAgentInvocation,
         ],
-        legacy_graph_id: str | None = None,
-        legacy_graph_version: str | None = None,
     ) -> None:
         if not isinstance(verifier, TaskPlanResultVerifierPort):
             raise TypeError("verifier must implement TaskPlanResultVerifierPort")
         if not isinstance(adapter, HarnessSubAgentResultAdapter):
             raise TypeError("adapter must be HarnessSubAgentResultAdapter")
-        if config.mode not in {
-            GraphArtifactRolloutMode.ENFORCE,
-            GraphArtifactRolloutMode.READ_ONLY,
-        }:
+        if config.mode is not GraphArtifactRolloutMode.ENFORCE:
             raise HarnessValidationError(
-                "TaskPlan result materializer requires enforce or read_only",
+                "TaskPlan result materializer requires enforce mode",
                 code="research_graph_result_rollout_invalid",
             )
         if checksum_for(tenant_id) != tenant_scope_ref:
@@ -630,19 +506,12 @@ class ResearchTaskPlanResultMaterializer(TaskPlanResultVerifierPort):
             )
         if not callable(invocation_factory):
             raise TypeError("invocation_factory must be callable")
-        if (legacy_graph_id is None) != (legacy_graph_version is None):
-            raise HarnessValidationError(
-                "legacy TaskPlan materialization Graph identity must be complete",
-                code="research_graph_result_identity_invalid",
-            )
         self._verifier = verifier
         self._adapter = adapter
         self._config = config
         self._tenant_id = tenant_id
         self._tenant_scope_ref = tenant_scope_ref
         self._invocation_factory = invocation_factory
-        self._legacy_graph_id = legacy_graph_id
-        self._legacy_graph_version = legacy_graph_version
 
     def verify(
         self,
@@ -653,6 +522,11 @@ class ResearchTaskPlanResultMaterializer(TaskPlanResultVerifierPort):
     ) -> TaskResultRecord:
         if not isinstance(request, TaskPlanResultVerificationRequest):
             raise TypeError("request must be TaskPlanResultVerificationRequest")
+        if not request.plan.is_graph_only:
+            raise HarnessValidationError(
+                "legacy TaskPlan materialization is rejected after Graph-only cutover",
+                code="legacy_task_plan_record_rejected",
+            )
         verified = self._verifier.verify(
             result,
             task=task,
@@ -660,7 +534,17 @@ class ResearchTaskPlanResultMaterializer(TaskPlanResultVerifierPort):
         )
         instance = request.instance
         plan = request.plan
-        invocation = self._invocation_factory(plan, task, instance)
+        if request.execution_identity is None:
+            raise HarnessValidationError(
+                "TaskPlan result materialization requires physical Graph identity",
+                code="task_plan_execution_identity_required",
+            )
+        invocation = self._invocation_factory(
+            plan,
+            task,
+            instance,
+            request.execution_identity,
+        )
         identity = subagent_attempt_identity(invocation)
         expected_identity = task_plan_subagent_attempt_identity(
             plan,
@@ -675,50 +559,23 @@ class ResearchTaskPlanResultMaterializer(TaskPlanResultVerifierPort):
                 "Research TaskPlan materialization invocation changed accepted-plan identity",
                 code="task_plan_subagent_evidence_mismatch",
             )
-        if plan.is_graph_only:
-            if (
-                self._legacy_graph_id is not None
-                or self._legacy_graph_version is not None
-            ):
-                raise HarnessValidationError(
-                    "Graph-only TaskPlan materialization cannot use legacy Graph identity",
-                    code="legacy_graph_identity_forbidden",
-                )
-            graph_id = plan.graph_id
-            graph_version = plan.graph_ref
-        else:
-            if (
-                self._legacy_graph_id is None
-                or self._legacy_graph_version is None
-            ):
-                raise HarnessValidationError(
-                    "legacy TaskPlan materialization requires its Graph identity",
-                    code="research_graph_result_identity_invalid",
-                )
-            graph_id = self._legacy_graph_id
-            graph_version = self._legacy_graph_version
+        graph_id = plan.graph_id
+        graph_version = plan.graph_ref
         binding = NodeResultBinding(
             tenant_id=self._tenant_id,
             tenant_scope_ref=self._tenant_scope_ref,
             run_id=instance.run_id,
             graph_id=graph_id,
             graph_version=graph_version,
-            node_id=identity.stage_id,
+            node_id=identity.node_id,
             attempt_id=subagent_result_attempt_id(identity),
             parent_checkpoint_ref=_task_plan_checkpoint_ref(instance),
         )
-        if self._config.mode is GraphArtifactRolloutMode.ENFORCE:
-            envelope = self._adapter.recover_materialization(
-                invocation=invocation,
-                binding=binding,
-                created_at=invocation.observed_at,
-            ).materialization.envelope
-        else:
-            envelope = self._adapter.require_existing_materialization(
-                invocation=invocation,
-                binding=binding,
-                created_at=invocation.observed_at,
-            )
+        envelope = self._adapter.recover_materialization(
+            invocation=invocation,
+            binding=binding,
+            created_at=invocation.observed_at,
+        ).materialization.envelope
         if verified.status is not TaskLifecycle.SUCCEEDED:
             return verified
         common_refs = tuple(
@@ -823,12 +680,10 @@ def _task_plan_checkpoint_ref(instance: TaskInstance) -> str:
 __all__ = [
     "RESEARCH_GRAPH_RESULT_ADAPTER_REF",
     "RESEARCH_GRAPH_RESULT_SCHEMA",
-    "RESEARCH_GRAPH_RESULT_SHADOW_SCHEMA",
     "RESEARCH_WORKER_CANDIDATE_SCHEMA",
     "RESEARCH_NODE_RESULT_POLICIES",
     "ResearchGraphResultCommitter",
     "ResearchGraphResultRequestFactory",
-    "ResearchGraphResultShadowObserver",
     "ResearchNodeResultPolicy",
     "ResearchTaskPlanResultMaterializer",
     "research_node_result_policy",

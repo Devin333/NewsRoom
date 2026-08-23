@@ -27,6 +27,7 @@ from business.research.document.chunk_storage import (
 from business.research.document.arxiv_parser import ArxivDocumentParser
 from business.research.application.chunk_paper_pipeline import ChunkPaperPipeline
 from business.research.application.paper_rag_session import PaperRAGSession
+from business.research.graphs import build_paper_analysis_context_graph_identity
 from interfaces.services.paper_rag_service import PaperRagApplicationService
 
 ARXIV_ID = "1706.03762"
@@ -145,6 +146,17 @@ def test_gated_ask_runs_over_live_retrieved_chunks(chunk_store, pipeline_result)
         pipeline_result.paper_id,
         "What evidence describes the attention mechanism?",
         generate=True,
+        graph_identity=(
+            build_paper_analysis_context_graph_identity(
+                run_id="chunk-paper-e2e-run",
+                stage_id="run_research_rag",
+            ).with_physical_activity(
+                node_id="run_research_rag",
+                node_instance_id="run_research_rag:1",
+                activity_id="activity-chunk-paper-e2e",
+                activity_attempt=1,
+            )
+        ),
         limit=5,
     )
 

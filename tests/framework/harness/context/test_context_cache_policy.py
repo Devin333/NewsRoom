@@ -1,9 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import replace
-
 from framework.harness import (
-    ContextAssembler,
     ContextCachePolicyBuilder,
     ContextCacheScope,
     ContextEnvelope,
@@ -11,33 +8,6 @@ from framework.harness import (
     ContextSegmentType,
 )
 from tests.framework.harness.context.test_context_models import _graph_identity
-
-
-def test_cache_key_depends_on_stable_prefix_not_dynamic_paper_content() -> None:
-    assembler = ContextAssembler()
-    first = assembler.assemble(
-        {
-            "workflow_id": "wf",
-            "worker_id": "worker",
-            "source_refs": ("source://paper-a#section=intro",),
-            "current_instruction": "Analyze paper A.",
-        }
-    )
-    second = replace(
-        first,
-        segments=(
-            *first.segments[:4],
-            replace(first.segments[4], content_ref="evidence-memory://paper-b", provenance_refs=("source://paper-b#section=method",)),
-            replace(first.segments[5], summary="Analyze paper B."),
-        ),
-    )
-    second_policy = ContextCachePolicyBuilder().build(second)
-
-    assert first.cache_policy is not None
-    assert first.cache_policy.cache_key == (
-        "context-cache:2331cc55737f42dd6dca81ddaf6aa0bd0baa02792cdbf62d2e3f9992a74b1afd"
-    )
-    assert first.cache_policy.cache_key == second_policy.cache_key
 
 
 def test_graph_cache_key_binds_graph_stage_not_dynamic_tail_or_task_attempt() -> None:

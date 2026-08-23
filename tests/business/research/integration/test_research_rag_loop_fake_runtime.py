@@ -10,6 +10,7 @@ from tests.business.research.fakes import (
     FakeResearchLLMWorker,
     FakeResearchRAGRuntime,
     FakeResearchSourceProvider,
+    in_memory_node_output_resource_factory,
 )
 
 
@@ -23,6 +24,7 @@ def _use_case(rag_runtime: FakeResearchRAGRuntime) -> AnalyzePaperUseCase:
             rag_runtime=rag_runtime,
             artifact_port=FakeArtifactPort(),
             event_port_factory=lambda run_id: InMemoryHarnessEventPort(),
+            node_output_resource_factory=in_memory_node_output_resource_factory,
         )
     )
 
@@ -70,4 +72,4 @@ def test_rag_budget_exhaustion_is_replayable_halt() -> None:
     assert result.status == "halted"
     assert result.rag_context is not None
     assert result.rag_context.gap_report.missing_information == ["rag_query_budget_exhausted"]
-    assert result.diagnostics["terminal_reason"] == "verification failed and replan budget is exhausted"
+    assert result.diagnostics["terminal_reason"] == "verification_failed_replans_exhausted"

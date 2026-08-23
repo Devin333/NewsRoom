@@ -57,7 +57,7 @@ class HarnessGraphResultRuntime:
             tenant_scope_ref=tenant_scope_ref,
             run_id=activity.run_id,
             graph_id=graph.graph_id,
-            graph_version=_graph_version(graph),
+            graph_version=_graph_identity(graph),
             node_id=activity.node_id,
             attempt_id=attempt_id,
             parent_checkpoint_ref=_checkpoint_ref(parent),
@@ -179,7 +179,7 @@ def _validate_binding(
         for field_name, expected, actual in (
             ("run_id", activity.run_id, binding.run_id),
             ("graph_id", graph.graph_id, binding.graph_id),
-            ("graph_version", _graph_version(graph), binding.graph_version),
+            ("graph_version", _graph_identity(graph), binding.graph_version),
             ("node_id", activity.node_id, binding.node_id),
             ("tenant_scope_ref", activity.tenant_scope_ref, binding.tenant_scope_ref),
             ("parent_checkpoint_ref", _checkpoint_ref(parent), binding.parent_checkpoint_ref),
@@ -217,7 +217,7 @@ def _validate_lineage_binding(
         for field_name, expected, actual in (
             ("run_id", activity.run_id, lineage.run_id),
             ("graph_id", graph.graph_id, lineage.graph_id),
-            ("graph_version", _graph_version(graph), lineage.graph_version),
+            ("graph_version", _graph_identity(graph), lineage.graph_version),
             ("node_id", activity.node_id, lineage.node_id),
             ("node_instance_id", activity.node_instance_id, lineage.node_instance_id),
             ("attempt", activity.attempt, lineage.attempt),
@@ -236,8 +236,10 @@ def _validate_lineage_binding(
         )
 
 
-def _graph_version(graph: NormalizedHarnessGraph) -> str:
-    return f"{graph.graph_id}@{graph.workflow_version}"
+def _graph_identity(graph: NormalizedHarnessGraph) -> str:
+    """Return the exact identity pinned by the normalized Graph schema."""
+
+    return graph.identity_ref.exact_ref
 
 
 def _checkpoint_ref(commit: HarnessGraphProjectionCommit) -> str:

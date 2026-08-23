@@ -21,7 +21,7 @@ from framework.harness import (
     HarnessWorkerStatus,
     InMemoryHarnessNodeOutputResource,
 )
-from framework.harness.control_plane.activity import harness_activity_input_checksum
+from framework.harness.graph import graph_activity_input_checksum
 from framework.harness.graph import (
     HarnessContractKind,
     HarnessContractReference,
@@ -29,9 +29,9 @@ from framework.harness.graph import (
 )
 from framework.harness.graph.bindings import HarnessActivityCapabilities
 from framework.harness.graph.versioning import (
+    GRAPH_ONLY_NORMALIZED_HARNESS_GRAPH_SCHEMA,
     HARNESS_CONDITION_POLICY_VERSION,
-    HARNESS_GRAPH_COMPILER_VERSION,
-    NORMALIZED_HARNESS_GRAPH_SCHEMA,
+    HARNESS_GRAPH_ONLY_COMPILER_VERSION,
 )
 from framework.shared.attempts import AttemptSupervisor
 
@@ -544,13 +544,13 @@ def _task(
         run_id=run_id,
         graph_ref=HarnessGraphReference(
             graph_id=definition.graph_id,
-            workflow_ref=HarnessContractReference(
-                HarnessContractKind.WORKFLOW,
+            graph_ref=HarnessContractReference(
+                HarnessContractKind.GRAPH,
                 definition.graph_id,
                 definition.graph_version,
             ),
-            schema_version=NORMALIZED_HARNESS_GRAPH_SCHEMA,
-            compiler_version=HARNESS_GRAPH_COMPILER_VERSION,
+            schema_version=GRAPH_ONLY_NORMALIZED_HARNESS_GRAPH_SCHEMA,
+            compiler_version=HARNESS_GRAPH_ONLY_COMPILER_VERSION,
             condition_policy_version=HARNESS_CONDITION_POLICY_VERSION,
             checksum=definition_checksum,
         ),
@@ -564,7 +564,7 @@ def _task(
         worker_ref=leaf.worker_ref,
         activity_ref=leaf.activity_ref,
         attempt=1,
-        input_ref=harness_activity_input_checksum(task),
+        input_ref=graph_activity_input_checksum(task),
         causal_decision_checksum=checksum_for(
             {"decision": "reader-repair-test-dispatch", "step_id": step_id}
         ),
@@ -739,13 +739,13 @@ def _application_activity(definition) -> HarnessGraphActivity:
         run_id=_RUN_ID,
         graph_ref=HarnessGraphReference(
             graph_id=READER_REPAIR_GRAPH_ID,
-            workflow_ref=HarnessContractReference(
-                HarnessContractKind.WORKFLOW,
+            graph_ref=HarnessContractReference(
+                HarnessContractKind.GRAPH,
                 READER_REPAIR_GRAPH_ID,
                 READER_REPAIR_GRAPH_VERSION,
             ),
-            schema_version=NORMALIZED_HARNESS_GRAPH_SCHEMA,
-            compiler_version=HARNESS_GRAPH_COMPILER_VERSION,
+            schema_version=GRAPH_ONLY_NORMALIZED_HARNESS_GRAPH_SCHEMA,
+            compiler_version=HARNESS_GRAPH_ONLY_COMPILER_VERSION,
             condition_policy_version=HARNESS_CONDITION_POLICY_VERSION,
             checksum=checksum_for(
                 {"graph": READER_REPAIR_GRAPH_ID, "version": "2"}

@@ -4,16 +4,14 @@ from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 from framework.harness.artifacts.ports import ArtifactRef, ArtifactWriteRequest
 from framework.harness.context.models import ContextEnvelope
-from framework.harness.control_plane.activity import HARNESS_ACTIVITY_CONTRACT
 from framework.harness.control_plane.event import HarnessEvent
 from framework.harness.control_plane.trace import HarnessTrace
 from framework.harness.mcp.policy import MCPToolDefinition, MCPToolRequest
 from framework.harness.memory.ports import MemoryWriteCandidate
 from framework.harness.quality.verdict import HarnessQualityVerdict
-from framework.harness.rag.models import RAGContextPack, RAGSessionRequest
+from framework.harness.rag.models import RAGContextPack, RAGSessionSpec
 from framework.harness.retrieval.evidence_pack import EvidencePackCollection
 from framework.harness.retrieval.request import RetrievalRequest
-from framework.harness.runtime.checkpoint import HarnessCheckpoint
 from framework.harness.skills.evolution.models import (
     SkillCandidate,
     SkillEvaluationResult,
@@ -27,7 +25,6 @@ from framework.harness.workers.result import HarnessWorkerResult
 if TYPE_CHECKING:
     from datetime import datetime
 
-    from framework.harness.control_plane.activity import HarnessActivity
     from framework.harness.control_plane.graph_runtime import HarnessGraphActivity
     from framework.harness.control_plane.graph_state import HarnessGraphState
     from framework.harness.graph.model import NormalizedHarnessGraph
@@ -77,34 +74,33 @@ class HarnessEventPort(Protocol):
 
 @runtime_checkable
 class HarnessTransitionPort(HarnessEventPort, Protocol):
-    def create_activity(
+    def accept_graph_activity(
         self,
-        *,
-        run_id: str,
-        step_id: str,
-        attempt: int,
-        activity_type: str,
-        inputs: dict[str, Any],
-        contract_version: str = HARNESS_ACTIVITY_CONTRACT,
-        worker_version: str = "1",
-    ) -> HarnessActivity:
-        """Create an activity using the port-owned authoritative identity scope."""
-        ...
-
-    def read_history(self, run_id: str) -> tuple[HarnessEvent, ...]: ...
-
-    def require_activity_storage(self) -> None: ...
-
-    def accept_activity(
-        self,
-        activity: HarnessActivity,
+        activity: HarnessGraphActivity,
+        graph: NormalizedHarnessGraph,
         inputs: dict[str, Any],
         *,
         accepted_at: datetime,
         started_at: datetime,
     ) -> HarnessWorkerResult | None:
-        """Persist accepted input before live work and return an existing terminal result."""
+        """Persist one checksum-bound Graph activity before live work."""
         ...
+
+    def record_graph_activity_result(
+        self,
+        activity: HarnessGraphActivity,
+        graph: NormalizedHarnessGraph,
+        result: HarnessWorkerResult,
+        *,
+        completed_at: datetime,
+        graph_context: Any,
+    ) -> HarnessEvent:
+        """Persist one terminal worker result under the Graph activity identity."""
+        ...
+
+    def read_history(self, run_id: str) -> tuple[HarnessEvent, ...]: ...
+
+    def require_activity_storage(self) -> None: ...
 
     def resolve_graph_replay_activity(
         self,
@@ -120,15 +116,6 @@ class HarnessTransitionPort(HarnessEventPort, Protocol):
         """
         ...
 
-    def record_activity_result(
-        self,
-        activity: HarnessActivity,
-        result: HarnessWorkerResult,
-        *,
-        completed_at: datetime,
-    ) -> HarnessEvent: ...
-
-
 @runtime_checkable
 class HarnessGraphResultCommitterPort(Protocol):
     """Commit one recorded worker result as a verified Graph result lineage."""
@@ -142,22 +129,6 @@ class HarnessGraphResultCommitterPort(Protocol):
         worker_result: HarnessWorkerResult,
         occurred_at: datetime,
     ) -> HarnessGraphState:
-        ...
-
-
-@runtime_checkable
-class HarnessGraphResultObserverPort(Protocol):
-    """Observe one Graph candidate without replacing result authority."""
-
-    def observe_result(
-        self,
-        *,
-        activity: HarnessGraphActivity,
-        graph: NormalizedHarnessGraph,
-        run_spec_checksum: str,
-        worker_result: HarnessWorkerResult,
-        occurred_at: datetime,
-    ) -> HarnessEvent | None:
         ...
 
 
@@ -185,17 +156,12 @@ class HarnessContextPort(Protocol):
 
 @runtime_checkable
 class HarnessRAGPort(Protocol):
-    def build_context_pack(self, request: RAGSessionRequest) -> RAGContextPack: ...
+    def build_context_pack(self, spec: RAGSessionSpec) -> RAGContextPack: ...
 
 
 @runtime_checkable
 class HarnessRetrievalPort(Protocol):
     def retrieve(self, request: RetrievalRequest) -> EvidencePackCollection: ...
-
-
-@runtime_checkable
-class HarnessCheckpointPort(Protocol):
-    def save_checkpoint(self, checkpoint: HarnessCheckpoint) -> None: ...
 
 
 @runtime_checkable
@@ -224,12 +190,10 @@ class HarnessSkillEvolutionPort(Protocol):
 
 __all__ = [
     "HarnessArtifactPort",
-    "HarnessCheckpointPort",
     "HarnessContextPort",
     "HarnessEventPort",
     "HarnessGovernancePort",
     "HarnessGraphResultCommitterPort",
-    "HarnessGraphResultObserverPort",
     "HarnessLLMPort",
     "HarnessMemoryPort",
     "HarnessRAGPort",

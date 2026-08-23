@@ -1,5 +1,7 @@
 import json
 
+import pytest
+
 from framework.agent.artifacts import ArtifactManager
 from framework.tool import (
     ToolCall,
@@ -11,6 +13,7 @@ from framework.tool import (
 from business.layers.output.tools import register_report_tools
 from interfaces.services.report_service import ReportApplicationService
 from infrastructure.storage.persistence import LocalJsonPersistenceAdapter
+from framework.shared.graph_identity import GraphExecutionIdentity
 
 
 def test_report_tools_render_markdown_and_json_through_executor() -> None:
@@ -146,9 +149,9 @@ def test_report_export_tool_writes_markdown_and_json_artifacts(tmp_path) -> None
     register_report_tools(
         registry,
         artifact_manager=artifact_manager,
-        run_id="report-run",
+        execution_identity=_identity("report-run"),
     )
-    executor = ToolExecutor(registry)
+    executor = ToolExecutor(registry, graph_identity=_identity("report-run"))
     report = {
         "title": "Daily Report",
         "sections": [{"title": "Summary", "content": "All systems nominal."}],
@@ -190,11 +193,35 @@ def test_report_export_tool_writes_markdown_and_json_artifacts(tmp_path) -> None
     assert json_observation.result.output["content_type"] == "application/json"
 
 
+def test_report_export_is_not_registered_without_graph_identity(tmp_path) -> None:
+    manager = ArtifactManager(tmp_path)
+    manager.start_run("report-run")
+    registry = ToolRegistry()
+    register_report_tools(registry, artifact_manager=manager, run_id="report-run")
+
+    assert "report.export" not in {tool.name for tool in registry.list_tools()}
+
+
+def test_report_publish_rejects_conflicting_run_id(tmp_path) -> None:
+    repository = LocalJsonPersistenceAdapter(tmp_path)
+    with pytest.raises(ValueError, match="run_id must match"):
+        register_report_tools(
+            ToolRegistry(),
+            persistence_repository=repository,
+            run_id="other-run",
+            execution_identity=_identity("run-1"),
+        )
+
+
 def test_report_publish_tool_saves_report_record(tmp_path) -> None:
     repository = LocalJsonPersistenceAdapter(tmp_path)
     registry = ToolRegistry()
-    register_report_tools(registry, persistence_repository=repository)
-    executor = ToolExecutor(registry)
+    register_report_tools(
+        registry,
+        persistence_repository=repository,
+        execution_identity=_identity("run-1"),
+    )
+    executor = ToolExecutor(registry, graph_identity=_identity("run-1"))
     report = {
         "title": "Daily Report",
         "sections": [{"title": "Summary", "content": "All systems nominal."}],
@@ -205,7 +232,6 @@ def test_report_publish_tool_saves_report_record(tmp_path) -> None:
         ToolCall(
             tool_name="report.publish",
             arguments={
-                "run_id": "run-1",
                 "report": report,
                 "quality_score": 0.91,
                 "citation_coverage_score": 1.0,
@@ -240,14 +266,17 @@ def test_report_publish_tool_saves_report_record(tmp_path) -> None:
 def test_report_publish_tool_is_blocked_by_default(tmp_path) -> None:
     repository = LocalJsonPersistenceAdapter(tmp_path)
     registry = ToolRegistry()
-    register_report_tools(registry, persistence_repository=repository)
-    executor = ToolExecutor(registry)
+    register_report_tools(
+        registry,
+        persistence_repository=repository,
+        execution_identity=_identity("run-1"),
+    )
+    executor = ToolExecutor(registry, graph_identity=_identity("run-1"))
 
     observation = executor.execute(
         ToolCall(
             tool_name="report.publish",
             arguments={
-                "run_id": "run-1",
                 "report": {
                     "title": "Daily Report",
                     "sections": [{"title": "Summary", "content": "Needs approval."}],
@@ -270,6 +299,8 @@ def _write_report_run(root, run_id: str, finished_at: str, title: str) -> None:
         json.dumps(
             {
                 "run_id": run_id,
+                "graph_id": "graph.test",
+                "graph_version": "v1",
                 "status": "succeeded",
                 "finished_at": finished_at,
                 "quality_score": 0.9,
@@ -280,6 +311,20 @@ def _write_report_run(root, run_id: str, finished_at: str, title: str) -> None:
             }
         ),
         encoding="utf-8",
+    )
+
+
+def _identity(run_id: str) -> GraphExecutionIdentity:
+    return GraphExecutionIdentity(
+        run_id=run_id,
+        graph_id="graph.test",
+        graph_version="v1",
+        graph_ref="graph.test@v1",
+        graph_checksum="sha256:" + "0" * 64,
+        node_id="node.report",
+        node_instance_id="instance.report",
+        activity_id="activity.report",
+        attempt=1,
     )
 
 

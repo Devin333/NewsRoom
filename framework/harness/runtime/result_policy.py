@@ -51,10 +51,7 @@ DEFAULT_GRAPH_ARTIFACT_POLICY_VERSION = "graph-artifact-policy@1"
 
 
 class GraphArtifactRolloutMode(StrEnum):
-    LEGACY = "legacy"
-    SHADOW = "shadow"
     ENFORCE = "enforce"
-    READ_ONLY = "read_only"
 
 
 class GraphArtifactDedupScope(StrEnum):
@@ -128,7 +125,10 @@ class GraphArtifactRetentionSettings:
 
 @dataclass(frozen=True, slots=True)
 class GraphArtifactPersistenceConfig:
-    mode: GraphArtifactRolloutMode = GraphArtifactRolloutMode.SHADOW
+    # Graph result materialization is the only live production authority after
+    # the Graph-only cutover.  Rollout modes remain parseable only long enough
+    # to produce a deterministic configuration error for stale snapshots.
+    mode: GraphArtifactRolloutMode = GraphArtifactRolloutMode.ENFORCE
     policy_version: str = DEFAULT_GRAPH_ARTIFACT_POLICY_VERSION
     readable_policy_versions: tuple[str, ...] = (
         DEFAULT_GRAPH_ARTIFACT_POLICY_VERSION,
@@ -166,6 +166,11 @@ class GraphArtifactPersistenceConfig:
             "mode",
             enum_value(GraphArtifactRolloutMode, self.mode, "config.mode"),
         )
+        if self.mode is not GraphArtifactRolloutMode.ENFORCE:
+            raise result_error(
+                GraphArtifactResultErrorCode.RESULT_SCHEMA_INVALID,
+                field="config.mode",
+            )
         policy_version = exact_reference(self.policy_version, "config.policy_version")
         readable = stable_tuple(
             self.readable_policy_versions,

@@ -15,9 +15,24 @@ from framework.harness.control_plane.harness import (
 )
 from framework.harness.control_plane.graph_runtime import HarnessGraphActivity
 from framework.harness.control_plane.state import HarnessRunSpec
+from framework.harness.runtime.graph_dispatcher import HarnessGraphPhysicalActivityDispatcher
+from framework.harness.runtime.activity_executor import HarnessGraphPhysicalActivityExecutor
+from framework.harness import InMemoryHarnessNodeOutputResource
+from framework.shared.attempts import AttemptSupervisor
 from framework.harness.graph.dsl import HarnessGraphSpec, StepRef
-from framework.harness.workflow.spec import HarnessWorkflowSpec
-from framework.harness.graph.activity import HarnessStepSpec
+from framework.harness.graph.activity import HarnessLeafActivityKind, HarnessStepSpec, HarnessWorkerType
+from framework.harness.graph.bindings import (
+    HarnessActivityCapabilities,
+    HarnessActivityContractBinding,
+    HarnessLeafActivityBinding as HarnessRuntimeLeafActivityBinding,
+    HarnessRuntimeBindingAuthority,
+    HarnessWorkerBinding,
+)
+from framework.harness.graph.definition import HarnessGraphDefinition, HarnessGraphLeafBinding
+from framework.harness.graph.model import HarnessContractKind, HarnessContractReference
+from framework.harness.side_effects.fake import CountingHarnessSideEffectHandler, InMemoryHarnessSideEffectStore
+from framework.harness.side_effects.models import HarnessTerminalSideEffectPolicy
+from framework.harness.side_effects.registry import HarnessSideEffectHandlerBinding, HarnessSideEffectRegistry
 from framework.harness.workers.result import HarnessWorkerResult
 from interfaces.models.actor import ActorContext
 from interfaces.services.harness_graph_service import (
@@ -229,33 +244,95 @@ def _service(
     actor_scope: HarnessGraphActorScope | None = None,
     dispatcher: _Dispatcher | None = None,
 ) -> tuple[HarnessGraphApplicationService, HarnessControlPlane, HarnessRunSpec]:
-    workflow = HarnessWorkflowSpec(
-        workflow_id=f"workflow-{run_id}",
-        steps=(HarnessStepSpec("inspect", "script", output_key="result"),),
-        entry_step_id="inspect",
-        graph=HarnessGraphSpec(f"graph-{run_id}", StepRef("inspect")),
+    requested_dispatcher = dispatcher
+    step = HarnessStepSpec("inspect", HarnessWorkerType.FUNCTION, output_key="result")
+    graph_spec = HarnessGraphSpec(f"graph-{run_id}", StepRef("inspect"))
+    graph = HarnessGraphDefinition(
+        graph_id=graph_spec.graph_id,
+        graph_version="1",
+        root=graph_spec,
+        activities=(step,),
+        leaf_activity_bindings=(
+            HarnessGraphLeafBinding(
+                "inspect",
+                HarnessLeafActivityKind.FUNCTION,
+                HarnessContractReference(HarnessContractKind.WORKER, "inspect", "1"),
+                HarnessContractReference(HarnessContractKind.ACTIVITY, "test.function.activity", "1"),
+            ),
+        ),
+        task_plan_stage_bindings=(),
+        committed_output_bindings=(),
+        repair_bindings=(),
+        terminal_side_effect_policy=HarnessTerminalSideEffectPolicy(
+            policy_id="test.terminal",
+            version="1",
+            handler="test.terminal@1",
+            kind="artifact",
+            requires_approval=False,
+            retry_limit=1,
+            not_required_evidence_ref=checksum_for("test.terminal"),
+        ),
     )
     run_spec = HarnessRunSpec(
         run_id,
-        workflow,
+        graph,
         metadata={
             "tenant_scope_ref": _TENANT_REF,
             "identity_scope_ref": _IDENTITY_REF,
+            "subject_scope_ref": checksum_for({"subject": run_id}),
             "secret": "raw-secret-value",
             "prompt": "raw prompt",
         },
         created_at=_NOW,
     )
+    worker = _FunctionWorker("inspect")
+    activity = _FunctionActivity()
+    side_effect_store = InMemoryHarnessSideEffectStore()
+    side_effect_registry = HarnessSideEffectRegistry(
+        (
+            HarnessSideEffectHandlerBinding(
+                "test.terminal@1",
+                "artifact",
+                CountingHarnessSideEffectHandler(side_effect_store, disposition="accepted"),
+            ),
+        )
+    )
     control_plane = HarnessControlPlane(
         event_port=InMemoryHarnessEventPort(),
-        worker_registry={
-            "inspect": lambda _task: HarnessWorkerResult(
-                "succeeded",
-                output={"secret": "raw-secret-value"},
-            )
-        },
-        graph_activity_dispatcher=dispatcher,
+        side_effect_store=side_effect_store,
+        runtime_binding_authority=HarnessRuntimeBindingAuthority(
+            workers=(HarnessWorkerBinding("inspect@1", HarnessWorkerType.FUNCTION, worker),),
+            activities=(HarnessActivityContractBinding("test.function.activity@1", activity),),
+            leaf_activities=(
+                HarnessRuntimeLeafActivityBinding(
+                    HarnessLeafActivityKind.FUNCTION,
+                    "inspect@1",
+                    "test.function.activity@1",
+                ),
+            ),
+            side_effect_registry=side_effect_registry,
+        ),
+        graph_activity_dispatcher=requested_dispatcher,
     )
+    if requested_dispatcher is None:
+        executor = HarnessGraphPhysicalActivityExecutor(
+            binding_authority=control_plane.runtime_binding_authority,
+            input_resolver=control_plane,
+            node_output_resource=InMemoryHarnessNodeOutputResource(),
+            result_committer=None,
+            supervisor=AttemptSupervisor(),
+        )
+        control_plane.install_graph_activity_dispatcher(
+            HarnessGraphPhysicalActivityDispatcher(
+                executor=executor,
+                graph_resolver=control_plane.graph_for_activity,
+                input_resolver=control_plane,
+                accept=control_plane.accept_graph_activity_for_execution,
+                record_call_marker=control_plane.record_graph_activity_call_marker,
+                record_result=control_plane.record_graph_activity_result_event,
+                apply_result=control_plane.commit_physical_graph_result,
+            )
+        )
     control_plane.run(run_spec)
     binding = HarnessGraphRuntimeBinding(run_spec, control_plane)
     service = HarnessGraphApplicationService(
@@ -277,3 +354,26 @@ def _service(
         clock=lambda: _NOW,
     )
     return service, control_plane, run_spec
+
+
+class _FunctionWorker:
+    worker_version = "1"
+    worker_type = HarnessWorkerType.FUNCTION
+
+    def __init__(self, worker_id: str) -> None:
+        self.worker_id = worker_id
+
+    def execute(self, _task: dict) -> HarnessWorkerResult:
+        return HarnessWorkerResult(
+            "succeeded",
+            output={"secret": "raw-secret-value"},
+        )
+
+
+class _FunctionActivity:
+    activity_contract_id = "test.function.activity"
+    activity_contract_version = "1"
+    capabilities = HarnessActivityCapabilities()
+
+    def dispatch(self, _request: dict) -> None:
+        return None

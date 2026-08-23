@@ -25,7 +25,6 @@ from framework.harness.task_plan.models import (
 )
 from framework.harness.task_plan.replay import (
     TASK_PLAN_REPLAY_REDUCER_VERSION,
-    TASK_PLAN_REPLAY_REDUCER_VERSION_V1,
     TASK_PLAN_REPLAY_REDUCER_VERSION_V2,
     TaskPlanReplayReport,
 )
@@ -33,13 +32,9 @@ from framework.harness.task_plan.store import TaskResultRecord
 from framework.shared.time import format_datetime, parse_datetime
 
 
-TASK_PLAN_CHECKPOINT_SCHEMA_V1 = "newsroom.harness-task-plan-checkpoint/v1"
 TASK_PLAN_CHECKPOINT_SCHEMA_V2 = "newsroom.harness-task-plan-checkpoint/v2"
-TASK_PLAN_CHECKPOINT_SCHEMA = TASK_PLAN_CHECKPOINT_SCHEMA_V1
-TASK_PLAN_CHECKPOINT_SCHEMAS = (
-    TASK_PLAN_CHECKPOINT_SCHEMA_V1,
-    TASK_PLAN_CHECKPOINT_SCHEMA_V2,
-)
+TASK_PLAN_CHECKPOINT_SCHEMA = TASK_PLAN_CHECKPOINT_SCHEMA_V2
+TASK_PLAN_CHECKPOINT_SCHEMAS = (TASK_PLAN_CHECKPOINT_SCHEMA_V2,)
 _GRAPH_CHECKPOINT_IDENTITY_FIELDS = (
     "graph_id",
     "graph_version",
@@ -69,7 +64,6 @@ class TaskPlanCheckpoint:
 
     checkpoint_id: str
     run_id: str
-    workflow_id: str | None
     stage_id: str
     graph_checksum: str
     plan_id: str
@@ -122,11 +116,6 @@ class TaskPlanCheckpoint:
             projection = TaskPlanProjection.from_dict(projection)
         if not isinstance(projection, TaskPlanProjection):
             raise TypeError("projection must be TaskPlanProjection")
-        if projection.is_graph_only != self.is_graph_only:
-            raise HarnessValidationError(
-                "TaskPlan checkpoint schema does not match projection identity",
-                code="task_plan_checkpoint_identity_mismatch",
-            )
         identity = (
             projection.run_id,
             projection.stage_id,
@@ -150,7 +139,7 @@ class TaskPlanCheckpoint:
                 "TaskPlan checkpoint identity does not match projection",
                 code="task_plan_checkpoint_identity_mismatch",
             )
-        if self.is_graph_only and any(
+        if any(
             getattr(self, field_name) != getattr(projection, field_name)
             for field_name in _GRAPH_CHECKPOINT_IDENTITY_FIELDS
         ):
@@ -296,11 +285,7 @@ class TaskPlanCheckpoint:
                 "TaskPlan checkpoint aggregate ref and checksum must be present together",
                 code="task_plan_checkpoint_aggregate_mismatch",
             )
-        expected_reducer_version = (
-            TASK_PLAN_REPLAY_REDUCER_VERSION_V2
-            if self.is_graph_only
-            else TASK_PLAN_REPLAY_REDUCER_VERSION_V1
-        )
+        expected_reducer_version = TASK_PLAN_REPLAY_REDUCER_VERSION_V2
         if self.reducer_version != expected_reducer_version:
             raise HarnessValidationError(
                 "unsupported TaskPlan checkpoint reducer",
@@ -346,18 +331,13 @@ class TaskPlanCheckpoint:
                 "TaskPlan replay report does not match checkpoint plan",
                 code="task_plan_checkpoint_identity_mismatch",
             )
-        graph_identity = (
-            {
-                field_name: getattr(plan, field_name)
-                for field_name in _GRAPH_CHECKPOINT_IDENTITY_FIELDS
-            }
-            if plan.is_graph_only
-            else {}
-        )
+        graph_identity = {
+            field_name: getattr(plan, field_name)
+            for field_name in _GRAPH_CHECKPOINT_IDENTITY_FIELDS
+        }
         return cls(
             checkpoint_id=checkpoint_id,
             run_id=plan.run_id,
-            workflow_id=plan.workflow_id,
             stage_id=plan.stage_id,
             graph_checksum=plan.graph_checksum,
             plan_id=plan.plan_id,
@@ -378,11 +358,7 @@ class TaskPlanCheckpoint:
             created_at=created_at,
             aggregate_ref=report.aggregate_ref,
             aggregate_checksum=report.aggregate_checksum,
-            schema_version=(
-                TASK_PLAN_CHECKPOINT_SCHEMA_V2
-                if plan.is_graph_only
-                else TASK_PLAN_CHECKPOINT_SCHEMA_V1
-            ),
+            schema_version=TASK_PLAN_CHECKPOINT_SCHEMA_V2,
             reducer_version=report.reducer_version,
             **graph_identity,
         )
@@ -403,8 +379,6 @@ class TaskPlanCheckpoint:
             "replay_checksum": (self.replay_checksum, report.replay_checksum),
         }
         mismatches = sorted(name for name, values in checks.items() if values[0] != values[1])
-        if report.projection.is_graph_only != self.is_graph_only:
-            mismatches.append("identity_schema")
         if report.reducer_version != self.reducer_version:
             mismatches.append("reducer_version")
         if mismatches:
@@ -421,15 +395,12 @@ class TaskPlanCheckpoint:
             "checkpoint_id": self.checkpoint_id,
             "run_id": self.run_id,
         }
-        if self.is_graph_only:
-            payload.update(
-                {
-                    field_name: getattr(self, field_name)
-                    for field_name in _GRAPH_CHECKPOINT_IDENTITY_FIELDS
-                }
-            )
-        else:
-            payload["workflow_id"] = self.workflow_id
+        payload.update(
+            {
+                field_name: getattr(self, field_name)
+                for field_name in _GRAPH_CHECKPOINT_IDENTITY_FIELDS
+            }
+        )
         payload.update({
             "stage_id": self.stage_id,
             "graph_checksum": self.graph_checksum,
@@ -490,19 +461,13 @@ class TaskPlanCheckpoint:
                 "checkpoint_checksum",
             }
         )
-        identity = (
-            frozenset(_GRAPH_CHECKPOINT_IDENTITY_FIELDS)
-            if schema_version == TASK_PLAN_CHECKPOINT_SCHEMA_V2
-            else frozenset({"workflow_id"})
-        )
+        identity = frozenset(_GRAPH_CHECKPOINT_IDENTITY_FIELDS)
         payload = exact_keys(
             value,
             required=common | identity,
             model=cls.__name__,
         )
         supplied = checksum(payload.pop("checkpoint_checksum"), "checkpoint_checksum")
-        if schema_version == TASK_PLAN_CHECKPOINT_SCHEMA_V2:
-            payload["workflow_id"] = None
         checkpoint = cls(**payload)
         if supplied != checkpoint.checkpoint_checksum:
             raise HarnessValidationError(
@@ -559,29 +524,6 @@ def _require_checkpoint_schema(value: Any) -> str:
 
 def _normalize_checkpoint_identity(checkpoint: TaskPlanCheckpoint) -> None:
     _require_checkpoint_schema(checkpoint.schema_version)
-    if checkpoint.schema_version == TASK_PLAN_CHECKPOINT_SCHEMA_V1:
-        object.__setattr__(
-            checkpoint,
-            "workflow_id",
-            identifier(checkpoint.workflow_id, "workflow_id"),
-        )
-        unexpected = sorted(
-            field_name
-            for field_name in _GRAPH_CHECKPOINT_IDENTITY_FIELDS
-            if getattr(checkpoint, field_name) is not None
-        )
-        if unexpected:
-            raise HarnessValidationError(
-                "legacy TaskPlan checkpoint cannot carry Graph-only identity",
-                code="task_plan_checkpoint_identity_mismatch",
-                details={"unexpected": unexpected},
-            )
-        return
-    if checkpoint.workflow_id is not None:
-        raise HarnessValidationError(
-            "Graph-only TaskPlan checkpoint cannot carry workflow_id",
-            code="task_plan_checkpoint_identity_mismatch",
-        )
     normalized = {
         "graph_id": identifier(checkpoint.graph_id, "graph_id"),
         "graph_version": identifier(checkpoint.graph_version, "graph_version"),
@@ -627,15 +569,12 @@ def _result_matches_checkpoint_projection(
     projection: TaskPlanProjection,
 ) -> bool:
     if (
-        result.is_graph_only != projection.is_graph_only
-        or result.run_id != projection.run_id
+        result.run_id != projection.run_id
         or result.stage_id != projection.stage_id
         or result.plan_id != projection.plan_id
         or result.plan_version != projection.plan_version
     ):
         return False
-    if not result.is_graph_only:
-        return True
     return all(
         getattr(result, field_name) == getattr(projection, field_name)
         for field_name in (*_GRAPH_CHECKPOINT_IDENTITY_FIELDS, "graph_checksum")
@@ -645,7 +584,6 @@ def _result_matches_checkpoint_projection(
 __all__ = [
     "InMemoryTaskPlanCheckpointStore",
     "TASK_PLAN_CHECKPOINT_SCHEMA",
-    "TASK_PLAN_CHECKPOINT_SCHEMA_V1",
     "TASK_PLAN_CHECKPOINT_SCHEMA_V2",
     "TASK_PLAN_CHECKPOINT_SCHEMAS",
     "TaskPlanCheckpoint",

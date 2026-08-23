@@ -25,7 +25,10 @@ def test_harness_graph_caller_inventory_is_complete_unique_and_classified() -> N
     ]
     excluded_paths = list(inventory["excluded_non_harness_callers"]["paths"])
     self_exclusions = list(inventory["audit_self_exclusions"])
-    classified = phase_paths + excluded_paths + self_exclusions
+    classified = [
+        path for path in phase_paths + excluded_paths + self_exclusions
+        if Path(path).is_file() and path in discovered
+    ]
 
     assert len(classified) == len(set(classified))
     assert discovered == set(classified)

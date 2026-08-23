@@ -12,30 +12,23 @@ def test_api_router_parity_keeps_current_paths_registered() -> None:
         "/health/live",
         "/health/ready",
         "/health/dependencies",
-        "/api/v1/runs",
-        "/api/v1/runs/catalog/health",
-        "/api/v1/runs/compare",
-        "/api/v1/runs/{run_id}",
-        "/api/v1/runs/{run_id}/manifest",
-        "/api/v1/runs/{run_id}/events",
-        "/api/v1/runs/{run_id}/steps",
-        "/api/v1/runs/{run_id}/events/stream",
-        "/api/v1/runs/{run_id}/progress",
-        "/api/v1/runs/{run_id}/replay",
-        "/api/v1/runs/{run_id}/diagnostics",
-        "/api/v1/runs/{run_id}/health",
-        "/api/v1/runs/{run_id}/lineage",
-        "/api/v1/runs/{run_id}/lineage/upstream",
-        "/api/v1/runs/{run_id}/lineage/downstream",
-        "/api/v1/runs/{run_id}/artifacts",
-        "/api/v1/runs/{run_id}/artifacts/{artifact_key}",
-        "/api/v1/runs/{run_id}/operations/cancel",
-        "/api/v1/runs/{run_id}/operations/rerun-from-step",
-        "/api/v1/runs/{run_id}/operations/resume-with-patch",
-        "/api/v1/runs/{run_id}/operations/skip-step",
-        "/api/v1/runs/{run_id}/operations/mark-blocked-resolved",
-        "/api/v1/artifacts",
-        "/api/v1/artifacts/{artifact_id}",
+        "/api/v2/graph-runs",
+        "/api/v2/graph-runs/catalog/health",
+        "/api/v2/graph-runs/compare",
+        "/api/v2/graph-runs/{run_id}",
+        "/api/v2/graph-runs/{run_id}/manifest",
+        "/api/v2/graph-runs/{run_id}/events",
+        "/api/v2/graph-runs/{run_id}/steps",
+        "/api/v2/graph-runs/{run_id}/events/stream",
+        "/api/v2/graph-runs/{run_id}/replay",
+        "/api/v2/graph-runs/{run_id}/diagnostics",
+        "/api/v2/graph-runs/{run_id}/health",
+        "/api/v2/graph-runs/{run_id}/lineage",
+        "/api/v2/graph-runs/{run_id}/lineage/upstream",
+        "/api/v2/graph-runs/{run_id}/lineage/downstream",
+        "/api/v2/graph-runs/{run_id}/artifacts",
+        "/api/v2/graph-runs/{run_id}/artifacts/{artifact_key}",
+        "/api/v2/graph-runs/{run_id}/cancel",
         "/api/v1/reports/latest",
         "/api/v1/reports",
         "/api/v1/reports/{report_id}",
@@ -97,8 +90,8 @@ def test_api_router_parity_keeps_current_paths_registered() -> None:
     assert expected_paths <= paths
     assert not any(path.startswith("/api/v1/papers") for path in paths)
     assert not any(path.startswith("/api/v1/boards") for path in paths)
-    assert "/api/v1/runs/daily" not in paths
-    assert "/api/v1/runs/weekly" not in paths
+    assert "/api/v2/graph-runs/daily" not in paths
+    assert "/api/v2/graph-runs/weekly" not in paths
     assert "/api/v1/approvals/{approval_id}/resume-workflow" not in paths
     assert "/api/v1/schedules/daily" not in paths
     assert "/api/v1/schedules/papers/ingest" not in paths

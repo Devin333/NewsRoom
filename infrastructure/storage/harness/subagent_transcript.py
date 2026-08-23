@@ -37,11 +37,7 @@ from framework.harness.subagents.transcript import (
     DEFAULT_MAX_OUTPUT_BYTES,
     DEFAULT_MAX_TRANSCRIPT_BYTES,
     MAX_PARENT_QUERY,
-    SUBAGENT_BUNDLE_SCHEMA_V1,
-    SUBAGENT_BUNDLE_SCHEMA_V2,
     SUBAGENT_BUNDLE_SCHEMA_V3,
-    SUBAGENT_RECEIPT_SCHEMA_V1,
-    SUBAGENT_RECEIPT_SCHEMA_V2,
     SUBAGENT_RECEIPT_SCHEMA_V3,
     SubAgentAttemptIdentity,
     SubAgentContextEvidence,
@@ -123,12 +119,7 @@ class FilesystemSubAgentTranscriptStore:
         started_at = self._monotonic()
         _validate_bundle_identity(context, output, transcript)
         identity = transcript.identity
-        version = (
-            "v3"
-            if identity.schema_version is not None
-            and identity.schema_version.endswith("/v3")
-            else "v2" if identity.is_graph_only else "v1"
-        )
+        version = "v3"
         receipt = SubAgentTranscriptReceipt(
             transcript_ref=transcript.ref,
             transcript_checksum=transcript.transcript_checksum,
@@ -144,17 +135,8 @@ class FilesystemSubAgentTranscriptStore:
             output_checksum=output.output_checksum,
             storage_revision=f"bundle:{identity.transcript_id}:{version}",
             committed_at=self._clock(),
-            identity_checksum=(identity.identity_checksum if identity.is_graph_only else None),
-            schema_version=(
-                SUBAGENT_RECEIPT_SCHEMA_V3
-                if identity.schema_version is not None
-                and identity.schema_version.endswith("/v3")
-                else (
-                    SUBAGENT_RECEIPT_SCHEMA_V2
-                    if identity.is_graph_only
-                    else SUBAGENT_RECEIPT_SCHEMA_V1
-                )
-            ),
+            identity_checksum=identity.identity_checksum,
+            schema_version=SUBAGENT_RECEIPT_SCHEMA_V3,
         )
         payload = {
             "schema_version": _bundle_schema_for_identity(identity),
@@ -393,11 +375,7 @@ class FilesystemSubAgentTranscriptStore:
                 "schema_version", "context", "output", "transcript", "receipt"
             }:
                 raise _corrupt("subagent transcript bundle fields are invalid")
-            if payload["schema_version"] not in {
-                SUBAGENT_BUNDLE_SCHEMA_V1,
-                SUBAGENT_BUNDLE_SCHEMA_V2,
-                SUBAGENT_BUNDLE_SCHEMA_V3,
-            }:
+            if payload["schema_version"] != SUBAGENT_BUNDLE_SCHEMA_V3:
                 raise _corrupt("subagent transcript bundle schema is unsupported", code="subagent_transcript_schema_unsupported")
             context = SubAgentContextEvidence.from_dict(_object(payload["context"], "context"))
             output = SubAgentOutputDocument.from_dict(_object(payload["output"], "output"))
@@ -529,7 +507,7 @@ def _parse_ref(value: str, kind: str) -> tuple[str, str, str]:
     version = next(
         (
             candidate
-            for candidate in ("v1", "v2", "v3")
+            for candidate in ("v3",)
             if isinstance(value, str) and value.startswith(f"{kind}://{candidate}/")
         ),
         None,

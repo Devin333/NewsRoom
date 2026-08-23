@@ -4,14 +4,13 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
-from framework import RunResult
 
 
 @dataclass(frozen=True)
 class RunPersistenceInput:
     run_id: str
-    workflow_id: str
-    workflow_version: str
+    graph_id: str
+    graph_version: str
     status: str
     profile: str
     artifact_dir: str | None = None
@@ -34,9 +33,15 @@ class RunPersistenceInput:
     evidence_bundle: Any | None = None
     verified_findings: Any | None = None
 
+    def __post_init__(self) -> None:
+        if not isinstance(self.graph_id, str) or not self.graph_id.strip():
+            raise ValueError("graph_id is required")
+        if not isinstance(self.graph_version, str) or not self.graph_version.strip():
+            raise ValueError("graph_version is required")
+
 
 def run_persistence_input_from_result(
-    result: RunResult,
+    result: Any,
     *,
     profile: str = "",
 ) -> RunPersistenceInput:
@@ -44,15 +49,16 @@ def run_persistence_input_from_result(
 
 
 def run_persistence_input_from_output(
-    result: RunResult,
+    result: Any,
     output: Mapping[str, Any],
     *,
     profile: str = "",
 ) -> RunPersistenceInput:
+    graph_id, graph_version = _graph_identity_from_result(result, output)
     return RunPersistenceInput(
         run_id=result.run_id,
-        workflow_id=result.workflow_id,
-        workflow_version=result.workflow_version,
+        graph_id=graph_id,
+        graph_version=graph_version,
         status=result.status.value,
         profile=profile,
         artifact_dir=result.artifact_dir,
@@ -75,6 +81,34 @@ def run_persistence_input_from_output(
         evidence_bundle=output.get("evidence_bundle"),
         verified_findings=output.get("verified_findings"),
     )
+
+
+def _graph_identity_from_result(
+    result: Any,
+    output: Mapping[str, Any],
+) -> tuple[str, str]:
+    candidates = (
+        (getattr(result, "graph_id", None), getattr(result, "graph_version", None)),
+        (output.get("graph_id"), output.get("graph_version")),
+        _context_graph_identity(getattr(result, "context_envelope", None)),
+    )
+    for graph_id, graph_version in candidates:
+        if _non_empty_text(graph_id) and _non_empty_text(graph_version):
+            return str(graph_id), str(graph_version)
+        if graph_id is not None or graph_version is not None:
+            raise ValueError("graph_id and graph_version must both be present")
+    raise ValueError("graph identity is required for persistence")
+
+
+def _context_graph_identity(value: Any) -> tuple[Any, Any]:
+    identity = getattr(value, "graph_identity", None)
+    if identity is None:
+        return None, None
+    return getattr(identity, "graph_id", None), getattr(identity, "graph_version", None)
+
+
+def _non_empty_text(value: Any) -> bool:
+    return isinstance(value, str) and bool(value.strip())
 
 
 __all__ = [

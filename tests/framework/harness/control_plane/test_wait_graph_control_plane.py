@@ -41,15 +41,39 @@ from framework.harness.graph.dsl import (
     Wait,
     WaitTimeoutPolicy,
 )
-from framework.harness.workflow.spec import HarnessWorkflowSpec
 from framework.harness.graph.model import (
     HarnessContractKind,
     HarnessContractReference,
 )
-from framework.harness.graph.activity import HarnessStepSpec
+from framework.harness.graph.activity import (
+    HarnessLeafActivityKind,
+    HarnessStepSpec,
+    HarnessWorkerType,
+)
+from framework.harness.graph.bindings import (
+    HarnessActivityCapabilities,
+    HarnessActivityContractBinding,
+    HarnessLeafActivityBinding,
+    HarnessRuntimeBindingAuthority,
+    HarnessWorkerBinding,
+)
+from framework.harness.graph.definition import HarnessGraphDefinition, HarnessGraphLeafBinding
+from framework.harness.side_effects.fake import (
+    CountingHarnessSideEffectHandler,
+    InMemoryHarnessSideEffectStore,
+)
+from framework.harness.side_effects.models import HarnessTerminalSideEffectPolicy
+from framework.harness.side_effects.registry import (
+    HarnessSideEffectHandlerBinding,
+    HarnessSideEffectRegistry,
+)
 from framework.harness.graph.validation import HarnessGraphPreflightPolicy
 from framework.harness.graph.validation import HarnessGraphPreflight
 from framework.harness.workers.result import HarnessWorkerResult
+from framework.harness.runtime.activity_executor import HarnessGraphPhysicalActivityExecutor
+from framework.harness.runtime.graph_dispatcher import HarnessGraphPhysicalActivityDispatcher
+from framework.harness import InMemoryHarnessNodeOutputResource
+from framework.shared.attempts import AttemptSupervisor
 from framework.harness.waits.models import (
     HarnessEarlySignalRetentionPolicy,
     HarnessWaitApprovalEvidenceRecord,
@@ -87,8 +111,8 @@ def test_signal_wait_survives_restart_and_duplicate_delivery() -> None:
 
     waiting_result = first.run(run_spec)
 
-    assert waiting_result.graph_state is not None
-    waiting = waiting_result.graph_state
+    assert waiting_result.state is not None
+    waiting = waiting_result.state
     assert waiting.lifecycle is RunLifecycle.WAITING
     registration = waiting.wait_registrations[0]
     assert registration.status is HarnessWaitStatus.REGISTERED
@@ -125,11 +149,11 @@ def test_signal_wait_survives_restart_and_duplicate_delivery() -> None:
 
     completed = restarted.recover_and_run(run_spec)
 
-    assert completed.graph_state is not None
-    assert completed.graph_state.lifecycle is RunLifecycle.COMPLETED
-    assert completed.graph_state.outcome is RunOutcome.SUCCEEDED
+    assert completed.state is not None
+    assert completed.state.lifecycle is RunLifecycle.COMPLETED
+    assert completed.state.outcome is RunOutcome.SUCCEEDED
     assert (
-        _node(completed.graph_state, "after").status
+        _node(completed.state, "after").status
         is HarnessNodeInstanceStatus.SUCCEEDED
     )
 
@@ -138,7 +162,7 @@ def test_concurrent_identical_signal_is_committed_once() -> None:
     run_spec = _wait_run_spec("run-wait-concurrent-duplicate")
     port = InMemoryHarnessEventPort()
     control_plane = _control_plane(port)
-    waiting = control_plane.run(run_spec).graph_state
+    waiting = control_plane.run(run_spec).state
     assert waiting is not None
     scope = _scope(run_spec.run_id, waiting.wait_registrations[0])
     barrier = Barrier(2)
@@ -176,7 +200,7 @@ def test_concurrent_conflicting_signal_identity_commits_one_cause() -> None:
     run_spec = _wait_run_spec("run-wait-concurrent-conflict")
     port = InMemoryHarnessEventPort()
     control_plane = _control_plane(port)
-    waiting = control_plane.run(run_spec).graph_state
+    waiting = control_plane.run(run_spec).state
     assert waiting is not None
     scope = _scope(run_spec.run_id, waiting.wait_registrations[0])
     barrier = Barrier(2)
@@ -273,8 +297,8 @@ def test_signal_before_registration_is_matched_only_after_register_commit() -> N
     assert registered.signal_inbox[0].status.value == "matched"
 
     completed = control_plane.recover_and_run(run_spec)
-    assert completed.graph_state is not None
-    assert completed.graph_state.outcome is RunOutcome.SUCCEEDED
+    assert completed.state is not None
+    assert completed.state.outcome is RunOutcome.SUCCEEDED
 
 
 def test_matched_signal_is_pruned_before_later_valid_signal_enters(
@@ -292,7 +316,7 @@ def test_matched_signal_is_pruned_before_later_valid_signal_enters(
     run_spec = _two_wait_run_spec("run-wait-retention")
     port = InMemoryHarnessEventPort()
     control_plane = _control_plane(port)
-    first_waiting = control_plane.run(run_spec).graph_state
+    first_waiting = control_plane.run(run_spec).state
     assert first_waiting is not None
     first_registration = next(
         item for item in first_waiting.wait_registrations if item.wait_id == "first-wait"
@@ -312,7 +336,7 @@ def test_matched_signal_is_pruned_before_later_valid_signal_enters(
         "first-signal"
     ]
 
-    second_waiting = control_plane.recover_and_run(run_spec).graph_state
+    second_waiting = control_plane.recover_and_run(run_spec).state
     assert second_waiting is not None
     assert second_waiting.lifecycle is RunLifecycle.WAITING
     assert [item.signal.signal_id for item in second_waiting.signal_inbox] == [
@@ -396,7 +420,7 @@ def test_generic_observation_api_rejects_wait_cause_bypass() -> None:
     run_spec = _wait_run_spec("run-wait-observation-bypass")
     port = InMemoryHarnessEventPort()
     control_plane = _control_plane(port)
-    waiting = control_plane.run(run_spec).graph_state
+    waiting = control_plane.run(run_spec).state
     assert waiting is not None
     registration = waiting.wait_registrations[0]
     event_sequence = port.recover_graph(run_spec.run_id).expected_last_sequence + 1
@@ -434,7 +458,7 @@ def test_timer_wake_uses_recorded_cause_and_resume_route() -> None:
     )
     port = InMemoryHarnessEventPort()
     control_plane = _control_plane(port)
-    waiting = control_plane.run(run_spec).graph_state
+    waiting = control_plane.run(run_spec).state
     assert waiting is not None
     registration = waiting.wait_registrations[0]
     scope = _scope(run_spec.run_id, registration)
@@ -453,8 +477,8 @@ def test_timer_wake_uses_recorded_cause_and_resume_route() -> None:
     assert resumed.lifecycle is RunLifecycle.RUNNING
     assert resumed.wait_registrations[0].status is HarnessWaitStatus.RESUMED
     completed = control_plane.recover_and_run(run_spec)
-    assert completed.graph_state is not None
-    assert completed.graph_state.outcome is RunOutcome.SUCCEEDED
+    assert completed.state is not None
+    assert completed.state.outcome is RunOutcome.SUCCEEDED
 
 
 def test_timeout_route_skips_the_normal_sequence_successor() -> None:
@@ -462,7 +486,7 @@ def test_timeout_route_skips_the_normal_sequence_successor() -> None:
     port = InMemoryHarnessEventPort()
     calls: list[str] = []
     control_plane = _control_plane(port, calls=calls)
-    waiting = control_plane.run(run_spec).graph_state
+    waiting = control_plane.run(run_spec).state
     assert waiting is not None
     registration = waiting.wait_registrations[0]
 
@@ -479,12 +503,12 @@ def test_timeout_route_skips_the_normal_sequence_successor() -> None:
 
     assert timed_out.wait_registrations[0].status is HarnessWaitStatus.TIMED_OUT
     completed = control_plane.recover_and_run(run_spec)
-    assert completed.graph_state is not None
-    assert completed.graph_state.outcome is RunOutcome.SUCCEEDED
+    assert completed.state is not None
+    assert completed.state.outcome is RunOutcome.SUCCEEDED
     assert calls == ["timeout"]
     assert not any(
         item.identity.node_id == "normal"
-        for item in completed.graph_state.node_instances
+        for item in completed.state.node_instances
     )
 
 
@@ -507,7 +531,7 @@ def test_timeout_halt_and_fail_have_distinct_terminal_semantics(
     port = InMemoryHarnessEventPort()
     calls: list[str] = []
     control_plane = _control_plane(port, calls=calls)
-    waiting = control_plane.run(run_spec).graph_state
+    waiting = control_plane.run(run_spec).state
     assert waiting is not None
     registration = waiting.wait_registrations[0]
     control_plane.accept_graph_wait_cause(
@@ -521,7 +545,7 @@ def test_timeout_halt_and_fail_have_distinct_terminal_semantics(
         occurred_at=_CREATED_AT,
     )
 
-    terminal = control_plane.recover_and_run(run_spec).graph_state
+    terminal = control_plane.recover_and_run(run_spec).state
 
     assert terminal is not None
     assert terminal.lifecycle is lifecycle
@@ -573,7 +597,7 @@ def test_approval_and_cancellation_are_generic_wait_causes() -> None:
     )
     approval_port = InMemoryHarnessEventPort()
     approval_plane = _control_plane(approval_port)
-    waiting = approval_plane.run(approval_spec).graph_state
+    waiting = approval_plane.run(approval_spec).state
     assert waiting is not None
     registration = waiting.wait_registrations[0]
     scope = _scope(approval_spec.run_id, registration)
@@ -593,13 +617,13 @@ def test_approval_and_cancellation_are_generic_wait_causes() -> None:
     assert approved.wait_registrations[0].status is HarnessWaitStatus.RESUMED
     assert _node(approved, "approval-wait").metadata["approval_granted"] is True
     assert (
-        approval_plane.recover_and_run(approval_spec).graph_state.outcome
+        approval_plane.recover_and_run(approval_spec).state.outcome
         is RunOutcome.SUCCEEDED
     )
 
     cancel_spec = _wait_run_spec("run-wait-cancel")
     cancel_plane = _control_plane(InMemoryHarnessEventPort())
-    cancel_waiting = cancel_plane.run(cancel_spec).graph_state
+    cancel_waiting = cancel_plane.run(cancel_spec).state
     assert cancel_waiting is not None
     cancel_registration = cancel_waiting.wait_registrations[0]
     cancelled = cancel_plane.accept_graph_wait_cause(
@@ -614,7 +638,7 @@ def test_approval_and_cancellation_are_generic_wait_causes() -> None:
         occurred_at=_CREATED_AT,
     )
     assert cancelled.wait_registrations[0].status is HarnessWaitStatus.CANCELLED
-    cancelled_run = cancel_plane.recover_and_run(cancel_spec).graph_state
+    cancelled_run = cancel_plane.recover_and_run(cancel_spec).state
     assert cancelled_run is not None
     assert cancelled_run.lifecycle is RunLifecycle.COMPLETED
     assert cancelled_run.outcome is RunOutcome.CANCELLED
@@ -627,13 +651,18 @@ def test_approval_resume_wrapper_uses_explicit_generic_wait_registration() -> No
     )
     port = InMemoryHarnessEventPort()
     control_plane = _control_plane(port)
-    waiting = control_plane.run(run_spec).graph_state
+    waiting = control_plane.run(run_spec).state
     assert waiting is not None
 
-    completed = control_plane.resume_after_approval(run_spec, approved=True)
+    completed = control_plane.resume_after_approval(
+        run_spec,
+        approved=True,
+        approval_ref=checksum_for({"approval": "approved"}),
+        actor_identity_scope_ref=checksum_for({"actor": "reviewer"}),
+    )
 
-    assert completed.graph_state is not None
-    assert completed.graph_state.outcome is RunOutcome.SUCCEEDED
+    assert completed.state is not None
+    assert completed.state.outcome is RunOutcome.SUCCEEDED
     wait_causes = tuple(
         item.observation
         for item in port.recover_graph(run_spec.run_id).observation_commits
@@ -649,7 +678,7 @@ def test_parallel_branch_continues_while_sibling_waits() -> None:
     calls: list[str] = []
     control_plane = _control_plane(port, calls=calls, max_active_nodes=4)
 
-    waiting = control_plane.run(run_spec).graph_state
+    waiting = control_plane.run(run_spec).state
 
     assert waiting is not None
     assert waiting.lifecycle is RunLifecycle.WAITING
@@ -668,9 +697,9 @@ def test_parallel_branch_continues_while_sibling_waits() -> None:
     )
 
     completed = control_plane.recover_and_run(run_spec)
-    assert completed.graph_state is not None
-    assert completed.graph_state.lifecycle is RunLifecycle.COMPLETED
-    assert completed.graph_state.outcome is RunOutcome.SUCCEEDED
+    assert completed.state is not None
+    assert completed.state.lifecycle is RunLifecycle.COMPLETED
+    assert completed.state.outcome is RunOutcome.SUCCEEDED
 
 
 def test_wait_registration_resolves_declared_verified_output_path() -> None:
@@ -679,7 +708,7 @@ def test_wait_registration_resolves_declared_verified_output_path() -> None:
     identity_ref = checksum_for({"identity": run_id})
     producer = HarnessStepSpec(
         "produce",
-        "script",
+        "function",
         output_key="token",
         quality_gate="output_schema@1",
         metadata={
@@ -688,37 +717,28 @@ def test_wait_registration_resolves_declared_verified_output_path() -> None:
             "control_fact_paths": ("request_id",),
         },
     )
-    workflow = HarnessWorkflowSpec(
-        workflow_id=f"workflow-{run_id}",
-        workflow_version="2",
-        steps=(producer,),
-        entry_step_id="produce",
-        graph=HarnessGraphSpec(
-            graph_id=f"graph-{run_id}",
-            root=Sequence(
-                (
-                    StepRef("produce"),
-                    Wait(
-                        "verified-wait",
-                        "signal",
-                        {
-                            "request_id": (
-                                "node.outputs.produce.token.request_id"
-                            )
-                        },
-                        "newsroom.wait",
-                        "1",
-                        "graph.inputs.tenant_scope_ref",
-                        "graph.inputs.identity_scope_ref",
-                    ),
-                )
-            ),
-            input_keys=("identity_scope_ref", "tenant_scope_ref"),
+    graph = HarnessGraphSpec(
+        graph_id=f"graph-{run_id}",
+        root=Sequence(
+            (
+                StepRef("produce"),
+                Wait(
+                    "verified-wait",
+                    "signal",
+                    {"request_id": "node.outputs.produce.token.request_id"},
+                    "newsroom.wait",
+                    "1",
+                    "graph.inputs.tenant_scope_ref",
+                    "graph.inputs.identity_scope_ref",
+                ),
+            )
         ),
+        input_keys=("identity_scope_ref", "tenant_scope_ref"),
     )
-    run_spec = HarnessRunSpec(
+    run_spec = _wait_graph_run_spec(
         run_id,
-        workflow,
+        graph,
+        (producer,),
         inputs={
             "tenant_scope_ref": tenant_ref,
             "identity_scope_ref": identity_ref,
@@ -728,11 +748,23 @@ def test_wait_registration_resolves_declared_verified_output_path() -> None:
             "identity_scope_ref": identity_ref,
         },
         budget=HarnessBudget.safe_default(),
-        created_at=_CREATED_AT,
     )
     output_gate = OutputSchemaGate()
+    store, authority = _wait_authority(
+        (_FixedFunctionWorker("produce", {"request_id": "verified-request"}),),
+        gate_registry=DeterministicGateRegistry(
+            (
+                GateRegistration(
+                    GateReference.parse("output_schema@1"),
+                    output_gate,
+                ),
+            )
+        ),
+    )
     control_plane = HarnessControlPlane(
         event_port=InMemoryHarnessEventPort(),
+        side_effect_store=store,
+        runtime_binding_authority=authority,
         verify_gates=(output_gate,),
         gate_registry=DeterministicGateRegistry(
             (
@@ -742,15 +774,27 @@ def test_wait_registration_resolves_declared_verified_output_path() -> None:
                 ),
             )
         ),
-        worker_registry={
-            "produce": lambda task: HarnessWorkerResult(
-                "succeeded",
-                output={"request_id": "verified-request"},
-            )
-        },
+    )
+    executor = HarnessGraphPhysicalActivityExecutor(
+        binding_authority=control_plane.runtime_binding_authority,
+        input_resolver=control_plane,
+        node_output_resource=InMemoryHarnessNodeOutputResource(),
+        result_committer=None,
+        supervisor=AttemptSupervisor(),
+    )
+    control_plane.install_graph_activity_dispatcher(
+        HarnessGraphPhysicalActivityDispatcher(
+            executor=executor,
+            graph_resolver=control_plane.graph_for_activity,
+            input_resolver=control_plane,
+            accept=control_plane.accept_graph_activity_for_execution,
+            record_call_marker=control_plane.record_graph_activity_call_marker,
+            record_result=control_plane.record_graph_activity_result_event,
+            apply_result=control_plane.commit_physical_graph_result,
+        )
     )
 
-    waiting = control_plane.run(run_spec).graph_state
+    waiting = control_plane.run(run_spec).state
 
     assert waiting is not None
     assert waiting.lifecycle is RunLifecycle.WAITING
@@ -768,18 +812,16 @@ def _control_plane(
 ) -> HarnessControlPlane:
     worker_calls = calls if calls is not None else []
 
-    def worker(task: dict) -> HarnessWorkerResult:
-        worker_calls.append(str(task["step_id"]))
-        return HarnessWorkerResult("succeeded", output=task)
+    workers = tuple(
+        _RecordingFunctionWorker(step_id, worker_calls)
+        for step_id in ("after", "fast", "normal", "timeout")
+    )
+    store, authority = _wait_authority(workers)
 
-    return HarnessControlPlane(
+    control_plane = HarnessControlPlane(
         event_port=port,
-        worker_registry={
-            "after": worker,
-            "fast": worker,
-            "normal": worker,
-            "timeout": worker,
-        },
+        side_effect_store=store,
+        runtime_binding_authority=authority,
         graph_preflight=HarnessGraphPreflight(
             policy=HarnessGraphPreflightPolicy(
                 max_active_nodes=max_active_nodes,
@@ -788,6 +830,25 @@ def _control_plane(
         ),
         timer_wake_port=timer_wake_port,
     )
+    executor = HarnessGraphPhysicalActivityExecutor(
+        binding_authority=control_plane.runtime_binding_authority,
+        input_resolver=control_plane,
+        node_output_resource=InMemoryHarnessNodeOutputResource(),
+        result_committer=None,
+        supervisor=AttemptSupervisor(),
+    )
+    control_plane.install_graph_activity_dispatcher(
+        HarnessGraphPhysicalActivityDispatcher(
+            executor=executor,
+            graph_resolver=control_plane.graph_for_activity,
+            input_resolver=control_plane,
+            accept=control_plane.accept_graph_activity_for_execution,
+            record_call_marker=control_plane.record_graph_activity_call_marker,
+            record_result=control_plane.record_graph_activity_result_event,
+            apply_result=control_plane.commit_physical_graph_result,
+        )
+    )
+    return control_plane
 
 
 def _wait_run_spec(
@@ -804,8 +865,8 @@ def _wait_run_spec(
     )
     after = HarnessStepSpec(
         "after",
-        "script",
-        metadata={"step_version": "1", "worker_version": "1"},
+        HarnessWorkerType.FUNCTION,
+        output_key="after_output",
     )
     inputs = {
         "request_id": f"request-{run_id}",
@@ -813,35 +874,30 @@ def _wait_run_spec(
         "identity_scope_ref": checksum_for({"identity": run_id}),
         "deadline_ref": checksum_for({"deadline": "2026-08-01T00:00:00Z"}),
     }
-    workflow = HarnessWorkflowSpec(
-        workflow_id=f"workflow-{run_id}",
-        workflow_version="2",
-        steps=(after,),
-        entry_step_id="after",
-        graph=HarnessGraphSpec(
-            graph_id=f"graph-{run_id}",
-            root=Sequence(
-                (
-                    Wait(
-                        wait_id,
-                        wait_kind,
-                        {"request_id": "graph.inputs.request_id"},
-                        "newsroom.wait",
-                        "1",
-                        "graph.inputs.tenant_scope_ref",
-                        "graph.inputs.identity_scope_ref",
-                        timeout_policy=timeout_policy,
-                        deadline_input_path=deadline_path,
-                    ),
-                    StepRef("after"),
-                )
-            ),
-            input_keys=tuple(sorted(inputs)),
+    graph = HarnessGraphSpec(
+        graph_id=f"graph-{run_id}",
+        root=Sequence(
+            (
+                Wait(
+                    wait_id,
+                    wait_kind,
+                    {"request_id": "graph.inputs.request_id"},
+                    "newsroom.wait",
+                    "1",
+                    "graph.inputs.tenant_scope_ref",
+                    "graph.inputs.identity_scope_ref",
+                    timeout_policy=timeout_policy,
+                    deadline_input_path=deadline_path,
+                ),
+                StepRef("after"),
+            )
         ),
+        input_keys=tuple(sorted(inputs)),
     )
-    return HarnessRunSpec(
+    return _wait_graph_run_spec(
         run_id,
-        workflow,
+        graph,
+        (after,),
         inputs=inputs,
         metadata={
             "tenant_scope_ref": inputs["tenant_scope_ref"],
@@ -849,18 +905,154 @@ def _wait_run_spec(
             "subject_scope_ref": checksum_for({"subject": run_id}),
         },
         budget=HarnessBudget.safe_default(),
+    )
+
+
+def _wait_graph_run_spec(
+    run_id: str,
+    graph: HarnessGraphSpec,
+    activities: tuple[HarnessStepSpec, ...],
+    *,
+    inputs: dict[str, str],
+    metadata: dict[str, str],
+    budget: HarnessBudget,
+) -> HarnessRunSpec:
+    metadata = {
+        **metadata,
+        "subject_scope_ref": metadata.get(
+            "subject_scope_ref",
+            checksum_for({"subject": run_id}),
+        ),
+    }
+    definition = HarnessGraphDefinition(
+        graph_id=graph.graph_id,
+        graph_version="1",
+        root=graph,
+        activities=activities,
+        leaf_activity_bindings=tuple(
+            HarnessGraphLeafBinding(
+                activity_id=step.step_id,
+                leaf_activity_kind=HarnessLeafActivityKind.FUNCTION,
+                worker_ref=HarnessContractReference(
+                    HarnessContractKind.WORKER,
+                    step.step_id,
+                    "1",
+                ),
+                activity_ref=HarnessContractReference(
+                    HarnessContractKind.ACTIVITY,
+                    "newsroom.harness-worker-activity",
+                    "v1",
+                ),
+            )
+            for step in activities
+        ),
+        task_plan_stage_bindings=(),
+        committed_output_bindings=(),
+        repair_bindings=(),
+        terminal_side_effect_policy=HarnessTerminalSideEffectPolicy(
+            policy_id="test.wait-terminal",
+            version="1",
+            handler="test.wait-terminal@1",
+            kind="artifact",
+            requires_approval=False,
+            retry_limit=1,
+            not_required_evidence_ref=checksum_for("wait-terminal-not-required"),
+        ),
+    )
+    return HarnessRunSpec(
+        run_id,
+        graph=definition,
+        inputs=inputs,
+        metadata=metadata,
+        budget=budget,
         created_at=_CREATED_AT,
+    )
+
+
+class _RecordingFunctionWorker:
+    worker_version = "1"
+    worker_type = HarnessWorkerType.FUNCTION
+
+    def __init__(self, worker_id: str, calls: list[str]) -> None:
+        self.worker_id = worker_id
+        self._calls = calls
+
+    def execute(self, task: dict) -> HarnessWorkerResult:
+        self._calls.append(str(task["step_id"]))
+        return HarnessWorkerResult("succeeded", output=task)
+
+
+class _FixedFunctionWorker(_RecordingFunctionWorker):
+    def __init__(self, worker_id: str, output: dict[str, str]) -> None:
+        super().__init__(worker_id, [])
+        self._output = output
+
+    def execute(self, task: dict) -> HarnessWorkerResult:
+        self._calls.append(str(task["step_id"]))
+        return HarnessWorkerResult("succeeded", output=self._output)
+
+
+class _WaitActivity:
+    activity_contract_id = "newsroom.harness-worker-activity"
+    activity_contract_version = "v1"
+    capabilities = HarnessActivityCapabilities()
+
+    def dispatch(self, _request: dict) -> None:
+        return None
+
+
+def _wait_authority(
+    workers: tuple[_RecordingFunctionWorker, ...],
+    *,
+    gate_registry: DeterministicGateRegistry | None = None,
+) -> tuple[InMemoryHarnessSideEffectStore, HarnessRuntimeBindingAuthority]:
+    store = InMemoryHarnessSideEffectStore()
+    terminal_registry = HarnessSideEffectRegistry(
+        (
+            HarnessSideEffectHandlerBinding(
+                "test.wait-terminal@1",
+                "artifact",
+                CountingHarnessSideEffectHandler(store, disposition="accepted"),
+            ),
+        )
+    )
+    activity_ref = HarnessContractReference(
+        HarnessContractKind.ACTIVITY,
+        "newsroom.harness-worker-activity",
+        "v1",
+    )
+    bindings = tuple(
+        HarnessWorkerBinding(
+            HarnessContractReference(
+                HarnessContractKind.WORKER,
+                worker.worker_id,
+                worker.worker_version,
+            ),
+            HarnessWorkerType.FUNCTION,
+            worker,
+        )
+        for worker in workers
+    )
+    return store, HarnessRuntimeBindingAuthority(
+        workers=bindings,
+        activities=(HarnessActivityContractBinding(activity_ref, _WaitActivity()),),
+        leaf_activities=tuple(
+            HarnessLeafActivityBinding(
+                HarnessLeafActivityKind.FUNCTION,
+                binding.reference,
+                activity_ref,
+            )
+            for binding in bindings
+        ),
+        gate_registry=gate_registry,
+        side_effect_registry=terminal_registry,
     )
 
 
 def _two_wait_run_spec(run_id: str) -> HarnessRunSpec:
     base = _wait_run_spec(run_id)
     inputs = dict(base.inputs)
-    after = HarnessStepSpec(
-        "after",
-        "script",
-        metadata={"step_version": "1", "worker_version": "1"},
-    )
+    after = HarnessStepSpec("after", HarnessWorkerType.FUNCTION, output_key="after_output")
 
     def wait(wait_id: str) -> Wait:
         return Wait(
@@ -873,30 +1065,24 @@ def _two_wait_run_spec(run_id: str) -> HarnessRunSpec:
             "graph.inputs.identity_scope_ref",
         )
 
-    workflow = HarnessWorkflowSpec(
-        workflow_id=f"workflow-{run_id}",
-        workflow_version="2",
-        steps=(after,),
-        entry_step_id="after",
-        graph=HarnessGraphSpec(
-            graph_id=f"graph-{run_id}",
-            root=Sequence(
-                (
-                    wait("first-wait"),
-                    wait("second-wait"),
-                    StepRef("after"),
-                )
-            ),
-            input_keys=tuple(sorted(inputs)),
+    graph = HarnessGraphSpec(
+        graph_id=f"graph-{run_id}",
+        root=Sequence(
+            (
+                wait("first-wait"),
+                wait("second-wait"),
+                StepRef("after"),
+            )
         ),
+        input_keys=tuple(sorted(inputs)),
     )
-    return HarnessRunSpec(
+    return _wait_graph_run_spec(
         run_id,
-        workflow,
+        graph,
+        (after,),
         inputs=inputs,
         metadata=dict(base.metadata),
         budget=HarnessBudget.safe_default(),
-        created_at=_CREATED_AT,
     )
 
 
@@ -906,56 +1092,47 @@ def _timeout_route_run_spec(run_id: str) -> HarnessRunSpec:
     steps = tuple(
         HarnessStepSpec(
             step_id,
-            "script",
+            HarnessWorkerType.FUNCTION,
+            output_key=f"{step_id}_output",
             metadata={"step_version": "1", "worker_version": "1"},
         )
         for step_id in ("normal", "timeout")
     )
-    workflow = HarnessWorkflowSpec(
-        workflow_id=f"workflow-{run_id}",
-        workflow_version="2",
-        steps=steps,
-        entry_step_id="normal",
-        graph=HarnessGraphSpec(
-            graph_id=f"graph-{run_id}",
-            root=Sequence(
-                (
-                    Wait(
-                        "signal-wait",
-                        "signal",
-                        {"request_id": "graph.inputs.request_id"},
-                        "newsroom.wait",
-                        "1",
-                        "graph.inputs.tenant_scope_ref",
-                        "graph.inputs.identity_scope_ref",
-                        timeout_policy=WaitTimeoutPolicy("route", "timeout"),
-                        deadline_input_path="graph.inputs.deadline_ref",
-                    ),
-                    StepRef("normal"),
-                    StepRef("timeout"),
-                )
-            ),
-            input_keys=tuple(sorted(inputs)),
+    graph = HarnessGraphSpec(
+        graph_id=f"graph-{run_id}",
+        root=Sequence(
+            (
+                Wait(
+                    "signal-wait",
+                    "signal",
+                    {"request_id": "graph.inputs.request_id"},
+                    "newsroom.wait",
+                    "1",
+                    "graph.inputs.tenant_scope_ref",
+                    "graph.inputs.identity_scope_ref",
+                    timeout_policy=WaitTimeoutPolicy("route", "timeout"),
+                    deadline_input_path="graph.inputs.deadline_ref",
+                ),
+                StepRef("normal"),
+                StepRef("timeout"),
+            )
         ),
+        input_keys=tuple(sorted(inputs)),
     )
-    return HarnessRunSpec(
+    return _wait_graph_run_spec(
         run_id,
-        workflow,
+        graph,
+        steps,
         inputs=inputs,
         metadata=dict(base.metadata),
         budget=HarnessBudget.safe_default(),
-        created_at=_CREATED_AT,
     )
 
 
 def _parallel_wait_run_spec(run_id: str) -> HarnessRunSpec:
     base = _wait_run_spec(run_id)
     inputs = dict(base.inputs)
-    fast = HarnessStepSpec(
-        "fast",
-        "script",
-        metadata={"step_version": "1", "worker_version": "1"},
-    )
+    fast = HarnessStepSpec("fast", HarnessWorkerType.FUNCTION, output_key="fast_output")
     wait = Wait(
         "signal-wait",
         "signal",
@@ -965,32 +1142,26 @@ def _parallel_wait_run_spec(run_id: str) -> HarnessRunSpec:
         "graph.inputs.tenant_scope_ref",
         "graph.inputs.identity_scope_ref",
     )
-    workflow = HarnessWorkflowSpec(
-        workflow_id=f"workflow-{run_id}",
-        workflow_version="2",
-        steps=(fast,),
-        entry_step_id="fast",
-        graph=HarnessGraphSpec(
-            graph_id=f"graph-{run_id}",
-            root=ParallelAll(
-                "fork",
-                "join",
-                (
-                    ParallelBranch("wait", wait, "parallel.wait"),
-                    ParallelBranch("fast", StepRef("fast"), "parallel.fast"),
-                ),
-                failure_policy="wait_all",
+    graph = HarnessGraphSpec(
+        graph_id=f"graph-{run_id}",
+        root=ParallelAll(
+            "fork",
+            "join",
+            (
+                ParallelBranch("wait", wait, "parallel.wait"),
+                ParallelBranch("fast", StepRef("fast"), "parallel.fast"),
             ),
-            input_keys=tuple(sorted(inputs)),
+            failure_policy="wait_all",
         ),
+        input_keys=tuple(sorted(inputs)),
     )
-    return HarnessRunSpec(
+    return _wait_graph_run_spec(
         run_id,
-        workflow,
+        graph,
+        (fast,),
         inputs=inputs,
         metadata=dict(base.metadata),
         budget=HarnessBudget.safe_default(),
-        created_at=_CREATED_AT,
     )
 
 

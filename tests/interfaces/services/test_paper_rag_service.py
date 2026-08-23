@@ -16,6 +16,7 @@ from framework.harness.rag.models import (
 from framework.harness.rag.metrics import RAGSessionMetrics
 from framework.harness.rag.policy import RAGDecision, RAGDecisionType
 from business.research.rag.evaluation.paper_evidence_eval import EvidenceQAPair
+from business.research.graphs import build_paper_analysis_context_graph_identity
 from interfaces.services.paper_rag_service import PaperRagApplicationService
 from interfaces.services.paper_rag_transcript_store import PaperRagTranscriptArtifact, PaperRagTranscriptFileStore
 
@@ -81,6 +82,18 @@ class _FailingTranscriptStore:
 class _BrokenTranscriptStore:
     def persist(self, transcript):
         raise OSError("transcript volume is read-only")
+
+
+def _graph_identity() -> object:
+    return build_paper_analysis_context_graph_identity(
+        run_id="paper-rag-test-run",
+        stage_id="run_research_rag",
+    ).with_physical_activity(
+        node_id="run_research_rag",
+        node_instance_id="run_research_rag:1",
+        activity_id="activity-paper-rag-test",
+        activity_attempt=1,
+    )
 
 
 def test_service_constructor_closes_owned_resources_on_graph_failure(
@@ -202,7 +215,12 @@ def test_rag_ask_gated_generation_returns_answered_payload(tmp_path) -> None:
         transcript_store=transcript_store,
     )
 
-    payload = service.rag_ask("p1", "How does it work?", generate=True)
+    payload = service.rag_ask(
+        "p1",
+        "How does it work?",
+        generate=True,
+        graph_identity=_graph_identity(),
+    )
 
     assert payload["status"] == "answered"
     assert payload["generation_mode"] == "gated_harness"
@@ -241,7 +259,12 @@ def test_rag_ask_gated_generation_returns_answer_when_transcript_persist_fails()
         transcript_store=_BrokenTranscriptStore(),
     )
 
-    payload = service.rag_ask("p1", "How does it work?", generate=True)
+    payload = service.rag_ask(
+        "p1",
+        "How does it work?",
+        generate=True,
+        graph_identity=_graph_identity(),
+    )
 
     assert payload["status"] == "answered"
     assert payload["answer"] == "The method retrieves evidence."
@@ -266,7 +289,12 @@ def test_rag_ask_gated_generation_returns_abstained_payload_without_answer_text(
         transcript_store=_RecordingTranscriptStore(),
     )
 
-    payload = service.rag_ask("p1", "How does it work?", generate=True)
+    payload = service.rag_ask(
+        "p1",
+        "How does it work?",
+        generate=True,
+        graph_identity=_graph_identity(),
+    )
 
     assert payload["status"] == "abstained"
     assert payload["answer"] is None
@@ -297,6 +325,7 @@ def test_rag_ask_gated_generation_carries_tenant_scope() -> None:
         "p1",
         "How does it work?",
         generate=True,
+        graph_identity=_graph_identity(),
         tenant_id="tenant-a",
         user_id="user-1",
     )
@@ -342,6 +371,7 @@ def test_rag_ask_gated_projection_fails_closed_for_mixed_tenant_context_pack(
         "p1",
         "How does it work?",
         generate=True,
+        graph_identity=_graph_identity(),
         tenant_id=tenant_id,
     )
 
@@ -370,7 +400,12 @@ def test_rag_ask_gated_generation_respects_expected_abstention_golden_case() -> 
         transcript_store=_RecordingTranscriptStore(),
     )
 
-    payload = service.rag_ask(pair.paper_id, pair.question, generate=True)
+    payload = service.rag_ask(
+        pair.paper_id,
+        pair.question,
+        generate=True,
+        graph_identity=_graph_identity(),
+    )
 
     assert pair.expected_behavior == "abstain"
     assert payload["status"] == "abstained"
@@ -391,6 +426,18 @@ def test_rag_ask_legacy_direct_generation_fails_closed() -> None:
         service.rag_ask("p1", "How does it work?", generate=True, gated=False)
 
     assert retriever.calls == []
+
+
+def test_rag_ask_graph_generation_requires_harness_activity_identity() -> None:
+    service = PaperRagApplicationService(
+        retriever=_Retriever(),
+        session_factory=lambda **_: (_ for _ in ()).throw(
+            AssertionError("session should not be built")
+        ),
+    )
+
+    with pytest.raises(ValueError, match="exact Graph activity identity"):
+        service.rag_ask("p1", "How does it work?", generate=True)
 
 
 def _session_result(

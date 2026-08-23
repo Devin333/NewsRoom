@@ -567,16 +567,6 @@ class GraphExecutionVersionManifest:
                 code="graph_execution_version_manifest_schema_mismatch",
                 details={"schema_version": graph.schema_version},
             )
-        if (
-            graph.workflow_id is not None
-            or graph.workflow_version is not None
-            or graph.workflow_ref is not None
-        ):
-            raise HarnessValidationError(
-                "Graph execution version manifest rejects legacy orchestration "
-                "identity aliases",
-                code="legacy_graph_identity_forbidden",
-            )
         if graph.checksum != canonical_checksum(graph.checksum_projection()):
             raise HarnessValidationError(
                 "normalized Graph checksum does not match canonical content",

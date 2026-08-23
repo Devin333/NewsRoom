@@ -20,7 +20,7 @@ class PostgresStorageMetricsCollector:
     def collect(self) -> StorageMetrics:
         sql = """
         SELECT
-            (SELECT COUNT(*) FROM workflow_runs) AS runs_count,
+            (SELECT COUNT(*) FROM graph_runs) AS runs_count,
             (SELECT COUNT(*) FROM reports) AS reports_count,
             (SELECT COUNT(*) FROM artifact_index) AS artifacts_count,
             (SELECT COUNT(*) FROM source_items) AS source_items_count,
@@ -30,7 +30,7 @@ class PostgresStorageMetricsCollector:
             (SELECT COUNT(*) FROM memory_documents) AS vector_documents_count,
             COALESCE((SELECT SUM(COALESCE(size_bytes, 0)) FROM artifact_index), 0)
                 AS artifact_bytes_total,
-            (SELECT COUNT(*) FROM workflow_events) AS events_count,
+            (SELECT COUNT(*) FROM durable_events) AS events_count,
             (SELECT COUNT(*) FROM lineage_refs) AS lineage_refs_count
         """
         with self._connection_factory() as connection:

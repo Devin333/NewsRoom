@@ -4904,7 +4904,6 @@ class HarnessControlPlane:
             or intent.node_id != node.identity.node_id
             or intent.node_instance_id != node.instance_id
             or intent.activity_id != activity_id
-            or intent.step_id != step_id
             or intent.attempt != node.attempt
         ):
             raise HarnessValidationError(
@@ -5055,7 +5054,6 @@ class HarnessControlPlane:
             node_id=intent.node_id,
             node_instance_id=intent.node_instance_id,
             activity_id=intent.activity_id,
-            step_id=step_id,
             attempt=node.attempt,
             worker_result_ref=intent.worker_result_ref,
             gate_refs=gate_refs,
@@ -5118,7 +5116,6 @@ class HarnessControlPlane:
                 identity_scope_ref=intent.identity_scope_ref,
                 subject_scope_ref=intent.subject_scope_ref,
                 decision_version="1",
-                step_id=step_id,
             ),
             approval_ref=approval_ref,
         )
@@ -6259,7 +6256,6 @@ def _bind_side_effect_outcome(
         node_id=intent.node_id,
         node_instance_id=intent.node_instance_id,
         activity_id=intent.activity_id,
-        step_id=intent.step_id,
         terminal_action=intent.terminal_action,
         attempt=intent.attempt,
         schema_version="newsroom.harness-side-effect-outcome/v3",

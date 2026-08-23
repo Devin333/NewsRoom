@@ -545,7 +545,7 @@ class ContextCompactionRuntime:
                 HarnessEvent(
                     event_type=event_type,
                     run_id=request.source_snapshot.run_id,
-                    step_id=request.source_snapshot.step_id,
+                    node_id=request.source_snapshot.stage_id,
                     payload=dict(payload),
                     metadata={
                         "schema_revision": "newsroom.context-runtime-event/v1",
@@ -662,7 +662,7 @@ class ContextCompactionRuntime:
         )
         return ContextCompressionRecordV2(
             run_id=source.run_id,
-            step_id=source.step_id,
+            stage_id=source.stage_id,
             source_snapshot_id=source.snapshot_id,
             source_snapshot_checksum=source.checksum,
             result_snapshot_id=result.snapshot_id,

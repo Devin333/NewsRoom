@@ -16,7 +16,6 @@ import pytest
 import framework.harness.control_plane.step_lifecycle as step_lifecycle_module
 from framework.harness.control_plane.errors import HarnessValidationError
 from framework.harness.control_plane.cumulative_budget import HarnessCumulativeBudgetFact
-from framework.harness.control_plane.gates import HarnessGateResult
 from framework.harness.control_plane.graph_state import (
     HarnessAttemptEvidenceReference,
     HarnessEvidenceKind,
@@ -25,7 +24,7 @@ from framework.harness.control_plane.graph_state import (
     HarnessNodeInstanceStatus,
 )
 from framework.harness.control_plane.policy import HarnessBudget, HarnessBudgetSnapshot
-from framework.harness.control_plane.state import HarnessStepState, HarnessStepStatus
+from framework.harness.control_plane.state import HarnessStepStatus
 from framework.harness.control_plane.step_lifecycle import (
     StepGateObservation,
     StepLifecycleBindingMode,
@@ -38,7 +37,6 @@ from framework.harness.control_plane.step_lifecycle import (
     StepQualityObservation,
     StepWorkerObservation,
 )
-from framework.harness.quality.verdict import HarnessQualityVerdict
 from framework.harness.graph.activity import HarnessRetryPolicy, HarnessStepSpec
 from framework.harness.graph.model import (
     HarnessContractKind,
@@ -46,7 +44,6 @@ from framework.harness.graph.model import (
     HarnessGraphNodeKind,
 )
 from framework.harness.graph.versioning import HARNESS_STEP_LIFECYCLE_VERSION
-from framework.harness.workers.result import HarnessWorkerResult
 from framework.shared.json import stable_json_dumps
 
 
@@ -57,64 +54,64 @@ def test_plan_execute_verify_phase_mapping_is_bounded_and_local_to_one_step() ->
     step = _step()
     passed_gate = StepGateObservation("schema@1", True)
     cases = (
-        (
-            HarnessStepStatus.PENDING,
-            StepLifecycleObservations(),
+            (
+                HarnessStepStatus.PENDING,
+                _observations(attempt=0),
             StepLifecycleTransitionType.PLAN_STEP,
         ),
         (
             HarnessStepStatus.PLANNING,
-            StepLifecycleObservations(gate_results=(passed_gate,)),
+            _observations(gate_results=(passed_gate,)),
             StepLifecycleTransitionType.EXECUTE_STEP,
         ),
         (
             HarnessStepStatus.PLAN_VERIFIED,
-            StepLifecycleObservations(),
+            _observations(),
             StepLifecycleTransitionType.EXECUTE_STEP,
         ),
         (
             HarnessStepStatus.RUNNING,
-            StepLifecycleObservations(),
+            _observations(),
             StepLifecycleTransitionType.EXECUTE_STEP,
         ),
         (
             HarnessStepStatus.RUNNING,
-            StepLifecycleObservations(worker_result=StepWorkerObservation("succeeded")),
+            _observations(worker_result=StepWorkerObservation("succeeded")),
             StepLifecycleTransitionType.VERIFY_STEP,
         ),
         (
             HarnessStepStatus.VERIFYING,
-            StepLifecycleObservations(),
+            _observations(),
             StepLifecycleTransitionType.VERIFY_STEP,
         ),
         (
             HarnessStepStatus.VERIFYING,
-            StepLifecycleObservations(gate_results=(passed_gate,)),
+            _observations(gate_results=(passed_gate,)),
             StepLifecycleTransitionType.COMPLETE_STEP,
         ),
         (
             HarnessStepStatus.RETRYING,
-            StepLifecycleObservations(),
+            _observations(),
             StepLifecycleTransitionType.EXECUTE_STEP,
         ),
         (
             HarnessStepStatus.REPLANNING,
-            StepLifecycleObservations(),
+            _observations(),
             StepLifecycleTransitionType.PLAN_STEP,
         ),
         (
             HarnessStepStatus.WAITING_APPROVAL,
-            StepLifecycleObservations(),
+            _observations(),
             StepLifecycleTransitionType.WAIT_FOR_APPROVAL,
         ),
         (
             HarnessStepStatus.HALTED,
-            StepLifecycleObservations(),
+            _observations(),
             StepLifecycleTransitionType.HALT_STEP,
         ),
         (
             HarnessStepStatus.FAILED,
-            StepLifecycleObservations(),
+            _observations(),
             StepLifecycleTransitionType.FAIL_STEP,
         ),
     )
@@ -211,7 +208,7 @@ def test_canonical_cumulative_budget_fact_controls_post_execute_transition(
     transition = _MACHINE.next_transition(
         _step(),
         _state(HarnessStepStatus.RUNNING),
-        StepLifecycleObservations(
+        _observations(
             worker_result=StepWorkerObservation(
                 "succeeded",
                 cumulative_budget_fact=fact,
@@ -229,13 +226,13 @@ def test_canonical_cumulative_budget_fact_controls_post_execute_transition(
     "status",
     (HarnessStepStatus.SUCCEEDED, HarnessStepStatus.SKIPPED),
 )
-def test_terminal_success_or_skip_does_not_select_a_workflow_successor(
+def test_terminal_success_or_skip_does_not_select_a_graph_successor(
     status: HarnessStepStatus,
 ) -> None:
     transition = _MACHINE.next_transition(
         _step(),
         _state(status),
-        StepLifecycleObservations(
+        _observations(
             worker_result=StepWorkerObservation(
                 "succeeded",
                 candidate_observations={"route": "untrusted-target"},
@@ -429,18 +426,11 @@ def test_graph_bound_transition_preserves_full_identity_and_evidence_serializati
     }
 
 
-def test_graph_bound_state_rejects_legacy_observation_downgrade() -> None:
-    node = _graph_node(step_status=HarnessStepStatus.PENDING)
-
+def test_graph_bound_observation_requires_exact_graph_identity() -> None:
     with pytest.raises(HarnessValidationError) as exc_info:
-        _MACHINE.next_transition(
-            _step(),
-            node,
-            StepLifecycleObservations(),
-            _budget(),
-        )
+        StepLifecycleObservations()
 
-    assert exc_info.value.code == "step_lifecycle_binding_mode_mismatch"
+    assert exc_info.value.code == "missing_step_observation_identity"
 
 
 @pytest.mark.parametrize(
@@ -464,7 +454,7 @@ def test_graph_bound_active_phase_rejects_zero_attempt(
         _MACHINE.next_transition(
             _step(),
             node,
-            StepLifecycleObservations(),
+            _observations(),
             _budget(max_retries_per_step=0),
         )
 
@@ -541,7 +531,7 @@ def test_graph_bound_observations_reject_stale_and_unaccepted_evidence() -> None
         evidence_refs=(accepted,),
     )
     gate = _bound_gate(accepted)
-    stale = StepLifecycleObservations(
+    stale = _observations(
         gate_results=(gate,),
         binding_mode=StepLifecycleBindingMode.GRAPH_BOUND,
         node_instance_id=identity.instance_id,
@@ -719,89 +709,6 @@ def test_graph_bound_retry_budget_exact_boundary(
     assert transition.evidence_refs == (evidence,)
 
 
-def test_retry_replan_repair_approval_and_halt_match_frozen_v1_goldens() -> None:
-    retry_step = _step(
-        retry_policy=HarnessRetryPolicy(max_attempts=2, retry_on_statuses=("failed",))
-    )
-    _assert_frozen_v1_parity(
-        step=retry_step,
-        status=HarnessStepStatus.RUNNING,
-        worker_result=HarnessWorkerResult("failed", error="transient"),
-        attempts=1,
-        expected=StepLifecycleTransitionType.RETRY_STEP,
-        expected_reason="transient",
-    )
-
-    replan_step = _step()
-    _assert_frozen_v1_parity(
-        step=replan_step,
-        status=HarnessStepStatus.VERIFYING,
-        gate_results=(HarnessGateResult("schema", False, reason="missing title"),),
-        budget=HarnessBudget(20, 1, 1, 10),
-        expected=StepLifecycleTransitionType.REPLAN_STEP,
-        expected_reason="verification failed",
-    )
-
-    repair_step = _step(retry_policy=HarnessRetryPolicy(repair_step_id="repair"))
-    _assert_frozen_v1_parity(
-        step=repair_step,
-        status=HarnessStepStatus.VERIFYING,
-        gate_results=(HarnessGateResult("schema", False, reason="missing title"),),
-        expected=StepLifecycleTransitionType.ROUTE_TO_REPAIR,
-        expected_target="repair",
-        expected_reason="verification failed; route to repair step",
-    )
-
-    approval_step = _step(metadata={"approval_required": True})
-    _assert_frozen_v1_parity(
-        step=approval_step,
-        status=HarnessStepStatus.RUNNING,
-        worker_result=HarnessWorkerResult("succeeded"),
-        expected=StepLifecycleTransitionType.WAIT_FOR_APPROVAL,
-        expected_reason="step requires Harness approval",
-    )
-
-    _assert_frozen_v1_parity(
-        step=_step(),
-        status=HarnessStepStatus.PENDING,
-        budget=HarnessBudget(2, 0, 0, 10),
-        turns_used=2,
-        expected=StepLifecycleTransitionType.HALT_STEP,
-        expected_reason="turn budget is exhausted",
-    )
-
-    _assert_frozen_v1_parity(
-        step=_step(),
-        status=HarnessStepStatus.PLAN_VERIFIED,
-        budget=HarnessBudget(20, 0, 0, 1),
-        worker_calls_used=1,
-        expected=StepLifecycleTransitionType.HALT_STEP,
-        expected_reason="worker call budget is exhausted",
-    )
-
-
-def test_plan_gate_failure_matches_frozen_v1_replan_and_exhaustion_goldens() -> None:
-    failed_gate = HarnessGateResult("plan", False, reason="unsafe plan")
-    _assert_frozen_v1_parity(
-        step=_step(),
-        status=HarnessStepStatus.PLANNING,
-        gate_results=(failed_gate,),
-        budget=HarnessBudget(20, 1, 0, 10),
-        expected=StepLifecycleTransitionType.REPLAN_STEP,
-        expected_reason="plan gate failed",
-    )
-    _assert_frozen_v1_parity(
-        step=_step(),
-        status=HarnessStepStatus.PLANNING,
-        gate_results=(failed_gate,),
-        budget=HarnessBudget(20, 1, 0, 10),
-        replans_used=1,
-        step_replans=1,
-        expected=StepLifecycleTransitionType.HALT_STEP,
-        expected_reason="plan gate failed and replan budget is exhausted",
-    )
-
-
 def test_retry_budget_and_fail_fast_error_type_preserve_current_behavior() -> None:
     retry_policy = HarnessRetryPolicy(
         max_attempts=5,
@@ -814,7 +721,7 @@ def test_retry_budget_and_fail_fast_error_type_preserve_current_behavior() -> No
     retry = _MACHINE.next_transition(
         step,
         _state(HarnessStepStatus.RUNNING, attempts=1),
-        StepLifecycleObservations(
+        _observations(
             worker_result=StepWorkerObservation("failed", error="transient")
         ),
         _budget(max_retries_per_step=1),
@@ -822,15 +729,16 @@ def test_retry_budget_and_fail_fast_error_type_preserve_current_behavior() -> No
     exhausted = _MACHINE.next_transition(
         step,
         _state(HarnessStepStatus.RUNNING, attempts=2),
-        StepLifecycleObservations(
-            worker_result=StepWorkerObservation("failed", error="still failing")
+        _observations(
+            worker_result=StepWorkerObservation("failed", error="still failing"),
+            attempt=2,
         ),
         _budget(max_retries_per_step=1),
     )
     fail_fast = _MACHINE.next_transition(
         step,
         _state(HarnessStepStatus.RUNNING, attempts=1),
-        StepLifecycleObservations(
+        _observations(
             worker_result=StepWorkerObservation(
                 "failed",
                 error="denied",
@@ -859,13 +767,13 @@ def test_verification_requires_deterministic_gate_evidence() -> None:
     pending = _MACHINE.next_transition(
         _step(),
         _state(HarnessStepStatus.VERIFYING),
-        StepLifecycleObservations(worker_result=untrusted_worker_verdict),
+        _observations(worker_result=untrusted_worker_verdict),
         _budget(),
     )
     accepted = _MACHINE.next_transition(
         _step(),
         _state(HarnessStepStatus.VERIFYING),
-        StepLifecycleObservations(
+        _observations(
             worker_result=untrusted_worker_verdict,
             gate_results=(StepGateObservation("schema@1", True),),
             quality_verdict=StepQualityObservation(True, score=1.0),
@@ -906,7 +814,7 @@ def test_worker_control_suggestions_are_observational_only() -> None:
     first = _MACHINE.next_transition(
         step,
         state,
-        StepLifecycleObservations(
+        _observations(
             worker_result=StepWorkerObservation(
                 "succeeded",
                 candidate_observations=first_suggestions,
@@ -917,7 +825,7 @@ def test_worker_control_suggestions_are_observational_only() -> None:
     second = _MACHINE.next_transition(
         step,
         state,
-        StepLifecycleObservations(
+        _observations(
             worker_result=StepWorkerObservation(
                 "succeeded",
                 candidate_observations=second_suggestions,
@@ -936,7 +844,7 @@ def test_worker_waiting_status_cannot_grant_approval_without_harness_policy() ->
     transition = _MACHINE.next_transition(
         _step(),
         _state(HarnessStepStatus.RUNNING),
-        StepLifecycleObservations(
+        _observations(
             worker_result=StepWorkerObservation(
                 "waiting_approval",
                 candidate_observations={"approval_granted": True},
@@ -980,7 +888,7 @@ def test_gate_permutations_and_repeated_evaluation_are_deterministic() -> None:
     first = _MACHINE.next_transition(
         step,
         state,
-        StepLifecycleObservations(
+        _observations(
             worker_result=worker_a,
             gate_results=(schema, budget),
         ),
@@ -989,7 +897,7 @@ def test_gate_permutations_and_repeated_evaluation_are_deterministic() -> None:
     second = _MACHINE.next_transition(
         step,
         state,
-        StepLifecycleObservations(
+        _observations(
             worker_result=worker_b,
             gate_results=(budget, schema),
         ),
@@ -1003,7 +911,7 @@ def test_gate_permutations_and_repeated_evaluation_are_deterministic() -> None:
         repeated = _MACHINE.next_transition(
             step,
             state,
-            StepLifecycleObservations(
+            _observations(
                 worker_result=worker_b,
                 gate_results=(budget, schema),
             ),
@@ -1020,7 +928,7 @@ def test_observations_budget_and_transition_are_deeply_immutable() -> None:
         candidate_observations={"nested": {"items": ["a", "b"]}},
     )
     gate = StepGateObservation("schema", False, details={"missing": ["title"]})
-    observations = StepLifecycleObservations(
+    observations = _observations(
         worker_result=worker,
         gate_results=(gate,),
     )
@@ -1096,7 +1004,7 @@ def test_state_machine_performs_no_io_clock_random_or_mutable_global_access(
     transition = _MACHINE.next_transition(
         _step(),
         _state(HarnessStepStatus.PENDING),
-        StepLifecycleObservations(),
+        _observations(attempt=0),
         _budget(),
     )
 
@@ -1111,13 +1019,13 @@ def test_invalid_or_ambiguous_inputs_fail_closed() -> None:
     with pytest.raises(HarnessValidationError, match="another Step"):
         _MACHINE.next_transition(
             _step(),
-            StepLifecycleState("other", HarnessStepStatus.PENDING),
-            StepLifecycleObservations(),
+            _state(HarnessStepStatus.PENDING, step_id="other"),
+            _observations(attempt=0),
             _budget(),
         )
 
     with pytest.raises(HarnessValidationError, match="unique exact identities"):
-        StepLifecycleObservations(
+        _observations(
             gate_results=(
                 StepGateObservation("schema", True, gate_reference="schema@1"),
                 StepGateObservation("schema", False, gate_reference="schema@1"),
@@ -1139,62 +1047,6 @@ def test_invalid_or_ambiguous_inputs_fail_closed() -> None:
             "draft",
             "repair_required",
         )
-
-
-def _assert_frozen_v1_parity(
-    *,
-    step: HarnessStepSpec,
-    status: HarnessStepStatus,
-    expected: StepLifecycleTransitionType,
-    expected_target: str | None = None,
-    expected_reason: str | None = None,
-    budget: HarnessBudget | None = None,
-    worker_result: HarnessWorkerResult | None = None,
-    gate_results: tuple[HarnessGateResult, ...] = (),
-    quality_verdict: HarnessQualityVerdict | None = None,
-    attempts: int = 0,
-    step_replans: int = 0,
-    turns_used: int = 0,
-    replans_used: int = 0,
-    worker_calls_used: int = 0,
-    approval_granted: bool = False,
-) -> None:
-    resolved_budget = budget or HarnessBudget(20, 2, 2, 10)
-    historical_step_state = HarnessStepState(
-        step_id=step.step_id,
-        status=status,
-        attempts=attempts,
-        replans=step_replans,
-        metadata={"approval_granted": approval_granted},
-    )
-    snapshot = HarnessBudgetSnapshot.from_budget(
-        resolved_budget,
-        turns_used=turns_used,
-        replans_used=replans_used,
-        worker_calls_used=worker_calls_used,
-    )
-    transition = _MACHINE.next_transition(
-        step,
-        StepLifecycleState.from_legacy(historical_step_state),
-        StepLifecycleObservations.from_legacy(
-            worker_result=worker_result,
-            gate_results=gate_results,
-            quality_verdict=quality_verdict,
-            approval_granted=approval_granted,
-        ),
-        StepLifecycleBudget.from_snapshot(snapshot),
-    )
-
-    assert transition is not None
-    assert transition.transition_type is expected
-    assert transition.target_step_id == expected_target
-    assert transition.reason == expected_reason
-    assert transition.binding_mode is StepLifecycleBindingMode.LEGACY_UNBOUND
-    assert transition.step_ref is None
-    assert transition.node_instance_id is None
-    assert transition.attempt is None
-    assert transition.last_event_sequence is None
-    assert transition.evidence_refs == ()
 
 
 def _graph_identity(
@@ -1235,21 +1087,27 @@ def _graph_node(
     attempt: int = 0,
     last_event_sequence: int = 1,
     evidence_refs: tuple[HarnessAttemptEvidenceReference, ...] = (),
+    step_id: str = "draft",
 ) -> HarnessNodeInstanceState:
     resolved_identity = identity or _graph_identity()
     resolved_node_status = node_status or (
-        HarnessNodeInstanceStatus.READY
-        if step_status is HarnessStepStatus.PENDING
-        else HarnessNodeInstanceStatus.RUNNING
+        {
+            HarnessStepStatus.PENDING: HarnessNodeInstanceStatus.READY,
+            HarnessStepStatus.WAITING_APPROVAL: HarnessNodeInstanceStatus.WAITING,
+            HarnessStepStatus.SUCCEEDED: HarnessNodeInstanceStatus.SUCCEEDED,
+            HarnessStepStatus.FAILED: HarnessNodeInstanceStatus.FAILED,
+            HarnessStepStatus.HALTED: HarnessNodeInstanceStatus.HALTED,
+            HarnessStepStatus.SKIPPED: HarnessNodeInstanceStatus.SKIPPED,
+        }.get(step_status, HarnessNodeInstanceStatus.RUNNING)
     )
     return HarnessNodeInstanceState(
         identity=resolved_identity,
         node_kind=HarnessGraphNodeKind.EXECUTABLE,
         status=resolved_node_status,
-        step_id="draft",
+        step_id=step_id,
         step_ref=HarnessContractReference(
             HarnessContractKind.STEP,
-            "draft",
+            step_id,
             "1",
         ),
         step_status=step_status,
@@ -1295,16 +1153,163 @@ def _step(
 def _state(
     status: HarnessStepStatus,
     *,
-    attempts: int = 0,
+    attempts: int | None = None,
     replans: int = 0,
     error: str | None = None,
+    step_id: str = "draft",
 ) -> StepLifecycleState:
+    resolved_attempts = (
+        0
+        if attempts is None and status is HarnessStepStatus.PENDING
+        else 1
+        if attempts is None
+        else attempts
+    )
+    node = _graph_node(
+        step_id=step_id,
+        step_status=status,
+        attempt=resolved_attempts,
+        last_event_sequence=1,
+        evidence_refs=(
+            ()
+            if resolved_attempts == 0
+            else (
+                _accepted_evidence(
+                    _graph_identity().instance_id,
+                    HarnessEvidenceKind.ACTIVITY_RESULT,
+                    attempt=resolved_attempts,
+                    event_sequence=1,
+                    marker="a",
+                ),
+                _accepted_evidence(
+                    _graph_identity().instance_id,
+                    HarnessEvidenceKind.GATE_RESULT,
+                    attempt=resolved_attempts,
+                    event_sequence=1,
+                    marker="b",
+                ),
+                _accepted_evidence(
+                    _graph_identity().instance_id,
+                    HarnessEvidenceKind.APPROVAL,
+                    attempt=resolved_attempts,
+                    event_sequence=1,
+                    marker="c",
+                ),
+            )
+        ),
+    )
+    lifecycle = StepLifecycleState.from_node_instance(node)
+    if step_id == lifecycle.step_id:
+        return lifecycle
     return StepLifecycleState(
-        "draft",
-        status,
-        attempts=attempts,
+        step_id=step_id,
+        status=status,
+        attempts=resolved_attempts,
         replans=replans,
         error=error,
+        binding_mode=StepLifecycleBindingMode.GRAPH_BOUND,
+        step_ref=HarnessContractReference(HarnessContractKind.STEP, step_id, "1"),
+        node_instance_id=lifecycle.node_instance_id,
+        last_event_sequence=lifecycle.last_event_sequence,
+        evidence_refs=lifecycle.evidence_refs,
+    )
+
+
+def _observations(
+    *,
+    worker_result: StepWorkerObservation | None = None,
+    gate_results: tuple[StepGateObservation, ...] = (),
+    quality_verdict: StepQualityObservation | None = None,
+    approval_granted: bool = False,
+    approval_evidence: HarnessAttemptEvidenceReference | None = None,
+    binding_mode: StepLifecycleBindingMode = StepLifecycleBindingMode.GRAPH_BOUND,
+    node_instance_id: str | None = None,
+    attempt: int | None = None,
+    last_event_sequence: int | None = None,
+) -> StepLifecycleObservations:
+    """Build test observations with the canonical Graph node identity."""
+
+    identity = _graph_identity().instance_id
+    resolved_node = identity if node_instance_id is None else node_instance_id
+    resolved_attempt = 1 if attempt is None else attempt
+    resolved_sequence = 1 if last_event_sequence is None else last_event_sequence
+    worker_evidence = _accepted_evidence(
+        resolved_node,
+        HarnessEvidenceKind.ACTIVITY_RESULT,
+        attempt=resolved_attempt,
+        event_sequence=resolved_sequence,
+        marker="a",
+    )
+    if worker_result is not None and worker_result.accepted_evidence is None:
+        worker_result = StepWorkerObservation(
+            status=worker_result.status,
+            error=worker_result.error,
+            error_type=worker_result.error_type,
+            candidate_observations=worker_result.candidate_observations,
+            accepted_evidence=worker_evidence,
+            cumulative_budget_fact=worker_result.cumulative_budget_fact,
+        )
+    resolved_gates: list[StepGateObservation] = []
+    for index, gate in enumerate(gate_results):
+        if gate.accepted_evidence is not None:
+            resolved_gates.append(gate)
+            continue
+        gate_name = gate.gate_name.split("@", 1)[0]
+        gate_reference = gate.gate_reference or f"{gate_name}@1"
+        gate_evidence = _accepted_evidence(
+            resolved_node,
+            HarnessEvidenceKind.GATE_RESULT,
+            attempt=resolved_attempt,
+            event_sequence=resolved_sequence,
+            marker="b",
+        )
+        resolved_gates.append(
+            StepGateObservation(
+                gate_name=gate_name,
+                passed=gate.passed,
+                reason=gate.reason,
+                details=gate.details,
+                gate_reference=gate_reference,
+                input_ref=f"sha256:{'d' * 64}",
+                result_ref=gate_evidence.evidence_ref,
+                gate_reason_code=gate.gate_reason_code
+                or ("gate_passed" if gate.passed else "gate_failed"),
+                accepted_evidence=gate_evidence,
+            )
+        )
+    if quality_verdict is not None and quality_verdict.accepted_evidence is None:
+        quality_verdict = StepQualityObservation(
+            passed=quality_verdict.passed,
+            score=quality_verdict.score,
+            issues=quality_verdict.issues,
+            repair_hints=quality_verdict.repair_hints,
+            metadata=quality_verdict.metadata,
+            accepted_evidence=_accepted_evidence(
+                resolved_node,
+                HarnessEvidenceKind.GATE_RESULT,
+                attempt=resolved_attempt,
+                event_sequence=resolved_sequence,
+                marker="b",
+            ),
+        )
+    if approval_granted and approval_evidence is None:
+        approval_evidence = _accepted_evidence(
+            resolved_node,
+            HarnessEvidenceKind.APPROVAL,
+            attempt=resolved_attempt,
+            event_sequence=resolved_sequence,
+            marker="c",
+        )
+    return StepLifecycleObservations(
+        worker_result=worker_result,
+        gate_results=tuple(resolved_gates),
+        quality_verdict=quality_verdict,
+        approval_granted=approval_granted,
+        approval_evidence=approval_evidence,
+        binding_mode=binding_mode,
+        node_instance_id=resolved_node,
+        attempt=resolved_attempt,
+        last_event_sequence=resolved_sequence,
     )
 
 

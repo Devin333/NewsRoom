@@ -18,6 +18,7 @@ from framework.harness.graph.model import (
     HarnessContractKind,
     HarnessContractReference,
 )
+from framework.harness.workers.result import HarnessWorkerResult
 from framework.shared.time import ensure_utc, format_datetime, parse_datetime
 
 
@@ -26,7 +27,7 @@ HARNESS_ADMITTED_GRAPH_ACTIVITY_SCHEMA = (
     "newsroom.harness-admitted-graph-activity/v1"
 )
 HARNESS_NODE_OUTPUT_LEASE_SCHEMA = "newsroom.harness-node-output-lease/v1"
-HARNESS_NODE_OUTPUT_CANDIDATE_SCHEMA = "newsroom.harness-node-output-candidate/v1"
+HARNESS_NODE_OUTPUT_CANDIDATE_SCHEMA = "newsroom.harness-node-output-candidate/v2"
 HARNESS_NODE_OUTPUT_STAGED_WRITE_SCHEMA = (
     "newsroom.harness-node-output-staged-write/v1"
 )
@@ -393,6 +394,7 @@ class HarnessNodeOutputLease:
 class HarnessNodeOutputCandidate:
     output_refs: Mapping[str, str]
     evidence_refs: tuple[str, ...]
+    worker_result: Mapping[str, Any] | None = None
     schema_version: str = HARNESS_NODE_OUTPUT_CANDIDATE_SCHEMA
     candidate_ref: str = field(init=False)
 
@@ -446,12 +448,18 @@ class HarnessNodeOutputCandidate:
                 "unsupported node-output candidate schema",
                 code="unsupported_graph_node_output_candidate_schema",
             )
+        worker_result = _validated_worker_result_payload(
+            self.worker_result,
+            output_refs=normalized_refs,
+            evidence_refs=evidence_refs,
+        )
         object.__setattr__(
             self,
             "output_refs",
             MappingProxyType(dict(sorted(normalized_refs.items()))),
         )
         object.__setattr__(self, "evidence_refs", evidence_refs)
+        object.__setattr__(self, "worker_result", worker_result)
         object.__setattr__(self, "candidate_ref", checksum_for(self.checksum_projection()))
 
     def checksum_projection(self) -> dict[str, Any]:
@@ -459,6 +467,9 @@ class HarnessNodeOutputCandidate:
             "schema_version": self.schema_version,
             "output_refs": dict(self.output_refs),
             "evidence_refs": list(self.evidence_refs),
+            "worker_result": (
+                None if self.worker_result is None else dict(self.worker_result)
+            ),
         }
 
     def to_dict(self) -> dict[str, Any]:
@@ -468,7 +479,13 @@ class HarnessNodeOutputCandidate:
     def from_dict(cls, value: Mapping[str, Any]) -> HarnessNodeOutputCandidate:
         payload = _exact_mapping(
             value,
-            {"schema_version", "output_refs", "evidence_refs", "candidate_ref"},
+            {
+                "schema_version",
+                "output_refs",
+                "evidence_refs",
+                "worker_result",
+                "candidate_ref",
+            },
             "node-output candidate",
         )
         if not isinstance(payload["evidence_refs"], list):
@@ -479,6 +496,7 @@ class HarnessNodeOutputCandidate:
         candidate = cls(
             output_refs=payload["output_refs"],
             evidence_refs=tuple(payload["evidence_refs"]),
+            worker_result=payload["worker_result"],
             schema_version=payload["schema_version"],
         )
         if payload["candidate_ref"] != candidate.candidate_ref:
@@ -941,12 +959,19 @@ class InMemoryHarnessNodeOutputResource:
             )
         resource = HarnessNodeOutputResourceIdentity.for_activity(activity)
         with self._lock:
-            if resource.resource_ref in self._commits:
-                raise HarnessValidationError(
-                    "node-output resource is already committed",
-                    code="graph_node_output_already_committed",
-                    details={"resource_ref": resource.resource_ref},
-                )
+            existing_commit = self._commits.get(resource.resource_ref)
+            if existing_commit is not None:
+                if existing_commit.activity_id == activity.activity_id:
+                    raise HarnessValidationError(
+                        "node-output resource is already committed",
+                        code="graph_node_output_already_committed",
+                        details={"resource_ref": resource.resource_ref},
+                    )
+                # A distinct durable Graph activity is a controller-authorized
+                # retry for this node instance. Atomically advance the
+                # resource-owned lease and replace only the current candidate;
+                # the prior result remains immutable in Graph event history.
+                self._commits.pop(resource.resource_ref, None)
             current = self._current_leases.get(resource.resource_ref)
             prior_admission = self._leases_by_admission.get(admission.admission_ref)
             if prior_admission is not None:
@@ -1192,6 +1217,58 @@ def _optional_checksum(value: Any, field_name: str) -> str | None:
     if value is None:
         return None
     return _checksum(value, field_name)
+
+
+def _validated_worker_result_payload(
+    value: Mapping[str, Any] | None,
+    *,
+    output_refs: Mapping[str, str],
+    evidence_refs: tuple[str, ...],
+) -> Mapping[str, Any] | None:
+    """Validate the worker evidence embedded for crash-safe Graph recovery."""
+
+    if value is None:
+        return None
+    if not isinstance(value, Mapping):
+        raise HarnessValidationError(
+            "node-output worker result must be an object",
+            code="graph_node_output_worker_result_invalid",
+        )
+    try:
+        result = HarnessWorkerResult.from_dict(value)
+    except (HarnessValidationError, TypeError, ValueError) as exc:
+        raise HarnessValidationError(
+            "node-output worker result is invalid",
+            code="graph_node_output_worker_result_invalid",
+        ) from exc
+    declared_output_keys = tuple(output_refs)
+    if len(declared_output_keys) == 1:
+        expected_output_refs = {
+            declared_output_keys[0]: checksum_for(result.output),
+        }
+    elif not set(declared_output_keys).issubset(result.output):
+        raise HarnessValidationError(
+            "node-output worker result keys conflict with output refs",
+            code="graph_node_output_worker_result_mismatch",
+        )
+    else:
+        expected_output_refs = {
+            key: checksum_for(result.output[key])
+            for key in declared_output_keys
+        }
+    if dict(output_refs) != expected_output_refs:
+        raise HarnessValidationError(
+            "node-output worker result output refs conflict",
+            code="graph_node_output_worker_result_mismatch",
+        )
+    expected_evidence = {result.candidate_result_ref}
+    expected_evidence.update(item.evidence_checksum for item in result.evidence)
+    if not expected_evidence.issubset(set(evidence_refs)):
+        raise HarnessValidationError(
+            "node-output worker result evidence refs are incomplete",
+            code="graph_node_output_worker_result_mismatch",
+        )
+    return result.to_dict()
 
 
 def _positive_int(value: Any, field_name: str) -> int:

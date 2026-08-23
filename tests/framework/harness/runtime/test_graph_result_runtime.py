@@ -44,6 +44,7 @@ from framework.harness.graph.bindings import (
     HarnessWorkerBinding,
 )
 from framework.harness.graph.canonical import thaw_json
+from framework.harness.graph.definition import HarnessGraphDefinition, HarnessGraphLeafBinding
 from framework.harness.graph.dsl import (
     HarnessGraphSpec,
     ParallelAll,
@@ -51,7 +52,16 @@ from framework.harness.graph.dsl import (
     Sequence,
     StepRef,
 )
-from framework.harness.workflow.spec import HarnessWorkflowSpec
+from framework.harness.graph.model import HarnessContractKind, HarnessContractReference
+from framework.harness.side_effects.models import HarnessTerminalSideEffectPolicy
+from framework.harness.side_effects.fake import (
+    CountingHarnessSideEffectHandler,
+    InMemoryHarnessSideEffectStore,
+)
+from framework.harness.side_effects.registry import (
+    HarnessSideEffectHandlerBinding,
+    HarnessSideEffectRegistry,
+)
 from framework.harness.graph.activity import HarnessStepSpec
 from framework.harness.graph.validation import HarnessGraphPreflightPolicy
 from framework.harness.graph.validation import HarnessGraphPreflight
@@ -88,7 +98,7 @@ class RecordingDispatcher:
 
 class _ExternalWorker:
     worker_version = "1"
-    worker_type = "script"
+    worker_type = "function"
 
     def __init__(self, worker_id: str) -> None:
         self.worker_id = worker_id
@@ -257,13 +267,41 @@ def test_pending_result_cause_recovers_without_another_dispatch() -> None:
     assert node.output_refs["activity_result_lineage"]["candidate_checksum"] == envelope.candidate_checksum
 
 
+def test_recovery_redispatches_marked_activity_without_result_after_restart() -> None:
+    """A dispatched marker is not proof that physical execution completed."""
+
+    fixture = _dispatched("run-dispatch-marker-crash-window")
+    dispatch_count = len(fixture.dispatcher.activities)
+    fixture.dispatcher.reconcile = lambda _activity: True
+    recovery = fixture.port.recover_graph(fixture.activity.run_id)
+    assert fixture.activity.activity_id in recovery.dispatched_activity_ids
+    assert not recovery.activity_result_commits
+    assert recovery.state is not None
+    assert any(
+        item.activity_id == fixture.activity.activity_id
+        for item in recovery.state.active_activities
+    )
+
+    restarted = HarnessGraphControlPlaneRuntime(
+        fixture.port,
+        activity_dispatcher=fixture.dispatcher,
+    )
+    restarted.recover(
+        fixture.activity.run_id,
+        fixture.graph,
+        run_spec_checksum=fixture.run_spec_checksum,
+    )
+
+    assert len(fixture.dispatcher.activities) == dispatch_count + 1
+
+
 def test_pending_result_cause_blocks_out_of_order_parallel_result() -> None:
     run_spec = _parallel_run_spec("run-result-out-of-order")
     port = FailResultProjectionPort()
     dispatcher = RecordingDispatcher()
     control_plane = _parallel_control_plane(port, dispatcher)
     running = control_plane.run(run_spec)
-    assert running.graph_state is not None
+    assert running.state is not None
     recovery = port.recover_graph(run_spec.run_id)
     assert recovery.graph is not None
     adapter = HarnessGraphResultRuntime(HarnessGraphControlPlaneRuntime(port))
@@ -433,7 +471,7 @@ def test_parallel_lineage_stays_branch_scoped_and_replay_is_worker_free() -> Non
 
     running = control_plane.run(run_spec)
 
-    assert running.graph_state is not None
+    assert running.state is not None
     assert {item.node_id for item in dispatcher.activities} == {"left", "right"}
     recovery = port.recover_graph(run_spec.run_id)
     assert recovery.graph is not None
@@ -452,7 +490,7 @@ def test_parallel_lineage_stays_branch_scoped_and_replay_is_worker_free() -> Non
 
     aggregation = control_plane.recover_and_run(run_spec)
 
-    assert aggregation.graph_state is not None
+    assert aggregation.state is not None
     assert [item.node_id for item in dispatcher.activities].count("aggregate") == 1
     aggregate = dispatcher.activities[-1]
     _accept_external_materialized_result(
@@ -466,10 +504,10 @@ def test_parallel_lineage_stays_branch_scoped_and_replay_is_worker_free() -> Non
     )
     completed = control_plane.recover_and_run(run_spec)
 
-    assert completed.graph_state is not None
+    assert completed.state is not None
     branch_nodes = {
         item.identity.node_id: item
-        for item in completed.graph_state.node_instances
+        for item in completed.state.node_instances
         if item.identity.node_id in {"left", "right"}
     }
     assert {
@@ -480,15 +518,15 @@ def test_parallel_lineage_stays_branch_scoped_and_replay_is_worker_free() -> Non
         node.output_refs["activity_result_lineage"]["inline_projection"]["branch"]
         for node in branch_nodes.values()
     } == {"left", "right"}
-    join_payload = stable_json_dumps(completed.graph_state.join_states[0].to_dict())
+    join_payload = stable_json_dumps(completed.state.join_states[0].to_dict())
     assert "inline_projection" not in join_payload
     assert "candidate_checksum" not in join_payload
 
     dispatch_count = len(dispatcher.activities)
     replayed = _parallel_control_plane(port, dispatcher).recover_and_run(run_spec)
-    assert replayed.graph_state is not None
-    assert replayed.graph_state.projection_checksum == (
-        completed.graph_state.projection_checksum
+    assert replayed.state is not None
+    assert replayed.state.projection_checksum == (
+        completed.state.projection_checksum
     )
     assert len(dispatcher.activities) == dispatch_count
 
@@ -507,13 +545,42 @@ def _dispatched(run_id: str, *, port=None) -> _Fixture:
     event_port = port or InMemoryHarnessEventPort()
     dispatcher = RecordingDispatcher()
     run_spec = _run_spec(run_id)
+    side_effect_store = InMemoryHarnessSideEffectStore()
+    terminal_registry = HarnessSideEffectRegistry(
+        (
+            HarnessSideEffectHandlerBinding(
+                "graph-result-test@1",
+                "artifact_publication",
+                CountingHarnessSideEffectHandler(
+                    side_effect_store,
+                    disposition="accepted",
+                ),
+            ),
+        )
+    )
     control_plane = HarnessControlPlane(
         event_port=event_port,
-        worker_registry={"analyze": lambda task: HarnessWorkerResult("succeeded", output=task)},
+        side_effect_store=side_effect_store,
+        runtime_binding_authority=HarnessRuntimeBindingAuthority(
+            workers=(
+                HarnessWorkerBinding(
+                    "analyze@1",
+                    "function",
+                    _ExternalWorker("analyze"),
+                ),
+            ),
+            activities=(
+                HarnessActivityContractBinding(
+                    "newsroom.harness-worker-activity@v1",
+                    _ParallelSafeActivity(),
+                ),
+            ),
+            side_effect_registry=terminal_registry,
+        ),
         graph_activity_dispatcher=dispatcher,
     )
     result = control_plane.run(run_spec)
-    assert result.graph_state is not None
+    assert result.state is not None
     assert len(dispatcher.activities) == 1
     recovery = event_port.recover_graph(run_id)
     assert recovery.graph is not None
@@ -533,22 +600,46 @@ def _dispatched(run_id: str, *, port=None) -> _Fixture:
 def _run_spec(run_id: str) -> HarnessRunSpec:
     step = HarnessStepSpec(
         "analyze",
-        "script",
+        "function",
         metadata={"step_version": "1", "worker_version": "1"},
     )
-    workflow = HarnessWorkflowSpec(
-        workflow_id=f"workflow-{run_id}",
-        workflow_version="2",
-        steps=(step,),
-        entry_step_id="analyze",
-        graph=HarnessGraphSpec(
-            graph_id=f"graph-{run_id}",
-            root=StepRef("analyze"),
+    graph_spec = HarnessGraphSpec(
+        graph_id=f"graph-{run_id}",
+        root=StepRef("analyze"),
+    )
+    graph = HarnessGraphDefinition(
+        graph_id=graph_spec.graph_id,
+        graph_version="1",
+        root=graph_spec,
+        activities=(step,),
+        leaf_activity_bindings=(
+            HarnessGraphLeafBinding(
+                "analyze",
+                "function",
+                HarnessContractReference(HarnessContractKind.WORKER, "analyze", "1"),
+                HarnessContractReference(
+                    HarnessContractKind.ACTIVITY,
+                    "newsroom.harness-worker-activity",
+                    "v1",
+                ),
+            ),
+        ),
+        task_plan_stage_bindings=(),
+        committed_output_bindings=(),
+        repair_bindings=(),
+        terminal_side_effect_policy=HarnessTerminalSideEffectPolicy(
+            policy_id="graph-result-test",
+            version="1",
+            handler="graph-result-test@1",
+            kind="artifact_publication",
+            requires_approval=False,
+            retry_limit=1,
+            not_required_evidence_ref=checksum_for("graph-result-test"),
         ),
     )
     return HarnessRunSpec(
         run_id=run_id,
-        workflow=workflow,
+        graph=graph,
         metadata={
             "tenant_scope_ref": TENANT_SCOPE_REF,
             "identity_scope_ref": TENANT_SCOPE_REF,
@@ -562,7 +653,7 @@ def _parallel_run_spec(run_id: str) -> HarnessRunSpec:
     steps = tuple(
         HarnessStepSpec(
             step_id,
-            "script",
+            "function",
             output_key=f"{step_id}_output",
             metadata={"step_version": "1", "worker_version": "1"},
         )
@@ -570,12 +661,10 @@ def _parallel_run_spec(run_id: str) -> HarnessRunSpec:
     )
     return HarnessRunSpec(
         run_id=run_id,
-        workflow=HarnessWorkflowSpec(
-            workflow_id=f"workflow-{run_id}",
-            workflow_version="2",
-            steps=steps,
-            entry_step_id="left",
-            graph=HarnessGraphSpec(
+        graph=HarnessGraphDefinition(
+            graph_id=f"graph-{run_id}",
+            graph_version="1",
+            root=HarnessGraphSpec(
                 graph_id=f"graph-{run_id}",
                 root=Sequence(
                     (
@@ -599,6 +688,32 @@ def _parallel_run_spec(run_id: str) -> HarnessRunSpec:
                     )
                 ),
             ),
+            activities=steps,
+            leaf_activity_bindings=tuple(
+                HarnessGraphLeafBinding(
+                    step_id,
+                    "function",
+                    HarnessContractReference(HarnessContractKind.WORKER, step_id, "1"),
+                    HarnessContractReference(
+                        HarnessContractKind.ACTIVITY,
+                        "newsroom.harness-worker-activity",
+                        "v1",
+                    ),
+                )
+                for step_id in ("left", "right", "aggregate")
+            ),
+            task_plan_stage_bindings=(),
+            committed_output_bindings=(),
+            repair_bindings=(),
+            terminal_side_effect_policy=HarnessTerminalSideEffectPolicy(
+                policy_id="graph-result-test",
+                version="1",
+                handler="graph-result-test@1",
+                kind="artifact_publication",
+                requires_approval=False,
+                retry_limit=1,
+                not_required_evidence_ref=checksum_for("graph-result-test"),
+            ),
         ),
         metadata={
             "tenant_scope_ref": TENANT_SCOPE_REF,
@@ -610,13 +725,27 @@ def _parallel_run_spec(run_id: str) -> HarnessRunSpec:
 
 
 def _parallel_control_plane(port, dispatcher) -> HarnessControlPlane:
+    side_effect_store = InMemoryHarnessSideEffectStore()
+    terminal_registry = HarnessSideEffectRegistry(
+        (
+            HarnessSideEffectHandlerBinding(
+                "graph-result-test@1",
+                "artifact_publication",
+                CountingHarnessSideEffectHandler(
+                    side_effect_store,
+                    disposition="accepted",
+                ),
+            ),
+        )
+    )
     return HarnessControlPlane(
         event_port=port,
+        side_effect_store=side_effect_store,
         runtime_binding_authority=HarnessRuntimeBindingAuthority(
             workers=tuple(
                 HarnessWorkerBinding(
                     f"{step_id}@1",
-                    "script",
+                    "function",
                     _ExternalWorker(step_id),
                 )
                 for step_id in ("left", "right", "aggregate")
@@ -627,6 +756,7 @@ def _parallel_control_plane(port, dispatcher) -> HarnessControlPlane:
                     _ParallelSafeActivity(),
                 ),
             ),
+            side_effect_registry=terminal_registry,
         ),
         graph_preflight=HarnessGraphPreflight(
             policy=HarnessGraphPreflightPolicy(

@@ -92,14 +92,14 @@ class _FakeReportService:
         self,
         *,
         limit: int,
-        workflow_id: str | None = None,
-        workflow_family: str | None = None,
+        graph_id: str | None = None,
+        graph_ids: tuple[str, ...] | None = None,
     ) -> "_FakeResult":
         return _FakeResult(
             {
                 "limit": limit,
-                "workflow_id": workflow_id,
-                "workflow_family": workflow_family,
+                "graph_id": graph_id,
+                "graph_ids": graph_ids,
                 "report_count": 1,
                 "reports": [self.latest_report().to_dict()],
             }

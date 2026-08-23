@@ -21,9 +21,10 @@ from framework.events.errors import (
 from framework.events.projection import (
     GRAPH_EVENT_CONTEXT_EXTENSION,
     GraphEventContext,
-    GraphRunIdentity,
+    GraphEventExecutionVersion,
     graph_event_context,
 )
+from framework.shared.graph_identity import GraphRunIdentity
 from framework.events.ports import EventReaderPort, EventRuntimePort
 from framework.events.runtime.models import StreamReadRequest
 from framework.events.runtime.publisher import EventPublishRequest
@@ -52,6 +53,7 @@ from framework.harness.task_plan.store import (
     _plan_event,
     _projection_for_plan,
     _require_event_matches_plan,
+    _require_live_graph_only,
     _require_subagent_result_evidence,
     _require_projection_transition_identity,
     _result_event,
@@ -252,6 +254,7 @@ class DurableTaskPlanStore:
     ) -> str:
         if not isinstance(candidate, PlanCandidate):
             raise TypeError("candidate must be PlanCandidate")
+        _require_live_graph_only(candidate, "candidate")
         if event_type not in {"PLAN_CANDIDATE_BUILT", "PLAN_CANDIDATE_REJECTED"}:
             raise HarnessValidationError(
                 "candidate event type is invalid",
@@ -287,6 +290,7 @@ class DurableTaskPlanStore:
     ) -> str:
         if not isinstance(candidate, PlanCandidate):
             raise TypeError("candidate must be PlanCandidate")
+        _require_live_graph_only(candidate, "candidate")
         candidate_ref = self._put_document(
             "candidate",
             candidate.run_id,
@@ -346,6 +350,7 @@ class DurableTaskPlanStore:
     def accept_plan(self, plan: ValidatedTaskPlan) -> str:
         if not isinstance(plan, ValidatedTaskPlan):
             raise TypeError("plan must be ValidatedTaskPlan")
+        _require_live_graph_only(plan, "plan")
         events = self.read_events(plan.run_id, plan.stage_id)
         accepted = [item for item in events if item.event_type == "PLAN_ACCEPTED"]
         same_version = [item for item in accepted if item.plan_version == plan.version]
@@ -409,6 +414,7 @@ class DurableTaskPlanStore:
     def append_patch(self, patch: PlanPatch, *, accepted: bool = False) -> str:
         if not isinstance(patch, PlanPatch):
             raise TypeError("patch must be PlanPatch")
+        _require_live_graph_only(patch, "patch")
         plan = self.plan(patch.run_id, patch.stage_id)
         if plan is None:
             raise HarnessValidationError(
@@ -465,6 +471,8 @@ class DurableTaskPlanStore:
 
         if not isinstance(patch, PlanPatch) or not isinstance(plan, ValidatedTaskPlan):
             raise TypeError("patch and plan must use TaskPlan contracts")
+        _require_live_graph_only(patch, "patch")
+        _require_live_graph_only(plan, "plan")
         current = self.plan(patch.run_id, patch.stage_id)
         if current is None or not patch.matches_plan_identity(current):
             raise HarnessValidationError("patch base plan is stale", code="task_plan_stale_patch")
@@ -548,6 +556,7 @@ class DurableTaskPlanStore:
     def append_result(self, result: TaskResultRecord) -> str:
         if not isinstance(result, TaskResultRecord):
             raise TypeError("result must be TaskResultRecord")
+        _require_live_graph_only(result, "result")
         events = self.read_events(result.run_id, result.stage_id)
         existing_events = [
             event
@@ -789,6 +798,7 @@ class DurableTaskPlanStore:
     def update_projection(self, projection: TaskPlanProjection) -> None:
         if not isinstance(projection, TaskPlanProjection):
             raise TypeError("projection must be TaskPlanProjection")
+        _require_live_graph_only(projection, "projection")
         current = self.load_projection(projection.run_id, projection.stage_id)
         if current.projection_checksum != projection.projection_checksum:
             raise HarnessValidationError(
@@ -870,6 +880,7 @@ class DurableTaskPlanStore:
     def append_event(self, event: TaskPlanEvent) -> str:
         if not isinstance(event, TaskPlanEvent):
             raise TypeError("event must be TaskPlanEvent")
+        _require_live_graph_only(event, "event")
         events = self.read_events(event.run_id, event.stage_id)
         if event.sequence <= len(events):
             existing = events[event.sequence - 1]
@@ -907,6 +918,8 @@ class DurableTaskPlanStore:
             raise TypeError("event must be TaskPlanEvent")
         if not isinstance(projection, TaskPlanProjection):
             raise TypeError("projection must be TaskPlanProjection")
+        _require_live_graph_only(event, "event")
+        _require_live_graph_only(projection, "projection")
         events = self.read_events(event.run_id, event.stage_id)
         if event.sequence <= len(events):
             existing = events[event.sequence - 1]
@@ -1409,16 +1422,18 @@ class DurableTaskPlanStore:
                 },
             }
         }
+        graph_context = _graph_event_context_for_task_plan_event(event)
         business_context = BusinessContext(
             run_id=event.run_id,
-            workflow_id=event.workflow_id,
-            step_id=event.stage_id if not event.is_graph_only else None,
+            graph_id=event.graph_id,
+            graph_version=event.graph_version,
+            graph_ref=event.graph_ref,
+            graph_checksum=event.graph_checksum,
+            stage_id=event.stage_id,
+            node_instance_id=graph_context.node_instance_id,
             task_id=event.task_id,
         )
-        if event.is_graph_only:
-            extensions[GRAPH_EVENT_CONTEXT_EXTENSION] = (
-                _graph_event_context_for_task_plan_event(event).to_dict()
-            )
+        extensions[GRAPH_EVENT_CONTEXT_EXTENSION] = graph_context.to_dict()
         return EventPublishRequest(
             event_id=_event_id(event, self._tenant_id),
             event_type=event.event_type,
@@ -1503,26 +1518,16 @@ class DurableTaskPlanStore:
                 "canonical TaskPlan event context conflicts with its payload",
                 code="task_plan_event_identity_mismatch",
             )
-        if event.is_graph_only:
-            try:
-                context = graph_event_context(stored)
-            except EventContractError as exc:
-                raise HarnessValidationError(
-                    "canonical Graph TaskPlan event context is invalid",
-                    code="task_plan_event_identity_mismatch",
-                ) from exc
-            if context != _graph_event_context_for_task_plan_event(event):
-                raise HarnessValidationError(
-                    "canonical Graph TaskPlan event context conflicts with its payload",
-                    code="task_plan_event_identity_mismatch",
-                )
-        elif (
-            stored.business_context.workflow_id != event.workflow_id
-            or stored.business_context.step_id != event.stage_id
-            or GRAPH_EVENT_CONTEXT_EXTENSION in stored.extensions
-        ):
+        try:
+            context = graph_event_context(stored)
+        except EventContractError as exc:
             raise HarnessValidationError(
-                "canonical legacy TaskPlan event context conflicts with its payload",
+                "canonical Graph TaskPlan event context is invalid",
+                code="task_plan_event_identity_mismatch",
+            ) from exc
+        if context != _graph_event_context_for_task_plan_event(event):
+            raise HarnessValidationError(
+                "canonical Graph TaskPlan event context conflicts with its payload",
                 code="task_plan_event_identity_mismatch",
             )
         return event
@@ -1616,11 +1621,6 @@ def _event_id(event: TaskPlanEvent, tenant_id: str | None) -> str:
 def _graph_event_context_for_task_plan_event(
     event: TaskPlanEvent,
 ) -> GraphEventContext:
-    if not event.is_graph_only:
-        raise HarnessValidationError(
-            "legacy TaskPlan event has no Graph event context",
-            code="graph_task_plan_identity_unavailable",
-        )
     assert event.graph_id is not None
     assert event.graph_version is not None
     assert event.graph_schema_version is not None
@@ -1630,10 +1630,14 @@ def _graph_event_context_for_task_plan_event(
             run_id=event.run_id,
             graph_id=event.graph_id,
             graph_version=event.graph_version,
+            graph_ref=f"{event.graph_id}@{event.graph_version}",
+            graph_checksum=event.graph_checksum,
+        ),
+        execution_version=GraphEventExecutionVersion(
             graph_schema_version=event.graph_schema_version,
             compiler_version=event.compiler_version,
             normalized_graph_checksum=event.graph_checksum,
-        )
+        ),
     )
 
 
@@ -1642,8 +1646,7 @@ def _require_projection_matches_event(
     event: TaskPlanEvent,
 ) -> None:
     if (
-        projection.is_graph_only != event.is_graph_only
-        or projection.run_id != event.run_id
+        projection.run_id != event.run_id
         or projection.stage_id != event.stage_id
         or projection.graph_checksum != event.graph_checksum
     ):
@@ -1670,7 +1673,7 @@ def _require_projection_matches_event(
         "stage_identity_schema",
         "stage_identity_checksum",
     )
-    if projection.is_graph_only and any(
+    if any(
         getattr(projection, name) != getattr(event, name)
         for name in graph_fields
     ):

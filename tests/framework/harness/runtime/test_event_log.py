@@ -10,7 +10,7 @@ def test_event_log_is_append_only_and_exports_dict() -> None:
     entry = HarnessEventLogEntry(
         event_id="event-1",
         run_id="run-event",
-        step_id="collect",
+        node_id="collect",
         event_type="phase_recorded",
         metadata={"phase": "plan", "budget_snapshot": {"turns_used": 1}},
     )

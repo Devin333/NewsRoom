@@ -10,36 +10,26 @@ from framework.harness.task_plan.canonical import required_text
 
 
 TASK_PLAN_RUNTIME_VERSION = "newsroom.harness-task-plan-runtime/v1"
-TASK_PLAN_EVENT_SCHEMA_V1 = "newsroom.harness-task-plan-event/v1"
 TASK_PLAN_EVENT_SCHEMA_V2 = "newsroom.harness-task-plan-event/v2"
 TASK_PLAN_EVENT_SCHEMAS = (
-    TASK_PLAN_EVENT_SCHEMA_V1,
     TASK_PLAN_EVENT_SCHEMA_V2,
 )
 TASK_DEFINITION_SCHEMA = "newsroom.harness-task-definition/v1"
 RESOLVED_TASK_DEFINITION_SCHEMA = "newsroom.harness-resolved-task-definition/v1"
-PLAN_CANDIDATE_SCHEMA = "newsroom.harness-task-plan-candidate/v1"
 GRAPH_ONLY_PLAN_CANDIDATE_SCHEMA = "newsroom.harness-task-plan-candidate/v2"
-VALIDATED_TASK_PLAN_SCHEMA = "newsroom.harness-task-plan/v1"
 GRAPH_ONLY_VALIDATED_TASK_PLAN_SCHEMA = "newsroom.harness-task-plan/v2"
-TASK_PLAN_PATCH_SCHEMA = "newsroom.harness-task-plan-patch/v1"
 GRAPH_ONLY_TASK_PLAN_PATCH_SCHEMA = "newsroom.harness-task-plan-patch/v2"
 TASK_PLAN_POLICY_SCHEMA = "newsroom.harness-task-plan-policy/v1"
-TASK_INSTANCE_SCHEMA = "newsroom.harness-task-instance/v1"
 GRAPH_ONLY_TASK_INSTANCE_SCHEMA = "newsroom.harness-task-instance/v2"
-TASK_PROJECTION_SCHEMA = "newsroom.harness-task-projection/v1"
 GRAPH_ONLY_TASK_PROJECTION_SCHEMA = "newsroom.harness-task-projection/v2"
-TASK_PLAN_PROJECTION_SCHEMA = "newsroom.harness-task-plan-projection/v1"
 GRAPH_ONLY_TASK_PLAN_PROJECTION_SCHEMA = (
     "newsroom.harness-task-plan-projection/v2"
 )
 TASK_RESULT_REFERENCE_SCHEMA = "newsroom.harness-task-result-reference/v1"
 TASK_CAPABILITY_BINDING_SCHEMA = "newsroom.harness-task-capability-binding/v1"
-TASK_PLAN_STAGE_BINDING_SCHEMA = "newsroom.harness-task-plan-stage-binding/v1"
 GRAPH_ONLY_TASK_PLAN_STAGE_BINDING_SCHEMA = (
     "newsroom.harness-task-plan-stage-binding/v2"
 )
-TASK_PLAN_STAGE_IDENTITY_SCHEMA = "newsroom.harness-task-plan-stage-identity/v1"
 GRAPH_ONLY_TASK_PLAN_STAGE_IDENTITY_SCHEMA = (
     "newsroom.harness-task-plan-stage-identity/v2"
 )
@@ -173,17 +163,19 @@ _WRITERS: Mapping[TaskPlanContractKind, str] = MappingProxyType(
     {
         TaskPlanContractKind.TASK_DEFINITION: TASK_DEFINITION_SCHEMA,
         TaskPlanContractKind.RESOLVED_TASK_DEFINITION: RESOLVED_TASK_DEFINITION_SCHEMA,
-        TaskPlanContractKind.PLAN_CANDIDATE: PLAN_CANDIDATE_SCHEMA,
-        TaskPlanContractKind.VALIDATED_PLAN: VALIDATED_TASK_PLAN_SCHEMA,
-        TaskPlanContractKind.PLAN_PATCH: TASK_PLAN_PATCH_SCHEMA,
+        # Graph v2 is the sole TaskPlan contract. Historical legacy data is
+        # intentionally handled outside the runtime by migration tooling.
+        TaskPlanContractKind.PLAN_CANDIDATE: GRAPH_ONLY_PLAN_CANDIDATE_SCHEMA,
+        TaskPlanContractKind.VALIDATED_PLAN: GRAPH_ONLY_VALIDATED_TASK_PLAN_SCHEMA,
+        TaskPlanContractKind.PLAN_PATCH: GRAPH_ONLY_TASK_PLAN_PATCH_SCHEMA,
         TaskPlanContractKind.POLICY: TASK_PLAN_POLICY_SCHEMA,
-        TaskPlanContractKind.TASK_INSTANCE: TASK_INSTANCE_SCHEMA,
-        TaskPlanContractKind.TASK_PROJECTION: TASK_PROJECTION_SCHEMA,
-        TaskPlanContractKind.PLAN_PROJECTION: TASK_PLAN_PROJECTION_SCHEMA,
+        TaskPlanContractKind.TASK_INSTANCE: GRAPH_ONLY_TASK_INSTANCE_SCHEMA,
+        TaskPlanContractKind.TASK_PROJECTION: GRAPH_ONLY_TASK_PROJECTION_SCHEMA,
+        TaskPlanContractKind.PLAN_PROJECTION: GRAPH_ONLY_TASK_PLAN_PROJECTION_SCHEMA,
         TaskPlanContractKind.RESULT_REFERENCE: TASK_RESULT_REFERENCE_SCHEMA,
         TaskPlanContractKind.CAPABILITY_BINDING: TASK_CAPABILITY_BINDING_SCHEMA,
-        TaskPlanContractKind.STAGE_BINDING: TASK_PLAN_STAGE_BINDING_SCHEMA,
-        TaskPlanContractKind.STAGE_IDENTITY: TASK_PLAN_STAGE_IDENTITY_SCHEMA,
+        TaskPlanContractKind.STAGE_BINDING: GRAPH_ONLY_TASK_PLAN_STAGE_BINDING_SCHEMA,
+        TaskPlanContractKind.STAGE_IDENTITY: GRAPH_ONLY_TASK_PLAN_STAGE_IDENTITY_SCHEMA,
     }
 )
 
@@ -223,8 +215,15 @@ DEFAULT_TASK_PLAN_SCHEMA_REGISTRY = TaskPlanSchemaRegistry(
         TaskPlanSchemaRegistration(
             contract_kind=kind,
             writer_schema=schema,
-            readable_schemas=(schema, *_ADDITIONAL_SCHEMAS.get(kind, ())),
-            executable_schemas=(schema, *_ADDITIONAL_SCHEMAS.get(kind, ())),
+            readable_schemas=tuple(
+                sorted(
+                    {
+                        schema,
+                        *_ADDITIONAL_SCHEMAS.get(kind, ()),
+                    }
+                )
+            ),
+            executable_schemas=(schema,),
         )
         for kind, schema in _WRITERS.items()
     )
@@ -241,23 +240,14 @@ __all__ = [
     "GRAPH_ONLY_TASK_PLAN_STAGE_BINDING_SCHEMA",
     "GRAPH_ONLY_TASK_PLAN_STAGE_IDENTITY_SCHEMA",
     "GRAPH_ONLY_VALIDATED_TASK_PLAN_SCHEMA",
-    "PLAN_CANDIDATE_SCHEMA",
     "RESOLVED_TASK_DEFINITION_SCHEMA",
     "TASK_CAPABILITY_BINDING_SCHEMA",
     "TASK_DEFINITION_SCHEMA",
-    "TASK_INSTANCE_SCHEMA",
-    "TASK_PLAN_PATCH_SCHEMA",
-    "TASK_PLAN_EVENT_SCHEMA_V1",
     "TASK_PLAN_EVENT_SCHEMA_V2",
     "TASK_PLAN_EVENT_SCHEMAS",
     "TASK_PLAN_POLICY_SCHEMA",
-    "TASK_PLAN_PROJECTION_SCHEMA",
     "TASK_PLAN_RUNTIME_VERSION",
-    "TASK_PLAN_STAGE_BINDING_SCHEMA",
-    "TASK_PLAN_STAGE_IDENTITY_SCHEMA",
-    "TASK_PROJECTION_SCHEMA",
     "TASK_RESULT_REFERENCE_SCHEMA",
-    "VALIDATED_TASK_PLAN_SCHEMA",
     "TaskPlanContractKind",
     "TaskPlanSchemaRegistration",
     "TaskPlanSchemaRegistry",

@@ -32,7 +32,11 @@ from business.research.graphs.gates import (
 )
 from business.research.graphs.paper_analysis import (
     build_dynamic_paper_analysis_graph_definition,
+    build_paper_analysis_context_graph_identity,
     build_paper_analysis_graph_definition,
+)
+from business.research.graphs.paper_analysis_runtime import (
+    build_paper_analysis_runtime_binding_authority,
 )
 from business.research.graphs.reader_repair import (
     READER_REPAIR_GRAPH_ID,
@@ -53,6 +57,7 @@ from business.research.graphs.reader_repair import (
     READER_REPAIR_SUBAGENT_IDS,
     READER_REPAIR_SUBAGENT_WORKER_REFS,
     build_reader_repair_graph_definition,
+    build_reader_repair_context_graph_identity,
     build_reader_repair_failure_diagnostic_terminal_policy,
     build_reader_repair_memory_terminal_policy,
     build_reader_repair_subagent_specs,
@@ -149,13 +154,16 @@ __all__ = [
     "ResearchAnalysisTaskPlanStageWorker",
     "build_dynamic_paper_analysis_graph_definition",
     "build_paper_analysis_gate_registry",
+    "build_paper_analysis_context_graph_identity",
     "build_paper_analysis_graph_definition",
+    "build_paper_analysis_runtime_binding_authority",
     "build_reader_repair_gate_registry",
     "build_reader_repair_execution_gate_registry",
     "build_reader_repair_application_verification_worker_result",
     "build_reader_repair_application_worker_result",
     "build_reader_repair_committed_result",
     "build_reader_repair_graph_definition",
+    "build_reader_repair_context_graph_identity",
     "build_reader_repair_failure_diagnostic_terminal_policy",
     "build_reader_repair_memory_terminal_policy",
     "build_reader_repair_memory_worker_result",

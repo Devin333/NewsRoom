@@ -52,15 +52,15 @@ def create_router(services: ApiServices, helpers: ApiRouteHelpers) -> APIRouter:
     def entity_report_matches(
         entity_id: str,
         limit: int = 20,
-        workflow_id: str | None = None,
-        workflow_family: str | None = None,
+        graph_id: str | None = None,
+        graph_ids: list[str] | None = None,
     ):
         try:
             result = services.entity_service_factory().match_reports(
                 entity_id,
                 limit=limit,
-                workflow_id=workflow_id,
-                workflow_family=workflow_family,
+                graph_id=graph_id,
+                graph_ids=tuple(graph_ids) if graph_ids is not None else None,
             )
         except KeyError as exc:
             return helpers.error(

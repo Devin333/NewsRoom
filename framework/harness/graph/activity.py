@@ -7,7 +7,20 @@ from typing import Any
 
 from framework.harness.control_plane.errors import HarnessValidationError
 from framework.harness.side_effects.models import HarnessSideEffectHandlerReference
+from framework.events.canonical import checksum_for, normalize_canonical_json
 from framework.shared.json import to_jsonable
+
+
+def graph_activity_input_checksum(inputs: Mapping[str, Any]) -> str:
+    """Canonical checksum for a Graph activity's immutable input document."""
+
+    if not isinstance(inputs, Mapping):
+        raise TypeError("inputs must be a mapping")
+    canonical = normalize_canonical_json(
+        to_jsonable(inputs),
+        path="$.harness_graph_activity.inputs",
+    )
+    return checksum_for(canonical)
 
 
 class HarnessWorkerType(StrEnum):
@@ -23,7 +36,6 @@ class HarnessWorkerType(StrEnum):
     MEMORY = "memory"
     MCP = "mcp"
     QUALITY_GATE = "quality_gate"
-    ARTIFACT = "artifact"
     SCRIPT = "script"
 
 
@@ -35,6 +47,7 @@ class HarnessLeafActivityKind(StrEnum):
     SKILL = "skill"
     SUBAGENT = "subagent"
     AGENT_LOOP = "agent_loop"
+    TASK_PLAN = "task_plan"
 
 
 _FORBIDDEN_OUTER_AUTHORITY_METADATA_KEYS = frozenset(

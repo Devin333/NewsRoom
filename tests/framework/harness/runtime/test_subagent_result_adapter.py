@@ -23,7 +23,12 @@ from framework.harness.control_plane.policy import (
     HarnessBudget,
     HarnessBudgetSnapshot,
 )
-from framework.harness.context.models import ContextEnvelope
+from framework.harness.context.models import (
+    CONTEXT_GRAPH_TASK_PLAN_STAGE_IDENTITY_SCHEMA_V2,
+    ContextEnvelope,
+    ContextGraphIdentity,
+    ContextTaskExecutionIdentity,
+)
 from framework.harness.runtime import (
     GraphArtifactResultError,
     GraphArtifactResultErrorCode,
@@ -37,7 +42,12 @@ from framework.harness.runtime.subagent_result_adapter import (
     verify_subagent_materialized_bundle,
 )
 from framework.harness.subagents.models import SubAgentHandoff
-from framework.harness.subagents.transcript import FakeSubAgentTranscriptStore
+from framework.harness.subagents.models import SUBAGENT_INVOCATION_SCHEMA_V3
+from framework.harness.subagents.transcript import (
+    SUBAGENT_ATTEMPT_IDENTITY_SCHEMA_V3,
+    FakeSubAgentTranscriptStore,
+    SubAgentAttemptIdentity,
+)
 from framework.shared.json import stable_json_dumps
 from tests.framework.harness.runtime.test_graph_result_runtime import (
     NOW,
@@ -77,24 +87,103 @@ def _spec() -> SubAgentSpec:
 def _invocation(fixture, spec: SubAgentSpec) -> SubAgentInvocation:
     budget = HarnessBudgetSnapshot.from_budget(HarnessBudget.safe_default())
     child_run_id = f"{fixture.activity.run_id}:{fixture.activity.node_id}:task-1"
+    stage_binding_checksum = checksum_for({"stage": fixture.activity.node_id})
+    stage_identity_checksum = checksum_for(
+        {
+            "schema_version": CONTEXT_GRAPH_TASK_PLAN_STAGE_IDENTITY_SCHEMA_V2,
+            "run_id": fixture.activity.run_id,
+            "graph_schema_version": fixture.graph.schema_version,
+            "compiler_version": fixture.graph.compiler_version,
+            "condition_policy_version": fixture.graph.condition_policy_version,
+            "graph_id": fixture.graph.graph_id,
+            "graph_version": fixture.graph.graph_version,
+            "graph_checksum": fixture.graph.checksum,
+            "stage_id": fixture.activity.node_id,
+            "stage_binding_checksum": stage_binding_checksum,
+            "graph_ref": fixture.graph.graph_ref.exact_ref,
+        }
+    )
+    graph_identity = ContextGraphIdentity(
+        run_id=fixture.activity.run_id,
+        graph_id=fixture.graph.graph_id,
+        graph_version=fixture.graph.graph_version,
+        graph_ref=fixture.graph.graph_ref.exact_ref,
+        graph_schema_version=fixture.graph.schema_version,
+        compiler_version=fixture.graph.compiler_version,
+        condition_policy_version=fixture.graph.condition_policy_version,
+        graph_checksum=fixture.graph.checksum,
+        stage_id=fixture.activity.node_id,
+        stage_binding_checksum=stage_binding_checksum,
+        stage_identity_schema=CONTEXT_GRAPH_TASK_PLAN_STAGE_IDENTITY_SCHEMA_V2,
+        stage_identity_checksum=stage_identity_checksum,
+        node_id=fixture.activity.node_id,
+        node_instance_id=fixture.activity.node_instance_id,
+        activity_id=fixture.activity.activity_id,
+        activity_attempt=fixture.activity.attempt,
+    )
+    task_identity = ContextTaskExecutionIdentity(
+        plan_id="adapter-test-plan",
+        plan_version=1,
+        plan_checksum=checksum_for({"plan": "adapter-test-plan"}),
+        task_id="task-1",
+        task_definition_checksum=checksum_for({"task": "task-1"}),
+        task_instance_id="task-instance-1",
+        attempt=1,
+    )
+    context_pack = ContextEnvelope.for_graph(
+        envelope_id="context://subagent-result",
+        graph_identity=graph_identity,
+        task_execution_identity=task_identity,
+        phase="EXECUTE",
+        worker_id=spec.subagent_id,
+        worker_type="subagent",
+        token_estimate=10,
+    )
     context = SubAgentContextBuilder().build(
         parent_run_id=fixture.activity.run_id,
         child_run_id=child_run_id,
         spec=spec,
-        context_pack=ContextEnvelope(
-            envelope_id="context://subagent-result",
-            token_estimate=10,
-        ),
+        context_pack=context_pack,
         input_refs=("artifact://research/input-1",),
         memory_context_refs=("memory://research/context-1",),
         budget_snapshot=budget,
+    )
+    attempt_identity = SubAgentAttemptIdentity(
+        invocation_id=f"invocation://{child_run_id}",
+        parent_run_id=fixture.activity.run_id,
+        child_run_id=child_run_id,
+        graph_id=graph_identity.graph_id,
+        graph_version=graph_identity.graph_version,
+        graph_ref=graph_identity.graph_ref,
+        graph_schema_version=graph_identity.graph_schema_version,
+        compiler_version=graph_identity.compiler_version,
+        condition_policy_version=graph_identity.condition_policy_version,
+        graph_checksum=graph_identity.graph_checksum,
+        stage_id=graph_identity.stage_id,
+        stage_binding_checksum=graph_identity.stage_binding_checksum,
+        stage_identity_schema=graph_identity.stage_identity_schema,
+        stage_identity_checksum=graph_identity.stage_identity_checksum,
+        plan_id=task_identity.plan_id,
+        plan_version=task_identity.plan_version,
+        plan_checksum=task_identity.plan_checksum,
+        task_id=task_identity.task_id,
+        task_definition_checksum=task_identity.task_definition_checksum,
+        context_envelope_id=context_pack.envelope_id,
+        context_envelope_checksum=context_pack.checksum,
+        node_id=fixture.activity.node_id,
+        node_instance_id=fixture.activity.node_instance_id,
+        activity_id=fixture.activity.activity_id,
+        activity_attempt=fixture.activity.attempt,
+        task_instance_id=task_identity.task_instance_id,
+        attempt=task_identity.attempt,
+        subagent_id=spec.subagent_id,
+        schema_version=SUBAGENT_ATTEMPT_IDENTITY_SCHEMA_V3,
     )
     return SubAgentInvocation(
         invocation_id=f"invocation://{child_run_id}",
         parent_run_id=fixture.activity.run_id,
         child_run_id=child_run_id,
-        workflow_id=fixture.graph.workflow_id,
-        step_id=fixture.activity.node_id,
+        stage_id=fixture.activity.node_id,
         task_id="task-1",
         task_instance_id="task-instance-1",
         attempt=1,
@@ -103,7 +192,9 @@ def _invocation(fixture, spec: SubAgentSpec) -> SubAgentInvocation:
         input_refs=("artifact://research/input-1",),
         context_envelope=context,
         budget_snapshot=budget,
+        attempt_identity=attempt_identity,
         metadata={"input_refs": ["artifact://research/input-1"]},
+        schema_version=SUBAGENT_INVOCATION_SCHEMA_V3,
     )
 
 
@@ -443,12 +534,18 @@ def test_cross_tenant_or_run_is_rejected_before_materialization(
         fixture,
         HarnessWorkerResult(status="succeeded", output={"result": "ok"}),
     )
-    invocation = replace(
-        invocation,
-        parent_run_id=parent_run_id,
-        child_run_id=f"{parent_run_id}:analyze:task-1",
-        invocation_id=f"invocation://{parent_run_id}:analyze:task-1",
-    )
+    if parent_run_id != fixture.activity.run_id:
+        with pytest.raises(HarnessValidationError) as identity_error:
+            replace(
+                invocation,
+                parent_run_id=parent_run_id,
+                child_run_id=f"{parent_run_id}:analyze:task-1",
+                invocation_id=f"invocation://{parent_run_id}:analyze:task-1",
+            )
+        assert identity_error.value.code == "subagent_invocation_identity_mismatch"
+        assert artifact.write_count == 0
+        assert attempts.put_count == 0
+        return
 
     with pytest.raises(HarnessValidationError) as captured:
         adapter.binding_for_activity(

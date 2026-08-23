@@ -12,6 +12,7 @@ from framework.harness import (
     HarnessGraphActivityResult,
     HarnessGraphCommitKind,
     HarnessGraphDecisionType,
+    HARNESS_GRAPH_ACTIVITY_TASK_CONTEXT_KEY,
     HarnessJoinStatus,
     HarnessNodeInstanceStatus,
     HarnessRunSpec,
@@ -24,12 +25,12 @@ from framework.harness import (
     HarnessStepSpec,
     HarnessWorkerResult,
     InMemoryHarnessEventPort,
+    InMemoryHarnessNodeOutputResource,
     InMemoryHarnessSideEffectStore,
     RunLifecycle,
     RunOutcome,
     harness_worker_candidate_ref,
 )
-from framework.harness.workflow.spec import HarnessWorkflowSpec
 from framework.harness.control_plane.errors import HarnessValidationError
 from framework.harness.graph.dsl import (
     HarnessGraphSpec,
@@ -42,11 +43,22 @@ from framework.harness.graph.dsl import (
 from framework.harness.graph.bindings import (
     HarnessActivityCapabilities,
     HarnessActivityContractBinding,
+    HarnessLeafActivityBinding,
     HarnessRuntimeBindingAuthority,
     HarnessWorkerBinding,
 )
+from framework.harness.graph.definition import (
+    HarnessGraphDefinition,
+    HarnessGraphLeafBinding,
+)
+from framework.harness.graph.activity import HarnessLeafActivityKind, HarnessWorkerType
+from framework.harness.graph.model import HarnessContractKind, HarnessContractReference
+from framework.harness.side_effects.models import HarnessTerminalSideEffectPolicy
 from framework.harness.graph.validation import HarnessGraphPreflightPolicy
 from framework.harness.graph.validation import HarnessGraphPreflight
+from framework.harness.runtime.activity_executor import HarnessGraphPhysicalActivityExecutor
+from framework.harness.runtime.graph_dispatcher import HarnessGraphPhysicalActivityDispatcher
+from framework.shared.attempts import AttemptSupervisor
 
 
 _CREATED_AT = datetime(2026, 7, 31, 4, 0, tzinfo=UTC)
@@ -65,6 +77,27 @@ _PARALLEL_SAFE_SIDE_EFFECT_CAPABILITIES = HarnessSideEffectCapabilities(
     fencing=True,
     reconciliation=True,
 )
+_EXTERNAL_SIDE_EFFECT_STORE: InMemoryHarnessSideEffectStore | None = None
+
+
+def _side_effect_identity(activity: dict, *, terminal: bool = False) -> dict:
+    graph_ref = activity["graph_ref"]
+    graph_contract = graph_ref["graph_ref"]
+    values = {
+        "graph_id": graph_ref["graph_id"],
+        "graph_version": graph_contract["version"],
+        "graph_ref": f"{graph_ref['graph_id']}@{graph_contract['version']}",
+        "graph_checksum": graph_ref["checksum"],
+        "run_id": activity["run_id"],
+        "attempt": activity.get("attempt", 1),
+    }
+    if not terminal:
+        values.update(
+            node_id=activity["node_id"],
+            node_instance_id=activity["node_instance_id"],
+            activity_id=activity["activity_id"],
+        )
+    return values
 
 
 class _FailAfterDecisionProjectionPort(InMemoryHarnessEventPort):
@@ -119,15 +152,15 @@ def test_parallel_all_commits_fork_branch_evidence_and_join_before_successor() -
     result = control_plane.run(run_spec)
 
     assert worker_calls == ["left", "right", "aggregate"]
-    assert result.graph_state is not None
-    assert result.graph_state.lifecycle is RunLifecycle.COMPLETED
-    assert result.graph_state.outcome is RunOutcome.SUCCEEDED
-    assert len(result.graph_state.join_states) == 1
-    join = result.graph_state.join_states[0]
+    assert result.state is not None
+    assert result.state.lifecycle is RunLifecycle.COMPLETED
+    assert result.state.outcome is RunOutcome.SUCCEEDED
+    assert len(result.state.join_states) == 1
+    join = result.state.join_states[0]
     assert join.status is HarnessJoinStatus.SATISFIED
     assert set(join.completed_branch_instances) == {"left-branch", "right-branch"}
     assert set(join.terminal_event_refs) == {"left-branch", "right-branch"}
-    nodes = {item.identity.node_id: item for item in result.graph_state.node_instances}
+    nodes = {item.identity.node_id: item for item in result.state.node_instances}
     assert nodes["left"].identity.branch_path == ("left-branch",)
     assert nodes["right"].identity.branch_path == ("right-branch",)
     assert set(nodes["left"].output_refs) == {"activity_result", "left_output"}
@@ -181,17 +214,18 @@ def test_external_dispatch_respects_physical_parallelism_without_local_execution
         runtime_binding_authority=_external_authority(
             ("left", "right", "aggregate"),
         ),
+        side_effect_store=_required_external_side_effect_store(),
         graph_preflight=_parallel_preflight(max_parallelism=max_parallelism),
         graph_activity_dispatcher=dispatcher,
     ).run(run_spec)
 
-    assert result.graph_state is not None
-    assert result.graph_state.lifecycle is RunLifecycle.RUNNING
-    assert result.graph_state.outcome is RunOutcome.NONE
+    assert result.state is not None
+    assert result.state.lifecycle is RunLifecycle.RUNNING
+    assert result.state.outcome is RunOutcome.NONE
     assert [item.node_id for item in dispatcher.calls] == expected_node_ids
-    assert len(result.graph_state.active_activities) == max_parallelism
-    assert len(result.graph_state.active_activities) <= (
-        result.graph_state.budgets.require("max_parallelism").limit
+    assert len(result.state.active_activities) == max_parallelism
+    assert len(result.state.active_activities) <= (
+        result.state.budgets.require("max_parallelism").limit
     )
 
 
@@ -205,12 +239,13 @@ def test_serial_external_dispatcher_does_not_require_concurrency_protocol() -> N
         runtime_binding_authority=_external_authority(
             ("left", "right", "aggregate"),
         ),
+        side_effect_store=_required_external_side_effect_store(),
         graph_preflight=_parallel_preflight(max_parallelism=1),
         graph_activity_dispatcher=dispatcher,
     ).run(run_spec)
 
-    assert result.graph_state is not None
-    assert result.graph_state.lifecycle is RunLifecycle.RUNNING
+    assert result.state is not None
+    assert result.state.lifecycle is RunLifecycle.RUNNING
     assert [item.node_id for item in dispatcher.calls] == ["left"]
 
 
@@ -223,14 +258,15 @@ def test_external_parallel_results_resume_through_join_and_aggregation() -> None
         runtime_binding_authority=_external_authority(
             ("left", "right", "aggregate"),
         ),
+        side_effect_store=_required_external_side_effect_store(),
         graph_preflight=_parallel_preflight(max_parallelism=2),
         graph_activity_dispatcher=dispatcher,
     )
 
     running = control_plane.run(run_spec)
 
-    assert running.graph_state is not None
-    assert running.graph_state.lifecycle is RunLifecycle.RUNNING
+    assert running.state is not None
+    assert running.state.lifecycle is RunLifecycle.RUNNING
     assert [item.node_id for item in dispatcher.calls] == ["left", "right"]
     for index, activity in enumerate(tuple(dispatcher.calls), start=1):
         _accept_external_result(
@@ -243,8 +279,8 @@ def test_external_parallel_results_resume_through_join_and_aggregation() -> None
 
     aggregation_running = control_plane.recover_and_run(run_spec)
 
-    assert aggregation_running.graph_state is not None
-    assert aggregation_running.graph_state.lifecycle is RunLifecycle.RUNNING
+    assert aggregation_running.state is not None
+    assert aggregation_running.state.lifecycle is RunLifecycle.RUNNING
     assert [item.node_id for item in dispatcher.calls] == [
         "left",
         "right",
@@ -260,9 +296,9 @@ def test_external_parallel_results_resume_through_join_and_aggregation() -> None
 
     completed = control_plane.recover_and_run(run_spec)
 
-    assert completed.graph_state is not None
-    assert completed.graph_state.lifecycle is RunLifecycle.COMPLETED
-    assert completed.graph_state.outcome is RunOutcome.SUCCEEDED
+    assert completed.state is not None
+    assert completed.state.lifecycle is RunLifecycle.COMPLETED
+    assert completed.state.outcome is RunOutcome.SUCCEEDED
     assert [item.node_id for item in dispatcher.calls] == [
         "left",
         "right",
@@ -299,9 +335,9 @@ def test_parallel_all_recovers_after_fork_projection_without_reopening_scope() -
 
     recovered = _control_plane(port, worker_calls).recover_and_run(run_spec)
 
-    assert recovered.graph_state is not None
-    assert recovered.graph_state.outcome is RunOutcome.SUCCEEDED
-    assert [item.join_instance_id for item in recovered.graph_state.join_states] == [
+    assert recovered.state is not None
+    assert recovered.state.outcome is RunOutcome.SUCCEEDED
+    assert [item.join_instance_id for item in recovered.state.join_states] == [
         join_instance_id
     ]
     recovery = port.recover_graph(run_spec.run_id)
@@ -322,14 +358,14 @@ def test_parallel_any_commits_winner_then_cancels_undispatched_loser() -> None:
 
     result = _control_plane(port, worker_calls).run(run_spec)
 
-    assert result.graph_state is not None
-    assert result.graph_state.outcome is RunOutcome.SUCCEEDED
+    assert result.state is not None
+    assert result.state.outcome is RunOutcome.SUCCEEDED
     assert worker_calls == ["left", "aggregate"]
-    join = result.graph_state.join_states[0]
+    join = result.state.join_states[0]
     assert join.status is HarnessJoinStatus.SATISFIED
     assert join.winner_branch_id == "left-branch"
     assert set(join.completed_branch_instances) == {"left-branch", "right-branch"}
-    nodes = {item.identity.node_id: item for item in result.graph_state.node_instances}
+    nodes = {item.identity.node_id: item for item in result.state.node_instances}
     assert nodes["right"].status is HarnessNodeInstanceStatus.CANCELLED
 
     recovery = port.recover_graph(run_spec.run_id)
@@ -359,10 +395,10 @@ def test_parallel_any_wait_for_losers_preserves_late_verified_result() -> None:
 
     result = _control_plane(port, worker_calls).run(run_spec)
 
-    assert result.graph_state is not None
-    assert result.graph_state.outcome is RunOutcome.SUCCEEDED
+    assert result.state is not None
+    assert result.state.outcome is RunOutcome.SUCCEEDED
     assert worker_calls == ["left", "right", "aggregate"]
-    join = result.graph_state.join_states[0]
+    join = result.state.join_states[0]
     assert join.winner_branch_id == "left-branch"
     assert set(join.completed_branch_instances) == {"left-branch", "right-branch"}
     recovery = port.recover_graph(run_spec.run_id)
@@ -382,16 +418,21 @@ def test_parallel_any_all_failed_records_aggregate_failure_without_winner() -> N
         worker_calls.append(task["step_id"])
         return HarnessWorkerResult("failed", error=f"{task['step_id']} failed")
 
-    result = HarnessControlPlane(
+    store, authority = _callable_authority(
+        ("left", "right", "aggregate"),
+        worker,
+    )
+    result = _local_control_plane(
         event_port=port,
-        worker_registry={step_id: worker for step_id in ("left", "right", "aggregate")},
+        side_effect_store=store,
+        runtime_binding_authority=authority,
         graph_preflight=_parallel_preflight(),
     ).run(run_spec)
 
-    assert result.graph_state is not None
-    assert result.graph_state.outcome is RunOutcome.FAILED
+    assert result.state is not None
+    assert result.state.outcome is RunOutcome.FAILED
     assert worker_calls == ["left", "right"]
-    join = result.graph_state.join_states[0]
+    join = result.state.join_states[0]
     assert join.status is HarnessJoinStatus.FAILED
     assert join.winner_branch_id is None
     recovery = port.recover_graph(run_spec.run_id)
@@ -405,19 +446,16 @@ def test_parallel_any_all_failed_records_aggregate_failure_without_winner() -> N
 
 
 def test_parallel_any_preserves_committed_loser_side_effect_outcome() -> None:
-    workflow = HarnessWorkflowSpec(
-        workflow_id="parallel-any-effects",
-        steps=tuple(
+    activities = tuple(
             HarnessStepSpec(
                 step_id,
-                "artifact",
+                HarnessWorkerType.FUNCTION,
                 output_key=f"{step_id}_output",
                 side_effect_handler="parallel.publish@1",
             )
             for step_id in ("left", "right")
-        ),
-        entry_step_id="left",
-        graph=HarnessGraphSpec(
+        )
+    graph = HarnessGraphSpec(
             "parallel-any-effects",
             ParallelAny(
                 "fork",
@@ -428,22 +466,23 @@ def test_parallel_any_preserves_committed_loser_side_effect_outcome() -> None:
                 ),
                 cancellation_policy="wait_for_losers",
             ),
-        ),
-    )
-    run_spec = HarnessRunSpec(
+        )
+    run_spec = _graph_run_spec(
         "run-parallel-any-effects",
-        workflow,
+        graph,
+        activities,
         metadata={
             "identity_scope_ref": _IDENTITY_SCOPE_REF,
             "subject_scope_ref": _SUBJECT_SCOPE_REF,
         },
-        created_at=_CREATED_AT,
     )
     store = InMemoryHarnessSideEffectStore()
     handler = CountingHarnessSideEffectHandler(store)
 
     def worker(task: dict) -> HarnessWorkerResult:
-        output = {"candidate": task["step_id"]}
+        step_id = task["step_id"]
+        graph_activity = task[HARNESS_GRAPH_ACTIVITY_TASK_CONTEXT_KEY]["activity"]
+        output = {f"{step_id}_output": step_id}
         candidate = {
             "status": "succeeded",
             "output": output,
@@ -456,42 +495,54 @@ def test_parallel_any_preserves_committed_loser_side_effect_outcome() -> None:
             "succeeded",
             output=output,
             effect_intent=HarnessSideEffectIntent(
-                effect_id=f"effect-{task['step_id']}",
+                effect_id=f"effect-{step_id}",
                 kind="artifact",
-                run_id=task["run_id"],
+                **_side_effect_identity(graph_activity),
                 origin="worker",
                 atomic_group="parallel-effects",
                 identity_scope_ref=_IDENTITY_SCOPE_REF,
                 subject_scope_ref=_SUBJECT_SCOPE_REF,
-                attempt=task["harness_activity"]["attempt"],
-                step_id=task["step_id"],
+                step_id=step_id,
                 worker_result_ref=harness_worker_candidate_ref(candidate),
                 candidate_checksum=checksum_for(output),
                 handler="parallel.publish@1",
             ),
         )
 
-    result = HarnessControlPlane(
+    side_effect_registry = HarnessSideEffectRegistry(
+        (
+            HarnessSideEffectHandlerBinding(
+                "parallel.publish@1",
+                "artifact",
+                handler,
+            ),
+        )
+    )
+    workers = tuple(
+        _CallableFunctionWorker(worker_id, worker)
+        for worker_id in ("left", "right")
+    )
+    _, authority = _local_authority(
+        workers,
+        side_effect_registry=side_effect_registry,
+        side_effect_store=store,
+    )
+    result = _local_control_plane(
         event_port=InMemoryHarnessEventPort(),
-        worker_registry={"left": worker, "right": worker},
-        side_effect_registry=HarnessSideEffectRegistry(
-            (
-                HarnessSideEffectHandlerBinding(
-                    "parallel.publish@1",
-                    "artifact",
-                    handler,
-                ),
-            )
-        ),
+        runtime_binding_authority=authority,
         side_effect_store=store,
         graph_preflight=_parallel_preflight(),
     ).run(run_spec)
 
-    assert result.graph_state is not None
-    assert result.graph_state.join_states[0].winner_branch_id == "left-branch"
-    assert set(result.side_effect_outcomes) == {"left", "right"}
+    assert result.state is not None
+    assert result.state.join_states[0].winner_branch_id == "left-branch"
+    outcome_keys = set(result.side_effect_outcomes)
+    assert len(outcome_keys) == 3
+    assert sum(key.startswith("terminal:") for key in outcome_keys) == 1
+    assert sum(":effect:effect-left" in key for key in outcome_keys) == 1
+    assert sum(":effect:effect-right" in key for key in outcome_keys) == 1
     assert handler.call_count == 2
-    assert store.outcome_write_count == 2
+    assert store.outcome_write_count == 3
 
 
 def test_parallel_side_effect_preflight_requires_fenced_binding_and_store() -> None:
@@ -500,23 +551,26 @@ def test_parallel_side_effect_preflight_requires_fenced_binding_and_store() -> N
     store = InMemoryHarnessSideEffectStore()
     handler = CountingHarnessSideEffectHandler(store)
     worker_calls: list[str] = []
+    side_effect_registry = HarnessSideEffectRegistry(
+        (
+            HarnessSideEffectHandlerBinding(
+                "parallel.fenced@1",
+                "artifact",
+                handler,
+            ),
+        )
+    )
+    _, authority = _callable_authority(
+        ("left", "right"),
+        _parallel_effect_worker(worker_calls),
+        side_effect_registry=side_effect_registry,
+        side_effect_store=store,
+    )
 
     with pytest.raises(HarnessValidationError) as captured:
         HarnessControlPlane(
             event_port=port,
-            worker_registry={
-                step_id: _parallel_effect_worker(worker_calls)
-                for step_id in ("left", "right")
-            },
-            side_effect_registry=HarnessSideEffectRegistry(
-                (
-                    HarnessSideEffectHandlerBinding(
-                        "parallel.fenced@1",
-                        "artifact",
-                        handler,
-                    ),
-                )
-            ),
+            runtime_binding_authority=authority,
             side_effect_store=store,
             graph_preflight=_parallel_preflight(max_parallelism=2),
         ).run(run_spec)
@@ -552,13 +606,14 @@ def test_parallel_side_effects_commit_through_fenced_handler_and_store() -> None
         runtime_binding_authority=_external_authority(
             ("left", "right"),
             side_effect_registry=side_effect_registry,
+            side_effect_store=store,
         ),
         side_effect_store=store,
         graph_preflight=_parallel_preflight(max_parallelism=2),
         graph_activity_dispatcher=dispatcher,
     )
     running = control_plane.run(run_spec)
-    assert running.graph_state is not None
+    assert running.state is not None
     assert [item.node_id for item in dispatcher.calls] == ["left", "right"]
     for index, activity in enumerate(tuple(dispatcher.calls), start=1):
         _accept_external_effect_result(
@@ -571,13 +626,18 @@ def test_parallel_side_effects_commit_through_fenced_handler_and_store() -> None
 
     result = control_plane.recover_and_run(run_spec)
 
-    assert result.graph_state is not None
-    assert result.graph_state.outcome is RunOutcome.SUCCEEDED
+    assert result.state is not None
+    assert result.state.outcome is RunOutcome.SUCCEEDED
     assert handler.serial_calls == 0
     assert handler.fenced_calls == 2
-    assert store.outcome_write_count == 2
-    assert set(result.side_effect_outcomes) == {"left", "right"}
-    for outcome in result.side_effect_outcomes.values():
+    assert store.outcome_write_count == 3
+    outcome_keys = set(result.side_effect_outcomes)
+    assert len(outcome_keys) == 3
+    assert sum(key.startswith("terminal:") for key in outcome_keys) == 1
+    assert sum(":effect:effect-run-parallel-fenced-effects-left" in key for key in outcome_keys) == 1
+    assert sum(":effect:effect-run-parallel-fenced-effects-right" in key for key in outcome_keys) == 1
+    for key in sorted(key for key in outcome_keys if not key.startswith("terminal:")):
+        outcome = result.side_effect_outcomes[key]
         assert outcome.attempt_id is not None
         assert outcome.fencing_generation == 1
 
@@ -703,7 +763,7 @@ def test_success_after_lease_expiry_reconciles_same_fenced_attempt() -> None:
     )
 
     assert handler.calls == ["commit", "cancel", "reconcile"]
-    assert outcome.schema_version == "newsroom.harness-side-effect-outcome/v2"
+    assert outcome.schema_version == "newsroom.harness-side-effect-outcome/v3"
     assert outcome.fencing_generation == 1
     attempt = store.get_attempt(
         effect_id=intent.effect_id,
@@ -729,9 +789,9 @@ def test_parallel_any_recovers_committed_winner_without_reselection() -> None:
 
     result = _control_plane(port, worker_calls).recover_and_run(run_spec)
 
-    assert result.graph_state is not None
-    assert result.graph_state.outcome is RunOutcome.SUCCEEDED
-    assert result.graph_state.join_states[0].winner_branch_id == "left-branch"
+    assert result.state is not None
+    assert result.state.outcome is RunOutcome.SUCCEEDED
+    assert result.state.join_states[0].winner_branch_id == "left-branch"
     recovery = port.recover_graph(run_spec.run_id)
     assert (
         sum(
@@ -764,9 +824,9 @@ def test_parallel_any_recovers_before_winner_commit_without_worker_reexecution()
 
     result = _control_plane(port, worker_calls).recover_and_run(run_spec)
 
-    assert result.graph_state is not None
-    assert result.graph_state.outcome is RunOutcome.SUCCEEDED
-    assert result.graph_state.join_states[0].winner_branch_id == "left-branch"
+    assert result.state is not None
+    assert result.state.outcome is RunOutcome.SUCCEEDED
+    assert result.state.join_states[0].winner_branch_id == "left-branch"
     assert tuple(worker_calls[: len(calls_before_restart)]) == calls_before_restart
     assert worker_calls == ["left", "aggregate"]
     recovery = port.recover_graph(run_spec.run_id)
@@ -790,9 +850,9 @@ def test_parallel_all_recovers_committed_join_without_reexecution() -> None:
 
     result = _control_plane(port, worker_calls).recover_and_run(run_spec)
 
-    assert result.graph_state is not None
-    assert result.graph_state.outcome is RunOutcome.SUCCEEDED
-    assert result.graph_state.join_states[0].status is HarnessJoinStatus.SATISFIED
+    assert result.state is not None
+    assert result.state.outcome is RunOutcome.SUCCEEDED
+    assert result.state.join_states[0].status is HarnessJoinStatus.SATISFIED
     recovery = port.recover_graph(run_spec.run_id)
     assert (
         sum(
@@ -818,15 +878,18 @@ def test_parallel_all_fail_fast_cancels_undispatched_sibling_before_join_failure
         worker_calls.append(task["step_id"])
         if task["step_id"] == "bad":
             return HarnessWorkerResult("failed", error="expected")
-        return HarnessWorkerResult("succeeded", output={"unexpected": True})
+        return HarnessWorkerResult(
+            "succeeded",
+            output={f"{task['step_id']}_output": True},
+        )
 
     result = _failure_control_plane(port, worker).run(run_spec)
 
-    assert result.graph_state is not None
-    assert result.graph_state.outcome is RunOutcome.FAILED
+    assert result.state is not None
+    assert result.state.outcome is RunOutcome.FAILED
     assert worker_calls == ["bad"]
     states = {
-        item.identity.node_id: item.status for item in result.graph_state.node_instances
+        item.identity.node_id: item.status for item in result.state.node_instances
     }
     assert states["bad"] is HarnessNodeInstanceStatus.FAILED
     assert states["good"] is HarnessNodeInstanceStatus.CANCELLED
@@ -857,12 +920,15 @@ def test_parallel_all_wait_all_runs_remaining_branch_before_join_failure() -> No
         worker_calls.append(task["step_id"])
         if task["step_id"] == "bad":
             return HarnessWorkerResult("failed", error="expected")
-        return HarnessWorkerResult("succeeded", output={"ok": True})
+        return HarnessWorkerResult(
+            "succeeded",
+            output={f"{task['step_id']}_output": True},
+        )
 
     result = _failure_control_plane(port, worker).run(run_spec)
 
-    assert result.graph_state is not None
-    assert result.graph_state.outcome is RunOutcome.FAILED
+    assert result.state is not None
+    assert result.state.outcome is RunOutcome.FAILED
     assert worker_calls == ["bad", "good"]
     recovery = port.recover_graph(run_spec.run_id)
     good_completion = _decision(
@@ -900,12 +966,13 @@ def test_parallel_all_fail_fast_waits_for_confirmed_active_sibling_termination(
     control_plane = HarnessControlPlane(
         event_port=port,
         runtime_binding_authority=_external_authority(("bad", "good")),
+        side_effect_store=_required_external_side_effect_store(),
         graph_preflight=_parallel_preflight(max_parallelism=2),
         graph_activity_dispatcher=dispatcher,
     )
 
     running = control_plane.run(run_spec)
-    assert running.graph_state is not None
+    assert running.state is not None
     assert [item.node_id for item in dispatcher.calls] == ["bad", "good"]
     bad_activity, good_activity = dispatcher.calls
 
@@ -919,12 +986,12 @@ def test_parallel_all_fail_fast_waits_for_confirmed_active_sibling_termination(
         offset=100,
     )
     pending_cancel = control_plane.recover_and_run(run_spec)
-    assert pending_cancel.graph_state is not None
-    assert pending_cancel.graph_state.lifecycle is RunLifecycle.RUNNING
-    assert pending_cancel.graph_state.join_states[0].status is HarnessJoinStatus.OPEN
+    assert pending_cancel.state is not None
+    assert pending_cancel.state.lifecycle is RunLifecycle.RUNNING
+    assert pending_cancel.state.join_states[0].status is HarnessJoinStatus.OPEN
     good_node = next(
         item
-        for item in pending_cancel.graph_state.node_instances
+        for item in pending_cancel.state.node_instances
         if item.identity.node_id == "good"
     )
     assert good_node.status is HarnessNodeInstanceStatus.CANCEL_REQUESTED
@@ -941,9 +1008,9 @@ def test_parallel_all_fail_fast_waits_for_confirmed_active_sibling_termination(
     )
     if termination_confirmed:
         completed = control_plane.recover_and_run(run_spec)
-        assert completed.graph_state is not None
-        assert completed.graph_state.lifecycle is expected_lifecycle
-        assert completed.graph_state.outcome is expected_outcome
+        assert completed.state is not None
+        assert completed.state.lifecycle is expected_lifecycle
+        assert completed.state.outcome is expected_outcome
         recovery = port.recover_graph(run_spec.run_id)
         cancel = _decision(
             recovery,
@@ -987,30 +1054,38 @@ def test_parallel_all_composite_branch_failure_reaches_owning_join(
         worker_calls.append(task["step_id"])
         if task["step_id"] == "bad":
             return HarnessWorkerResult("failed", error="expected")
-        return HarnessWorkerResult("succeeded", output={"ok": True})
+        return HarnessWorkerResult(
+            "succeeded",
+            output={f"{task['step_id']}_output": True},
+        )
 
-    result = HarnessControlPlane(
+    store, authority = _callable_authority(
+        ("bad", "never", "good"),
+        worker,
+    )
+    result = _local_control_plane(
         event_port=port,
-        worker_registry={step_id: worker for step_id in ("bad", "never", "good")},
+        side_effect_store=store,
+        runtime_binding_authority=authority,
         graph_preflight=_parallel_preflight(),
     ).run(run_spec)
 
-    assert result.graph_state is not None
-    assert result.graph_state.outcome is RunOutcome.FAILED
+    assert result.state is not None
+    assert result.state.outcome is RunOutcome.FAILED
     assert worker_calls == expected_calls
     assert "never" not in worker_calls
-    join = result.graph_state.join_states[0]
+    join = result.state.join_states[0]
     assert join.status is HarnessJoinStatus.FAILED
     assert set(join.completed_branch_instances) == {"bad-branch", "good-branch"}
     bad_instance_id = join.completed_branch_instances["bad-branch"]
     bad_instance = next(
         item
-        for item in result.graph_state.node_instances
+        for item in result.state.node_instances
         if item.instance_id == bad_instance_id
     )
     assert bad_instance.identity.node_id == "bad"
     if failure_policy == "compensate":
-        assert result.graph_state.metadata["execution_mode"] == "compensating"
+        assert result.state.metadata["execution_mode"] == "compensating"
 
 
 @pytest.mark.parametrize(
@@ -1042,6 +1117,7 @@ def test_parallel_preflight_rejects_unsafe_dispatcher_despite_safe_binding(
             runtime_binding_authority=_external_authority(
                 ("left", "right", "aggregate"),
             ),
+            side_effect_store=_required_external_side_effect_store(),
             graph_preflight=_parallel_preflight(max_parallelism=2),
             graph_activity_dispatcher=dispatcher,
         ).run(run_spec)
@@ -1068,6 +1144,7 @@ def test_parallel_preflight_rejects_dispatcher_without_cancellation_capability()
             runtime_binding_authority=_external_authority(
                 ("left", "right", "aggregate"),
             ),
+            side_effect_store=_required_external_side_effect_store(),
             graph_preflight=_parallel_preflight(max_parallelism=2),
             graph_activity_dispatcher=dispatcher,
         ).run(run_spec)
@@ -1092,6 +1169,7 @@ def test_parallel_dispatch_revalidates_pinned_dispatcher_capabilities() -> None:
             runtime_binding_authority=_external_authority(
                 ("left", "right", "aggregate"),
             ),
+            side_effect_store=_required_external_side_effect_store(),
             graph_preflight=_parallel_preflight(max_parallelism=2),
             graph_activity_dispatcher=dispatcher,
         ).run(run_spec)
@@ -1114,6 +1192,7 @@ def test_non_success_activity_result_requires_explicit_termination_confirmation(
         runtime_binding_authority=_external_authority(
             ("left", "right", "aggregate"),
         ),
+        side_effect_store=_required_external_side_effect_store(),
         graph_preflight=_parallel_preflight(max_parallelism=1),
         graph_activity_dispatcher=dispatcher,
     )
@@ -1144,6 +1223,7 @@ def test_unconfirmed_non_success_keeps_parallel_slot_and_blocks_replacement(
         runtime_binding_authority=_external_authority(
             ("left", "right", "aggregate"),
         ),
+        side_effect_store=_required_external_side_effect_store(),
         graph_preflight=_parallel_preflight(max_parallelism=1),
         graph_activity_dispatcher=dispatcher,
     )
@@ -1168,45 +1248,36 @@ def test_unconfirmed_non_success_keeps_parallel_slot_and_blocks_replacement(
     ]
     assert [item.node_id for item in dispatcher.calls] == ["left"]
     resumed = control_plane.recover_and_run(run_spec)
-    assert resumed.graph_state == halted
+    assert resumed.state == halted
     assert [item.node_id for item in dispatcher.calls] == ["left"]
 
 
 def _run_spec(run_id: str) -> HarnessRunSpec:
-    workflow = HarnessWorkflowSpec(
-        workflow_id=f"workflow-{run_id}",
-        workflow_version="2",
-        steps=tuple(
-            HarnessStepSpec(step_id, "script", output_key=f"{step_id}_output")
-            for step_id in ("left", "right", "aggregate")
-        ),
-        entry_step_id="left",
-        graph=HarnessGraphSpec(
-            graph_id=f"graph-{run_id}",
-            root=Sequence(
-                (
-                    ParallelAll(
-                        "fork",
-                        "join",
-                        (
-                            ParallelBranch(
-                                "left-branch",
-                                StepRef("left"),
-                                "parallel.left",
-                            ),
-                            ParallelBranch(
-                                "right-branch",
-                                StepRef("right"),
-                                "parallel.right",
-                            ),
-                        ),
+    steps = tuple(
+        HarnessStepSpec(
+            step_id,
+            HarnessWorkerType.FUNCTION,
+            output_key=f"{step_id}_output",
+        )
+        for step_id in ("left", "right", "aggregate")
+    )
+    graph = HarnessGraphSpec(
+        graph_id=f"graph-{run_id}",
+        root=Sequence(
+            (
+                ParallelAll(
+                    "fork",
+                    "join",
+                    (
+                        ParallelBranch("left-branch", StepRef("left"), "parallel.left"),
+                        ParallelBranch("right-branch", StepRef("right"), "parallel.right"),
                     ),
-                    StepRef("aggregate"),
-                )
-            ),
+                ),
+                StepRef("aggregate"),
+            )
         ),
     )
-    return HarnessRunSpec(run_id, workflow, created_at=_CREATED_AT)
+    return _graph_run_spec(run_id, graph, steps)
 
 
 def _parallel_any_run_spec(
@@ -1214,41 +1285,32 @@ def _parallel_any_run_spec(
     *,
     cancellation_policy: str = "cancel_losers",
 ) -> HarnessRunSpec:
-    workflow = HarnessWorkflowSpec(
-        workflow_id=f"workflow-{run_id}",
-        workflow_version="2",
-        steps=tuple(
-            HarnessStepSpec(step_id, "script", output_key=f"{step_id}_output")
-            for step_id in ("left", "right", "aggregate")
-        ),
-        entry_step_id="left",
-        graph=HarnessGraphSpec(
-            graph_id=f"graph-{run_id}",
-            root=Sequence(
-                (
-                    ParallelAny(
-                        "fork",
-                        "join",
-                        (
-                            ParallelBranch(
-                                "left-branch",
-                                StepRef("left"),
-                                "parallel.left",
-                            ),
-                            ParallelBranch(
-                                "right-branch",
-                                StepRef("right"),
-                                "parallel.right",
-                            ),
-                        ),
-                        cancellation_policy=cancellation_policy,
+    steps = tuple(
+        HarnessStepSpec(
+            step_id,
+            HarnessWorkerType.FUNCTION,
+            output_key=f"{step_id}_output",
+        )
+        for step_id in ("left", "right", "aggregate")
+    )
+    graph = HarnessGraphSpec(
+        graph_id=f"graph-{run_id}",
+        root=Sequence(
+            (
+                ParallelAny(
+                    "fork",
+                    "join",
+                    (
+                        ParallelBranch("left-branch", StepRef("left"), "parallel.left"),
+                        ParallelBranch("right-branch", StepRef("right"), "parallel.right"),
                     ),
-                    StepRef("aggregate"),
-                )
-            ),
+                    cancellation_policy=cancellation_policy,
+                ),
+                StepRef("aggregate"),
+            )
         ),
     )
-    return HarnessRunSpec(run_id, workflow, created_at=_CREATED_AT)
+    return _graph_run_spec(run_id, graph, steps)
 
 
 def _parallel_all_failure_run_spec(
@@ -1256,27 +1318,23 @@ def _parallel_all_failure_run_spec(
     *,
     failure_policy: str,
 ) -> HarnessRunSpec:
-    workflow = HarnessWorkflowSpec(
-        workflow_id=f"workflow-{run_id}",
-        steps=(
-            HarnessStepSpec("bad", "script"),
-            HarnessStepSpec("good", "script"),
-        ),
-        entry_step_id="bad",
-        graph=HarnessGraphSpec(
-            graph_id=f"graph-{run_id}",
-            root=ParallelAll(
-                "fork",
-                "join",
-                (
-                    ParallelBranch("bad-branch", StepRef("bad"), "parallel.bad"),
-                    ParallelBranch("good-branch", StepRef("good"), "parallel.good"),
-                ),
-                failure_policy=failure_policy,
+    steps = (
+        HarnessStepSpec("bad", HarnessWorkerType.FUNCTION, output_key="bad_output"),
+        HarnessStepSpec("good", HarnessWorkerType.FUNCTION, output_key="good_output"),
+    )
+    graph = HarnessGraphSpec(
+        graph_id=f"graph-{run_id}",
+        root=ParallelAll(
+            "fork",
+            "join",
+            (
+                ParallelBranch("bad-branch", StepRef("bad"), "parallel.bad"),
+                ParallelBranch("good-branch", StepRef("good"), "parallel.good"),
             ),
+            failure_policy=failure_policy,
         ),
     )
-    return HarnessRunSpec(run_id, workflow, created_at=_CREATED_AT)
+    return _graph_run_spec(run_id, graph, steps)
 
 
 def _parallel_all_composite_failure_run_spec(
@@ -1284,59 +1342,242 @@ def _parallel_all_composite_failure_run_spec(
     *,
     failure_policy: str,
 ) -> HarnessRunSpec:
-    workflow = HarnessWorkflowSpec(
-        workflow_id=f"workflow-{run_id}",
-        steps=tuple(
-            HarnessStepSpec(step_id, "script") for step_id in ("bad", "never", "good")
-        ),
-        entry_step_id="bad",
-        graph=HarnessGraphSpec(
-            graph_id=f"graph-{run_id}",
-            root=ParallelAll(
-                "fork",
-                "join",
-                (
-                    ParallelBranch(
-                        "bad-branch",
-                        Sequence((StepRef("bad"), StepRef("never"))),
-                        "parallel.bad",
-                    ),
-                    ParallelBranch(
-                        "good-branch",
-                        StepRef("good"),
-                        "parallel.good",
-                    ),
+    steps = tuple(
+        HarnessStepSpec(
+            step_id,
+            HarnessWorkerType.FUNCTION,
+            output_key=f"{step_id}_output",
+        )
+        for step_id in ("bad", "never", "good")
+    )
+    graph = HarnessGraphSpec(
+        graph_id=f"graph-{run_id}",
+        root=ParallelAll(
+            "fork",
+            "join",
+            (
+                ParallelBranch(
+                    "bad-branch",
+                    Sequence((StepRef("bad"), StepRef("never"))),
+                    "parallel.bad",
                 ),
-                failure_policy=failure_policy,
+                ParallelBranch("good-branch", StepRef("good"), "parallel.good"),
             ),
+            failure_policy=failure_policy,
         ),
     )
-    return HarnessRunSpec(run_id, workflow, created_at=_CREATED_AT)
+    return _graph_run_spec(run_id, graph, steps)
 
 
 def _control_plane(
     port: InMemoryHarnessEventPort,
     worker_calls: list[str],
 ) -> HarnessControlPlane:
-    def worker(task: dict) -> HarnessWorkerResult:
-        worker_calls.append(task["step_id"])
-        return HarnessWorkerResult(
-            "succeeded",
-            output={"step_id": task["step_id"]},
-        )
+    workers = tuple(
+        _RecordingFunctionWorker(worker_id, worker_calls)
+        for worker_id in ("left", "right", "aggregate")
+    )
+    store, authority = _local_authority(workers)
 
-    return HarnessControlPlane(
+    control_plane = HarnessControlPlane(
         event_port=port,
-        worker_registry={step_id: worker for step_id in ("left", "right", "aggregate")},
+        side_effect_store=store,
+        runtime_binding_authority=authority,
         graph_preflight=_parallel_preflight(),
     )
+    _install_local_physical_dispatcher(control_plane)
+    return control_plane
 
 
 def _failure_control_plane(port, worker) -> HarnessControlPlane:
-    return HarnessControlPlane(
+    workers = (
+        _CallableFunctionWorker("bad", worker),
+        _CallableFunctionWorker("good", worker),
+    )
+    store, authority = _local_authority(workers)
+    control_plane = HarnessControlPlane(
         event_port=port,
-        worker_registry={"bad": worker, "good": worker},
+        side_effect_store=store,
+        runtime_binding_authority=authority,
         graph_preflight=_parallel_preflight(),
+    )
+    _install_local_physical_dispatcher(control_plane)
+    return control_plane
+
+
+def _install_local_physical_dispatcher(
+    control_plane: HarnessControlPlane,
+) -> None:
+    resource = InMemoryHarnessNodeOutputResource()
+    executor = HarnessGraphPhysicalActivityExecutor(
+        binding_authority=control_plane.runtime_binding_authority,
+        input_resolver=control_plane,
+        node_output_resource=resource,
+        result_committer=None,
+        supervisor=AttemptSupervisor(),
+    )
+    dispatcher = HarnessGraphPhysicalActivityDispatcher(
+        executor=executor,
+        graph_resolver=control_plane.graph_for_activity,
+        input_resolver=control_plane,
+        accept=control_plane.accept_graph_activity_for_execution,
+        record_call_marker=control_plane.record_graph_activity_call_marker,
+        record_result=control_plane.record_graph_activity_result_event,
+        apply_result=control_plane.commit_physical_graph_result,
+    )
+    control_plane.install_graph_activity_dispatcher(dispatcher)
+
+
+def _local_control_plane(**kwargs) -> HarnessControlPlane:
+    control_plane = HarnessControlPlane(**kwargs)
+    _install_local_physical_dispatcher(control_plane)
+    return control_plane
+
+
+def _graph_run_spec(
+    run_id: str,
+    graph: HarnessGraphSpec,
+    activities: tuple[HarnessStepSpec, ...],
+    *,
+    metadata: dict[str, str] | None = None,
+) -> HarnessRunSpec:
+    definition = HarnessGraphDefinition(
+        graph_id=graph.graph_id,
+        graph_version="1",
+        root=graph,
+        activities=activities,
+        leaf_activity_bindings=tuple(
+            HarnessGraphLeafBinding(
+                activity_id=step.step_id,
+                leaf_activity_kind=HarnessLeafActivityKind.FUNCTION,
+                worker_ref=HarnessContractReference(
+                    HarnessContractKind.WORKER,
+                    str(step.metadata.get("worker_id", step.step_id)),
+                    str(step.metadata.get("worker_version", "1")),
+                ),
+                activity_ref=HarnessContractReference(
+                    HarnessContractKind.ACTIVITY,
+                    "newsroom.harness-worker-activity",
+                    "v1",
+                ),
+            )
+            for step in activities
+        ),
+        task_plan_stage_bindings=(),
+        committed_output_bindings=(),
+        repair_bindings=(),
+        terminal_side_effect_policy=_terminal_policy(),
+    )
+    return HarnessRunSpec(
+        run_id,
+        graph=definition,
+        metadata={
+            "identity_scope_ref": _IDENTITY_SCOPE_REF,
+            "subject_scope_ref": _SUBJECT_SCOPE_REF,
+            **(metadata or {}),
+        },
+        created_at=_CREATED_AT,
+    )
+
+
+class _RecordingFunctionWorker:
+    worker_version = "1"
+    worker_type = HarnessWorkerType.FUNCTION
+
+    def __init__(self, worker_id: str, calls: list[str]) -> None:
+        self.worker_id = worker_id
+        self._calls = calls
+
+    def execute(self, task: dict) -> HarnessWorkerResult:
+        self._calls.append(task["step_id"])
+        return HarnessWorkerResult("succeeded", output={"step_id": task["step_id"]})
+
+
+class _CallableFunctionWorker:
+    worker_version = "1"
+    worker_type = HarnessWorkerType.FUNCTION
+
+    def __init__(self, worker_id: str, execute) -> None:
+        self.worker_id = worker_id
+        self._execute = execute
+
+    def execute(self, task: dict) -> HarnessWorkerResult:
+        return self._execute(task)
+
+
+def _local_authority(
+    workers: tuple[_RecordingFunctionWorker | _CallableFunctionWorker, ...],
+    *,
+    side_effect_registry: HarnessSideEffectRegistry | None = None,
+    side_effect_store: InMemoryHarnessSideEffectStore | None = None,
+) -> tuple[InMemoryHarnessSideEffectStore, HarnessRuntimeBindingAuthority]:
+    store = side_effect_store or InMemoryHarnessSideEffectStore()
+    bindings = list(side_effect_registry.bindings()) if side_effect_registry else []
+    if not any(str(item.reference) == "test.terminal@1" for item in bindings):
+        bindings.append(
+            HarnessSideEffectHandlerBinding(
+                "test.terminal@1",
+                "artifact",
+                CountingHarnessSideEffectHandler(store, disposition="accepted"),
+            )
+        )
+    terminal_registry = HarnessSideEffectRegistry(bindings)
+    activity_ref = HarnessContractReference(
+        HarnessContractKind.ACTIVITY,
+        "newsroom.harness-worker-activity",
+        "v1",
+    )
+    worker_bindings = tuple(
+        HarnessWorkerBinding(
+            HarnessContractReference(
+                HarnessContractKind.WORKER,
+                worker.worker_id,
+                worker.worker_version,
+            ),
+            HarnessWorkerType.FUNCTION,
+            worker,
+        )
+        for worker in workers
+    )
+    return store, HarnessRuntimeBindingAuthority(
+        workers=worker_bindings,
+        activities=(HarnessActivityContractBinding(activity_ref, _ParallelSafeActivity()),),
+        leaf_activities=tuple(
+            HarnessLeafActivityBinding(
+                HarnessLeafActivityKind.FUNCTION,
+                binding.reference,
+                activity_ref,
+            )
+            for binding in worker_bindings
+        ),
+        side_effect_registry=terminal_registry,
+    )
+
+
+def _callable_authority(
+    worker_ids: tuple[str, ...],
+    execute,
+    *,
+    side_effect_registry: HarnessSideEffectRegistry | None = None,
+    side_effect_store: InMemoryHarnessSideEffectStore | None = None,
+) -> tuple[InMemoryHarnessSideEffectStore, HarnessRuntimeBindingAuthority]:
+    workers = tuple(_CallableFunctionWorker(worker_id, execute) for worker_id in worker_ids)
+    return _local_authority(
+        workers,
+        side_effect_registry=side_effect_registry,
+        side_effect_store=side_effect_store,
+    )
+
+
+def _terminal_policy() -> HarnessTerminalSideEffectPolicy:
+    return HarnessTerminalSideEffectPolicy(
+        policy_id="test.terminal",
+        version="1",
+        handler="test.terminal@1",
+        kind="artifact",
+        requires_approval=False,
+        retry_limit=1,
+        not_required_evidence_ref=checksum_for("parallel-terminal-not-required"),
     )
 
 
@@ -1417,13 +1658,19 @@ def _accept_external_effect_result(
         effect_intent=HarnessSideEffectIntent(
             effect_id=f"effect-{activity.run_id}-{activity.node_id}",
             kind="artifact",
+            graph_id=activity.graph_ref.graph_id,
+            graph_version=activity.graph_ref.identity_version,
+            graph_ref=activity.graph_ref.identity_ref.exact_ref,
+            graph_checksum=activity.graph_ref.checksum,
             run_id=activity.run_id,
             origin="worker",
             atomic_group="parallel-fenced-effects",
             identity_scope_ref=_IDENTITY_SCOPE_REF,
             subject_scope_ref=_SUBJECT_SCOPE_REF,
-            attempt=activity.attempt,
             step_id=activity.node_id,
+            node_id=activity.node_id,
+            node_instance_id=activity.node_instance_id,
+            activity_id=activity.activity_id,
             worker_result_ref=harness_worker_candidate_ref(candidate),
             candidate_checksum=checksum_for(output),
             handler="parallel.fenced@1",
@@ -1477,7 +1724,7 @@ def _accept_external_activity_result(
                     "termination_confirmed": termination_confirmed,
                 }
             ),
-            payload_ref=checksum_for(worker_result.to_dict()),
+            payload_ref=worker_result.candidate_result_ref,
             status=status,
             termination_confirmed=termination_confirmed,
         ),
@@ -1551,7 +1798,7 @@ class _CapabilityChangingDispatcher(_AsyncDispatcher):
 
 class _ExternalWorker:
     worker_version = "1"
-    worker_type = "script"
+    worker_type = "function"
 
     def __init__(self, worker_id: str) -> None:
         self.worker_id = worker_id
@@ -1648,12 +1895,23 @@ class _FencedEffectHandler:
             effect_id=intent.effect_id,
             decision_ref=authorization.checksum,
             run_id=intent.run_id,
+            graph_id=intent.graph_id,
+            graph_version=intent.graph_version,
+            graph_ref=intent.graph_ref,
+            graph_checksum=intent.graph_checksum,
+            origin=intent.origin,
             kind=intent.kind,
             handler=authorization.handler,
             idempotency_key=intent.idempotency_key,
             identity_scope_ref=intent.identity_scope_ref,
             subject_scope_ref=intent.subject_scope_ref,
             atomic_group=intent.atomic_group,
+            attempt=intent.attempt,
+            node_id=intent.node_id,
+            node_instance_id=intent.node_instance_id,
+            activity_id=intent.activity_id,
+            step_id=intent.step_id,
+            terminal_action=intent.terminal_action,
             disposition=authorization.disposition,
             candidate_refs=intent.candidate_refs,
             result_ref=checksum_for({"effect_id": intent.effect_id}),
@@ -1713,19 +1971,16 @@ class _ProtocolTrackingFencedHandler:
 
 
 def _parallel_effect_run_spec(run_id: str) -> HarnessRunSpec:
-    workflow = HarnessWorkflowSpec(
-        workflow_id=f"workflow-{run_id}",
-        steps=tuple(
+    activities = tuple(
             HarnessStepSpec(
                 step_id,
-                "script",
+                HarnessWorkerType.FUNCTION,
                 output_key=f"{step_id}_output",
                 side_effect_handler="parallel.fenced@1",
             )
             for step_id in ("left", "right")
-        ),
-        entry_step_id="left",
-        graph=HarnessGraphSpec(
+        )
+    graph = HarnessGraphSpec(
             graph_id=f"graph-{run_id}",
             root=ParallelAll(
                 "fork",
@@ -1735,16 +1990,15 @@ def _parallel_effect_run_spec(run_id: str) -> HarnessRunSpec:
                     ParallelBranch("right-branch", StepRef("right"), "parallel.right"),
                 ),
             ),
-        ),
-    )
-    return HarnessRunSpec(
+        )
+    return _graph_run_spec(
         run_id,
-        workflow,
+        graph,
+        activities,
         metadata={
             "identity_scope_ref": _IDENTITY_SCOPE_REF,
             "subject_scope_ref": _SUBJECT_SCOPE_REF,
         },
-        created_at=_CREATED_AT,
     )
 
 
@@ -1752,6 +2006,7 @@ def _parallel_effect_worker(worker_calls: list[str]):
     def worker(task: dict) -> HarnessWorkerResult:
         step_id = task["step_id"]
         worker_calls.append(step_id)
+        activity = task["harness_graph_activity"]["activity"]
         output = {"candidate": step_id}
         candidate = {
             "status": "succeeded",
@@ -1767,12 +2022,11 @@ def _parallel_effect_worker(worker_calls: list[str]):
             effect_intent=HarnessSideEffectIntent(
                 effect_id=f"effect-{task['run_id']}-{step_id}",
                 kind="artifact",
-                run_id=task["run_id"],
+                **_side_effect_identity(activity),
                 origin="worker",
                 atomic_group="parallel-fenced-effects",
                 identity_scope_ref=_IDENTITY_SCOPE_REF,
                 subject_scope_ref=_SUBJECT_SCOPE_REF,
-                attempt=task["harness_activity"]["attempt"],
                 step_id=step_id,
                 worker_result_ref=harness_worker_candidate_ref(candidate),
                 candidate_checksum=checksum_for(output),
@@ -1788,11 +2042,18 @@ def _direct_effect_intent(run_id: str) -> HarnessSideEffectIntent:
         effect_id=f"effect-{run_id}",
         kind="artifact",
         run_id=run_id,
+        graph_id="parallel.test",
+        graph_version="1",
+        graph_ref="parallel.test@1",
+        graph_checksum=checksum_for({"graph_id": "parallel.test", "graph_version": "1"}),
         origin="worker",
         atomic_group="parallel-fenced-effects",
         identity_scope_ref=_IDENTITY_SCOPE_REF,
         subject_scope_ref=_SUBJECT_SCOPE_REF,
         step_id="left",
+        node_id="left",
+        node_instance_id=f"node:{run_id}:left",
+        activity_id=f"activity:{run_id}:left",
         worker_result_ref=checksum_for({"worker": run_id}),
         candidate_checksum=checksum_for({"candidate": run_id}),
         handler="parallel.fenced@1",
@@ -1811,6 +2072,10 @@ def _direct_effect_decision(
         kind=intent.kind,
         origin=intent.origin,
         run_id=intent.run_id,
+        graph_id=intent.graph_id,
+        graph_version=intent.graph_version,
+        graph_ref=intent.graph_ref,
+        graph_checksum=intent.graph_checksum,
         handler=intent.handler,
         identity_scope_ref=intent.identity_scope_ref,
         subject_scope_ref=intent.subject_scope_ref,
@@ -1819,6 +2084,10 @@ def _direct_effect_decision(
         command_ordinal=1,
         causation_id=f"event-{intent.effect_id}",
         disposition="prepared",
+        node_id=intent.node_id,
+        node_instance_id=intent.node_instance_id,
+        activity_id=intent.activity_id,
+        attempt=intent.attempt,
         step_id=intent.step_id,
         worker_result_ref=intent.worker_result_ref,
         approval_evidence_ref=checksum_for({"approval": intent.effect_id}),
@@ -1831,12 +2100,48 @@ def _external_authority(
     worker_ids: tuple[str, ...],
     *,
     side_effect_registry: HarnessSideEffectRegistry | None = None,
+    side_effect_store: InMemoryHarnessSideEffectStore | None = None,
 ) -> HarnessRuntimeBindingAuthority:
+    global _EXTERNAL_SIDE_EFFECT_STORE
+    if side_effect_registry is None:
+        # Graph admission resolves the terminal policy before dispatch.  Keep
+        # the external-dispatch fixture explicit about that authority even
+        # when the test stops with an in-flight activity.
+        side_effect_store = side_effect_store or InMemoryHarnessSideEffectStore()
+        _EXTERNAL_SIDE_EFFECT_STORE = side_effect_store
+        side_effect_registry = HarnessSideEffectRegistry(
+            (
+                HarnessSideEffectHandlerBinding(
+                    "test.terminal@1",
+                    "artifact",
+                    CountingHarnessSideEffectHandler(
+                        side_effect_store,
+                        disposition="accepted",
+                    ),
+                ),
+            )
+        )
+    else:
+        side_effect_store = side_effect_store or InMemoryHarnessSideEffectStore()
+        bindings = list(side_effect_registry.bindings())
+        if not any(str(item.reference) == "test.terminal@1" for item in bindings):
+            bindings.append(
+                HarnessSideEffectHandlerBinding(
+                    "test.terminal@1",
+                    "artifact",
+                    CountingHarnessSideEffectHandler(
+                        side_effect_store,
+                        disposition="accepted",
+                    ),
+                )
+            )
+        side_effect_registry = HarnessSideEffectRegistry(bindings)
+        _EXTERNAL_SIDE_EFFECT_STORE = side_effect_store
     return HarnessRuntimeBindingAuthority(
         workers=tuple(
             HarnessWorkerBinding(
                 f"{worker_id}@1",
-                "script",
+                "function",
                 _ExternalWorker(worker_id),
             )
             for worker_id in worker_ids
@@ -1849,3 +2154,9 @@ def _external_authority(
         ),
         side_effect_registry=side_effect_registry,
     )
+
+
+def _required_external_side_effect_store() -> InMemoryHarnessSideEffectStore:
+    if _EXTERNAL_SIDE_EFFECT_STORE is None:
+        raise AssertionError("external authority did not create its durable store")
+    return _EXTERNAL_SIDE_EFFECT_STORE

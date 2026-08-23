@@ -6,7 +6,9 @@ from interfaces.services.run_inspection_service import RunEventsResult
 
 def test_mcp_run_events_schema_and_call_preserve_cursor() -> None:
     service = _CapturingInspectionService()
-    mcp = MCPApplicationService(run_inspection_service_factory=lambda: service)
+    mcp = MCPApplicationService(
+        graph_run_inspection_service_factory=lambda: service
+    )
     tools = {tool.name: tool for tool in mcp.catalog().tools}
 
     schema = tools["news.run.events"].input_schema
@@ -14,7 +16,7 @@ def test_mcp_run_events_schema_and_call_preserve_cursor() -> None:
         "limit",
         "offset",
         "event_type",
-        "step_id",
+        "node_instance_id",
         "sequence_cursor",
     } <= set(schema["properties"])
 
@@ -24,7 +26,7 @@ def test_mcp_run_events_schema_and_call_preserve_cursor() -> None:
             "run_id": "run-1",
             "limit": 1,
             "event_type": "step_started",
-            "step_id": "step-7",
+            "node_instance_id": "node-7",
             "sequence_cursor": "opaque-cursor",
         },
     )
@@ -36,10 +38,12 @@ def test_mcp_run_events_schema_and_call_preserve_cursor() -> None:
 
 def test_mcp_run_events_resource_continues_with_query_cursor() -> None:
     service = _CapturingInspectionService()
-    mcp = MCPApplicationService(run_inspection_service_factory=lambda: service)
+    mcp = MCPApplicationService(
+        graph_run_inspection_service_factory=lambda: service
+    )
     uri = (
         "news://runs/run-1/events?limit=1&event_type=step_started"
-        "&step_id=step-7&sequence_cursor=opaque-cursor"
+        "&node_instance_id=node-7&sequence_cursor=opaque-cursor"
     )
 
     result = mcp.read_resource(uri)
@@ -51,7 +55,7 @@ def test_mcp_run_events_resource_continues_with_query_cursor() -> None:
             "limit": 1,
             "offset": 0,
             "event_type": "step_started",
-            "step_id": "step-7",
+            "node_instance_id": "node-7",
             "sequence_cursor": "opaque-cursor",
         }
     ]
@@ -60,7 +64,7 @@ def test_mcp_run_events_resource_continues_with_query_cursor() -> None:
 
 def test_mcp_run_events_preserves_explicit_unavailable_metadata() -> None:
     mcp = MCPApplicationService(
-        run_inspection_service_factory=_UnavailableMetadataInspectionService
+        graph_run_inspection_service_factory=_UnavailableMetadataInspectionService
     )
 
     tool_result = mcp.call_tool("news.run.events", {"run_id": "run-1"})
@@ -86,7 +90,7 @@ class _CapturingInspectionService:
                 {
                     "event_type": "step_started",
                     "stream_sequence": 7,
-                    "step_id": "step-7",
+                    "node_instance_id": "node-7",
                     "payload": {},
                 }
             ],

@@ -45,6 +45,11 @@ class HarnessSideEffectApprovalRequest:
         if isinstance(self.attempt, bool) or not isinstance(self.attempt, int) or self.attempt < 1:
             raise HarnessValidationError("approval request attempt must be positive")
         terminal_action = _optional_text(self.terminal_action, "terminal_action")
+        if self.step_id is not None:
+            raise HarnessValidationError(
+                "active side-effect approval cannot carry retired step_id authority",
+                code="legacy_step_identity_not_supported",
+            )
         identity = _canonical_side_effect_identity(
             run_id=self.run_id,
             graph_id=self.graph_id,
@@ -67,7 +72,7 @@ class HarnessSideEffectApprovalRequest:
             )
         for field_name in (
             "graph_id", "graph_version", "graph_ref", "graph_checksum", "run_id",
-            "node_id", "node_instance_id", "activity_id", "step_id",
+            "node_id", "node_instance_id", "activity_id",
         ):
             object.__setattr__(self, field_name, getattr(identity, field_name, None))
         object.__setattr__(self, "terminal_action", terminal_action)
@@ -83,7 +88,6 @@ class HarnessSideEffectApprovalRequest:
 
     def _canonical_dict(self) -> dict[str, Any]:
         payload = self.to_dict()
-        payload.pop("step_id", None)
         return payload
 
     def to_dict(self) -> dict[str, Any]:
@@ -102,7 +106,6 @@ class HarnessSideEffectApprovalRequest:
             "identity_scope_ref": self.identity_scope_ref,
             "subject_scope_ref": self.subject_scope_ref,
             "decision_version": self.decision_version,
-            "step_id": self.step_id,
             "terminal_action": self.terminal_action,
             "schema_version": self.schema_version,
         }
@@ -162,7 +165,6 @@ class HarnessSideEffectApprovalEvidence:
             "node_id",
             "node_instance_id",
             "activity_id",
-            "step_id",
             "terminal_action",
             "effect_id",
             "candidate_checksum",
@@ -216,7 +218,6 @@ class HarnessSideEffectApprovalEvidence:
             "identity_scope_ref": self.identity_scope_ref,
             "subject_scope_ref": self.subject_scope_ref,
             "decision_version": self.decision_version,
-            "step_id": self.step_id,
             "terminal_action": self.terminal_action,
             "schema_version": self.schema_version,
             "approved": self.approved,
@@ -280,7 +281,6 @@ def approval_evidence_ref(evidence: HarnessSideEffectApprovalEvidence) -> str:
     if not isinstance(evidence, HarnessSideEffectApprovalEvidence):
         raise TypeError("evidence must be HarnessSideEffectApprovalEvidence")
     payload = evidence.to_dict()
-    payload.pop("step_id", None)
     return checksum_for(payload)
 
 

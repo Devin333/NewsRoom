@@ -124,12 +124,12 @@ class _Reader:
         )
 
 
-def test_run_reader_binds_authorized_tenant_and_uses_canonical_step_context() -> None:
+def test_run_reader_binds_authorized_tenant_and_exact_node_instance() -> None:
     reader = _Reader(
         [
-            _event(1, tenant_id="tenant-a", step_id="step-a"),
-            _event(2, tenant_id="tenant-a", step_id="step-b"),
-            _event(1, tenant_id="tenant-b", step_id="step-b"),
+            _event(1, tenant_id="tenant-a", node_instance_id="node-a"),
+            _event(2, tenant_id="tenant-a", node_instance_id="node-b"),
+            _event(1, tenant_id="tenant-b", node_instance_id="node-b"),
         ]
     )
     authorizer = _Authorizer()
@@ -138,7 +138,7 @@ def test_run_reader_binds_authorized_tenant_and_uses_canonical_step_context() ->
     result = service.read_run_events(
         "run-reader",
         authorization=_authorization(),
-        step_id="step-b",
+        node_instance_id="node-b",
     )
 
     assert result.availability is EventServiceAvailability.AVAILABLE
@@ -147,11 +147,11 @@ def test_run_reader_binds_authorized_tenant_and_uses_canonical_step_context() ->
     assert reader.requests[0].tenant_id == "tenant-a"
     assert reader.requests[0].stream_id == "run:run-reader"
     assert authorizer.requests[0].operation is EventPermission.READ
-    assert authorizer.requests[0].target["step_id"] == "step-b"
+    assert authorizer.requests[0].target["node_instance_id"] == "node-b"
 
 
 def test_reader_denies_before_touching_the_durable_port() -> None:
-    reader = _Reader([_event(1, tenant_id="tenant-a", step_id=None)])
+    reader = _Reader([_event(1, tenant_id="tenant-a", node_instance_id=None)])
     service = EventReaderService(reader, authorizer=_Authorizer(authorized=False))
 
     with pytest.raises(EventAuthorizationError, match="not authorized"):
@@ -181,7 +181,7 @@ def test_unavailable_reader_returns_typed_status_without_projection_fallback() -
 
 
 def test_event_lookup_never_treats_none_tenant_as_a_wildcard() -> None:
-    reader = _Reader([_event(1, tenant_id="tenant-b", step_id=None)])
+    reader = _Reader([_event(1, tenant_id="tenant-b", node_instance_id=None)])
     service = EventReaderService(reader, authorizer=_Authorizer())
 
     result = service.get_event(
@@ -197,12 +197,12 @@ def test_event_lookup_never_treats_none_tenant_as_a_wildcard() -> None:
     assert reader.get_scopes == [None]
 
 
-def test_step_filter_scans_pages_and_returns_a_stable_matching_cursor() -> None:
+def test_node_instance_filter_scans_pages_and_returns_a_stable_matching_cursor() -> None:
     events = [
         _event(
             sequence,
             tenant_id="tenant-a",
-            step_id="wanted" if sequence in {3, 5, 7} else "other",
+            node_instance_id="wanted" if sequence in {3, 5, 7} else "other",
         )
         for sequence in range(1, 8)
     ]
@@ -212,13 +212,13 @@ def test_step_filter_scans_pages_and_returns_a_stable_matching_cursor() -> None:
     first = service.read_run_events(
         "run-reader",
         authorization=_authorization(),
-        step_id="wanted",
+        node_instance_id="wanted",
         limit=2,
     )
     second = service.read_run_events(
         "run-reader",
         authorization=_authorization(),
-        step_id="wanted",
+        node_instance_id="wanted",
         limit=2,
         cursor=first.next_cursor,
     )
@@ -232,7 +232,7 @@ def test_step_filter_scans_pages_and_returns_a_stable_matching_cursor() -> None:
 
 
 def test_authorizer_decision_must_match_the_exact_request() -> None:
-    reader = _Reader([_event(1, tenant_id="tenant-a", step_id=None)])
+    reader = _Reader([_event(1, tenant_id="tenant-a", node_instance_id=None)])
     service = EventReaderService(reader, authorizer=_Authorizer(mismatch=True))
 
     with pytest.raises(EventAuthorizationContractError, match="exact request"):
@@ -247,8 +247,8 @@ def test_authorizer_decision_must_match_the_exact_request() -> None:
 def test_reader_rejects_non_contiguous_or_filter_violating_pages() -> None:
     gap_reader = _Reader(
         [
-            _event(1, tenant_id="tenant-a", step_id="step-a"),
-            _event(3, tenant_id="tenant-a", step_id="step-a"),
+            _event(1, tenant_id="tenant-a", node_instance_id="node-a"),
+            _event(3, tenant_id="tenant-a", node_instance_id="node-a"),
         ]
     )
     service = EventReaderService(gap_reader, authorizer=_Authorizer())
@@ -272,7 +272,7 @@ def test_reader_rejects_non_contiguous_or_filter_violating_pages() -> None:
 
     violating = EventReaderService(
         FilterViolatingReader(
-            [_event(1, tenant_id="tenant-a", step_id="step-a")]
+            [_event(1, tenant_id="tenant-a", node_instance_id="node-a")]
         ),
         authorizer=_Authorizer(),
     )
@@ -284,7 +284,7 @@ def test_reader_rejects_non_contiguous_or_filter_violating_pages() -> None:
         )
 
 
-def test_step_scan_rejects_a_cursor_that_does_not_advance() -> None:
+def test_node_instance_scan_rejects_a_cursor_that_does_not_advance() -> None:
     class StuckCursorReader(_Reader):
         def read_stream(self, request):
             page = super().read_stream(request)
@@ -297,7 +297,7 @@ def test_step_scan_rejects_a_cursor_that_does_not_advance() -> None:
             _event(
                 sequence,
                 tenant_id="tenant-a",
-                step_id="wanted" if sequence == 205 else "other",
+                node_instance_id="wanted" if sequence == 205 else "other",
             )
             for sequence in range(1, 206)
         ]
@@ -308,7 +308,7 @@ def test_step_scan_rejects_a_cursor_that_does_not_advance() -> None:
         service.read_run_events(
             "run-reader",
             authorization=_authorization(),
-            step_id="wanted",
+            node_instance_id="wanted",
             limit=1,
         )
 
@@ -319,7 +319,7 @@ def test_event_lookup_rejects_another_event_identity() -> None:
             return self.events[0]
 
     service = EventReaderService(
-        WrongLookupReader([_event(1, tenant_id="tenant-a", step_id=None)]),
+        WrongLookupReader([_event(1, tenant_id="tenant-a", node_instance_id=None)]),
         authorizer=_Authorizer(),
     )
 
@@ -359,27 +359,31 @@ def _event(
     sequence: int,
     *,
     tenant_id: str,
-    step_id: str | None,
+    node_instance_id: str | None,
 ) -> StoredEvent:
     candidate = EventCandidate(
         event_id=f"evt-{tenant_id}-{sequence}",
         event_type="step_started",
-        data_schema="newsroom.workflow-event/v1",
-        source="io.newsroom.workflow.runtime",
+            data_schema="newsroom.harness-event/v1",
+            source="io.newsroom.harness.runtime",
         occurred_at=NOW + timedelta(seconds=sequence),
         stream_id="run:run-reader",
         correlation_id="run-reader",
-        business_context=BusinessContext(
-            run_id="run-reader",
-            workflow_id="workflow-reader",
-            step_id=step_id,
-        ),
-        producer=ProducerIdentity(
-            component="framework.workflow.runtime",
-            version="1",
+            business_context=BusinessContext(
+                run_id="run-reader",
+                graph_id="research.reader-repair.graph",
+                graph_version="2",
+                graph_ref="research.reader-repair.graph@2",
+                graph_checksum="sha256:" + "a" * 64,
+                stage_id="step-reader",
+                node_instance_id=node_instance_id,
+            ),
+            producer=ProducerIdentity(
+                component="framework.harness.runtime",
+                version="1",
         ),
         payload={
-            "step_id": step_id or "workflow",
+            "step_id": "step-reader",
             "step_type": "function",
             "attempt": 1,
             "max_attempts": 1,

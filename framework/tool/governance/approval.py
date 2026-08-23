@@ -43,6 +43,8 @@ class ToolApprovalRequest:
     def __post_init__(self) -> None:
         if self.risk_level not in _VALID_RISK_LEVELS:
             raise ValueError(f"invalid tool approval risk level: {self.risk_level}")
+        if self.step_id is not None:
+            raise ValueError("active tool approval cannot carry retired step_id authority")
         object.__setattr__(self, "created_at", ensure_utc(self.created_at))
         object.__setattr__(self, "metadata", dict(self.metadata))
         identity = self.graph_identity
@@ -63,7 +65,6 @@ class ToolApprovalRequest:
             "reason": self.reason,
             "risk_level": self.risk_level,
             "run_id": self.run_id,
-            "step_id": self.step_id,
             "agent_id": self.agent_id,
             "graph_identity": (
                 self.graph_identity.to_dict()

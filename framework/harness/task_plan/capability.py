@@ -40,6 +40,7 @@ from framework.harness.task_plan.verification import (
 )
 from framework.harness.graph.bindings import HarnessWorkerBinding
 from framework.harness.graph.activity import HarnessWorkerType
+from framework.shared.graph_identity import GraphExecutionIdentity
 
 
 @dataclass(frozen=True, slots=True)
@@ -364,6 +365,7 @@ class ResolvedSubAgentTaskAdapter:
         instance: TaskInstance,
         context_pack: ContextEnvelope,
         budget_snapshot: HarnessBudgetSnapshot,
+        execution_identity: GraphExecutionIdentity,
     ) -> SubAgentResult:
         invocation = self.build_invocation(
             plan=plan,
@@ -372,6 +374,7 @@ class ResolvedSubAgentTaskAdapter:
             instance=instance,
             context_pack=context_pack,
             budget_snapshot=budget_snapshot,
+            execution_identity=execution_identity,
         )
         return self._runtime.invoke(invocation)
 
@@ -384,6 +387,7 @@ class ResolvedSubAgentTaskAdapter:
         instance: TaskInstance,
         context_pack: ContextEnvelope,
         budget_snapshot: HarnessBudgetSnapshot,
+        execution_identity: GraphExecutionIdentity,
     ) -> SubAgentResult | None:
         invocation = self.build_invocation(
             plan=plan,
@@ -392,6 +396,7 @@ class ResolvedSubAgentTaskAdapter:
             instance=instance,
             context_pack=context_pack,
             budget_snapshot=budget_snapshot,
+            execution_identity=execution_identity,
         )
         return self._runtime.recover(invocation)
 
@@ -404,6 +409,7 @@ class ResolvedSubAgentTaskAdapter:
         instance: TaskInstance,
         context_pack: ContextEnvelope,
         budget_snapshot: HarnessBudgetSnapshot,
+        execution_identity: GraphExecutionIdentity,
     ) -> SubAgentInvocation:
         if not isinstance(plan, ValidatedTaskPlan):
             raise TypeError("plan must be ValidatedTaskPlan")
@@ -429,31 +435,20 @@ class ResolvedSubAgentTaskAdapter:
                 code="stale_task_capability_binding",
                 details={"task_id": resolved_task.task_id},
             )
-        if plan.is_graph_only:
-            graph_identity, task_identity = task_plan_context_identities(
-                plan,
-                instance,
+        graph_identity, task_identity = task_plan_context_identities(
+            plan,
+            instance,
+            execution_identity=execution_identity,
+        )
+        if (
+            context_pack.phase != "EXECUTE"
+            or not context_pack.matches_graph_identity(graph_identity)
+            or not context_pack.matches_task_execution_identity(task_identity)
+        ):
+            raise HarnessValidationError(
+                "Graph dynamic task context does not match its accepted attempt",
+                code="task_plan_result_identity_mismatch",
             )
-            if (
-                context_pack.phase != "EXECUTE"
-                or not context_pack.matches_graph_identity(graph_identity)
-                or not context_pack.matches_task_execution_identity(task_identity)
-            ):
-                raise HarnessValidationError(
-                    "Graph dynamic task context does not match its accepted attempt",
-                    code="task_plan_result_identity_mismatch",
-                )
-        else:
-            if context_pack.run_id not in {None, plan.run_id}:
-                raise HarnessValidationError(
-                    "dynamic task context belongs to another run",
-                    code="task_plan_result_identity_mismatch",
-                )
-            if context_pack.workflow_id not in {None, plan.workflow_id}:
-                raise HarnessValidationError(
-                    "dynamic task context belongs to another orchestration identity",
-                    code="task_plan_result_identity_mismatch",
-                )
         source_spec = binding.subagent_spec
         if source_spec is None:
             raise HarnessValidationError(
@@ -503,21 +498,19 @@ class ResolvedSubAgentTaskAdapter:
             "task_id": resolved_task.task_id,
             "task_definition_checksum": resolved_task.task_definition_checksum,
         }
-        if plan.is_graph_only:
-            metadata.update(
-                {
+        metadata.update(
+            {
                     "plan_id": plan.plan_id,
                     "plan_version": plan.version,
                     "plan_checksum": plan.plan_checksum,
                     "stage_identity_checksum": plan.stage_identity_checksum,
-                }
-            )
+            }
+        )
         invocation = SubAgentInvocation(
             invocation_id=invocation_id,
             parent_run_id=plan.run_id,
             child_run_id=child_run_id,
-            workflow_id=None if plan.is_graph_only else plan.workflow_id,
-            step_id=plan.stage_id,
+            stage_id=plan.stage_id,
             task_id=resolved_task.task_id,
             task_instance_id=instance.task_instance_id,
             attempt=instance.attempt,
@@ -527,8 +520,8 @@ class ResolvedSubAgentTaskAdapter:
             context_envelope=envelope,
             budget_snapshot=budget_snapshot,
             metadata=metadata,
-            attempt_identity=(attempt_identity if plan.is_graph_only else None),
-            schema_version=(SUBAGENT_INVOCATION_SCHEMA_V3 if plan.is_graph_only else None),
+            attempt_identity=attempt_identity,
+            schema_version=SUBAGENT_INVOCATION_SCHEMA_V3,
         )
         return invocation
 
@@ -536,6 +529,8 @@ class ResolvedSubAgentTaskAdapter:
 def task_plan_context_identities(
     plan: ValidatedTaskPlan,
     instance: TaskInstance,
+    *,
+    execution_identity: GraphExecutionIdentity,
 ) -> tuple[ContextGraphIdentity, ContextTaskExecutionIdentity]:
     """Project accepted Graph TaskPlan identity into the neutral context owner."""
 
@@ -543,6 +538,8 @@ def task_plan_context_identities(
         raise TypeError("plan must be ValidatedTaskPlan")
     if not isinstance(instance, TaskInstance):
         raise TypeError("instance must be TaskInstance")
+    if not isinstance(execution_identity, GraphExecutionIdentity):
+        raise TypeError("execution_identity must be GraphExecutionIdentity")
     task = next((item for item in plan.tasks if item.task_id == instance.task_id), None)
     if (
         not plan.is_graph_only
@@ -554,6 +551,17 @@ def task_plan_context_identities(
         raise HarnessValidationError(
             "Graph context identity requires an exact accepted TaskPlan attempt",
             code="task_plan_result_identity_mismatch",
+        )
+    if (
+        execution_identity.run_id != plan.run_id
+        or execution_identity.graph_id != plan.graph_id
+        or execution_identity.graph_version != plan.graph_version
+        or execution_identity.graph_ref != plan.graph_ref
+        or execution_identity.graph_checksum != plan.graph_checksum
+    ):
+        raise HarnessValidationError(
+            "Graph context execution identity is outside the accepted TaskPlan",
+            code="task_plan_execution_identity_mismatch",
         )
     return (
         ContextGraphIdentity(
@@ -569,6 +577,10 @@ def task_plan_context_identities(
             stage_binding_checksum=plan.stage_binding_checksum,
             stage_identity_schema=plan.stage_identity_schema,
             stage_identity_checksum=plan.stage_identity_checksum,
+            node_id=execution_identity.node_id,
+            node_instance_id=execution_identity.node_instance_id,
+            activity_id=execution_identity.activity_id,
+            activity_attempt=execution_identity.attempt,
         ),
         ContextTaskExecutionIdentity(
             plan_id=plan.plan_id,

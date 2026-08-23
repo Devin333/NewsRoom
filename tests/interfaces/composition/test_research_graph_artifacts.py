@@ -105,15 +105,10 @@ def _materialization_request(
     )
 
 
-@pytest.mark.parametrize(
-    "mode",
-    ["legacy", "shadow", "enforce", "read_only"],
-)
 def test_components_share_one_real_catalog_store_and_artifact_port(
     tmp_path,
-    mode: str,
 ) -> None:
-    settings = _settings(tmp_path, mode=mode)
+    settings = _settings(tmp_path, mode="enforce")
 
     components = compose_research_graph_artifact_runtime(settings)
 
@@ -138,13 +133,9 @@ def test_components_share_one_real_catalog_store_and_artifact_port(
     assert components.store.max_materialized_bytes_per_class == 12_000
 
 
-@pytest.mark.parametrize(
-    "mode",
-    ["legacy", "shadow", "enforce", "read_only"],
-)
-def test_gc_plan_persists_only_in_enforce_mode(tmp_path, mode: str) -> None:
+def test_gc_plan_is_persisted_by_the_graph_authority(tmp_path) -> None:
     components = compose_research_graph_artifact_runtime(
-        _settings(tmp_path, mode=mode)
+        _settings(tmp_path, mode="enforce")
     )
 
     plan = components.governance_service.plan_gc(
@@ -156,42 +147,12 @@ def test_gc_plan_persists_only_in_enforce_mode(tmp_path, mode: str) -> None:
         tenant_id="tenant-operator",
         plan_checksum=plan.plan_checksum,
     )
-    if mode == "enforce":
-        assert stored == plan
-    else:
-        assert stored is None
-        with pytest.raises(GraphArtifactResultError) as exc_info:
-            components.governance_service.apply_gc(
-                tenant_id="tenant-operator",
-                plan_checksum=plan.plan_checksum,
-                confirmed=True,
-                max_operations=1,
-            )
-        assert exc_info.value.error_code is (
-            GraphArtifactResultErrorCode.LIFECYCLE_AUTHORIZATION_INVALID
-        )
-        assert components.store.list_gc_operations(
-            tenant_id="tenant-operator",
-            include_completed=True,
-        ) == ()
+    assert stored == plan
 
 
-@pytest.mark.parametrize(
-    ("mode", "stored"),
-    [
-        ("legacy", False),
-        ("shadow", True),
-        ("enforce", True),
-        ("read_only", True),
-    ],
-)
-def test_cost_report_is_inspectable_without_legacy_state_writes(
-    tmp_path,
-    mode: str,
-    stored: bool,
-) -> None:
+def test_cost_report_is_inspectable_from_graph_state(tmp_path) -> None:
     components = compose_research_graph_artifact_runtime(
-        _settings(tmp_path, mode=mode)
+        _settings(tmp_path, mode="enforce")
     )
 
     report = components.governance_service.generate_cost_report(
@@ -206,7 +167,7 @@ def test_cost_report_is_inspectable_without_legacy_state_writes(
             tenant_id="tenant-report",
             report_id=report.report_id,
         )
-        == (report if stored else None)
+        == report
     )
 
 
@@ -367,131 +328,3 @@ def test_reconciliation_records_idempotent_drift_alert_and_usage(tmp_path) -> No
     assert alerts[0].kind is GraphArtifactAlertKind.CATALOG_DRIFT
     assert len(usage) == 1
     assert components.governance_runtime.config.mode is GraphArtifactRolloutMode.ENFORCE
-
-
-def test_read_only_rollback_reads_previous_policy_and_rejects_mutations(
-    tmp_path,
-) -> None:
-    request = _materialization_request()
-    enforced = compose_research_graph_artifact_runtime(
-        _settings(tmp_path, mode="enforce")
-    )
-    committed = enforced.materializer.materialize(request).envelope
-    record = committed.materialized_refs[0]
-    assert committed.persistence_decision.policy_version == (
-        "graph-artifact-policy@1"
-    )
-
-    read_only = compose_research_graph_artifact_runtime(
-        _settings(
-            tmp_path,
-            mode="read_only",
-            policy_version="graph-artifact-policy@2",
-            readable_policy_versions=(
-                "graph-artifact-policy@1",
-                "graph-artifact-policy@2",
-            ),
-        )
-    )
-    recovered = read_only.materializer.require_existing(request)
-    stored = read_only.artifact_port.read_graph_result_artifact(
-        record.ref,
-        expected_run_id=record.run_id,
-    )
-    plan = read_only.governance_service.plan_gc(
-        tenant_id=request.binding.tenant_id,
-        observed_at=NOW,
-    )
-    report = read_only.governance_service.generate_cost_report(
-        tenant_id=request.binding.tenant_id,
-        day=NOW.date(),
-        generated_at=NOW + timedelta(days=1, seconds=1),
-    )
-    quota = read_only.governance_service.inspect_quota(
-        tenant_id=request.binding.tenant_id,
-        captured_at=NOW + timedelta(days=1),
-    )
-    reconciliation = read_only.governance_service.reconcile(
-        tenant_id=request.binding.tenant_id,
-        observed_at=NOW + timedelta(days=1),
-    )
-
-    assert recovered == committed
-    assert stored["payload"]["candidate_checksum"] == record.content_checksum
-    assert report.policy_version == "graph-artifact-policy@2"
-    assert quota.snapshots
-    assert reconciliation.plan.is_clean
-    assert read_only.store.get_gc_plan(
-        tenant_id=request.binding.tenant_id,
-        plan_checksum=plan.plan_checksum,
-    ) is None
-
-    catalog_before = read_only.catalog.snapshot(
-        captured_at=NOW + timedelta(days=1),
-        tenant_id=request.binding.tenant_id,
-    )
-    staging_before = read_only.artifact_port.list_staged_artifacts(
-        request.binding.run_id
-    )
-    usage_before = read_only.store.list_usage(
-        tenant_id=request.binding.tenant_id,
-        window_start=NOW - timedelta(days=1),
-        window_end=NOW + timedelta(days=3),
-    )
-    operations_before = read_only.store.list_gc_operations(
-        tenant_id=request.binding.tenant_id,
-        include_completed=True,
-    )
-    missing = replace(
-        request,
-        binding=replace(request.binding, attempt_id="attempt-missing"),
-    )
-
-    with pytest.raises(GraphArtifactResultError) as missing_attempt:
-        read_only.materializer.require_existing(missing)
-    with pytest.raises(GraphArtifactResultError) as gc_apply:
-        read_only.governance_service.apply_gc(
-            tenant_id=request.binding.tenant_id,
-            plan_checksum=plan.plan_checksum,
-            confirmed=True,
-            max_operations=1,
-        )
-
-    assert missing_attempt.value.error_code is (
-        GraphArtifactResultErrorCode.RESULT_LEDGER_FAILED
-    )
-    assert gc_apply.value.error_code is (
-        GraphArtifactResultErrorCode.LIFECYCLE_AUTHORIZATION_INVALID
-    )
-    assert read_only.materializer.recover(missing.binding) is None
-    assert read_only.catalog.snapshot(
-        captured_at=NOW + timedelta(days=1),
-        tenant_id=request.binding.tenant_id,
-    ) == catalog_before
-    assert read_only.artifact_port.list_staged_artifacts(
-        request.binding.run_id
-    ) == staging_before
-    assert read_only.store.list_usage(
-        tenant_id=request.binding.tenant_id,
-        window_start=NOW - timedelta(days=1),
-        window_end=NOW + timedelta(days=3),
-    ) == usage_before
-    assert read_only.store.list_gc_operations(
-        tenant_id=request.binding.tenant_id,
-        include_completed=True,
-    ) == operations_before
-
-    incompatible_reader = compose_research_graph_artifact_runtime(
-        _settings(
-            tmp_path,
-            mode="read_only",
-            policy_version="graph-artifact-policy@2",
-            readable_policy_versions=("graph-artifact-policy@2",),
-        )
-    )
-    with pytest.raises(GraphArtifactResultError) as unsupported:
-        incompatible_reader.materializer.require_existing(request)
-    assert unsupported.value.error_code is (
-        GraphArtifactResultErrorCode.POLICY_VERSION_UNSUPPORTED
-    )
-    assert incompatible_reader.materializer.recover(request.binding) == committed

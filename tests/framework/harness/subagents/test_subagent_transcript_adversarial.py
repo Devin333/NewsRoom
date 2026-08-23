@@ -235,7 +235,6 @@ def test_recovery_observation_is_payload_free_and_sink_failure_is_non_authoritat
         "invocation_id",
         "parent_run_id",
         "child_run_id",
-        "workflow_id",
         "stage_id",
         "task_id",
         "task_instance_id",

@@ -42,7 +42,7 @@ class ContextSemanticSnapshot:
     groups: tuple[ContextGroup, ...]
     policy_revision: str
     snapshot_kind: ContextSemanticSnapshotKind | str
-    step_id: str | None = None
+    stage_id: str | None = None
     physical_profile_revision: str | None = None
     parent_snapshot_id: str | None = None
     schema_revision: str = CONTEXT_SEMANTIC_SNAPSHOT_SCHEMA_REVISION
@@ -56,7 +56,7 @@ class ContextSemanticSnapshot:
                 field_name,
                 required_text(getattr(self, field_name), field=field_name),
             )
-        object.__setattr__(self, "step_id", optional_text(self.step_id, field="step_id"))
+        object.__setattr__(self, "stage_id", optional_text(self.stage_id, field="stage_id"))
         object.__setattr__(
             self,
             "physical_profile_revision",
@@ -102,7 +102,7 @@ class ContextSemanticSnapshot:
         return {
             "schema_revision": self.schema_revision,
             "run_id": self.run_id,
-            "step_id": self.step_id,
+            "stage_id": self.stage_id,
             "task_binding_ref": self.task_binding_ref,
             "groups": [group.identity_projection() for group in self.groups],
             "policy_revision": self.policy_revision,
@@ -127,7 +127,7 @@ class ContextSemanticSnapshot:
             raise HarnessValidationError("ContextSemanticSnapshot.groups must be a list")
         result = cls(
             run_id=payload.pop("run_id"),
-            step_id=payload.pop("step_id", None),
+            stage_id=payload.pop("stage_id", None),
             task_binding_ref=payload.pop("task_binding_ref"),
             groups=tuple(ContextGroup.from_dict(group) for group in raw_groups),
             policy_revision=payload.pop("policy_revision"),
@@ -171,7 +171,7 @@ class ContextCompressionRecordV2:
     profile_revision: str
     tokenizer_revision: str
     normalizer_revision: str
-    step_id: str | None = None
+    stage_id: str | None = None
     schema_revision: str = CONTEXT_COMPRESSION_RECORD_SCHEMA_REVISION
     record_id: str | None = None
     checksum: str | None = None
@@ -201,7 +201,7 @@ class ContextCompressionRecordV2:
                 field_name,
                 required_text(getattr(self, field_name), field=field_name),
             )
-        object.__setattr__(self, "step_id", optional_text(self.step_id, field="step_id"))
+        object.__setattr__(self, "stage_id", optional_text(self.stage_id, field="stage_id"))
         for field_name in (
             "prepared_fingerprint",
             "initial_admission_evidence_id",
@@ -267,7 +267,7 @@ class ContextCompressionRecordV2:
         return {
             "schema_revision": self.schema_revision,
             "run_id": self.run_id,
-            "step_id": self.step_id,
+            "stage_id": self.stage_id,
             "source_snapshot_id": self.source_snapshot_id,
             "source_snapshot_checksum": self.source_snapshot_checksum,
             "result_snapshot_id": self.result_snapshot_id,
@@ -312,7 +312,7 @@ class ContextCompressionRecordV2:
         raw_gates = payload.pop("gate_results", ())
         result = cls(
             run_id=payload.pop("run_id"),
-            step_id=payload.pop("step_id", None),
+            stage_id=payload.pop("stage_id", None),
             source_snapshot_id=payload.pop("source_snapshot_id"),
             source_snapshot_checksum=payload.pop("source_snapshot_checksum"),
             result_snapshot_id=payload.pop("result_snapshot_id"),

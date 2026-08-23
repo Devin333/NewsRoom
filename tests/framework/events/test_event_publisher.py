@@ -490,7 +490,7 @@ def test_publish_records_committed_append_latency_result_and_store_health() -> N
         monotonic=lambda: next(ticks),
     )
 
-    accepted.publish(_request(source="workflow.runtime"))
+    accepted.publish(_request(source="graph.runtime"))
 
     unavailable = EventRuntime(
         store=_Store(
@@ -503,7 +503,7 @@ def test_publish_records_committed_append_latency_result_and_store_health() -> N
         monotonic=lambda: next(ticks),
     )
     with pytest.raises(EventStoreUnavailableError):
-        unavailable.publish(_request(source="workflow.runtime"))
+        unavailable.publish(_request(source="graph.runtime"))
 
     assert backend.counters == [
         ("event_append_total", 1, {"backend": "sqlite", "result": "accepted"}),
@@ -548,7 +548,7 @@ def test_healthy_append_rejection_does_not_mark_store_unhealthy(
     )
 
     with pytest.raises(type(rejection)):
-        runtime.publish(_request(source="workflow.runtime"))
+        runtime.publish(_request(source="graph.runtime"))
 
     assert backend.counters[0] == (
         "event_append_total",
@@ -557,7 +557,7 @@ def test_healthy_append_rejection_does_not_mark_store_unhealthy(
     )
     if isinstance(rejection, EventIdentityCollisionError):
         assert backend.counters[1:] == [
-            ("event_identity_collision_total", 1, {"source": "workflow"})
+            ("event_identity_collision_total", 1, {"source": "graph"})
         ]
     else:
         assert backend.counters[1:] == []

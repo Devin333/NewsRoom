@@ -91,7 +91,6 @@ DANGEROUS_MCP_TOOLS = frozenset(
     {
         "news.report.publish",
         "news.run.cancel",
-        "news.run.rerun_from_step",
         "news.approval.approve",
         "news.approval.reject",
         "news.event.dead_letters.resolve",
@@ -122,8 +121,8 @@ class MCPApplicationService:
         memory_service_factory: Callable[[], Any] | None = None,
         diagnostic_service_factory: Callable[[], Any] | None = None,
         approval_service_factory: Callable[[], Any] | None = None,
-        run_inspection_service_factory: Callable[[], Any] | None = None,
-        run_operation_service_factory: Callable[[], Any] | None = None,
+        graph_run_inspection_service_factory: Callable[[], Any] | None = None,
+        graph_run_operation_service_factory: Callable[[], Any] | None = None,
         artifact_service_factory: Callable[[], Any] | None = None,
         storage_service_factory: Callable[[], Any] | None = None,
         research_service_factory: Callable[[], Any] | None = None,
@@ -150,11 +149,11 @@ class MCPApplicationService:
         self.memory_service_factory = memory_service_factory or _memory_service_factory
         self.diagnostic_service_factory = diagnostic_service_factory or _diagnostic_service_factory
         self.approval_service_factory = approval_service_factory or _approval_service_factory
-        self.run_inspection_service_factory = (
-            run_inspection_service_factory or _run_inspection_service_factory
+        self.graph_run_inspection_service_factory = (
+            graph_run_inspection_service_factory or _graph_run_inspection_service_factory
         )
-        self.run_operation_service_factory = (
-            run_operation_service_factory or _run_operation_service_factory
+        self.graph_run_operation_service_factory = (
+            graph_run_operation_service_factory or _graph_run_operation_service_factory
         )
         self.artifact_service_factory = artifact_service_factory or _artifact_service_factory
         self.storage_service_factory = storage_service_factory or _storage_service_factory
@@ -351,8 +350,8 @@ class MCPApplicationService:
                 return self._subscription_disable(args)
             if tool_name == "news.subscription.delete":
                 return self._subscription_delete(args)
-            if tool_name == "news.memory.search":
-                return self._memory_search(args)
+            if tool_name == "news.memory.recall":
+                return self._memory_recall(args)
             if tool_name == "news.memory.reindex":
                 return self._memory_reindex(args)
             if tool_name == "news.memory.bootstrap":
@@ -369,8 +368,6 @@ class MCPApplicationService:
                 return self._run_diagnostics(args)
             if tool_name == "news.run.cancel":
                 return self._run_cancel(args)
-            if tool_name == "news.run.rerun_from_step":
-                return self._run_rerun_from_step(args)
             if tool_name == "news.run.health":
                 return self._run_health(args)
             if tool_name == "news.run.catalog_health":
@@ -619,8 +616,8 @@ class MCPApplicationService:
     def _report_list(self, args: dict[str, Any]) -> MCPToolCallResult:
         result = self.report_service_factory().list_reports(
             limit=_optional_int_arg(args, "limit", default=20),
-            workflow_id=_optional_arg(args, "workflow_id"),
-            workflow_family=_optional_arg(args, "workflow_family"),
+            graph_id=_optional_arg(args, "graph_id"),
+            graph_ids=_optional_text_tuple(args, "graph_ids"),
         )
         return MCPToolCallResult(
             tool_name="news.report.list",
@@ -793,8 +790,8 @@ class MCPApplicationService:
             _required_arg(args, "entity_id"),
             artifact_root=str(args.get("artifact_root") or ".newsroom/runs"),
             limit=_optional_int_arg(args, "limit", default=20),
-            workflow_id=_optional_arg(args, "workflow_id"),
-            workflow_family=_optional_arg(args, "workflow_family"),
+            graph_id=_optional_arg(args, "graph_id"),
+            graph_ids=_optional_text_tuple(args, "graph_ids"),
         )
         return MCPToolCallResult(
             tool_name="news.entity.match_reports",
@@ -860,7 +857,7 @@ class MCPApplicationService:
             data={"subscription_id": subscription_id, "deleted": deleted},
         )
 
-    def _memory_search(self, args: dict[str, Any]) -> MCPToolCallResult:
+    def _memory_recall(self, args: dict[str, Any]) -> MCPToolCallResult:
         query = str(args.get("query") or "")
         if not query:
             raise ValueError("query is required")
@@ -871,7 +868,7 @@ class MCPApplicationService:
             filters=dict(args.get("filters") or {}),
         )
         return MCPToolCallResult(
-            tool_name="news.memory.search",
+            tool_name="news.memory.recall",
             success=True,
             data=result.to_dict(),
         )
@@ -908,7 +905,7 @@ class MCPApplicationService:
         run_id = str(args.get("run_id") or "")
         if not run_id:
             raise ValueError("run_id is required")
-        result = self.run_inspection_service_factory().get_run(run_id)
+        result = self.graph_run_inspection_service_factory().get_run(run_id)
         return MCPToolCallResult(
             tool_name="news.run.show",
             success=True,
@@ -919,12 +916,12 @@ class MCPApplicationService:
         run_id = str(args.get("run_id") or "")
         if not run_id:
             raise ValueError("run_id is required")
-        result = self.run_inspection_service_factory().get_run_events(
+        result = self.graph_run_inspection_service_factory().get_run_events(
             run_id,
             limit=int(args["limit"]) if args.get("limit") is not None else None,
             offset=int(args.get("offset") or 0),
             event_type=_optional_arg(args, "event_type"),
-            step_id=_optional_arg(args, "step_id"),
+            node_instance_id=_optional_arg(args, "node_instance_id"),
             sequence_cursor=_optional_arg(args, "sequence_cursor"),
         )
         return MCPToolCallResult(
@@ -937,7 +934,7 @@ class MCPApplicationService:
         run_id = str(args.get("run_id") or "")
         if not run_id:
             raise ValueError("run_id is required")
-        result = self.run_inspection_service_factory().replay_run(run_id)
+        result = self.graph_run_inspection_service_factory().replay_run(run_id)
         return MCPToolCallResult(
             tool_name="news.run.replay",
             success=True,
@@ -948,7 +945,7 @@ class MCPApplicationService:
         run_id = str(args.get("run_id") or "")
         if not run_id:
             raise ValueError("run_id is required")
-        result = self.run_inspection_service_factory().get_run_diagnostics(run_id)
+        result = self.graph_run_inspection_service_factory().get_run_diagnostics(run_id)
         return MCPToolCallResult(
             tool_name="news.run.diagnostics",
             success=True,
@@ -956,11 +953,12 @@ class MCPApplicationService:
         )
 
     def _run_cancel(self, args: dict[str, Any]) -> MCPToolCallResult:
-        result = self.run_operation_service_factory().cancel_run(
+        actor = self._graph_operation_actor()
+        result = self.graph_run_operation_service_factory().cancel_run(
             _required_arg(args, "run_id"),
-            reason=_optional_arg(args, "reason"),
-            actor_id=_optional_arg(args, "actor_id"),
-            metadata=dict(args.get("metadata") or {}),
+            reason_code=_required_arg(args, "reason_code"),
+            cancellation_id=_optional_arg(args, "cancellation_id"),
+            actor=actor,
         )
         return MCPToolCallResult(
             tool_name="news.run.cancel",
@@ -968,24 +966,19 @@ class MCPApplicationService:
             data=result.to_dict(),
         )
 
-    def _run_rerun_from_step(self, args: dict[str, Any]) -> MCPToolCallResult:
-        result = self.run_operation_service_factory().rerun_from_step(
-            _required_arg(args, "run_id"),
-            step_id=_required_arg(args, "step_id"),
-            actor_id=_optional_arg(args, "actor_id"),
-            metadata=dict(args.get("metadata") or {}),
-        )
-        return MCPToolCallResult(
-            tool_name="news.run.rerun_from_step",
-            success=True,
-            data=result.to_dict(),
-        )
+    def _graph_operation_actor(self) -> ActorContext:
+        actor = self._operator_actor
+        if not isinstance(actor, ActorContext):
+            raise PermissionError(
+                "Graph run mutation requires an authenticated MCP actor"
+            )
+        return actor
 
     def _run_health(self, args: dict[str, Any]) -> MCPToolCallResult:
         run_id = str(args.get("run_id") or "")
         if not run_id:
             raise ValueError("run_id is required")
-        result = self.run_inspection_service_factory().get_run_health(run_id)
+        result = self.graph_run_inspection_service_factory().get_run_health(run_id)
         return MCPToolCallResult(
             tool_name="news.run.health",
             success=True,
@@ -993,7 +986,7 @@ class MCPApplicationService:
         )
 
     def _run_catalog_health(self) -> MCPToolCallResult:
-        result = self.run_inspection_service_factory().get_catalog_health()
+        result = self.graph_run_inspection_service_factory().get_catalog_health()
         return MCPToolCallResult(
             tool_name="news.run.catalog_health",
             success=True,
@@ -1007,7 +1000,7 @@ class MCPApplicationService:
             raise ValueError("base_run_id is required")
         if not target_run_id:
             raise ValueError("target_run_id is required")
-        result = self.run_inspection_service_factory().compare_runs(
+        result = self.graph_run_inspection_service_factory().compare_runs(
             base_run_id,
             target_run_id,
         )
@@ -1222,7 +1215,7 @@ class MCPApplicationService:
         )
 
     def _read_run_manifest_resource(self, uri: str, run_id: str) -> MCPResourceReadResult:
-        result = self.run_inspection_service_factory().get_run(run_id)
+        result = self.graph_run_inspection_service_factory().get_run(run_id)
         return MCPResourceReadResult(
             uri=uri,
             success=True,
@@ -1235,16 +1228,22 @@ class MCPApplicationService:
         args: dict[str, Any],
     ) -> MCPResourceReadResult:
         run_id = str(args.pop("run_id"))
-        allowed = {"limit", "offset", "event_type", "step_id", "sequence_cursor"}
+        allowed = {
+            "limit",
+            "offset",
+            "event_type",
+            "node_instance_id",
+            "sequence_cursor",
+        }
         unknown = set(args) - allowed
         if unknown:
             raise ValueError(f"unsupported run events resource parameter: {sorted(unknown)[0]}")
-        result = self.run_inspection_service_factory().get_run_events(
+        result = self.graph_run_inspection_service_factory().get_run_events(
             run_id,
             limit=(int(args["limit"]) if args.get("limit") is not None else None),
             offset=int(args.get("offset") or 0),
             event_type=_optional_arg(args, "event_type"),
-            step_id=_optional_arg(args, "step_id"),
+            node_instance_id=_optional_arg(args, "node_instance_id"),
             sequence_cursor=_optional_arg(args, "sequence_cursor"),
         )
         return MCPResourceReadResult(
@@ -1254,7 +1253,7 @@ class MCPApplicationService:
         )
 
     def _read_run_replay_resource(self, uri: str, run_id: str) -> MCPResourceReadResult:
-        result = self.run_inspection_service_factory().replay_run(run_id)
+        result = self.graph_run_inspection_service_factory().replay_run(run_id)
         return MCPResourceReadResult(
             uri=uri,
             success=True,
@@ -1494,8 +1493,8 @@ def _tools() -> list[MCPTool]:
                 "type": "object",
                 "properties": {
                     "limit": {"type": "integer", "minimum": 1},
-                    "workflow_id": {"type": "string"},
-                    "workflow_family": {"type": "string"},
+                    "graph_id": {"type": "string"},
+                    "graph_ids": {"type": "array", "items": {"type": "string"}},
                 },
             },
         ),
@@ -1663,8 +1662,8 @@ def _tools() -> list[MCPTool]:
                     "entity_id": {"type": "string"},
                     "artifact_root": {"type": "string"},
                     "limit": {"type": "integer", "minimum": 1},
-                    "workflow_id": {"type": "string"},
-                    "workflow_family": {"type": "string"},
+                    "graph_id": {"type": "string"},
+                    "graph_ids": {"type": "array", "items": {"type": "string"}},
                 },
             },
         ),
@@ -1729,9 +1728,9 @@ def _tools() -> list[MCPTool]:
             },
         ),
         MCPTool(
-            name="news.memory.search",
-            title="Search vector memory",
-            description="Search vector memory through MemoryApplicationService.",
+            name="news.memory.recall",
+            title="Recall vector memory",
+            description="Recall vector memory through MemoryApplicationService.",
             input_schema={
                 "type": "object",
                 "required": ["query"],
@@ -1779,7 +1778,7 @@ def _tools() -> list[MCPTool]:
         MCPTool(
             name="news.run.show",
             title="Show run",
-            description="Read one workflow run manifest through RunInspectionService.",
+            description="Read one Graph run manifest through GraphRunInspectionService.",
             input_schema={
                 "type": "object",
                 "required": ["run_id"],
@@ -1789,7 +1788,7 @@ def _tools() -> list[MCPTool]:
         MCPTool(
             name="news.run.events",
             title="Show run events",
-            description="Read structured workflow run events through RunInspectionService.",
+            description="Read structured Graph run events through GraphRunInspectionService.",
             input_schema={
                 "type": "object",
                 "required": ["run_id"],
@@ -1798,7 +1797,7 @@ def _tools() -> list[MCPTool]:
                     "limit": {"type": "integer", "minimum": 1},
                     "offset": {"type": "integer", "minimum": 0},
                     "event_type": {"type": "string"},
-                    "step_id": {"type": "string"},
+                    "node_instance_id": {"type": "string"},
                     "sequence_cursor": {"type": "string"},
                 },
             },
@@ -1806,7 +1805,7 @@ def _tools() -> list[MCPTool]:
         MCPTool(
             name="news.run.replay",
             title="Replay run artifacts",
-            description="Read a redacted run replay bundle through RunInspectionService.",
+            description="Read a Graph run replay bundle through GraphRunInspectionService.",
             input_schema={
                 "type": "object",
                 "required": ["run_id"],
@@ -1816,7 +1815,7 @@ def _tools() -> list[MCPTool]:
         MCPTool(
             name="news.run.diagnostics",
             title="Inspect run diagnostics",
-            description="Read workflow run diagnostics through RunInspectionService.",
+            description="Read Graph run diagnostics through GraphRunInspectionService.",
             input_schema={
                 "type": "object",
                 "required": ["run_id"],
@@ -1826,37 +1825,21 @@ def _tools() -> list[MCPTool]:
         MCPTool(
             name="news.run.cancel",
             title="Cancel run",
-            description="Request workflow run cancellation through RunOperationApplicationService.",
+            description="Request Graph run cancellation through GraphRunOperationApplicationService.",
             input_schema={
                 "type": "object",
-                "required": ["run_id"],
+                "required": ["run_id", "reason_code"],
                 "properties": {
                     "run_id": {"type": "string"},
-                    "reason": {"type": "string"},
-                    "actor_id": {"type": "string"},
-                    "metadata": {"type": "object"},
-                },
-            },
-        ),
-        MCPTool(
-            name="news.run.rerun_from_step",
-            title="Rerun from step",
-            description="Request a workflow rerun plan from a specific step.",
-            input_schema={
-                "type": "object",
-                "required": ["run_id", "step_id"],
-                "properties": {
-                    "run_id": {"type": "string"},
-                    "step_id": {"type": "string"},
-                    "actor_id": {"type": "string"},
-                    "metadata": {"type": "object"},
+                    "reason_code": {"type": "string"},
+                    "cancellation_id": {"type": "string"},
                 },
             },
         ),
         MCPTool(
             name="news.run.health",
             title="Inspect run health",
-            description="Read workflow run health through RunInspectionService.",
+            description="Read Graph run health through GraphRunInspectionService.",
             input_schema={
                 "type": "object",
                 "required": ["run_id"],
@@ -1866,13 +1849,13 @@ def _tools() -> list[MCPTool]:
         MCPTool(
             name="news.run.catalog_health",
             title="Inspect run catalog health",
-            description="Read workflow run catalog health through RunInspectionService.",
+            description="Read Graph run catalog health through GraphRunInspectionService.",
             input_schema={"type": "object", "properties": {}},
         ),
         MCPTool(
             name="news.run.compare",
-            title="Compare workflow runs",
-            description="Compare two workflow runs through RunInspectionService.",
+            title="Compare Graph runs",
+            description="Compare two Graph runs through GraphRunInspectionService.",
             input_schema={
                 "type": "object",
                 "required": ["base_run_id", "target_run_id"],
@@ -2265,17 +2248,17 @@ def _resources() -> list[MCPResource]:
         MCPResource(
             uri=RUN_MANIFEST_RESOURCE_TEMPLATE,
             name="Run Manifest",
-            description="Workflow run manifest by run id.",
+            description="Graph run manifest by run id.",
         ),
         MCPResource(
             uri=RUN_EVENTS_RESOURCE_TEMPLATE,
             name="Run Events",
-            description="Structured workflow run events by run id.",
+            description="Structured Graph run events by run id.",
         ),
         MCPResource(
             uri=RUN_REPLAY_RESOURCE_TEMPLATE,
             name="Run Replay",
-            description="Redacted workflow run replay bundle by run id.",
+            description="Graph run replay bundle by run id.",
         ),
         MCPResource(
             uri=RUN_LINEAGE_RESOURCE_TEMPLATE,
@@ -2295,7 +2278,7 @@ def _resources() -> list[MCPResource]:
         MCPResource(
             uri=RUN_ARTIFACT_RESOURCE_TEMPLATE,
             name="Run Artifact",
-            description="Manifest-listed workflow artifact by run id and artifact key.",
+            description="Manifest-listed Graph artifact by run id and artifact key.",
         ),
         MCPResource(
             uri=ARTIFACT_RESOURCE_TEMPLATE,
@@ -2550,7 +2533,7 @@ def _tool_permission(tool_name: str) -> str:
         return "write:runs"
     if tool_name.startswith("news.research."):
         return "read:reports"
-    if tool_name in {"news.run.cancel", "news.run.rerun_from_step"}:
+    if tool_name == "news.run.cancel":
         return "write:runs"
     if tool_name.startswith("news.run."):
         return "read:reports"
@@ -2630,7 +2613,7 @@ def _tool_is_read_only(tool_name: str) -> bool:
         return False
     if tool_name == "news.research.analyze_paper":
         return False
-    if tool_name in {"news.run.cancel", "news.run.rerun_from_step"}:
+    if tool_name == "news.run.cancel":
         return False
     write_markers = (
         ".enqueue",
@@ -2694,7 +2677,7 @@ def _prompts() -> list[MCPPrompt]:
         ),
         MCPPrompt(
             name="news.run.diagnose",
-            description="Diagnose a workflow run and propose remediation steps.",
+            description="Diagnose a Graph run and propose remediation steps.",
             arguments_schema={"type": "object", "properties": {"run_id": {"type": "string"}}},
         ),
         MCPPrompt(
@@ -2756,10 +2739,10 @@ def _prompt_templates() -> dict[str, dict[str, str]]:
             ),
         },
         "news.run.diagnose": {
-            "description": "Diagnose a workflow run and propose remediation steps.",
+            "description": "Diagnose a Graph run and propose remediation steps.",
             "text": (
-                "Diagnose workflow run {run_id}.\n"
-                "Summarize failed steps, missing artifacts, blocked states, and safe recovery options."
+                "Diagnose Graph run {run_id}.\n"
+                "Summarize failed nodes, missing artifacts, terminal states, and safe recovery options."
             ),
         },
         "news.source.triage": {
@@ -2894,16 +2877,18 @@ def _approval_service_factory():
     return ApprovalApplicationService()
 
 
-def _run_inspection_service_factory():
-    from interfaces.services.run_inspection_factory import run_inspection_service_from_env
+def _graph_run_inspection_service_factory():
+    from interfaces.services.run_inspection_factory import (
+        graph_run_inspection_service_from_env,
+    )
 
-    return run_inspection_service_from_env()
+    return graph_run_inspection_service_from_env()
 
 
-def _run_operation_service_factory():
-    from interfaces.services.run_operation_service import RunOperationApplicationService
+def _graph_run_operation_service_factory():
+    from interfaces.services.run_operation_service import GraphRunOperationApplicationService
 
-    return RunOperationApplicationService()
+    return GraphRunOperationApplicationService()
 
 
 def _artifact_service_factory():
@@ -3326,6 +3311,22 @@ def _optional_bool_arg(args: dict[str, Any], name: str, *, default: bool) -> boo
         if normalized in {"0", "false", "no", "off"}:
             return False
     return bool(value)
+
+
+def _optional_text_tuple(args: dict[str, Any], name: str) -> tuple[str, ...] | None:
+    value = args.get(name)
+    if value is None:
+        return None
+    if isinstance(value, str):
+        items = (value,)
+    elif isinstance(value, (list, tuple)):
+        items = tuple(str(item) for item in value)
+    else:
+        raise ValueError(f"{name} must be a string list")
+    normalized = tuple(item.strip() for item in items if item.strip())
+    if not normalized:
+        raise ValueError(f"{name} must not be empty")
+    return normalized
 
 
 def _string_list_arg(args: dict[str, Any], name: str) -> list[str]:

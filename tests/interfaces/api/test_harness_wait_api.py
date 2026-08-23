@@ -25,7 +25,7 @@ from interfaces.services.harness_wait_service import (
 
 _TOKEN = "harness-wait-secret"
 _AUTH_HEADERS = {"Authorization": f"Bearer {_TOKEN}"}
-_WAIT_PATH = "/api/v1/runs/run-1/waits/node-1"
+_WAIT_PATH = "/api/v2/graph-runs/run-1/waits/node-1"
 
 
 @dataclass

@@ -14,10 +14,25 @@ from framework.events import (
     W3CTracePropagator,
 )
 import framework.events.propagation as propagation_module
+from framework.shared import GraphExecutionIdentity
 
 
 TRACE_ID = "1" * 32
 REMOTE_SPAN_ID = "2" * 16
+
+
+def _identity(run_id: str, *, graph_id: str = "test.graph") -> GraphExecutionIdentity:
+    return GraphExecutionIdentity(
+        run_id=run_id,
+        graph_id=graph_id,
+        graph_version="1",
+        graph_ref=f"{graph_id}@1",
+        graph_checksum="sha256:" + "a" * 64,
+        node_id="analyze",
+        node_instance_id=f"{run_id}:analyze:1",
+        activity_id=f"activity-{run_id}",
+        attempt=1,
+    )
 
 
 def test_w3c_extract_child_and_inject_preserve_only_allowed_state() -> None:
@@ -34,10 +49,9 @@ def test_w3c_extract_child_and_inject_preserve_only_allowed_state() -> None:
 
     extracted = propagator.extract(
         carrier,
-        run_id="run-propagation",
-        workflow_id="wf-propagation",
+        execution_identity=_identity("run-propagation", graph_id="research.graph"),
     )
-    child = extracted.child(step_id="step-propagation")
+    child = extracted.child()
     outbound_seed = {"content-type": "application/json"}
     outbound = propagator.inject(
         child.context,
@@ -72,7 +86,7 @@ def test_invalid_or_untrusted_remote_context_restarts_without_business_identity(
             "traceparent": "00-not-a-trace-id-not-a-span-id-01",
             "baggage": "run_id=attacker-selected",
         },
-        run_id="trusted-run-id",
+        execution_identity=_identity("trusted-run-id"),
     )
 
     assert extracted.restarted is True
@@ -86,7 +100,7 @@ def test_invalid_or_untrusted_remote_context_restarts_without_business_identity(
         TracePropagationPolicy(accept_remote_context=False)
     ).extract(
         {"traceparent": f"00-{TRACE_ID}-{REMOTE_SPAN_ID}-00"},
-        run_id="trusted-run-id",
+        execution_identity=_identity("trusted-run-id"),
     )
     assert untrusted.restarted is True
     assert untrusted.context.trace_id != TRACE_ID
@@ -103,34 +117,17 @@ def test_traceparent_policy_can_reject_instead_of_restart() -> None:
     with pytest.raises(TracePropagationError, match="invalid_traceparent"):
         propagator.extract(
             {"traceparent": "malformed"},
-            run_id="run-reject",
+            execution_identity=_identity("run-reject"),
         )
 
 
-def test_legacy_context_is_preserved_but_never_injected() -> None:
-    legacy = TraceContext.root(
-        run_id="run-legacy",
-        trace_id="trace-events",
-        span_id="workflow:run-legacy",
-    )
-    restored = TraceContext.from_dict(legacy.to_dict(redact=False))
-    propagator = W3CTracePropagator()
-
-    outbound = propagator.inject(
-        restored,
-        {
-            "TraceParent": f"00-{TRACE_ID}-{REMOTE_SPAN_ID}-01",
-            "tracestate": "vendor=stale",
-            "baggage": "safe=stale",
-            "content-type": "application/json",
-        },
-    )
-
-    assert restored.trace_id == "trace-events"
-    assert restored.span_id == "workflow:run-legacy"
-    assert restored.has_legacy_identifiers is True
-    assert restored.is_injectable is False
-    assert outbound == {"content-type": "application/json"}
+def test_trace_context_without_graph_identity_is_rejected() -> None:
+    with pytest.raises(TypeError):
+        TraceContext.root(
+            run_id="run-legacy",
+            trace_id="trace-events",
+            span_id="legacy:run-legacy",
+        )
 
 
 def test_auxiliary_headers_are_bounded_and_can_fail_closed() -> None:
@@ -148,7 +145,7 @@ def test_auxiliary_headers_are_bounded_and_can_fail_closed() -> None:
             "tracestate": "vendor=value-that-is-too-large",
             "baggage": "safe=value-that-is-too-large",
         },
-        run_id="run-bounded",
+        execution_identity=_identity("run-bounded"),
     )
 
     assert extracted.accepted_remote is True
@@ -169,7 +166,7 @@ def test_auxiliary_headers_are_bounded_and_can_fail_closed() -> None:
                 "traceparent": f"00-{TRACE_ID}-{REMOTE_SPAN_ID}-00",
                 "baggage": "safe=oversized",
             },
-            run_id="run-bounded",
+            execution_identity=_identity("run-bounded"),
         )
 
 
@@ -179,20 +176,20 @@ def test_extract_rejects_duplicate_case_insensitive_trace_headers() -> None:
             {
                 "traceparent": f"00-{TRACE_ID}-{REMOTE_SPAN_ID}-00",
                 "TraceParent": f"00-{TRACE_ID}-{'3' * 16}-00",
-            },
-            run_id="run-duplicate",
+                },
+                execution_identity=_identity("run-duplicate"),
         )
 
 
 def test_extracted_baggage_is_immutable() -> None:
     extracted = W3CTracePropagator(
         TracePropagationPolicy(baggage_allowlist=frozenset({"safe"}))
-    ).extract(
+        ).extract(
         {
             "traceparent": f"00-{TRACE_ID}-{REMOTE_SPAN_ID}-00",
             "baggage": "safe=value",
-        },
-        run_id="run-baggage",
+            },
+            execution_identity=_identity("run-baggage"),
     )
 
     with pytest.raises(TypeError):
@@ -203,7 +200,9 @@ def test_extracted_context_defaults_do_not_share_baggage() -> None:
     span_context = propagation_module.W3CSpanContext.root()
     first_span = propagation_module.ExtractedSpanContext(span_context)
     second_span = propagation_module.ExtractedSpanContext(span_context)
-    trace_context = TraceContext.root(run_id="run-default-baggage")
+    trace_context = TraceContext.root(
+        execution_identity=_identity("run-default-baggage")
+    )
     first_trace = propagation_module.ExtractedTraceContext(trace_context)
     second_trace = propagation_module.ExtractedTraceContext(trace_context)
 
@@ -226,8 +225,8 @@ def test_noop_adapter_preserves_trace_facade_when_otel_is_unavailable(
     monkeypatch.setattr(propagation_module, "_load_otel_bindings", _missing_otel)
 
     adapter = propagation_module.default_trace_adapter()
-    root = adapter.root(run_id="run-noop")
-    child = adapter.child(root, step_id="step-noop")
+    root = adapter.root(execution_identity=_identity("run-noop"))
+    child = adapter.child(root)
 
     assert isinstance(adapter, NoOpTraceAdapter)
     assert adapter.available is False
@@ -248,7 +247,9 @@ def test_trace_adapter_never_changes_facade_identity(
     factory: Callable[[], object],
 ) -> None:
     adapter = factory()
-    root = adapter.root(run_id="run-adapter")  # type: ignore[attr-defined]
+    root = adapter.root(  # type: ignore[attr-defined]
+        execution_identity=_identity("run-adapter")
+    )
     child = adapter.child(root, agent_id="agent-adapter")  # type: ignore[attr-defined]
 
     assert child.trace_id == root.trace_id

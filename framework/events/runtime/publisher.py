@@ -496,7 +496,7 @@ def _backend_metric_bucket(value: Any) -> str:
 
 def _source_metric_bucket(value: Any) -> str:
     normalized = str(value).strip().lower() if isinstance(value, str) else ""
-    for bucket in ("workflow", "harness", "migration", "tool", "api"):
+    for bucket in ("graph", "harness", "migration", "tool", "api"):
         if normalized == bucket or normalized.startswith(f"{bucket}.") or normalized.startswith(
             f"{bucket}:"
         ):

@@ -2,11 +2,21 @@ from __future__ import annotations
 
 import json
 
+from framework.events.canonical import checksum_for
 from framework.harness import (
     ContextBudget,
+    ContextGraphIdentity,
     FakeArtifactPort,
     HarnessEventType,
     InMemoryHarnessEventPort,
+)
+from framework.harness.context.models import (
+    CONTEXT_GRAPH_TASK_PLAN_STAGE_IDENTITY_SCHEMA_V2,
+)
+from framework.harness.graph.versioning import (
+    GRAPH_ONLY_NORMALIZED_HARNESS_GRAPH_SCHEMA,
+    HARNESS_CONDITION_POLICY_VERSION,
+    HARNESS_GRAPH_ONLY_COMPILER_VERSION,
 )
 from infrastructure.research.context_runtime import build_research_context_assembler
 
@@ -26,8 +36,10 @@ def test_research_context_assembler_commits_exact_no_compaction_evidence() -> No
     envelope = assembler.assemble(
         {
             "run_id": "research-context-production",
-            "workflow_id": "research.paper_analysis",
-            "step_id": "publish_artifacts",
+            "graph_identity": _graph_identity(),
+            "phase": "EXECUTE",
+            "worker_id": "research-artifact-publisher",
+            "worker_type": "function",
             "current_task_ref": "task://publish_artifacts",
             "current_instruction": "Publish verified Research artifacts.",
             "source_refs": ("source://paper",),
@@ -71,3 +83,33 @@ def test_research_context_assembler_commits_exact_no_compaction_evidence() -> No
         sort_keys=True,
     )
     assert "Publish verified Research artifacts." not in durable_projection
+
+
+def _graph_identity() -> ContextGraphIdentity:
+    projection = {
+        "schema_version": CONTEXT_GRAPH_TASK_PLAN_STAGE_IDENTITY_SCHEMA_V2,
+        "run_id": "research-context-production",
+        "graph_schema_version": GRAPH_ONLY_NORMALIZED_HARNESS_GRAPH_SCHEMA,
+        "compiler_version": HARNESS_GRAPH_ONLY_COMPILER_VERSION,
+        "condition_policy_version": HARNESS_CONDITION_POLICY_VERSION,
+        "graph_id": "research.paper_analysis",
+        "graph_version": "1",
+        "graph_checksum": "sha256:" + "1" * 64,
+        "stage_id": "publish_artifacts",
+        "stage_binding_checksum": "sha256:" + "2" * 64,
+        "graph_ref": "research.paper_analysis@1",
+    }
+    return ContextGraphIdentity(
+        run_id=projection["run_id"],
+        graph_id=projection["graph_id"],
+        graph_version=projection["graph_version"],
+        graph_ref=projection["graph_ref"],
+        graph_schema_version=projection["graph_schema_version"],
+        compiler_version=projection["compiler_version"],
+        condition_policy_version=projection["condition_policy_version"],
+        graph_checksum=projection["graph_checksum"],
+        stage_id=projection["stage_id"],
+        stage_binding_checksum=projection["stage_binding_checksum"],
+        stage_identity_schema=projection["schema_version"],
+        stage_identity_checksum=checksum_for(projection),
+    )

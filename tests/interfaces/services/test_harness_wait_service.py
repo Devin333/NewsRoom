@@ -11,9 +11,24 @@ from framework.harness.control_plane.harness import (
 )
 from framework.harness.control_plane.policy import HarnessBudget
 from framework.harness.control_plane.state import HarnessRunSpec
+from framework.harness.runtime.graph_dispatcher import HarnessGraphPhysicalActivityDispatcher
+from framework.harness.runtime.activity_executor import HarnessGraphPhysicalActivityExecutor
+from framework.harness import InMemoryHarnessNodeOutputResource
+from framework.shared.attempts import AttemptSupervisor
 from framework.harness.graph.dsl import HarnessGraphSpec, Sequence, StepRef, Wait
-from framework.harness.workflow.spec import HarnessWorkflowSpec
-from framework.harness.graph.activity import HarnessStepSpec
+from framework.harness.graph.activity import HarnessLeafActivityKind, HarnessStepSpec, HarnessWorkerType
+from framework.harness.graph.bindings import (
+    HarnessActivityCapabilities,
+    HarnessActivityContractBinding,
+    HarnessLeafActivityBinding as HarnessRuntimeLeafActivityBinding,
+    HarnessRuntimeBindingAuthority,
+    HarnessWorkerBinding,
+)
+from framework.harness.graph.definition import HarnessGraphDefinition, HarnessGraphLeafBinding
+from framework.harness.graph.model import HarnessContractKind, HarnessContractReference
+from framework.harness.side_effects.fake import CountingHarnessSideEffectHandler, InMemoryHarnessSideEffectStore
+from framework.harness.side_effects.models import HarnessTerminalSideEffectPolicy
+from framework.harness.side_effects.registry import HarnessSideEffectHandlerBinding, HarnessSideEffectRegistry
 from framework.harness.workers.result import HarnessWorkerResult
 from framework.harness.waits.models import HarnessWaitScope, HarnessWaitTimerWakeRecord
 from interfaces.models.actor import ActorContext
@@ -458,56 +473,118 @@ def _waiting_service(
     }
     after = HarnessStepSpec(
         "after",
-        "script",
+        HarnessWorkerType.FUNCTION,
+        output_key="after_output",
         metadata={"step_version": "1", "worker_version": "1"},
     )
-    workflow = HarnessWorkflowSpec(
-        workflow_id=f"workflow-{run_id}",
-        workflow_version="2",
-        steps=(after,),
-        entry_step_id="after",
-        graph=HarnessGraphSpec(
-            graph_id=f"graph-{run_id}",
-            root=Sequence(
-                (
-                    Wait(
-                        "approval-wait" if wait_kind == "approval" else "signal-wait",
-                        wait_kind,
-                        {"request_id": "graph.inputs.request_id"},
-                        "newsroom.wait",
-                        "1",
-                        "graph.inputs.tenant_scope_ref",
-                        "graph.inputs.identity_scope_ref",
-                        deadline_input_path=(
-                            "graph.inputs.deadline_ref"
-                            if wait_kind == "timer"
-                            else None
-                        ),
+    graph = HarnessGraphSpec(
+        graph_id=f"graph-{run_id}",
+        root=Sequence(
+            (
+                Wait(
+                    "approval-wait" if wait_kind == "approval" else "signal-wait",
+                    wait_kind,
+                    {"request_id": "graph.inputs.request_id"},
+                    "newsroom.wait",
+                    "1",
+                    "graph.inputs.tenant_scope_ref",
+                    "graph.inputs.identity_scope_ref",
+                    deadline_input_path=(
+                        "graph.inputs.deadline_ref"
+                        if wait_kind == "timer"
+                        else None
                     ),
-                    StepRef("after"),
-                )
+                ),
+                StepRef("after"),
+            )
+        ),
+        input_keys=tuple(sorted(inputs)),
+    )
+    definition = HarnessGraphDefinition(
+        graph_id=graph.graph_id,
+        graph_version="1",
+        root=graph,
+        activities=(after,),
+        leaf_activity_bindings=(
+            HarnessGraphLeafBinding(
+                "after",
+                HarnessLeafActivityKind.FUNCTION,
+                HarnessContractReference(HarnessContractKind.WORKER, "after", "1"),
+                HarnessContractReference(HarnessContractKind.ACTIVITY, "test.function.activity", "1"),
             ),
-            input_keys=tuple(sorted(inputs)),
+        ),
+        task_plan_stage_bindings=(),
+        committed_output_bindings=(),
+        repair_bindings=(),
+        terminal_side_effect_policy=HarnessTerminalSideEffectPolicy(
+            policy_id="test.terminal",
+            version="1",
+            handler="test.terminal@1",
+            kind="artifact",
+            requires_approval=False,
+            retry_limit=1,
+            not_required_evidence_ref=checksum_for("test.terminal"),
         ),
     )
     run_spec = HarnessRunSpec(
         run_id,
-        workflow,
+        definition,
         inputs=inputs,
         metadata={
             "tenant_scope_ref": tenant_scope_ref,
             "identity_scope_ref": identity_scope_ref,
+            "subject_scope_ref": checksum_for({"subject": run_id}),
         },
         budget=HarnessBudget.safe_default(),
         created_at=_NOW,
     )
+    worker = _FunctionWorker("after")
+    activity = _FunctionActivity()
+    side_effect_store = InMemoryHarnessSideEffectStore()
+    side_effect_registry = HarnessSideEffectRegistry(
+        (
+            HarnessSideEffectHandlerBinding(
+                "test.terminal@1",
+                "artifact",
+                CountingHarnessSideEffectHandler(side_effect_store, disposition="accepted"),
+            ),
+        )
+    )
     control_plane = HarnessControlPlane(
         event_port=InMemoryHarnessEventPort(),
-        worker_registry={
-            "after": lambda task: HarnessWorkerResult("succeeded", output=task)
-        },
+        side_effect_store=side_effect_store,
+        runtime_binding_authority=HarnessRuntimeBindingAuthority(
+            workers=(HarnessWorkerBinding("after@1", HarnessWorkerType.FUNCTION, worker),),
+            activities=(HarnessActivityContractBinding("test.function.activity@1", activity),),
+            leaf_activities=(
+                HarnessRuntimeLeafActivityBinding(
+                    HarnessLeafActivityKind.FUNCTION,
+                    "after@1",
+                    "test.function.activity@1",
+                ),
+            ),
+            side_effect_registry=side_effect_registry,
+        ),
     )
-    waiting = control_plane.run(run_spec).graph_state
+    executor = HarnessGraphPhysicalActivityExecutor(
+        binding_authority=control_plane.runtime_binding_authority,
+        input_resolver=control_plane,
+        node_output_resource=InMemoryHarnessNodeOutputResource(),
+        result_committer=None,
+        supervisor=AttemptSupervisor(),
+    )
+    control_plane.install_graph_activity_dispatcher(
+        HarnessGraphPhysicalActivityDispatcher(
+            executor=executor,
+            graph_resolver=control_plane.graph_for_activity,
+            input_resolver=control_plane,
+            accept=control_plane.accept_graph_activity_for_execution,
+            record_call_marker=control_plane.record_graph_activity_call_marker,
+            record_result=control_plane.record_graph_activity_result_event,
+            apply_result=control_plane.commit_physical_graph_result,
+        )
+    )
+    waiting = control_plane.run(run_spec).state
     assert waiting is not None
     registration = waiting.wait_registrations[0]
     binding = HarnessWaitRuntimeBinding(run_spec, control_plane)
@@ -539,6 +616,26 @@ def _waiting_service(
         clock=lambda: _NOW,
     )
     return service, registration, runtime_resolver
+
+
+class _FunctionWorker:
+    worker_version = "1"
+    worker_type = HarnessWorkerType.FUNCTION
+
+    def __init__(self, worker_id: str) -> None:
+        self.worker_id = worker_id
+
+    def execute(self, task: dict) -> HarnessWorkerResult:
+        return HarnessWorkerResult("succeeded", output=task)
+
+
+class _FunctionActivity:
+    activity_contract_id = "test.function.activity"
+    activity_contract_version = "1"
+    capabilities = HarnessActivityCapabilities()
+
+    def dispatch(self, _request: dict) -> None:
+        return None
 
 
 def _wait_scope(run_id: str, registration) -> HarnessWaitScope:

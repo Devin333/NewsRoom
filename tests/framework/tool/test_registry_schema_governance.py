@@ -3,6 +3,8 @@ from __future__ import annotations
 import pytest
 
 from framework.shared.graph_identity import GraphExecutionIdentity
+from framework.tool.governance.approval import ToolApprovalRequest
+from framework.tool.models.call import ToolCall
 from framework.tool import (
     MappingSecretProvider,
     ToolDefinition,
@@ -63,6 +65,28 @@ def test_control_tool_rejects_sensitive_payload_keys() -> None:
                 "reason": "needs review",
                 "payload": {"api_key": "hidden"},
             }
+        )
+
+
+def test_tool_approval_wire_rejects_and_omits_step_id() -> None:
+    request = ToolApprovalRequest(
+        tool_call=ToolCall(tool_name="sample.publish"),
+        tool_name="sample.publish",
+        side_effect="write",
+        reason="publish",
+        risk_level="medium",
+        graph_identity=_identity(),
+    )
+    assert "step_id" not in request.to_dict()
+    with pytest.raises(ValueError, match="retired step_id"):
+        ToolApprovalRequest(
+            tool_call=request.tool_call,
+            tool_name=request.tool_name,
+            side_effect=request.side_effect,
+            reason=request.reason,
+            risk_level=request.risk_level,
+            graph_identity=_identity(),
+            step_id="publish",
         )
 
 

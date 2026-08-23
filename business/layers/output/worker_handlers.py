@@ -24,7 +24,8 @@ class MemoryReindexTaskHandler:
             task_id=task.task_id,
             success=True,
             status=TaskStatus.SUCCEEDED,
-            workflow_run_id=run_id,
+            execution_scope=task.execution_scope,
+            graph_identity=task.graph_identity,
             run_status="succeeded",
             output=handler_output(result.to_dict()),
         )

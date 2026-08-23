@@ -61,10 +61,8 @@ RESERVED_EVENT_FIELDS = frozenset(
     }
 )
 
-# Flat fields owned by the legacy Event/EventEnvelope facades are authority
-# aliases, not an extension namespace. They remain accepted by the bounded
-# legacy parser, which resolves equal duplicates before security projection,
-# but cannot be reintroduced through extension metadata.
+# Retired flat orchestration fields remain reserved so no extension can revive
+# them as a new authority channel.
 _LEGACY_AUTHORITY_FIELDS = frozenset(
     {
         "agent_id",

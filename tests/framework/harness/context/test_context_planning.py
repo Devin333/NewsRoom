@@ -76,7 +76,7 @@ def _snapshot(
         # remains independent of provider/tokenizer implementations.
         ContextMaterializationRequest(
             run_id="run-1",
-            step_id="step-1",
+            stage_id="step-1",
             task_binding_ref="task://current",
             policy_revision=policy.policy_revision,
             physical_profile_revision="profile-v1",
@@ -93,7 +93,7 @@ def _snapshot(
         return base
     return ContextSemanticSnapshot(
         run_id=base.run_id,
-        step_id=base.step_id,
+        stage_id=base.stage_id,
         task_binding_ref=base.task_binding_ref,
         groups=(*base.groups, *extra_groups),
         policy_revision=base.policy_revision,

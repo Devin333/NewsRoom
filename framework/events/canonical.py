@@ -19,6 +19,7 @@ from framework.events.errors import (
 )
 from framework.events.schema.security import SecurityClassification
 from framework.shared.json import stable_json_dumps
+from framework.shared.graph_identity import GraphExecutionIdentity, GraphRunIdentity
 from framework.shared.time import ensure_utc, format_datetime, parse_datetime
 
 
@@ -32,8 +33,13 @@ _CHECKSUM_PATTERN = re.compile(r"sha256:[0-9a-f]{64}\Z")
 _BUSINESS_CONTEXT_FIELDS = frozenset(
     {
         "run_id",
-        "workflow_id",
-        "step_id",
+        "graph_id",
+        "graph_version",
+        "graph_ref",
+        "graph_checksum",
+        "execution_identity",
+        "stage_id",
+        "node_instance_id",
         "task_id",
         "agent_id",
         "tool_call_id",
@@ -89,8 +95,13 @@ CanonicalValue: TypeAlias = CanonicalScalar | Mapping[str, "CanonicalValue"] | t
 @dataclass(frozen=True)
 class BusinessContext:
     run_id: str | None = None
-    workflow_id: str | None = None
-    step_id: str | None = None
+    graph_id: str | None = None
+    graph_version: str | None = None
+    graph_ref: str | None = None
+    graph_checksum: str | None = None
+    execution_identity: GraphExecutionIdentity | None = None
+    stage_id: str | None = None
+    node_instance_id: str | None = None
     task_id: str | None = None
     agent_id: str | None = None
     tool_call_id: str | None = None
@@ -99,25 +110,123 @@ class BusinessContext:
     def __post_init__(self) -> None:
         for field_name in (
             "run_id",
-            "workflow_id",
-            "step_id",
+            "graph_id",
+            "graph_version",
+            "graph_ref",
+            "graph_checksum",
+            "stage_id",
+            "node_instance_id",
             "task_id",
             "agent_id",
             "tool_call_id",
             "request_id",
         ):
             object.__setattr__(self, field_name, _optional_text(getattr(self, field_name)))
+        execution_identity = self.execution_identity
+        if execution_identity is not None and not isinstance(
+            execution_identity, GraphExecutionIdentity
+        ):
+            if not isinstance(execution_identity, Mapping):
+                raise EventCanonicalizationError(
+                    "business_context execution_identity must be an object"
+                )
+            try:
+                execution_identity = GraphExecutionIdentity.from_dict(execution_identity)
+            except (TypeError, ValueError) as exc:
+                raise EventCanonicalizationError(
+                    "business_context execution_identity is invalid"
+                ) from exc
+        if execution_identity is not None:
+            if self.run_id is not None and self.run_id != execution_identity.run_id:
+                raise EventCanonicalizationError(
+                    "business_context execution identity run_id conflicts"
+                )
+            object.__setattr__(self, "execution_identity", execution_identity)
+            for field_name in (
+                "run_id",
+                "graph_id",
+                "graph_version",
+                "graph_ref",
+                "graph_checksum",
+            ):
+                object.__setattr__(self, field_name, getattr(execution_identity, field_name))
+            if self.stage_id is not None and self.stage_id != execution_identity.node_id:
+                raise EventCanonicalizationError(
+                    "business_context stage_id conflicts with execution identity"
+                )
+            if self.node_instance_id is not None and self.node_instance_id != execution_identity.node_instance_id:
+                raise EventCanonicalizationError(
+                    "business_context node_instance_id conflicts with execution identity"
+                )
+            object.__setattr__(self, "stage_id", execution_identity.node_id)
+            object.__setattr__(self, "node_instance_id", execution_identity.node_instance_id)
+        else:
+            object.__setattr__(self, "execution_identity", None)
+        graph_fields = (
+            self.graph_id,
+            self.graph_version,
+            self.graph_ref,
+            self.graph_checksum,
+        )
+        if any(value is not None for value in graph_fields):
+            if self.run_id is None or not all(value is not None for value in graph_fields):
+                raise EventCanonicalizationError(
+                    "business_context Graph identity must contain run_id and all Graph fields"
+                )
+            try:
+                graph_identity = GraphRunIdentity(
+                    run_id=self.run_id,
+                    graph_id=self.graph_id,
+                    graph_version=self.graph_version,
+                    graph_ref=self.graph_ref,
+                    graph_checksum=self.graph_checksum,
+                )
+            except (TypeError, ValueError) as exc:
+                raise EventCanonicalizationError(
+                    "business_context Graph identity is invalid"
+                ) from exc
+            for field_name in (
+                "run_id",
+                "graph_id",
+                "graph_version",
+                "graph_ref",
+                "graph_checksum",
+            ):
+                object.__setattr__(self, field_name, getattr(graph_identity, field_name))
 
-    def to_dict(self) -> dict[str, str | None]:
-        return {
+    @property
+    def graph_identity(self) -> GraphRunIdentity | None:
+        if self.graph_id is None:
+            return None
+        return GraphRunIdentity(
+            run_id=self.run_id,
+            graph_id=self.graph_id,
+            graph_version=self.graph_version,
+            graph_ref=self.graph_ref,
+            graph_checksum=self.graph_checksum,
+        )
+
+    @property
+    def physical_identity(self) -> GraphExecutionIdentity | None:
+        return self.execution_identity
+
+    def to_dict(self) -> dict[str, Any]:
+        payload: dict[str, Any] = {
             "run_id": self.run_id,
-            "workflow_id": self.workflow_id,
-            "step_id": self.step_id,
+            "graph_id": self.graph_id,
+            "graph_version": self.graph_version,
+            "graph_ref": self.graph_ref,
+            "graph_checksum": self.graph_checksum,
+            "stage_id": self.stage_id,
+            "node_instance_id": self.node_instance_id,
             "task_id": self.task_id,
             "agent_id": self.agent_id,
             "tool_call_id": self.tool_call_id,
             "request_id": self.request_id,
         }
+        if self.execution_identity is not None:
+            payload["execution_identity"] = self.execution_identity.to_dict()
+        return payload
 
     @classmethod
     def from_dict(cls, value: Mapping[str, Any] | None) -> BusinessContext:
@@ -130,8 +239,13 @@ class BusinessContext:
         _reject_unknown_fields(payload, _BUSINESS_CONTEXT_FIELDS, "business_context")
         return cls(
             run_id=payload.get("run_id"),
-            workflow_id=payload.get("workflow_id"),
-            step_id=payload.get("step_id"),
+            graph_id=payload.get("graph_id"),
+            graph_version=payload.get("graph_version"),
+            graph_ref=payload.get("graph_ref"),
+            graph_checksum=payload.get("graph_checksum"),
+            execution_identity=payload.get("execution_identity"),
+            stage_id=payload.get("stage_id"),
+            node_instance_id=payload.get("node_instance_id"),
             task_id=payload.get("task_id"),
             agent_id=payload.get("agent_id"),
             tool_call_id=payload.get("tool_call_id"),

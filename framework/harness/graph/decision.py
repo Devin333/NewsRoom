@@ -23,7 +23,6 @@ from framework.harness.graph.versioning import (
     GRAPH_ONLY_HARNESS_GRAPH_DECISION_SCHEMA,
     GRAPH_ONLY_NORMALIZED_HARNESS_GRAPH_SCHEMA,
     HARNESS_GRAPH_CONTROL_POLICY_VERSION,
-    HARNESS_GRAPH_DECISION_SCHEMA,
     HARNESS_GRAPH_EVALUATOR_VERSION,
     HARNESS_STEP_LIFECYCLE_VERSION,
 )
@@ -195,31 +194,26 @@ class HarnessGraphDecision:
             attempt=attempt,
             binding_versions=versions,
         )
-        expected_schema = (
-            GRAPH_ONLY_HARNESS_GRAPH_DECISION_SCHEMA
-            if self.graph_ref.schema_version
-            == GRAPH_ONLY_NORMALIZED_HARNESS_GRAPH_SCHEMA
-            else HARNESS_GRAPH_DECISION_SCHEMA
-        )
-        schema_version = (
-            expected_schema if self.schema_version is None else self.schema_version
-        )
-        if schema_version not in {
-            HARNESS_GRAPH_DECISION_SCHEMA,
-            GRAPH_ONLY_HARNESS_GRAPH_DECISION_SCHEMA,
-        }:
+        if (
+            self.graph_ref.schema_version
+            != GRAPH_ONLY_NORMALIZED_HARNESS_GRAPH_SCHEMA
+        ):
             raise HarnessValidationError(
-                "unsupported graph decision schema",
-                code="unsupported_graph_decision_schema",
+                "graph decision requires a Graph v2 reference",
+                code="legacy_graph_schema_forbidden",
             )
-        if schema_version != expected_schema:
+        schema_version = (
+            GRAPH_ONLY_HARNESS_GRAPH_DECISION_SCHEMA
+            if self.schema_version is None
+            else self.schema_version
+        )
+        if schema_version != GRAPH_ONLY_HARNESS_GRAPH_DECISION_SCHEMA:
             raise HarnessValidationError(
-                "graph decision schema does not match its normalized Graph reference",
-                code="graph_decision_schema_mismatch",
+                "only the Graph v2 decision schema is accepted",
+                code="legacy_graph_schema_forbidden",
             )
         if (
-            schema_version == GRAPH_ONLY_HARNESS_GRAPH_DECISION_SCHEMA
-            and decision_type is HarnessGraphDecisionType.COMPLETE_RUN
+            decision_type is HarnessGraphDecisionType.COMPLETE_RUN
             and payload.get("outcome", "succeeded") == "succeeded"
         ):
             if not evidence_refs:
