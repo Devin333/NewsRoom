@@ -15,6 +15,22 @@
 | Artifact 处置 | **保留 Artifact 产品能力与独立 owner；只迁移或删除 legacy Workflow bridge/writer/reader 和 `ARTIFACT` leaf execution classification** |
 | 对应规划 | `proposal.md`、`design.md`、`specs/**/spec.md`、`tasks.md` |
 
+### 1.1 子 PRD 执行入口
+
+本文件是 Graph-only cutover 的总规范，保留完整产品目标、架构不变量、capability traceability 和最终完成定义。为了让实现可以按职责边界独立运行，执行时应使用 [prd-split-index.md](F:/github/NewsRoom/openspec/changes/graph-only-orchestration/prd-split-index.md) 选择子 PRD；子 PRD 不复制本文件的规范内容，也不拥有第二套 Graph authority。
+
+| 子 PRD | 原 `tasks.md` 范围 | 依赖 | 交付边界 |
+|---|---|---|---|
+| `prd-01-graph-contract-and-identity.md` | 1-2 | 无 | Graph declaration、identity、compiler、preflight 和公共契约 |
+| `prd-02-harness-control-plane-and-admission.md` | 3 | `prd-01` | Harness control plane、PLAN/EXECUTE/VERIFY、dispatch、side-effect、budget 和 recovery authority |
+| `prd-03-domain-neutral-owners-and-storage.md` | 4 | `prd-01`、`prd-02` | Artifact、Event、inspection、index、node-output、storage 和 Research physical ports |
+| `prd-04-research-and-agentloop.md` | 5-6 | `prd-01`、`prd-02`、`prd-03` | Research Graph、RAG/context、reader repair、AgentLoop、SubAgent 和 TaskPlan caller cutover |
+| `prd-05-public-interfaces-and-approval.md` | 7 | `prd-01`、`prd-02`、`prd-03` | API、CLI、MCP、SDK、Wait/approval/resume 和 public schema major cutover |
+| `prd-06-history-and-legacy-cleanup.md` | 8-9 | `prd-01` 至 `prd-05` | history quarantine、legacy reader 隔离、Workflow runtime 删除和 zero-reference proof |
+| `prd-07-spec-sync-and-release-gates.md` | 10-11 | `prd-01` 至 `prd-06` | canonical OpenSpec 同步、文档、全量验证、smoke、发布审查和最终收口 |
+
+每个子 PRD 的任务编号仍以 `tasks.md` 为唯一 checklist；子 PRD 完成后必须把证据写入本 change 的 `evidence/`，更新对应 checkbox，并独立提交。只有 `prd-07` 完成后，才可以判断整个 change 是否达到最终完成定义。
+
 ## 2. 摘要
 
 NewsRoom 当前已经拥有真正的 Harness Graph runtime：Research 主路径可以声明 `Sequence`、`Parallel-All`、`VerifiedAggregation` 等 Graph 结构，并由 `HarnessControlPlane`、Graph scheduler/evaluator 和 durable Graph state 执行。

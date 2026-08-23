@@ -1,5 +1,7 @@
 > **直接替换决定（规范性，2026-08-18）**：当前项目 owner 授权本 change 直接完成 Graph-only repository cutover。所有 production caller、writer/reader、runtime route、public contract 和 persisted authority 直接切到 Graph；不等待前置 change archive、managed-environment owner、backup/drain、rollback point、rollback drill、观察期或外部 sign-off，也不保留 dual mode、feature flag、fallback 或 compatibility facade。legacy persisted input 只允许被隔离诊断为 quarantine，不能被 live reader、resume、replay、worker 或 publication 执行。Artifact subsystem 继续保留，只有 legacy Workflow Artifact bridge/writer/reader 和 `ARTIFACT` leaf classification 可删除。
 
+> **子 PRD 导航**：原任务按职责拆成 7 个可单独执行的 PRD，入口见 `prd-split-index.md`。`prd.md` 是总规范，`tasks.md` 是唯一 checklist；子 PRD 不复制任务状态，也不创建第二套 Graph authority。
+
 ## 1. 基线、依赖和冻结
 
 直接替换不设置 Gate B/C 外部前置；inventory、owner contract、replacement test、runtime wiring 和 legacy deletion 都是本 change 的 repository-local 工作，按可验证的职责边界分 commit 完成。
