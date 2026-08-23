@@ -6,14 +6,16 @@ from pathlib import Path
 
 _PROJECT_ROOT = Path(__file__).resolve().parents[2]
 _OWNER = _PROJECT_ROOT / "framework/harness/control_plane/node_output.py"
-_INACTIVE_ADAPTER = _PROJECT_ROOT / "framework/harness/runtime/node_output.py"
-_INACTIVE_EXECUTOR = _PROJECT_ROOT / "framework/harness/runtime/activity_executor.py"
+_ADAPTER = _PROJECT_ROOT / "framework/harness/runtime/node_output.py"
+_EXECUTOR = _PROJECT_ROOT / "framework/harness/runtime/activity_executor.py"
 _LIVE_ROOTS = (
     _PROJECT_ROOT / "business",
     _PROJECT_ROOT / "interfaces",
     _PROJECT_ROOT / "infrastructure",
 )
-_APPROVED_DEV_ADAPTER_PATHS = {
+_REQUIRED_LIVE_RUNTIME_PATHS = {
+    "business/research/application/single_paper_runtime.py",
+    "interfaces/services/agent_loop_graph_service.py",
     "interfaces/services/agent_loop_smoke_service.py",
 }
 _FORBIDDEN_OWNER_ROOTS = (
@@ -28,7 +30,7 @@ _EXECUTOR_NAME = "HarnessGraphPhysicalActivityExecutor"
 
 def test_node_output_owner_and_adapter_do_not_depend_on_legacy_layers() -> None:
     violations: list[str] = []
-    for path in (_OWNER, _INACTIVE_ADAPTER, _INACTIVE_EXECUTOR):
+    for path in (_OWNER, _ADAPTER, _EXECUTOR):
         tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
         for node in ast.walk(tree):
             for module in _imported_modules(node):
@@ -66,8 +68,8 @@ def test_node_output_lease_generation_is_owned_by_the_resource_port() -> None:
 
 def test_node_output_adapter_is_not_a_live_graph_dispatcher() -> None:
     tree = ast.parse(
-        _INACTIVE_ADAPTER.read_text(encoding="utf-8"),
-        filename=str(_INACTIVE_ADAPTER),
+        _ADAPTER.read_text(encoding="utf-8"),
+        filename=str(_ADAPTER),
     )
     adapter = next(
         node
@@ -88,8 +90,8 @@ def test_node_output_adapter_is_not_a_live_graph_dispatcher() -> None:
 
 
 def test_physical_executor_is_graph_native_and_does_not_call_legacy_dispatch() -> None:
-    source = _INACTIVE_EXECUTOR.read_text(encoding="utf-8")
-    tree = ast.parse(source, filename=str(_INACTIVE_EXECUTOR))
+    source = _EXECUTOR.read_text(encoding="utf-8")
+    tree = ast.parse(source, filename=str(_EXECUTOR))
     executor = next(
         node
         for node in tree.body
@@ -115,7 +117,7 @@ def test_physical_executor_is_graph_native_and_does_not_call_legacy_dispatch() -
     assert "Artifact" not in source
 
 
-def test_only_graph_smoke_service_activates_gate_a_node_output_runtime() -> None:
+def test_graph_node_output_runtime_is_active_only_in_owned_compositions() -> None:
     violations: list[str] = []
     approved: list[str] = []
     for root in _LIVE_ROOTS:
@@ -133,13 +135,13 @@ def test_only_graph_smoke_service_activates_gate_a_node_output_runtime() -> None
                 for node in ast.walk(tree)
             ):
                 relative = path.relative_to(_PROJECT_ROOT).as_posix()
-                if relative in _APPROVED_DEV_ADAPTER_PATHS:
+                if relative in _REQUIRED_LIVE_RUNTIME_PATHS:
                     approved.append(relative)
                 else:
                     violations.append(relative)
 
     assert violations == []
-    assert set(approved) == _APPROVED_DEV_ADAPTER_PATHS
+    assert set(approved) == _REQUIRED_LIVE_RUNTIME_PATHS
 
 
 def _imported_modules(node: ast.AST) -> tuple[str, ...]:

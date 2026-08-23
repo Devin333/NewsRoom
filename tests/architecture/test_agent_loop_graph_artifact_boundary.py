@@ -15,6 +15,9 @@ _LIVE_ROOTS = (
 _APPROVED_DEV_ADAPTER_PATHS = {
     "interfaces/services/agent_loop_smoke_service.py",
 }
+_APPROVED_PRODUCTION_ADAPTER_PATHS = {
+    "interfaces/services/agent_loop_graph_service.py",
+}
 _ADAPTER_NAMES = {
     "AgentLoopGraphActivityBindingBundle",
     "AgentLoopGraphActivityContract",
@@ -71,9 +74,10 @@ def test_graph_artifact_adapter_has_no_legacy_or_publication_authority() -> None
         assert calls.isdisjoint(forbidden_calls)
 
 
-def test_only_graph_smoke_service_activates_gate_a_agent_loop_adapter() -> None:
+def test_only_declared_graph_services_activate_agent_loop_adapter() -> None:
     violations: list[str] = []
     approved: list[str] = []
+    approved_paths = _APPROVED_DEV_ADAPTER_PATHS | _APPROVED_PRODUCTION_ADAPTER_PATHS
     for root in _LIVE_ROOTS:
         for path in root.rglob("*.py"):
             tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
@@ -89,13 +93,15 @@ def test_only_graph_smoke_service_activates_gate_a_agent_loop_adapter() -> None:
                 for node in ast.walk(tree)
             ):
                 relative = path.relative_to(_PROJECT_ROOT).as_posix()
-                if relative in _APPROVED_DEV_ADAPTER_PATHS:
+                if relative in approved_paths:
                     approved.append(relative)
                 else:
                     violations.append(relative)
 
     assert violations == []
-    assert set(approved) == _APPROVED_DEV_ADAPTER_PATHS
+    assert set(approved) == (
+        _APPROVED_DEV_ADAPTER_PATHS | _APPROVED_PRODUCTION_ADAPTER_PATHS
+    )
 
 
 def test_graph_smoke_service_does_not_restore_legacy_workflow_runtime() -> None:
