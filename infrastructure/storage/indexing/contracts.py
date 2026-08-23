@@ -15,9 +15,15 @@ from framework.events.projection import GraphEventContext, GraphRunIdentity
 from framework.harness.artifacts.terminal_manifest import (
     GraphTerminalArtifact,
     GraphTerminalManifest,
+    GraphTerminalManifestV2,
     graph_terminal_manifest_hash,
 )
 from framework.shared.time import format_datetime, parse_datetime
+from infrastructure.storage.indexing.bindings import (
+    GraphArtifactBindingEvidenceSource,
+    GraphArtifactBindingKind,
+    GraphArtifactBindingProjection,
+)
 
 
 GRAPH_STORAGE_INDEX_IDENTITY_SCHEMA = (
@@ -27,11 +33,14 @@ GRAPH_ARTIFACT_NODE_BINDING_SCHEMA = (
     "newsroom.graph-artifact-node-binding/v1"
 )
 GRAPH_ARTIFACT_INDEX_RECORD_SCHEMA = (
-    "newsroom.graph-artifact-index-record/v1"
+    "newsroom.graph-artifact-index-record/v2"
 )
 GRAPH_EVENT_INDEX_RECORD_SCHEMA = "newsroom.graph-event-index-record/v1"
 GRAPH_STORAGE_INDEX_CANDIDATE_REQUEST_SCHEMA = (
     "newsroom.graph-storage-index-candidate-request/v1"
+)
+GRAPH_STORAGE_INDEX_MATERIALIZATION_REQUEST_SCHEMA = (
+    "newsroom.graph-storage-index-materialization-request/v1"
 )
 GRAPH_STORAGE_INDEX_CANDIDATE_SCHEMA = (
     "newsroom.graph-storage-index-candidate/v1"
@@ -141,9 +150,9 @@ class GraphStorageIndexIdentity:
         return self.graph_identity.run_id
 
     @classmethod
-    def from_manifest(cls, manifest: GraphTerminalManifest) -> Self:
-        if not isinstance(manifest, GraphTerminalManifest):
-            raise TypeError("manifest must be GraphTerminalManifest")
+    def from_manifest(cls, manifest: GraphTerminalManifestV2) -> Self:
+        if not isinstance(manifest, GraphTerminalManifestV2):
+            raise TypeError("manifest must be GraphTerminalManifestV2")
         if manifest.manifest_hash is None:
             raise GraphStorageIndexError(
                 GraphStorageIndexErrorCode.REQUEST_INVALID,
@@ -162,9 +171,10 @@ class GraphStorageIndexIdentity:
                 run_id=manifest.run_id,
                 graph_id=manifest.graph_id,
                 graph_version=manifest.graph_version,
-                graph_schema_version=manifest.graph_schema_version,
-                compiler_version=manifest.compiler_version,
-                normalized_graph_checksum=manifest.normalized_graph_checksum,
+                graph_ref=(
+                    f"{manifest.graph_id}@{manifest.graph_version}"
+                ),
+                graph_checksum=manifest.normalized_graph_checksum,
             ),
             terminal_manifest_hash=manifest.manifest_hash,
         )
@@ -294,12 +304,16 @@ class GraphArtifactIndexRecord:
     content_checksum: str
     byte_size: int
     media_type: str
-    node_id: str
-    node_instance_id: str
-    attempt_id: str
+    node_id: str | None
+    node_instance_id: str | None
+    attempt_id: str | None
     binding_evidence_ref: str
     required_for_replay: bool
     required_for_publication: bool
+    binding_kind: GraphArtifactBindingKind | str = GraphArtifactBindingKind.NODE
+    binding_evidence_source: (
+        GraphArtifactBindingEvidenceSource | str
+    ) = GraphArtifactBindingEvidenceSource.WORKER_SIDE_EFFECT_INTENT
     schema_version: str = GRAPH_ARTIFACT_INDEX_RECORD_SCHEMA
     record_checksum: str = field(init=False)
 
@@ -311,15 +325,57 @@ class GraphArtifactIndexRecord:
             "artifact_id",
             "artifact_ref",
             "media_type",
-            "node_id",
-            "node_instance_id",
-            "attempt_id",
         ):
             object.__setattr__(
                 self,
                 field_name,
                 _required_text(getattr(self, field_name), field_name),
             )
+        try:
+            binding_kind = GraphArtifactBindingKind(self.binding_kind)
+            evidence_source = GraphArtifactBindingEvidenceSource(
+                self.binding_evidence_source,
+            )
+        except ValueError as exc:
+            raise GraphStorageIndexError(
+                GraphStorageIndexErrorCode.REQUEST_INVALID,
+                "Graph artifact index binding discriminator is unsupported",
+                field="binding_kind",
+            ) from exc
+        object.__setattr__(self, "binding_kind", binding_kind)
+        object.__setattr__(self, "binding_evidence_source", evidence_source)
+        node_id = _optional_text(self.node_id, "node_id")
+        node_instance_id = _optional_text(
+            self.node_instance_id,
+            "node_instance_id",
+        )
+        attempt_id = _optional_text(self.attempt_id, "attempt_id")
+        if binding_kind is GraphArtifactBindingKind.NODE:
+            if node_id is None or node_instance_id is None or attempt_id is None:
+                raise GraphStorageIndexError(
+                    GraphStorageIndexErrorCode.REQUEST_INVALID,
+                    "Node artifact index binding requires complete node identity",
+                    field="node_instance_id",
+                )
+        else:
+            if any(value is not None for value in (node_id, node_instance_id, attempt_id)):
+                raise GraphStorageIndexError(
+                    GraphStorageIndexErrorCode.REQUEST_INVALID,
+                    "System artifact index binding cannot carry node identity",
+                    field="node_instance_id",
+                )
+            if evidence_source not in {
+                GraphArtifactBindingEvidenceSource.CONTROLLER_TERMINAL_AUTHORITY,
+                GraphArtifactBindingEvidenceSource.GRAPH_EVENT_PROJECTION,
+            }:
+                raise GraphStorageIndexError(
+                    GraphStorageIndexErrorCode.REQUEST_INVALID,
+                    "System artifact index binding evidence source is invalid",
+                    field="binding_evidence_source",
+                )
+        object.__setattr__(self, "node_id", node_id)
+        object.__setattr__(self, "node_instance_id", node_instance_id)
+        object.__setattr__(self, "attempt_id", attempt_id)
         object.__setattr__(
             self,
             "relative_path",
@@ -401,6 +457,53 @@ class GraphArtifactIndexRecord:
             required_for_publication=artifact.required_for_publication,
         )
 
+    @classmethod
+    def from_artifact_binding(
+        cls,
+        *,
+        identity: GraphStorageIndexIdentity,
+        artifact: GraphTerminalArtifact,
+        binding: GraphArtifactBindingProjection,
+    ) -> Self:
+        if not isinstance(artifact, GraphTerminalArtifact):
+            raise TypeError("artifact must be GraphTerminalArtifact")
+        if not isinstance(binding, GraphArtifactBindingProjection):
+            raise TypeError("binding must be GraphArtifactBindingProjection")
+        if binding.artifact_id != artifact.artifact_id:
+            raise GraphStorageIndexError(
+                GraphStorageIndexErrorCode.REQUEST_INVALID,
+                "Graph artifact binding changed terminal manifest identity",
+                field="artifact_binding",
+            )
+        if binding.kind is GraphArtifactBindingKind.NODE:
+            if (
+                binding.node_id != artifact.node_id
+                or binding.attempt_id != artifact.attempt_id
+            ):
+                raise GraphStorageIndexError(
+                    GraphStorageIndexErrorCode.REQUEST_INVALID,
+                    "Graph node artifact binding changed terminal manifest identity",
+                    field="artifact_binding",
+                )
+        return cls(
+            identity=identity,
+            artifact_key=artifact.artifact_key,
+            artifact_id=artifact.artifact_id,
+            artifact_ref=artifact.ref,
+            relative_path=artifact.relative_path,
+            content_checksum=artifact.content_checksum,
+            byte_size=artifact.byte_size,
+            media_type=artifact.media_type,
+            node_id=binding.node_id,
+            node_instance_id=binding.node_instance_id,
+            attempt_id=binding.attempt_id,
+            binding_evidence_ref=binding.evidence_ref,
+            required_for_replay=artifact.required_for_replay,
+            required_for_publication=artifact.required_for_publication,
+            binding_kind=binding.kind,
+            binding_evidence_source=binding.evidence_source,
+        )
+
     def checksum_projection(self) -> dict[str, Any]:
         return {
             "schema_version": self.schema_version,
@@ -412,6 +515,8 @@ class GraphArtifactIndexRecord:
             "content_checksum": self.content_checksum,
             "byte_size": self.byte_size,
             "media_type": self.media_type,
+            "binding_kind": self.binding_kind.value,
+            "binding_evidence_source": self.binding_evidence_source.value,
             "node_id": self.node_id,
             "node_instance_id": self.node_instance_id,
             "attempt_id": self.attempt_id,
@@ -437,6 +542,8 @@ class GraphArtifactIndexRecord:
                 "content_checksum",
                 "byte_size",
                 "media_type",
+                "binding_kind",
+                "binding_evidence_source",
                 "node_id",
                 "node_instance_id",
                 "attempt_id",
@@ -456,6 +563,8 @@ class GraphArtifactIndexRecord:
             content_checksum=payload["content_checksum"],
             byte_size=payload["byte_size"],
             media_type=payload["media_type"],
+            binding_kind=payload["binding_kind"],
+            binding_evidence_source=payload["binding_evidence_source"],
             node_id=payload["node_id"],
             node_instance_id=payload["node_instance_id"],
             attempt_id=payload["attempt_id"],
@@ -642,15 +751,15 @@ class GraphEventIndexRecord:
 
 @dataclass(frozen=True, slots=True)
 class GraphStorageIndexCandidateRequest:
-    manifest: GraphTerminalManifest
+    manifest: GraphTerminalManifestV2
     events: tuple[StoredEvent, ...]
     artifact_bindings: tuple[GraphArtifactNodeBinding, ...]
     schema_version: str = GRAPH_STORAGE_INDEX_CANDIDATE_REQUEST_SCHEMA
     request_ref: str = field(init=False)
 
     def __post_init__(self) -> None:
-        if not isinstance(self.manifest, GraphTerminalManifest):
-            raise TypeError("manifest must be GraphTerminalManifest")
+        if not isinstance(self.manifest, GraphTerminalManifestV2):
+            raise TypeError("manifest must be GraphTerminalManifestV2")
         events = _typed_tuple(self.events, StoredEvent, "events")
         bindings = _typed_tuple(
             self.artifact_bindings,
@@ -675,6 +784,67 @@ class GraphStorageIndexCandidateRequest:
             raise GraphStorageIndexError(
                 GraphStorageIndexErrorCode.REQUEST_INVALID,
                 "Graph storage index candidate request schema is unsupported",
+                field="schema_version",
+            )
+        object.__setattr__(
+            self,
+            "request_ref",
+            checksum_for(self.checksum_projection()),
+        )
+
+    def checksum_projection(self) -> dict[str, Any]:
+        return {
+            "schema_version": self.schema_version,
+            "manifest_hash": self.manifest.manifest_hash,
+            "event_record_checksums": [event.record_checksum for event in self.events],
+            "artifact_binding_refs": [
+                binding.binding_ref for binding in self.artifact_bindings
+            ],
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class GraphStorageIndexMaterializationRequest:
+    """Canonical inputs for the live Graph index candidate builder.
+
+    Unlike the inactive candidate request, this contract carries the typed
+    producer projection for every manifest artifact. System artifacts remain
+    system-scoped and are never coerced into a node binding.
+    """
+
+    manifest: GraphTerminalManifestV2
+    events: tuple[StoredEvent, ...]
+    artifact_bindings: tuple[GraphArtifactBindingProjection, ...]
+    schema_version: str = GRAPH_STORAGE_INDEX_MATERIALIZATION_REQUEST_SCHEMA
+    request_ref: str = field(init=False)
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.manifest, GraphTerminalManifestV2):
+            raise TypeError("manifest must be GraphTerminalManifestV2")
+        events = _typed_tuple(self.events, StoredEvent, "events")
+        bindings = _typed_tuple(
+            self.artifact_bindings,
+            GraphArtifactBindingProjection,
+            "artifact_bindings",
+        )
+        if len(events) > MAX_GRAPH_INDEX_EVENTS:
+            raise GraphStorageIndexError(
+                GraphStorageIndexErrorCode.REQUEST_INVALID,
+                "Graph storage index event input exceeds its bound",
+                field="events",
+            )
+        if len(bindings) > MAX_GRAPH_INDEX_ARTIFACTS:
+            raise GraphStorageIndexError(
+                GraphStorageIndexErrorCode.REQUEST_INVALID,
+                "Graph storage index binding input exceeds its bound",
+                field="artifact_bindings",
+            )
+        object.__setattr__(self, "events", events)
+        object.__setattr__(self, "artifact_bindings", bindings)
+        if self.schema_version != GRAPH_STORAGE_INDEX_MATERIALIZATION_REQUEST_SCHEMA:
+            raise GraphStorageIndexError(
+                GraphStorageIndexErrorCode.REQUEST_INVALID,
+                "Graph storage index materialization request schema is unsupported",
                 field="schema_version",
             )
         object.__setattr__(
@@ -1015,9 +1185,8 @@ def _graph_identity_from_dict(value: Any) -> GraphRunIdentity:
             "run_id",
             "graph_id",
             "graph_version",
-            "graph_schema_version",
-            "compiler_version",
-            "normalized_graph_checksum",
+            "graph_ref",
+            "graph_checksum",
         },
         "Graph run identity",
     )
@@ -1025,9 +1194,8 @@ def _graph_identity_from_dict(value: Any) -> GraphRunIdentity:
         run_id=payload["run_id"],
         graph_id=payload["graph_id"],
         graph_version=payload["graph_version"],
-        graph_schema_version=payload["graph_schema_version"],
-        compiler_version=payload["compiler_version"],
-        normalized_graph_checksum=payload["normalized_graph_checksum"],
+        graph_ref=payload["graph_ref"],
+        graph_checksum=payload["graph_checksum"],
     )
 
 
@@ -1158,6 +1326,7 @@ __all__ = [
     "GRAPH_ARTIFACT_NODE_BINDING_SCHEMA",
     "GRAPH_EVENT_INDEX_RECORD_SCHEMA",
     "GRAPH_STORAGE_INDEX_CANDIDATE_REQUEST_SCHEMA",
+    "GRAPH_STORAGE_INDEX_MATERIALIZATION_REQUEST_SCHEMA",
     "GRAPH_STORAGE_INDEX_CANDIDATE_SCHEMA",
     "GRAPH_STORAGE_INDEX_DIAGNOSTIC_SCHEMA",
     "GRAPH_STORAGE_INDEX_DRY_RUN_SCHEMA",
@@ -1173,6 +1342,7 @@ __all__ = [
     "GraphIndexStageStatus",
     "GraphStorageIndexCandidate",
     "GraphStorageIndexCandidateRequest",
+    "GraphStorageIndexMaterializationRequest",
     "GraphStorageIndexDryRunReport",
     "GraphStorageIndexError",
     "GraphStorageIndexErrorCode",

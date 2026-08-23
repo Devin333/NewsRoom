@@ -5,6 +5,7 @@ from infrastructure.storage.indexing.contracts import (
     GRAPH_ARTIFACT_NODE_BINDING_SCHEMA,
     GRAPH_EVENT_INDEX_RECORD_SCHEMA,
     GRAPH_STORAGE_INDEX_CANDIDATE_REQUEST_SCHEMA,
+    GRAPH_STORAGE_INDEX_MATERIALIZATION_REQUEST_SCHEMA,
     GRAPH_STORAGE_INDEX_CANDIDATE_SCHEMA,
     GRAPH_STORAGE_INDEX_DIAGNOSTIC_SCHEMA,
     GRAPH_STORAGE_INDEX_DRY_RUN_SCHEMA,
@@ -20,6 +21,7 @@ from infrastructure.storage.indexing.contracts import (
     GraphIndexStageStatus,
     GraphStorageIndexCandidate,
     GraphStorageIndexCandidateRequest,
+    GraphStorageIndexMaterializationRequest,
     GraphStorageIndexDryRunReport,
     GraphStorageIndexError,
     GraphStorageIndexErrorCode,
@@ -29,6 +31,9 @@ from infrastructure.storage.indexing.contracts import (
 )
 from infrastructure.storage.indexing.inactive import (
     InactiveGraphStorageIndexAdapter,
+)
+from infrastructure.storage.indexing.active import (
+    GraphStorageIndexCandidateBuilder,
 )
 from infrastructure.storage.indexing.bindings import (
     GRAPH_ARTIFACT_BINDING_PROJECTION_SCHEMA,
@@ -58,6 +63,7 @@ __all__ = [
     "GRAPH_ARTIFACT_NODE_BINDING_SCHEMA",
     "GRAPH_EVENT_INDEX_RECORD_SCHEMA",
     "GRAPH_STORAGE_INDEX_CANDIDATE_REQUEST_SCHEMA",
+    "GRAPH_STORAGE_INDEX_MATERIALIZATION_REQUEST_SCHEMA",
     "GRAPH_STORAGE_INDEX_CANDIDATE_SCHEMA",
     "GRAPH_STORAGE_INDEX_DIAGNOSTIC_SCHEMA",
     "GRAPH_STORAGE_INDEX_DRY_RUN_SCHEMA",
@@ -77,11 +83,13 @@ __all__ = [
     "GraphIndexStageStatus",
     "GraphStorageIndexCandidate",
     "GraphStorageIndexCandidateRequest",
+    "GraphStorageIndexMaterializationRequest",
     "GraphStorageIndexDryRunReport",
     "GraphStorageIndexError",
     "GraphStorageIndexErrorCode",
     "GraphStorageIndexIdentity",
     "InactiveGraphStorageIndexAdapter",
+    "GraphStorageIndexCandidateBuilder",
     "LocalGraphIndexCandidateStore",
     "GraphStorageIndexSnapshot",
     "GraphStorageIndexStorePort",
