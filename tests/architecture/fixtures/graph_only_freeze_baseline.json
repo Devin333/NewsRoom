@@ -39,7 +39,7 @@
     "framework.workflow",
     "framework.harness.workflow"
   ],
-  "generation": 15,
+  "generation": 16,
   "legacy_schema_ids": [
     "newsroom.harness-checkpoint-legacy/v1",
     "newsroom.harness-decision-legacy/v1",
@@ -20844,6 +20844,6 @@
     }
   ],
   "schema": "newsroom.graph-only-freeze-baseline/v1",
-  "source_commit": "d1390150f910316b9ab5a5ae6d63f2931164828c",
-  "source_tree": "7ef57d27d7b8b7eb44257fcd56ee308ddc4d5d3b"
+  "source_commit": "d3b92253c385140c903cc195cf4ffb228bc11d5e",
+  "source_tree": "c10e1229533796f270046e9dd930b92fdc6f6bde"
 }
