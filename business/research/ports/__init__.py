@@ -6,6 +6,7 @@ from business.research.ports.artifact_publication import (
     ResearchArtifactDiagnosticReader,
     ResearchArtifactReadClaim,
     ResearchArtifactReadResolution,
+    ResearchGraphStorageIndexPublisherPort,
 )
 from business.research.ports.artifact_store import ResearchArtifactStorePort
 from business.research.ports.document_compiler import DocumentCompilerPort
@@ -105,6 +106,7 @@ __all__ = [
     "ResearchArtifactDiagnosticReader",
     "ResearchArtifactReadClaim",
     "ResearchArtifactReadResolution",
+    "ResearchGraphStorageIndexPublisherPort",
     "ResearchCandidateWorkerPort",
     "ResearchMemoryPort",
     "ResearchPaperRepository",

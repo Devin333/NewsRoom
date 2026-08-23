@@ -24,6 +24,8 @@ from framework.agent.artifacts import (
 )
 from framework.agent.artifacts.stores.integrity import validate_sha256_checksum
 from framework.agent.artifacts.stores.fs_safety import verified_exclusive_file_lock
+from framework.events.canonical import checksum_for
+from framework.events.projection import GraphEventProjection
 from framework.harness import (
     ArtifactRef as HarnessArtifactRef,
     ArtifactWriteRequest,
@@ -32,16 +34,20 @@ from framework.harness import (
 )
 from framework.harness.artifacts import (
     GraphTerminalArtifact,
-    GraphTerminalManifest,
+    GraphTerminalManifestV2,
     GraphTerminalManifestCommitRequest,
 )
 from framework.harness.control_plane.errors import HarnessValidationError
 from framework.shared.hashing import hash_text
+from framework.shared.graph_identity import GraphRunIdentity
 from framework.shared.json import stable_json_dumps
 from infrastructure.research.diagnostics import emit_research_persistence_diagnostic
 from infrastructure.storage.artifacts import FilesystemGraphTerminalArtifactStore
+from infrastructure.storage.indexing import (
+    GraphArtifactBindingEvidenceSource,
+    GraphArtifactBindingProjection,
+)
 from business.research.ports.artifact_publication import (
-    RESEARCH_ARTIFACT_LEGACY_MANIFEST_VERSION,
     RESEARCH_ARTIFACT_MANIFEST_VERSION,
     ResearchArtifactDiagnosticClaim,
     ResearchArtifactReadClaim,
@@ -98,7 +104,6 @@ class FilesystemHarnessArtifactPort:
         max_write_bytes: int | None = None,
         accepted_run_resolver: Callable[..., bool] | None = None,
         diagnostic_run_resolver: Callable[..., bool] | None = None,
-        legacy_identity_scope_ref: str | None = None,
         terminal_store: FilesystemGraphTerminalArtifactStore | None = None,
     ) -> None:
         if max_write_bytes is not None and max_write_bytes < 0:
@@ -133,15 +138,6 @@ class FilesystemHarnessArtifactPort:
             raise TypeError("diagnostic_run_resolver must be callable")
         self._accepted_run_resolver = accepted_run_resolver
         self._diagnostic_run_resolver = diagnostic_run_resolver
-        self._legacy_identity_scope_ref = (
-            _validated_checksum_ref(
-                legacy_identity_scope_ref,
-                field="legacy storage-root identity scope",
-                artifact_id="research-artifact-root",
-            )
-            if legacy_identity_scope_ref is not None
-            else None
-        )
         self._manifest_lock = threading.RLock()
         self._run_binding: contextvars.ContextVar[str | None] = contextvars.ContextVar(
             f"filesystem_harness_artifact_run_{id(self)}",
@@ -401,24 +397,14 @@ class FilesystemHarnessArtifactPort:
         identity_scope_ref: str,
         subject_scope_ref: str | None = None,
     ) -> dict[str, Any]:
-        """Read retained quarantine bytes through an explicit scoped resolver.
-
-        This method never upgrades the manifest and never makes it eligible for
-        ``read_artifact``.  A legacy Research manifest is always projected as
-        ``legacy_quarantined``; a version-2 manifest without accepted
-        disposition is projected as ``quarantine``.
-        """
+        """Read a current Graph manifest retained in explicit quarantine."""
 
         run_id: str | None = None
         try:
             run_id, artifact_type = self._parse_ref(ref)
             manifest = self._artifact_metadata_projection(run_id)
-            schema_version = self._publication_schema_version(manifest)
-            disposition = (
-                "quarantine"
-                if schema_version == RESEARCH_ARTIFACT_MANIFEST_VERSION
-                else "legacy_quarantined"
-            )
+            schema_version = self._require_current_publication_schema(manifest)
+            disposition = "quarantine"
             diagnostic_claim = ResearchArtifactDiagnosticClaim(
                 run_id=run_id,
                 schema_version=schema_version,
@@ -448,9 +434,6 @@ class FilesystemHarnessArtifactPort:
                 manifest,
                 run_id=run_id,
                 artifact_type=artifact_type,
-                allow_legacy_diagnostic=(
-                    schema_version != RESEARCH_ARTIFACT_MANIFEST_VERSION
-                ),
             )
         except Exception as exc:
             emit_research_persistence_diagnostic(
@@ -494,46 +477,13 @@ class FilesystemHarnessArtifactPort:
                 disposition="quarantine",
             )
         manifest = _terminal_manifest_projection(terminal)
-        schema_version = self._publication_schema_version(manifest)
-        if schema_version == RESEARCH_ARTIFACT_MANIFEST_VERSION:
-            claim = self._validated_v2_publication_claim(manifest, run_id=run_id)
-            if not self._resolve_accepted_run(claim).accepted:
-                raise ArtifactPublicationVisibilityError(
-                    "Research artifact requires a matching accepted run disposition",
-                    disposition="quarantine",
-                )
-        elif self._accepted_run_resolver is not None and _is_research_manifest(manifest):
-            if manifest.get("status") in {
-                "failed",
-                "halted",
-                "cancelled",
-                "blocked",
-                "waiting_approval",
-            }:
-                raise ArtifactPublicationVisibilityError(
-                    "Research legacy artifact is legacy_quarantined",
-                    disposition="legacy_quarantined",
-                )
-            try:
-                claim = self._legacy_publication_claim(manifest, run_id=run_id)
-            except ArtifactStoreMetadataError as exc:
-                raise ArtifactPublicationVisibilityError(
-                    "Research legacy artifact is legacy_quarantined",
-                    disposition="legacy_quarantined",
-                ) from exc
-            resolution = self._resolve_accepted_run(claim)
-            if (
-                not resolution.accepted
-                or resolution.identity_scope_ref is None
-                or (
-                    claim.identity_scope_ref is not None
-                    and resolution.identity_scope_ref != claim.identity_scope_ref
-                )
-            ):
-                raise ArtifactPublicationVisibilityError(
-                    "Research legacy artifact is legacy_quarantined",
-                    disposition="legacy_quarantined",
-                )
+        self._require_current_publication_schema(manifest)
+        claim = self._validated_v2_publication_claim(manifest, run_id=run_id)
+        if not self._resolve_accepted_run(claim).accepted:
+            raise ArtifactPublicationVisibilityError(
+                "Research artifact requires a matching accepted run disposition",
+                disposition="quarantine",
+            )
         return self._read_artifact_payload(
             manifest,
             run_id=run_id,
@@ -546,12 +496,10 @@ class FilesystemHarnessArtifactPort:
         *,
         run_id: str,
         artifact_type: str,
-        allow_legacy_diagnostic: bool = False,
     ) -> dict[str, Any]:
         if (
             not isinstance(manifest.get("manifest_hash"), str)
             and manifest.get("authority_mode") != "staging_only"
-            and not allow_legacy_diagnostic
         ):
             raise ArtifactStoreMetadataError(
                 f"artifact manifest hash is missing: {run_id}"
@@ -563,22 +511,12 @@ class FilesystemHarnessArtifactPort:
                 f"artifact manifest path mismatch: {artifact_type}"
             )
 
-        try:
-            metadata = self._manifest_metadata(
-                manifest,
-                artifact_type,
-                run_id,
-                relative_path,
-            )
-        except ArtifactStoreMetadataError:
-            if not allow_legacy_diagnostic:
-                raise
-            metadata = self._legacy_diagnostic_metadata(
-                manifest,
-                artifact_type=artifact_type,
-                run_id=run_id,
-                relative_path=relative_path,
-            )
+        metadata = self._manifest_metadata(
+            manifest,
+            artifact_type,
+            run_id,
+            relative_path,
+        )
         checksum = validate_sha256_checksum(
             metadata["checksum"],
             artifact_id=artifact_type,
@@ -806,138 +744,14 @@ class FilesystemHarnessArtifactPort:
         )
 
     @staticmethod
-    def _publication_schema_version(manifest: dict[str, Any]) -> str:
+    def _require_current_publication_schema(manifest: dict[str, Any]) -> str:
         value = manifest.get("publication_schema_version")
-        if value is None:
-            return RESEARCH_ARTIFACT_LEGACY_MANIFEST_VERSION
-        if not isinstance(value, str) or value not in {
-            RESEARCH_ARTIFACT_LEGACY_MANIFEST_VERSION,
-            RESEARCH_ARTIFACT_MANIFEST_VERSION,
-        }:
-            raise ArtifactStoreMetadataError(
-                "Research artifact publication schema is unsupported"
+        if value != RESEARCH_ARTIFACT_MANIFEST_VERSION:
+            raise ArtifactPublicationVisibilityError(
+                "Research artifact manifest is legacy or unsupported",
+                disposition="legacy_quarantined",
             )
         return value
-
-    def _legacy_publication_claim(
-        self,
-        manifest: dict[str, Any],
-        *,
-        run_id: str,
-    ) -> ResearchArtifactReadClaim:
-        artifacts = manifest.get("artifacts")
-        if not isinstance(artifacts, dict):
-            raise ArtifactStoreMetadataError(
-                f"Research legacy artifact manifest is invalid: {run_id}"
-            )
-        legacy_refs: list[tuple[str, str]] = []
-        for artifact_type, path in artifacts.items():
-            if artifact_type == "manifest":
-                continue
-            if not isinstance(artifact_type, str):
-                raise ArtifactStoreMetadataError(
-                    f"Research legacy artifact identity is invalid: {run_id}"
-                )
-            validate_artifact_path_segment(artifact_type, field="artifact_type")
-            if path != self._canonical_path(artifact_type):
-                raise ArtifactStoreMetadataError(
-                    f"Research legacy artifact path mismatch: {artifact_type}"
-                )
-            legacy_refs.append(
-                (artifact_type, self._canonical_ref(run_id, artifact_type))
-            )
-        artifact_refs = tuple(sorted(legacy_refs))
-        member_checksums: list[tuple[str, str]] = []
-        for artifact_type, _ in artifact_refs:
-            metadata = self._manifest_metadata(
-                manifest,
-                artifact_type,
-                run_id,
-                self._canonical_path(artifact_type),
-            )
-            checksum = validate_sha256_checksum(
-                metadata.get("checksum"),
-                artifact_id=artifact_type,
-                field="artifact manifest checksum",
-            )
-            size_bytes = metadata.get("size_bytes")
-            content_type = metadata.get("content_type")
-            if (
-                not isinstance(size_bytes, int)
-                or size_bytes < 0
-                or not isinstance(content_type, str)
-                or not content_type.strip()
-            ):
-                raise ArtifactStoreMetadataError(
-                    f"Research legacy artifact metadata is invalid: {artifact_type}"
-                )
-            self.store.read(
-                StorageArtifactRef(
-                    artifact_id=artifact_type,
-                    run_id=run_id,
-                    artifact_type=artifact_type,
-                    path=self._canonical_path(artifact_type),
-                    content_type=content_type,
-                    size_bytes=size_bytes,
-                    checksum=checksum,
-                )
-            )
-            member_checksums.append((artifact_type, f"sha256:{checksum}"))
-        if not artifact_refs:
-            raise ArtifactStoreMetadataError(
-                f"Research legacy artifact evidence is missing: {run_id}"
-            )
-        persisted_scope_ref = _optional_checksum_ref(
-            manifest.get("identity_scope_ref"),
-            field="legacy identity scope",
-            artifact_id=run_id,
-        )
-        if (
-            persisted_scope_ref is not None
-            and self._legacy_identity_scope_ref is not None
-            and persisted_scope_ref != self._legacy_identity_scope_ref
-        ):
-            raise ArtifactStoreMetadataError(
-                f"Research legacy artifact identity scope conflicts: {run_id}"
-            )
-        resolved_scope_ref = persisted_scope_ref or self._legacy_identity_scope_ref
-        refs_map = dict(artifact_refs)
-        derived_artifact_evidence = artifact_evidence_ref(refs_map)
-        persisted_artifact_evidence = _optional_checksum_ref(
-            manifest.get("artifact_evidence_ref"),
-            field="legacy artifact evidence",
-            artifact_id=run_id,
-        )
-        if (
-            persisted_artifact_evidence is not None
-            and persisted_artifact_evidence != derived_artifact_evidence
-        ):
-            raise ArtifactStoreMetadataError(
-                f"Research legacy artifact evidence conflicts: {run_id}"
-            )
-        return ResearchArtifactReadClaim(
-            run_id=run_id,
-            schema_version=RESEARCH_ARTIFACT_LEGACY_MANIFEST_VERSION,
-            identity_scope_ref=resolved_scope_ref,
-            subject_scope_ref=_optional_checksum_ref(
-                manifest.get("subject_scope_ref"),
-                field="legacy subject scope",
-                artifact_id=run_id,
-            ),
-            publication_authority_ref=_optional_checksum_ref(
-                manifest.get("publication_authority_ref"),
-                field="legacy publication authority",
-                artifact_id=run_id,
-            ),
-            artifact_evidence_ref=derived_artifact_evidence,
-            terminal_side_effect_outcome_ref=_optional_checksum_ref(
-                manifest.get("terminal_side_effect_outcome_ref"),
-                field="legacy terminal side-effect outcome",
-                artifact_id=run_id,
-            ),
-            artifact_refs=artifact_refs,
-            member_checksums=tuple(member_checksums),
-        )
 
     def _v2_artifact_types(
         self,
@@ -963,10 +777,6 @@ class FilesystemHarnessArtifactPort:
                     f"Research artifact identity is invalid: {run_id}"
                 )
             validate_artifact_path_segment(artifact_type, field="artifact_type")
-            if path != self._canonical_path(artifact_type):
-                raise ArtifactStoreMetadataError(
-                    f"Research artifact path mismatch: {artifact_type}"
-                )
             if _is_verified_context_ref_only_artifact(
                 manifest,
                 artifact_type=artifact_type,
@@ -975,8 +785,16 @@ class FilesystemHarnessArtifactPort:
                 manifest,
                 artifact_type=artifact_type,
                 path=path,
+            ) or _is_verified_graph_event_projection_manifest_artifact(
+                manifest,
+                artifact_type=artifact_type,
+                path=path,
             ):
                 continue
+            if path != self._canonical_path(artifact_type):
+                raise ArtifactStoreMetadataError(
+                    f"Research artifact path mismatch: {artifact_type}"
+                )
             artifact_types.append(artifact_type)
         if not artifact_types:
             raise ArtifactStoreMetadataError(
@@ -1154,37 +972,6 @@ class FilesystemHarnessArtifactPort:
             )
         )
 
-    def _legacy_diagnostic_metadata(
-        self,
-        manifest: dict[str, Any],
-        *,
-        artifact_type: str,
-        run_id: str,
-        relative_path: str,
-    ) -> dict[str, Any]:
-        if self._publication_schema_version(manifest) == RESEARCH_ARTIFACT_MANIFEST_VERSION:
-            raise ArtifactStoreMetadataError(
-                f"version-2 artifact metadata is invalid: {artifact_type}"
-            )
-        content = self.store.read(
-            StorageArtifactRef(
-                artifact_id=artifact_type,
-                run_id=run_id,
-                artifact_type=artifact_type,
-                path=relative_path,
-                content_type="application/json",
-            )
-        )
-        return {
-            "artifact_id": artifact_type,
-            "run_id": run_id,
-            "kind": artifact_type,
-            "path": relative_path,
-            "content_type": "application/json",
-            "size_bytes": len(content),
-            "checksum": compute_checksum(content),
-        }
-
     def _existing_artifact_result(
         self,
         *,
@@ -1259,19 +1046,19 @@ class FilesystemHarnessArtifactPort:
             raise ArtifactRunBindingError("artifact write requires a bound run")
         return run_id
 
-    def read_terminal_manifest(self, run_id: str) -> GraphTerminalManifest:
+    def read_terminal_manifest(self, run_id: str) -> GraphTerminalManifestV2:
         return self.terminal_store.read_terminal_manifest(run_id)
 
     def write_terminal_manifest(
         self,
-        manifest: GraphTerminalManifest,
-    ) -> GraphTerminalManifest:
+        manifest: GraphTerminalManifestV2,
+    ) -> GraphTerminalManifestV2:
         return self.terminal_store.write_terminal_manifest(manifest)
 
     def commit_unpublished_terminal_manifest(
         self,
         request: GraphTerminalManifestCommitRequest,
-    ) -> GraphTerminalManifest:
+    ) -> GraphTerminalManifestV2:
         if not isinstance(request, GraphTerminalManifestCommitRequest):
             raise TypeError("request must be GraphTerminalManifestCommitRequest")
         staged = self.terminal_store.list_staged_artifacts(request.run_id)
@@ -1287,6 +1074,105 @@ class FilesystemHarnessArtifactPort:
         return self.terminal_store.write_terminal_manifest(
             request.to_manifest(artifacts=staged)
         )
+
+    def stage_graph_event_projection(
+        self,
+        projection: GraphEventProjection,
+        *,
+        graph_identity: GraphRunIdentity,
+        tenant_id: str,
+    ) -> GraphTerminalArtifact:
+        """Stage one verified Graph event projection in terminal Artifact state."""
+
+        if not isinstance(projection, GraphEventProjection):
+            raise TypeError("projection must be GraphEventProjection")
+        if not isinstance(graph_identity, GraphRunIdentity):
+            raise TypeError("graph_identity must be GraphRunIdentity")
+        if projection.graph_identity != graph_identity:
+            raise ArtifactStoreMetadataError(
+                "Graph event projection identity does not match terminal Graph"
+            )
+        tenant = str(tenant_id or "").strip()
+        if not tenant:
+            raise ArtifactStoreMetadataError("Graph event projection tenant is required")
+        run_id = self._require_bound_run()
+        if projection.graph_identity.run_id != run_id:
+            raise ArtifactRunBindingError(
+                "Graph event projection run does not match the bound run"
+            )
+        root = self.manager.run_dir(run_id).resolve(strict=False)
+        path = Path(projection.path).resolve(strict=False)
+        try:
+            path.relative_to(root)
+        except ValueError as exc:
+            raise ArtifactStoreMetadataError(
+                "Graph event projection path escapes the bound run"
+            ) from exc
+        if path.name != "events.jsonl":
+            raise ArtifactStoreMetadataError(
+                "Graph event projection must use events.jsonl"
+            )
+        try:
+            content = path.read_bytes()
+        except OSError as exc:
+            raise ArtifactNotFoundError(
+                f"Graph event projection is unavailable: {run_id}"
+            ) from exc
+        checksum = f"sha256:{compute_checksum(content)}"
+        if checksum != projection.checksum:
+            raise ArtifactChecksumMismatchError(
+                "Graph event projection checksum does not match exported content"
+            )
+        relative_path = path.relative_to(root).as_posix()
+        if relative_path != "events.jsonl":
+            raise ArtifactStoreMetadataError(
+                "Graph event projection relative path is invalid"
+            )
+        metadata = {
+            "schema_version": "newsroom.graph-event-projection-artifact/v1",
+            "graph_identity": graph_identity.to_dict(),
+            "graph_execution_version": projection.execution_version.to_dict(),
+            "tenant_id": tenant,
+            "stream_id": projection.stream_id,
+            "high_watermark": projection.high_watermark,
+            "event_count": projection.event_count,
+            "checksum": projection.checksum,
+            "content_checksum": projection.checksum,
+        }
+        binding_evidence_ref = checksum_for(
+            {
+                "artifact_id": "event_projection",
+                "content_checksum": projection.checksum,
+                "graph_identity": graph_identity.to_dict(),
+                "tenant_id": tenant,
+                "stream_id": projection.stream_id,
+                "high_watermark": projection.high_watermark,
+            }
+        )
+        metadata["graph_artifact_binding"] = GraphArtifactBindingProjection.for_system(
+            artifact_id="event_projection",
+            evidence_ref=binding_evidence_ref,
+            evidence_source=GraphArtifactBindingEvidenceSource.GRAPH_EVENT_PROJECTION,
+        ).to_dict()
+        artifact = GraphTerminalArtifact(
+            artifact_key="event_projection",
+            artifact_id="event_projection",
+            ref=self._canonical_ref(run_id, "event_projection"),
+            relative_path=relative_path,
+            content_checksum=projection.checksum,
+            byte_size=len(content),
+            media_type="application/x-ndjson",
+            node_id="graph",
+            attempt_id=f"projection-{projection.high_watermark or 0}",
+            required_for_replay=True,
+            required_for_publication=True,
+            metadata=metadata,
+        )
+        with self.lock_run(run_id):
+            return self.terminal_store.stage_artifact(
+                run_id=run_id,
+                artifact=artifact,
+            )
 
     def list_staged_artifacts(
         self,
@@ -1509,7 +1395,7 @@ def _artifact_projection(
 
 
 def _terminal_manifest_projection(
-    manifest: GraphTerminalManifest,
+    manifest: GraphTerminalManifestV2,
 ) -> dict[str, Any]:
     projection = _artifact_projection(
         manifest.run_id,
@@ -1556,13 +1442,16 @@ def _terminal_manifest_projection(
 
 
 def _is_research_manifest(manifest: Mapping[str, Any]) -> bool:
+    graph_identity = manifest.get("graph_identity")
+    graph_id = (
+        graph_identity.get("graph_id")
+        if isinstance(graph_identity, Mapping)
+        else manifest.get("graph_id")
+    )
     return (
         manifest.get("run_type") == "research"
         or manifest.get("profile") == "research"
-        or (
-            isinstance(manifest.get("workflow_id"), str)
-            and manifest["workflow_id"].startswith("research.")
-        )
+        or (isinstance(graph_id, str) and graph_id.startswith("research."))
     )
 
 
@@ -1688,8 +1577,8 @@ def _is_verified_context_ref_only_artifact(
         for item in artifact_index
         if isinstance(item, Mapping)
         and item.get("artifact_id") == artifact_type
-        and item.get("kind") == artifact_type
-        and item.get("path") == path
+        and item.get("kind", item.get("artifact_key")) == artifact_type
+        and item.get("path", item.get("relative_path")) == path
     ]
     if len(matches) != 1:
         return False
@@ -1728,8 +1617,8 @@ def _is_verified_graph_result_ref_only_artifact(
         for item in artifact_index
         if isinstance(item, Mapping)
         and item.get("artifact_id") == artifact_type
-        and item.get("kind") == artifact_type
-        and item.get("path") == path
+        and item.get("kind", item.get("artifact_key")) == artifact_type
+        and item.get("path", item.get("relative_path")) == path
     ]
     if len(matches) != 1:
         return False
@@ -1741,6 +1630,74 @@ def _is_verified_graph_result_ref_only_artifact(
     )
 
 
+def _is_verified_graph_event_projection_manifest_artifact(
+    manifest: Mapping[str, Any],
+    *,
+    artifact_type: Any,
+    path: Any,
+) -> bool:
+    if artifact_type != "event_projection" or path != "events.jsonl":
+        return False
+    artifact_index = manifest.get("artifact_index")
+    if not isinstance(artifact_index, list):
+        return False
+    matches = [
+        item
+        for item in artifact_index
+        if isinstance(item, Mapping)
+        and item.get("artifact_id") == artifact_type
+        and item.get("kind", item.get("artifact_key")) == artifact_type
+        and item.get("path", item.get("relative_path")) == path
+    ]
+    if len(matches) != 1:
+        return False
+    item = matches[0]
+    metadata = item.get("metadata")
+    if not isinstance(metadata, Mapping):
+        return False
+    identity = metadata.get("graph_identity")
+    if not isinstance(identity, Mapping):
+        return False
+    # The projection carries the immutable Graph run identity.  Execution
+    # schema/compiler details live in ``graph_execution_version`` and must not
+    # be duplicated into the identity payload.
+    required_identity = {
+        "run_id",
+        "graph_id",
+        "graph_version",
+        "graph_ref",
+        "graph_checksum",
+    }
+    if set(identity) != required_identity:
+        return False
+    run_id = manifest.get("run_id")
+    checksum = item.get("checksum") or item.get("content_checksum")
+    checksum_ref = (
+        checksum
+        if isinstance(checksum, str) and checksum.startswith("sha256:")
+        else f"sha256:{checksum}"
+    )
+    content_type = item.get("content_type", item.get("media_type"))
+    return (
+        metadata.get("schema_version")
+        == "newsroom.graph-event-projection-artifact/v1"
+        and metadata.get("stream_id") == f"run:{run_id}"
+        and metadata.get("tenant_id") not in (None, "")
+        and identity.get("run_id") == run_id
+        and identity.get("graph_ref")
+        == f"{identity.get('graph_id')}@{identity.get('graph_version')}"
+        and checksum is not None
+        and metadata.get("checksum") == checksum_ref
+        and metadata.get("content_checksum") == checksum_ref
+        and content_type == "application/x-ndjson"
+        and isinstance(metadata.get("graph_execution_version"), Mapping)
+        and metadata["graph_execution_version"].get(
+            "normalized_graph_checksum"
+        )
+        == identity.get("graph_checksum")
+    )
+
+
 def is_verified_internal_staged_artifact(
     artifact: GraphTerminalArtifact,
 ) -> bool:
@@ -1748,6 +1705,8 @@ def is_verified_internal_staged_artifact(
 
     if not isinstance(artifact, GraphTerminalArtifact):
         return False
+    if artifact.artifact_key == "event_projection":
+        return _is_verified_graph_event_projection_artifact(artifact)
     metadata = artifact.metadata
     context_only = metadata.get("context_ref_only") is True
     graph_result_only = metadata.get("graph_result_ref_only") is True
@@ -1771,6 +1730,71 @@ def is_verified_internal_staged_artifact(
     except ValueError:
         return False
     return metadata.get("identity_checksum") == f"sha256:{identity_suffix}"
+
+
+def _is_verified_graph_event_projection_artifact(
+    artifact: GraphTerminalArtifact,
+) -> bool:
+    metadata = artifact.metadata
+    if (
+        metadata.get("schema_version")
+        != "newsroom.graph-event-projection-artifact/v1"
+        or artifact.artifact_id != "event_projection"
+        or artifact.relative_path != "events.jsonl"
+        or artifact.media_type != "application/x-ndjson"
+        or metadata.get("stream_id") != f"run:{artifact.ref.split('/')[-2]}"
+        or metadata.get("checksum") != artifact.content_checksum
+        or metadata.get("content_checksum") != artifact.content_checksum
+        or metadata.get("tenant_id") in (None, "")
+    ):
+        return False
+    identity = metadata.get("graph_identity")
+    if not isinstance(identity, Mapping):
+        return False
+    required_identity = {
+        "run_id",
+        "graph_id",
+        "graph_version",
+        "graph_ref",
+        "graph_checksum",
+    }
+    if set(identity) != required_identity:
+        return False
+    if identity.get("run_id") != artifact.ref.split("/")[-2]:
+        return False
+    if identity.get("graph_ref") != (
+        f"{identity.get('graph_id')}@{identity.get('graph_version')}"
+    ):
+        return False
+    execution_version = metadata.get("graph_execution_version")
+    if not isinstance(execution_version, Mapping):
+        return False
+    if set(execution_version) != {
+        "graph_schema_version",
+        "compiler_version",
+        "normalized_graph_checksum",
+    }:
+        return False
+    if execution_version.get("normalized_graph_checksum") != identity.get(
+        "graph_checksum"
+    ):
+        return False
+    high_watermark = metadata.get("high_watermark")
+    event_count = metadata.get("event_count")
+    if high_watermark is not None and (
+        isinstance(high_watermark, bool)
+        or not isinstance(high_watermark, int)
+        or high_watermark < 1
+    ):
+        return False
+    if (
+        isinstance(event_count, bool)
+        or not isinstance(event_count, int)
+        or event_count < 0
+        or event_count != (high_watermark or 0)
+    ):
+        return False
+    return True
 
 
 __all__ = [

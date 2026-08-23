@@ -58,6 +58,41 @@ def test_active_builder_preserves_node_and_system_bindings_through_store(
     assert restored.candidate == candidate
 
 
+def test_active_builder_excludes_internal_ref_only_artifacts_from_publication_index() -> None:
+    manifest = _mixed_manifest()
+    internal_artifact = GraphTerminalArtifact(
+        artifact_key="graph-result-" + "d" * 64,
+        artifact_id="graph-result-" + "d" * 64,
+        ref=f"artifact://{manifest.run_id}/graph-result-" + "d" * 64,
+        relative_path="internal/graph-result.json",
+        content_checksum=_SHA_A,
+        byte_size=1,
+        media_type="application/json",
+        node_id="publish_artifacts",
+        attempt_id="internal-1",
+        required_for_replay=True,
+        required_for_publication=True,
+        metadata={
+            "graph_result_ref_only": True,
+            "identity_checksum": _SHA_A,
+        },
+    )
+    manifest = _manifest_with_artifacts(
+        (*manifest.artifacts, internal_artifact),
+    )
+
+    request = GraphStorageIndexCandidateBuilder.from_manifest(
+        manifest=manifest,
+        events=_events(manifest),
+    )
+    candidate = GraphStorageIndexCandidateBuilder().build(request)
+
+    assert tuple(record.artifact_id for record in candidate.artifact_records) == (
+        manifest.artifacts[0].artifact_id,
+        manifest.artifacts[2].artifact_id,
+    )
+
+
 def test_active_builder_rejects_missing_explicit_binding() -> None:
     manifest = _manifest()
 
@@ -204,7 +239,7 @@ def _mixed_manifest():
         node_id="terminal",
         attempt_id="terminal-1",
         required_for_replay=True,
-        required_for_publication=False,
+        required_for_publication=True,
         metadata={"graph_artifact_binding": system_projection.to_dict()},
     )
     return _manifest_with_artifacts((node_artifact, system_artifact))

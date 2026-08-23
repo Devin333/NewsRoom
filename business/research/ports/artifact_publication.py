@@ -22,7 +22,6 @@ RESEARCH_ARTIFACT_HANDLER_REF = (
     f"{RESEARCH_ARTIFACT_HANDLER_ID}@{RESEARCH_ARTIFACT_HANDLER_VERSION}"
 )
 RESEARCH_ARTIFACT_SCHEMA_VERSION = "newsroom.research-artifact-bundle/v1"
-RESEARCH_ARTIFACT_LEGACY_MANIFEST_VERSION = "newsroom.research-artifact-manifest/v1"
 RESEARCH_ARTIFACT_MANIFEST_VERSION = "newsroom.research-artifact-manifest/v2"
 
 
@@ -30,10 +29,9 @@ RESEARCH_ARTIFACT_MANIFEST_VERSION = "newsroom.research-artifact-manifest/v2"
 class ResearchArtifactReadClaim:
     """Immutable evidence presented to the accepted-run resolver.
 
-    ``schema_version`` is ``v2`` for finalized publication manifests and ``v1``
-    for a legacy manifest being opened through a dual reader.  Legacy claims
-    intentionally carry optional evidence because old bytes are not rewritten;
-    the resolver must classify them from the durable run record instead.
+    Only the current Graph publication manifest major can produce a claim.
+    Legacy and unknown manifests are quarantined before an application resolver
+    receives a claim, so they can never become live publication authority.
     """
 
     run_id: str
@@ -51,11 +49,8 @@ class ResearchArtifactReadClaim:
 class ResearchArtifactReadResolution:
     """Application-owned result of resolving a publication read claim.
 
-    A legacy manifest may not carry an identity scope.  In that case a plain
-    boolean resolver result is intentionally insufficient: only an
-    application resolver that checked the strict v1 Research run record may
-    provide the missing scope evidence here.  For v2 claims the field normally
-    mirrors the claim's persisted scope.
+    The identity scope mirrors the current Graph manifest's persisted scope
+    when an accepted publication is resolved.
     """
 
     accepted: bool
@@ -82,6 +77,18 @@ class ResearchArtifactDiagnosticReader(Protocol):
         identity_scope_ref: str,
         subject_scope_ref: str | None = None,
     ) -> Mapping[str, Any]: ...
+
+
+@runtime_checkable
+class ResearchGraphStorageIndexPublisherPort(Protocol):
+    """Publish one canonical Research terminal manifest into the Graph index."""
+
+    def publish(
+        self,
+        *,
+        run_id: str,
+        expected_manifest_hash: str,
+    ) -> object: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -144,11 +151,11 @@ __all__ = [
     "RESEARCH_ARTIFACT_HANDLER_ID",
     "RESEARCH_ARTIFACT_HANDLER_REF",
     "RESEARCH_ARTIFACT_HANDLER_VERSION",
-    "RESEARCH_ARTIFACT_LEGACY_MANIFEST_VERSION",
     "RESEARCH_ARTIFACT_MANIFEST_VERSION",
     "RESEARCH_ARTIFACT_SCHEMA_VERSION",
     "ResearchArtifactDiagnosticClaim",
     "ResearchArtifactDiagnosticReader",
+    "ResearchGraphStorageIndexPublisherPort",
     "ResearchArtifactReadClaim",
     "ResearchArtifactReadResolution",
     "artifact_evidence_ref",

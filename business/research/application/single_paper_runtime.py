@@ -117,6 +117,7 @@ from business.research.ports.artifact_publication import (
     RESEARCH_ARTIFACT_EFFECT_KIND,
     RESEARCH_ARTIFACT_HANDLER_REF,
     RESEARCH_ARTIFACT_SCHEMA_VERSION,
+    ResearchGraphStorageIndexPublisherPort,
 )
 
 
@@ -851,6 +852,7 @@ class ResearchSinglePaperRuntime:
         dynamic_task_plan_runner_factory: Callable[..., Any] | None = None,
         graph_result_committer_factory: Callable[..., Any] | None = None,
         graph_event_projection: GraphEventProjectionApplicationPort | None = None,
+        graph_index_publisher: ResearchGraphStorageIndexPublisherPort | None = None,
         node_output_resource_factory: Callable[[str], HarnessNodeOutputResourcePort]
         | None = None,
     ) -> None:
@@ -869,6 +871,15 @@ class ResearchSinglePaperRuntime:
                 "GraphEventProjectionApplicationPort"
             )
         self.graph_event_projection = graph_event_projection
+        if graph_index_publisher is not None and not isinstance(
+            graph_index_publisher,
+            ResearchGraphStorageIndexPublisherPort,
+        ):
+            raise TypeError(
+                "graph_index_publisher must implement "
+                "ResearchGraphStorageIndexPublisherPort"
+            )
+        self.graph_index_publisher = graph_index_publisher
         if node_output_resource_factory is not None and not callable(
             node_output_resource_factory
         ):
@@ -1023,6 +1034,7 @@ class ResearchSinglePaperRuntime:
                 terminal_payload_factory=terminal_payload_factory,
                 candidate_payload_factory=candidate_payload_factory,
                 graph_event_projection=self.graph_event_projection,
+                graph_index_publisher=self.graph_index_publisher,
             )
         side_effect_registry = HarnessSideEffectRegistry(
             (
@@ -1164,12 +1176,22 @@ class ResearchSinglePaperRuntime:
                 run_spec=run_spec,
                 harness_result=harness_result,
             )
-            self.artifact_port.commit_unpublished_terminal_manifest(
+            persisted_manifest = self.artifact_port.commit_unpublished_terminal_manifest(
                 _unpublished_terminal_manifest_request(
                     run_spec=run_spec,
                     harness_result=harness_result,
                 )
             )
+            if self.graph_index_publisher is not None:
+                if persisted_manifest.manifest_hash is None:
+                    raise HarnessValidationError(
+                        "unpublished Graph terminal manifest has no canonical hash",
+                        code="research_graph_index_manifest_hash_missing",
+                    )
+                self.graph_index_publisher.publish(
+                    run_id=persisted_manifest.run_id,
+                    expected_manifest_hash=persisted_manifest.manifest_hash,
+                )
         if (
             workspace.analysis is None
             and harness_result.status is HarnessRunStatus.SUCCEEDED

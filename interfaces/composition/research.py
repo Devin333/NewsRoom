@@ -143,6 +143,10 @@ from infrastructure.research.github_repository import (
 from infrastructure.research.local_chunk_store import LocalChunkPayloadStore
 from infrastructure.research.source_provider import ArxivResearchSourceProvider
 from infrastructure.storage.events.factory import durable_event_storage_from_env
+from infrastructure.storage.indexing import (
+    GraphStorageIndexPublisher,
+    LocalGraphStorageIndexStore,
+)
 from infrastructure.storage.harness import (
     FilesystemSubAgentTranscriptStore,
     SQLiteHarnessNodeOutputResource,
@@ -1303,6 +1307,20 @@ def _build_configured_composition(
             reader=durable_events.event_store,
             schema_catalog=durable_events.schema_catalog,
         )
+        graph_index_store = _compose_component(
+            ResearchCapability.GRAPH_ARTIFACT_PERSISTENCE,
+            lambda: LocalGraphStorageIndexStore(
+                settings.artifact.root / "graph-index",
+            ),
+        )
+        graph_index_publisher = _compose_component(
+            ResearchCapability.GRAPH_ARTIFACT_PERSISTENCE,
+            lambda: GraphStorageIndexPublisher(
+                manifest_reader=artifact_port,
+                event_reader=durable_events.event_store,
+                index_store=graph_index_store,
+            ),
+        )
         dynamic_task_plan_store = DurableTaskPlanStore(
             durable_events.event_runtime,
             durable_events.event_store,
@@ -1722,6 +1740,7 @@ def _build_configured_composition(
             dynamic_task_plan_runner_factory=dynamic_task_plan_runner_factory,
             graph_result_committer_factory=graph_result_committer_factory,
             graph_event_projection=graph_event_projection,
+            graph_index_publisher=graph_index_publisher,
             node_output_resource_factory=lambda _run_id: node_output_resource,
         )
         ask_use_case = AskPaperUseCase()

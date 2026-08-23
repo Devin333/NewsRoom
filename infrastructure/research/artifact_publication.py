@@ -71,6 +71,9 @@ from infrastructure.storage.indexing import (
     GraphArtifactBindingKind,
     GraphArtifactBindingProjection,
 )
+from business.research.ports.artifact_publication import (
+    ResearchGraphStorageIndexPublisherPort,
+)
 
 
 # Keep the on-disk staging segment compact for Windows path-length limits.  Its
@@ -108,6 +111,7 @@ class ResearchArtifactBundleHandler:
         terminal_payload_factory: TerminalArtifactPayloadFactory | None = None,
         candidate_payload_factory: CandidateArtifactPayloadFactory | None = None,
         graph_event_projection: GraphEventProjectionApplicationPort | None = None,
+        graph_index_publisher: ResearchGraphStorageIndexPublisherPort | None = None,
         retention: timedelta = _DEFAULT_RETENTION,
         failure_injector: Callable[[int, str, str], None] | None = None,
     ) -> None:
@@ -128,6 +132,15 @@ class ResearchArtifactBundleHandler:
                 "GraphEventProjectionApplicationPort"
             )
         self.graph_event_projection = graph_event_projection
+        if graph_index_publisher is not None and not isinstance(
+            graph_index_publisher,
+            ResearchGraphStorageIndexPublisherPort,
+        ):
+            raise TypeError(
+                "graph_index_publisher must implement "
+                "ResearchGraphStorageIndexPublisherPort"
+            )
+        self.graph_index_publisher = graph_index_publisher
         self.retention = retention
         self.failure_injector = failure_injector
         self.prepare_calls = 0
@@ -275,6 +288,9 @@ class ResearchArtifactBundleHandler:
             authorization,
         )
         if existing is not None:
+            self._publish_graph_index(
+                self.artifact_port.read_terminal_manifest(intent.run_id),
+            )
             self._cleanup_prepared_candidates(prepared)
             return existing
 
@@ -461,8 +477,9 @@ class ResearchArtifactBundleHandler:
             # This is the sole visibility write.  Every member has already
             # been checksum-verified, and the manager uses temp-write + flush
             # + atomic replace for manifest.json.
-            self.artifact_port.write_terminal_manifest(manifest)
+            persisted_manifest = self.artifact_port.write_terminal_manifest(manifest)
             manifest_committed = True
+            self._publish_graph_index(persisted_manifest)
             # Cleanup is intentionally best-effort after the atomic visibility
             # commit.  A filesystem cleanup failure retains hidden bytes under
             # their bounded retention instead of turning a committed manifest
@@ -492,6 +509,19 @@ class ResearchArtifactBundleHandler:
                     except OSError:
                         pass
             raise
+
+    def _publish_graph_index(self, manifest: GraphTerminalManifestV2) -> None:
+        if self.graph_index_publisher is None:
+            return
+        if manifest.manifest_hash is None:
+            raise HarnessValidationError(
+                "Graph terminal manifest has no canonical hash for index publication",
+                code="research_graph_index_manifest_hash_missing",
+            )
+        self.graph_index_publisher.publish(
+            run_id=manifest.run_id,
+            expected_manifest_hash=manifest.manifest_hash,
+        )
 
     def cleanup_candidates(
         self,

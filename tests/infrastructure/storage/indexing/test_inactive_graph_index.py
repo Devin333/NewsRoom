@@ -11,16 +11,22 @@ from framework.events import (
     BusinessContext,
     EventCandidate,
     GraphEventContext,
+    GraphEventExecutionVersion,
     GraphRunIdentity,
+    GraphStageIdentity,
     ProducerIdentity,
     StoredEvent,
 )
 from framework.harness.artifacts import (
     GraphTerminalArtifact,
     GraphTerminalManifest,
+    GraphTerminalManifestV2,
     GraphTerminalStatus,
     graph_terminal_manifest_hash,
 )
+from framework.harness.graph import HarnessGraphCompiler
+from framework.harness.graph.execution_versions import GraphExecutionVersionManifest
+from business.research.graphs import build_paper_analysis_graph_definition
 from infrastructure.storage.indexing import (
     GraphArtifactNodeBinding,
     GraphIndexDiagnosticCode,
@@ -111,7 +117,7 @@ def test_dry_run_returns_typed_diagnostics_without_a_candidate(
 
 def test_dry_run_rejects_a_tampered_terminal_manifest(tmp_path) -> None:
     request = _request()
-    object.__setattr__(request.manifest, "graph_version", "2")
+    object.__setattr__(request.manifest.terminal, "graph_version", "2")
 
     report = _adapter(tmp_path).dry_run(request)
 
@@ -251,7 +257,7 @@ def _invalid_request(variant: str) -> GraphStorageIndexCandidateRequest:
 
 def _request(
     *,
-    manifest: GraphTerminalManifest | None = None,
+    manifest: GraphTerminalManifestV2 | None = None,
     events: tuple[StoredEvent, ...] | None = None,
     bindings: tuple[GraphArtifactNodeBinding, ...] | None = None,
 ) -> GraphStorageIndexCandidateRequest:
@@ -263,21 +269,22 @@ def _request(
     )
 
 
-def _manifest() -> GraphTerminalManifest:
-    return GraphTerminalManifest(
+def _manifest() -> GraphTerminalManifestV2:
+    execution_versions = _execution_versions()
+    terminal = GraphTerminalManifest(
         tenant_id="tenant-a",
         run_id=_RUN_ID,
-        graph_id="research.paper-analysis",
-        graph_version="1",
-        graph_schema_version="newsroom.normalized-harness-graph/v3",
-        compiler_version="3",
-        normalized_graph_checksum=_SHA_A,
+        graph_id=execution_versions.graph_id,
+        graph_version=execution_versions.graph_version,
+        graph_schema_version=execution_versions.normalized_graph_schema_version,
+        compiler_version=execution_versions.compiler_version,
+        normalized_graph_checksum=execution_versions.normalized_graph_checksum,
         status=GraphTerminalStatus.SUCCEEDED,
         started_at=_NOW,
         completed_at=_NOW + timedelta(seconds=5),
         terminal_state_ref=_SHA_B,
         checkpoint_ref=f"checkpoint://{_RUN_ID}/terminal",
-        terminal_node_ids=("publish",),
+        terminal_node_ids=execution_versions.terminal_node_ids,
         gate_evidence_refs=(_SHA_C,),
         artifacts=(
             GraphTerminalArtifact(
@@ -298,6 +305,10 @@ def _manifest() -> GraphTerminalManifest:
             ),
         ),
     )
+    return GraphTerminalManifestV2(
+        terminal=terminal,
+        execution_versions=execution_versions,
+    )
 
 
 def _binding(*, attempt_id: str = "attempt-1") -> GraphArtifactNodeBinding:
@@ -311,7 +322,7 @@ def _binding(*, attempt_id: str = "attempt-1") -> GraphArtifactNodeBinding:
 
 
 def _identity(
-    manifest: GraphTerminalManifest | None = None,
+    manifest: GraphTerminalManifestV2 | None = None,
     *,
     checksum: str | None = None,
 ) -> GraphRunIdentity:
@@ -320,18 +331,24 @@ def _identity(
         run_id=source.run_id,
         graph_id=source.graph_id,
         graph_version=source.graph_version,
-        graph_schema_version=source.graph_schema_version,
-        compiler_version=source.compiler_version,
-        normalized_graph_checksum=checksum or source.normalized_graph_checksum,
+        graph_ref=f"{source.graph_id}@{source.graph_version}",
+        graph_checksum=checksum or source.normalized_graph_checksum,
     )
 
 
-def _events(manifest: GraphTerminalManifest) -> tuple[StoredEvent, ...]:
+def _events(manifest: GraphTerminalManifestV2) -> tuple[StoredEvent, ...]:
     identity = _identity(manifest)
     return (
         _event(1, identity),
         _event(2, identity, with_node=True),
     )
+
+
+def _execution_versions() -> GraphExecutionVersionManifest:
+    graph = HarnessGraphCompiler().compile(
+        build_paper_analysis_graph_definition()
+    ).graph
+    return GraphExecutionVersionManifest.from_normalized_graph(graph)
 
 
 def _event(
@@ -342,11 +359,27 @@ def _event(
 ) -> StoredEvent:
     context = GraphEventContext(
         identity=identity,
-        node_id="analyze" if with_node else None,
-        node_instance_id="analyze:1" if with_node else None,
+        execution_version=GraphEventExecutionVersion(
+            graph_schema_version="newsroom.normalized-harness-graph/v3",
+            compiler_version="3",
+            normalized_graph_checksum=identity.graph_checksum,
+        ),
+        stage_identity=(
+            GraphStageIdentity(
+                run_id=identity.run_id,
+                graph_id=identity.graph_id,
+                graph_version=identity.graph_version,
+                graph_ref=identity.graph_ref,
+                graph_checksum=identity.graph_checksum,
+                node_id="analyze",
+                node_instance_id="analyze:1",
+            )
+            if with_node
+            else None
+        ),
     )
     candidate = EventCandidate(
-        event_id=f"evt-index-{sequence}-{identity.normalized_graph_checksum[-1]}",
+        event_id=f"evt-index-{sequence}-{identity.graph_checksum[-1]}",
         event_type=(
             "harness_graph_initialized"
             if sequence == 1
@@ -357,7 +390,15 @@ def _event(
         occurred_at=_NOW + timedelta(seconds=sequence),
         stream_id=f"run:{identity.run_id}",
         correlation_id=identity.run_id,
-        business_context=BusinessContext(run_id=identity.run_id),
+        business_context=BusinessContext(
+            run_id=identity.run_id,
+            graph_id=identity.graph_id,
+            graph_version=identity.graph_version,
+            graph_ref=f"{identity.graph_id}@{identity.graph_version}",
+            graph_checksum=identity.graph_checksum,
+            stage_id=context.node_id,
+            node_instance_id=context.node_instance_id,
+        ),
         producer=ProducerIdentity(
             component="framework.harness.control_plane",
             version="1",

@@ -32,6 +32,7 @@ from infrastructure.research import (
     FilesystemResearchRunStore,
     StructuredResearchCandidateWorker,
 )
+from infrastructure.storage.indexing import GraphStorageIndexSnapshot
 from interfaces.api.app import create_app
 from interfaces.cli.commands import mcp as mcp_commands
 from interfaces.composition import research as research_composition
@@ -388,6 +389,21 @@ def test_recorded_transports_execute_full_production_research_analysis(
         assert isinstance(runtime.llm_worker, StructuredResearchCandidateWorker)
         assert isinstance(runtime.artifact_port, FilesystemHarnessArtifactPort)
         assert isinstance(service._run_store, FilesystemResearchRunStore)
+        index_files = sorted(
+            (settings.artifact.root / "graph-index").glob("index-*.json")
+        )
+        assert len(index_files) == 2
+        index_snapshots = tuple(
+            GraphStorageIndexSnapshot.from_dict(
+                json.loads(path.read_text(encoding="utf-8"))
+            )
+            for path in index_files
+        )
+        assert {
+            snapshot.identity.run_id for snapshot in index_snapshots
+        } == {_RUN_ID, _MCP_RUN_ID}
+        assert all(snapshot.artifact_records for snapshot in index_snapshots)
+        assert all(snapshot.event_records for snapshot in index_snapshots)
 
         record = service._run_store.get_by_run_id(_RUN_ID)
         assert record is not None
