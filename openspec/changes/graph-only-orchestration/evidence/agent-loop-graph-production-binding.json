@@ -1,0 +1,73 @@
+{
+  "schema": "newsroom.agent-loop-graph-production-binding-evidence/v1",
+  "captured_at": "2026-08-23",
+  "change": "graph-only-orchestration",
+  "task_refs": [
+    "6.1",
+    "6.2",
+    "6.4",
+    "6.7"
+  ],
+  "status": "composition_leaf_adapter_complete_live_control_plane_cutover_open",
+  "implementation": {
+    "commit": "a9a62b74",
+    "tree": "940f3d33f67263411d3c2d89451576bf1aa147a1",
+    "application_service": "interfaces/services/agent_loop_graph_service.py",
+    "composition_factory": "interfaces/composition/agent_loop_graph.py",
+    "result_store": "interfaces.services.agent_loop_graph_service.SQLiteAgentLoopActivityResultStore",
+    "graph_executor": "framework/harness/runtime/activity_executor.py",
+    "artifact_recorder": "framework/harness/agent_loop/artifacts.py"
+  },
+  "composition_contract": {
+    "explicit_durable_ports_required": true,
+    "local_storage_fallback": false,
+    "exact_worker_reference_required": true,
+    "exact_activity_reference_required": true,
+    "agent_loop_leaf_required": true,
+    "serial_usage_required": true,
+    "graph_activity_input_checksum_verified": true,
+    "durable_node_output_resource_required": true,
+    "durable_result_commit_required": true,
+    "strict_result_json_read_back": true,
+    "result_lineage_rehydrated_and_checksum_verified": true,
+    "same_activity_recovery_without_worker_call": true,
+    "graph_state_or_routing_authority": false,
+    "wait_registration_authority": false,
+    "terminal_manifest_authority": false,
+    "publication_authority": false,
+    "cancellation_reconciliation_authority": false,
+    "conversation_event_and_terminal_owners_supplied_by_outer_composition": true
+  },
+  "worker_boundary": {
+    "agent_runner_is_worker_dependency": true,
+    "candidate_only_result": true,
+    "artifact_owner_required": true,
+    "direct_memory_write": false,
+    "worker_route_decision": false,
+    "worker_wait_registration": false,
+    "legacy_agent_loop_step_runner_used": false
+  },
+  "verification": {
+    "focused_service_and_architecture": "7 passed",
+    "architecture_suite": "210 passed, 4 warnings",
+    "compile": "passed",
+    "mandatory_smoke": "2292 passed, 23 deselected, 22 warnings",
+    "embedded_agent_loop_smoke": "status=succeeded, network_calls=0",
+    "source_validation": "is_valid=true, error_count=0, warning_count=0"
+  },
+  "open_gaps": [
+    "No live production GraphControlPlane dispatcher is installed for this adapter.",
+    "Outer durable event/result projection and terminal acceptance must be supplied by the owning composition.",
+    "Production approval Wait registration and automatic resume remain Harness-owned follow-up work.",
+    "Cross-store conversation and Artifact recovery, PostgreSQL parent identity cutover, and Gate C legacy runner deletion remain open."
+  ],
+  "task_status": {
+    "task_6_1_checked": false,
+    "task_6_2_checked": false,
+    "task_6_3_checked": true,
+    "task_6_4_checked": false,
+    "task_6_5_checked": true,
+    "task_6_6_checked": true,
+    "task_6_7_checked": false
+  }
+}
