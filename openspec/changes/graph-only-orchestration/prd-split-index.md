@@ -48,6 +48,22 @@ F:\github\NewsRoom\openspec\changes\graph-only-orchestration\prd-07-spec-sync-an
 4. 完成后运行本子 PRD 的 focused checks，更新 `tasks.md` 对应任务和 `evidence/`，再做 path-scoped commit。不要在未完成最终门禁时把总 change 标为 complete。
 5. `prd-07` 必须重新运行 `python -m scripts.dev compile`、`python -m scripts.dev smoke`、`openspec validate graph-only-orchestration --strict` 和 `openspec validate --all --strict`，并执行 zero-reference scan。
 
-## 4. 状态来源
+## 4. 细粒度叶子入口
+
+阶段 PRD 只适合做一个阶段的整体 review；实际实现优先使用 [`prds/README.md`](F:/github/NewsRoom/openspec/changes/graph-only-orchestration/prds/README.md) 中的叶子 PRD。叶子文件按 `01a` 到 `07d` 编号，共 31 个：
+
+| 阶段 | 叶子范围 | 适合一次处理的边界 |
+|---|---|---|
+| 01 | `01a-01d` | baseline、Graph namespace、compiler/preflight、leaf contract |
+| 02 | `02a-02e` | control plane、control nodes、side-effect、recovery、worker/context |
+| 03 | `03a-03e` | Artifact、Event/application、index、node-output、caller migration |
+| 04 | `04a-04e` | Research composition、dynamic/repair、E2E、AgentLoop activity/state |
+| 05 | `05a-05d` | API、CLI、MCP/SDK/OpenAPI、approval validation |
+| 06 | `06a-06d` | history reader、quarantine、isolation、legacy deletion |
+| 07 | `07a-07d` | canonical spec、docs audit、strict gates、final release |
+
+叶子 PRD 通过 `tasks.md` 任务范围建立追踪，不单独创建 OpenSpec change。这样 `openspec status --change graph-only-orchestration` 仍然反映真实总进度，而每次执行可以把一个叶子作为独立目标，并以独立 commit 交付。
+
+## 5. 状态来源
 
 子 PRD 的状态不单独维护数字。当前进度以 `openspec status --change graph-only-orchestration --json` 和 `tasks.md` checkbox 为准；PRD 中的历史 evidence 不能覆盖当前 live source、测试和 working tree 事实。

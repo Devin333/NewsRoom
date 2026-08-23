@@ -19,6 +19,8 @@
 
 本文件是 Graph-only cutover 的总规范，保留完整产品目标、架构不变量、capability traceability 和最终完成定义。为了让实现可以按职责边界独立运行，执行时应使用 [prd-split-index.md](F:/github/NewsRoom/openspec/changes/graph-only-orchestration/prd-split-index.md) 选择子 PRD；子 PRD 不复制本文件的规范内容，也不拥有第二套 Graph authority。
 
+需要更细粒度执行时，使用 [prds/README.md](F:/github/NewsRoom/openspec/changes/graph-only-orchestration/prds/README.md) 下的 31 个叶子 PRD。阶段 PRD 用于阶段级 review，叶子 PRD 用于一次任务运行和一次职责提交。
+
 | 子 PRD | 原 `tasks.md` 范围 | 依赖 | 交付边界 |
 |---|---|---|---|
 | `prd-01-graph-contract-and-identity.md` | 1-2 | 无 | Graph declaration、identity、compiler、preflight 和公共契约 |
