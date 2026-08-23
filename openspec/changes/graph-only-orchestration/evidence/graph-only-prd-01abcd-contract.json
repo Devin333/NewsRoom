@@ -1,0 +1,37 @@
+{
+  "schema": "newsroom.graph-only-prd-01abcd-contract/v1",
+  "captured_at": "2026-08-23",
+  "change": "graph-only-orchestration",
+  "prd_slices": ["01a", "01b", "01c", "01d"],
+  "status": "complete_for_current_scope",
+  "implementation": {
+    "run_spec": "framework/harness/control_plane/state.py",
+    "graph_owner": "framework/harness/graph",
+    "compiler": "framework/harness/graph/compiler.py",
+    "preflight": "framework/harness/graph/validation/preflight.py",
+    "runtime_resolution": "framework/harness/graph/runtime_resolution.py",
+    "admission": "framework/harness/control_plane/harness.py::_prepare_run_spec"
+  },
+  "contracts": {
+    "baseline_and_freeze": true,
+    "explicit_graph_run_declaration": true,
+    "immutable_definition_checksum": true,
+    "normalized_graph_checksum": true,
+    "exact_schema_and_compiler_versions": true,
+    "unknown_version_fail_closed": true,
+    "strict_runtime_binding_resolution": true,
+    "leaf_activity_outer_authority_rejected": true,
+    "legacy_workflow_declaration_accepted_by_live_runtime": false,
+    "worker_dispatched_before_preflight": false
+  },
+  "verification": {
+    "command": ".\\.venv\\Scripts\\python.exe -m pytest tests/framework/harness/graph tests/framework/harness/test_phase_contract.py tests/architecture/test_harness_graph_namespace_boundary.py tests/architecture/test_framework_public_api.py tests/framework/harness/control_plane/test_graph_state.py tests/scripts/test_graph_only_migration.py tests/architecture/test_harness_graph_authority.py -q",
+    "result": "263 passed",
+    "production_runtime_legacy_namespace_scan": "no live framework/harness/workflow namespace or HarnessWorkflowGraphCompiler reference",
+    "strict_openspec_validation": "passed"
+  },
+  "scope_boundary": {
+    "historical_migration_readers": "scripts/graph_only_migration",
+    "remaining_work": "02 and later leaf PRDs; this evidence does not close their task ranges"
+  }
+}

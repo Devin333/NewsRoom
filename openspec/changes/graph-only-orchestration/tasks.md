@@ -24,16 +24,18 @@ Task 2.4 的 Gate A compiler/resolver contract 已由 commit `1f9e20e938fe92fac7
 
 commit `98c3a97d47860340de6f46599de686e81642a791` 将 pure Graph result-lineage value contract 物理迁至 `framework/harness/graph/result_lineage.py`，删除 control-plane path/re-export 且不留 shim；所有 caller 直导入 Graph owner，root API 从 Graph owner 保持同一 contract。该 slice 只推进 2.1/3.1 owner/import 收敛，不改变 live state/compiler/writer/admission，所以 2.1/3.1 继续开放，证据见 `evidence/graph-result-lineage-owner-relocation-contract.json`。
 
-- [ ] 2.1 在 `framework/harness/graph` 建立最终 Graph namespace，并为 DSL、normalized graph、compiler、reader、versioning、validation、bindings 和 runtime resolution 划分 owner
+- [x] 2.1 在 `framework/harness/graph` 建立最终 Graph namespace，并为 DSL、normalized graph、compiler、reader、versioning、validation、bindings 和 runtime resolution 划分 owner
 - [x] 2.2 定义不可变 `HarnessGraphDefinition`，明确 `graph_id`、`graph_version`、root Graph、activity bindings、terminal side-effect policy 和 canonical serialization
-- [ ] 2.3 将 `HarnessRunSpec.workflow` 改为 `HarnessRunSpec.graph`，并同步所有内部构造、类型检查、序列化和错误码
-- [ ] 2.4 将 `HarnessWorkflowGraphCompiler` 改为 `HarnessGraphCompiler`，只接受显式 Graph definition 并输出带 checksum 的 `NormalizedHarnessGraph`
-- [ ] 2.5 删除 `graph=None` fallback、`entry_step_id`、`routing_rules`、`declaration_mode`、legacy schema constants 和 dual declaration reader
-- [ ] 2.6 让 preflight 在 `RUN_CREATED`、checkpoint、artifact、worker 或 publication side effect 前拒绝所有 legacy Workflow declarations
-- [ ] 2.7 为 Graph schema、compiler、condition、activity binding、gate、checkpoint、event 和 manifest 建立精确 version pinning 及 unknown-version fail-closed 行为
-- [ ] 2.8 保留 `HarnessStepSpec` 仅用于 executable leaf lifecycle，禁止它表达 outer routing、node readiness 或 publication decision
+- [x] 2.3 将 `HarnessRunSpec.workflow` 改为 `HarnessRunSpec.graph`，并同步所有内部构造、类型检查、序列化和错误码
+- [x] 2.4 将 `HarnessWorkflowGraphCompiler` 改为 `HarnessGraphCompiler`，只接受显式 Graph definition 并输出带 checksum 的 `NormalizedHarnessGraph`
+- [x] 2.5 删除 `graph=None` fallback、`entry_step_id`、`routing_rules`、`declaration_mode`、legacy schema constants 和 dual declaration reader
+- [x] 2.6 让 preflight 在 `RUN_CREATED`、checkpoint、artifact、worker 或 publication side effect 前拒绝所有 legacy Workflow declarations
+- [x] 2.7 为 Graph schema、compiler、condition、activity binding、gate、checkpoint、event 和 manifest 建立精确 version pinning 及 unknown-version fail-closed 行为
+- [x] 2.8 保留 `HarnessStepSpec` 仅用于 executable leaf lifecycle，禁止它表达 outer routing、node readiness 或 publication decision
 - [x] 2.9 更新 `framework/harness/__init__.py`、模块 `__all__` 和 type-checking imports，删除 Workflow 名称的 re-export
-- [ ] 2.10 增加 Graph contract round-trip、canonical checksum、unknown construct、missing Graph、dual declaration 和 no-worker-before-preflight 测试
+- [x] 2.10 增加 Graph contract round-trip、canonical checksum、unknown construct、missing Graph、dual declaration 和 no-worker-before-preflight 测试
+
+> **01abcd 当前验收证据（2026-08-23）**：`evidence/graph-only-prd-01abcd-contract.json`。当前工作树的 Graph-only runtime 已将 `HarnessRunSpec.graph`、`HarnessGraphCompiler`、strict preflight、exact version/reference resolution 和 leaf lifecycle guard 接入 live Harness admission；定向 01abcd 测试为 `263 passed`。历史 evidence 中的 `production_activation=false` 字段属于旧快照，不再作为当前状态依据。
 
 commit `452626dbff266ae58271f81cac7b39b035e0fc56` 将 pure Graph decision contract 物理迁至 `framework/harness/graph/decision.py`，删除 control-plane path/re-export 且不留 shim，并把 contract test 迁入 Graph tests；该 slice 只推进 2.1/3.1 owner/import 收敛，不改变 live scheduler/state/checkpoint/admission，因此 2.1/3.1 继续开放，证据见 `evidence/graph-decision-owner-relocation-contract.json`。
 
