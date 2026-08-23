@@ -84,6 +84,10 @@ class GraphStorageIndexErrorCode(StrEnum):
     CANDIDATE_NOT_FOUND = "graph_storage_index_candidate_not_found"
     CANDIDATE_CORRUPT = "graph_storage_index_candidate_corrupt"
     CANDIDATE_SCOPE_MISMATCH = "graph_storage_index_candidate_scope_mismatch"
+    INDEX_CONFLICT = "graph_storage_index_conflict"
+    INDEX_NOT_FOUND = "graph_storage_index_not_found"
+    INDEX_CORRUPT = "graph_storage_index_corrupt"
+    INDEX_SCOPE_MISMATCH = "graph_storage_index_scope_mismatch"
 
 
 class GraphStorageIndexError(ValueError):

@@ -34,9 +34,19 @@ from infrastructure.storage.indexing.local_candidate import (
     DEFAULT_MAX_GRAPH_INDEX_CANDIDATE_BYTES,
     LocalGraphIndexCandidateStore,
 )
+from infrastructure.storage.indexing.local_store import (
+    DEFAULT_MAX_GRAPH_INDEX_SNAPSHOT_BYTES,
+    GRAPH_STORAGE_INDEX_SNAPSHOT_SCHEMA,
+    GraphStorageIndexSnapshot,
+    GraphStorageIndexStorePort,
+    GraphStorageIndexWriteReceipt,
+    GraphStorageIndexWriteStatus,
+    LocalGraphStorageIndexStore,
+)
 
 __all__ = [
     "DEFAULT_MAX_GRAPH_INDEX_CANDIDATE_BYTES",
+    "DEFAULT_MAX_GRAPH_INDEX_SNAPSHOT_BYTES",
     "GRAPH_ARTIFACT_INDEX_RECORD_SCHEMA",
     "GRAPH_ARTIFACT_NODE_BINDING_SCHEMA",
     "GRAPH_EVENT_INDEX_RECORD_SCHEMA",
@@ -46,6 +56,7 @@ __all__ = [
     "GRAPH_STORAGE_INDEX_DRY_RUN_SCHEMA",
     "GRAPH_STORAGE_INDEX_IDENTITY_SCHEMA",
     "GRAPH_STORAGE_INDEX_STAGE_RECEIPT_SCHEMA",
+    "GRAPH_STORAGE_INDEX_SNAPSHOT_SCHEMA",
     "GraphArtifactIndexRecord",
     "GraphArtifactNodeBinding",
     "GraphEventIndexRecord",
@@ -62,6 +73,11 @@ __all__ = [
     "GraphStorageIndexIdentity",
     "InactiveGraphStorageIndexAdapter",
     "LocalGraphIndexCandidateStore",
+    "GraphStorageIndexSnapshot",
+    "GraphStorageIndexStorePort",
+    "GraphStorageIndexWriteReceipt",
+    "GraphStorageIndexWriteStatus",
+    "LocalGraphStorageIndexStore",
     "MAX_GRAPH_INDEX_ARTIFACTS",
     "MAX_GRAPH_INDEX_EVENTS",
 ]
