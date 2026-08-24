@@ -52,16 +52,24 @@ READER_REPAIR_RUNTIME_BINDING_SCHEMA = (
 
 @dataclass(frozen=True, slots=True)
 class ReaderRepairRuntimeBindingBundle:
-    """Exact Graph v2 bindings prepared for composition, without installing them."""
+    """Exact Graph v2 bindings installed by a composition-owned runtime."""
 
     definition: HarnessGraphDefinition
     authority: HarnessRuntimeBindingAuthority
+    gate_registry: DeterministicGateRegistry
+    side_effect_registry: HarnessSideEffectRegistry
 
     def __post_init__(self) -> None:
         if not isinstance(self.definition, HarnessGraphDefinition):
             raise TypeError("definition must be HarnessGraphDefinition")
         if not isinstance(self.authority, HarnessRuntimeBindingAuthority):
             raise TypeError("authority must be HarnessRuntimeBindingAuthority")
+        if not isinstance(self.gate_registry, DeterministicGateRegistry):
+            raise TypeError("gate_registry must be DeterministicGateRegistry")
+        if not isinstance(self.side_effect_registry, HarnessSideEffectRegistry):
+            raise TypeError(
+                "side_effect_registry must be HarnessSideEffectRegistry"
+            )
         _verify_exact_bundle(self.definition, self.authority)
 
     def to_manifest(self) -> dict[str, Any]:
@@ -219,18 +227,22 @@ def build_reader_repair_runtime_binding_bundle(
         supports_origins=(HarnessSideEffectOrigin.CONTROLLER_TERMINAL.value,),
         capabilities=HarnessSideEffectCapabilities(stable_idempotency=True),
     )
+    gate_registry = _build_exact_gate_registry(definition)
+    side_effect_registry = HarnessSideEffectRegistry(
+        (memory_binding, failure_binding)
+    )
     authority = HarnessRuntimeBindingAuthority(
         workers=workers,
         activities=activities,
         leaf_activities=leaves,
-        gate_registry=_build_exact_gate_registry(definition),
-        side_effect_registry=HarnessSideEffectRegistry(
-            (memory_binding, failure_binding)
-        ),
+        gate_registry=gate_registry,
+        side_effect_registry=side_effect_registry,
     )
     return ReaderRepairRuntimeBindingBundle(
         definition=definition,
         authority=authority,
+        gate_registry=gate_registry,
+        side_effect_registry=side_effect_registry,
     )
 
 

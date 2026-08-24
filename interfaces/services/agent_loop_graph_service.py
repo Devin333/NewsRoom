@@ -78,11 +78,7 @@ class SQLiteAgentLoopActivityResultStore(HarnessGraphActivityExecutionCommitPort
         self._lock = RLock()
         self._connection = sqlite3.connect(self.path, check_same_thread=False)
         self._connection.row_factory = sqlite3.Row
-        self._connection.execute(
-            "CREATE TABLE IF NOT EXISTS agent_loop_activity_results ("
-            "activity_id TEXT PRIMARY KEY, activity_checksum TEXT NOT NULL, "
-            "result_checksum TEXT NOT NULL, result_json TEXT NOT NULL)"
-        )
+        self._ensure_schema()
         self._connection.commit()
 
     def close(self) -> None:
@@ -99,11 +95,16 @@ class SQLiteAgentLoopActivityResultStore(HarnessGraphActivityExecutionCommitPort
         result: HarnessGraphActivityResult,
     ) -> HarnessGraphActivityResult:
         del execution_input, worker_result, node_output_commit
+        identity = _activity_identity(activity)
+        _assert_result_matches_activity(result, activity)
         with self._lock:
             row = self._connection.execute(
                 "SELECT activity_checksum, result_checksum, result_json "
-                "FROM agent_loop_activity_results WHERE activity_id = ?",
-                (activity.activity_id,),
+                "FROM agent_loop_activity_results "
+                "WHERE run_id = ? AND graph_id = ? AND graph_version = ? "
+                "AND graph_checksum = ? AND node_id = ? "
+                "AND node_instance_id = ? AND activity_id = ? AND attempt = ?",
+                identity,
             ).fetchone()
             if row is not None:
                 if row[0] != activity.activity_checksum or row[1] != result.result_checksum:
@@ -114,10 +115,12 @@ class SQLiteAgentLoopActivityResultStore(HarnessGraphActivityExecutionCommitPort
                 return _result_from_dict(json.loads(row[2]))
             self._connection.execute(
                 "INSERT INTO agent_loop_activity_results "
-                "(activity_id, activity_checksum, result_checksum, result_json) "
-                "VALUES (?, ?, ?, ?)",
+                "(run_id, graph_id, graph_version, graph_checksum, node_id, "
+                "node_instance_id, activity_id, attempt, activity_checksum, "
+                "result_checksum, result_json) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
-                    activity.activity_id,
+                    *identity,
                     activity.activity_checksum,
                     result.result_checksum,
                     json.dumps(result.to_dict(), sort_keys=True),
@@ -126,13 +129,81 @@ class SQLiteAgentLoopActivityResultStore(HarnessGraphActivityExecutionCommitPort
             self._connection.commit()
             return result
 
-    def read(self, activity_id: str) -> HarnessGraphActivityResult | None:
+    def read(self, activity: HarnessGraphActivity) -> HarnessGraphActivityResult | None:
+        """Read a receipt only for its exact durable Graph activity identity."""
+
+        if not isinstance(activity, HarnessGraphActivity):
+            raise TypeError("activity must be HarnessGraphActivity")
+        identity = _activity_identity(activity)
         with self._lock:
             row = self._connection.execute(
-                "SELECT result_json FROM agent_loop_activity_results WHERE activity_id = ?",
-                (activity_id,),
+                "SELECT activity_checksum, result_json "
+                "FROM agent_loop_activity_results "
+                "WHERE run_id = ? AND graph_id = ? AND graph_version = ? "
+                "AND graph_checksum = ? AND node_id = ? "
+                "AND node_instance_id = ? AND activity_id = ? AND attempt = ?",
+                identity,
             ).fetchone()
-        return None if row is None else _result_from_dict(json.loads(row[0]))
+        if row is None:
+            return None
+        if row[0] != activity.activity_checksum:
+            raise HarnessValidationError(
+                "AgentLoop activity result identity conflicts",
+                code="agent_loop_activity_result_conflict",
+            )
+        result = _result_from_dict(json.loads(row[1]))
+        _assert_result_matches_activity(result, activity)
+        return result
+
+    def _ensure_schema(self) -> None:
+        existing = self._connection.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table' "
+            "AND name = 'agent_loop_activity_results'"
+        ).fetchone()
+        if existing is not None:
+            columns = {
+                row[1]
+                for row in self._connection.execute(
+                    "PRAGMA table_info(agent_loop_activity_results)"
+                ).fetchall()
+            }
+            required_columns = {
+                "run_id",
+                "graph_id",
+                "graph_version",
+                "graph_checksum",
+                "node_id",
+                "node_instance_id",
+                "activity_id",
+                "attempt",
+                "activity_checksum",
+                "result_checksum",
+                "result_json",
+            }
+            if not required_columns.issubset(columns):
+                # The legacy table does not retain Graph identity, so its rows
+                # cannot safely participate in live recovery. Preserve them
+                # for operator inspection and start an isolated v2 table.
+                self._connection.execute(
+                    "ALTER TABLE agent_loop_activity_results RENAME TO "
+                    "agent_loop_activity_results_legacy_untrusted"
+                )
+        self._connection.execute(
+            "CREATE TABLE IF NOT EXISTS agent_loop_activity_results ("
+            "run_id TEXT NOT NULL, graph_id TEXT NOT NULL, "
+            "graph_version TEXT NOT NULL, graph_checksum TEXT NOT NULL, "
+            "node_id TEXT NOT NULL, node_instance_id TEXT NOT NULL, "
+            "activity_id TEXT NOT NULL, attempt INTEGER NOT NULL, "
+            "activity_checksum TEXT NOT NULL, result_checksum TEXT NOT NULL, "
+            "result_json TEXT NOT NULL, "
+            "PRIMARY KEY (run_id, graph_id, graph_version, graph_checksum, "
+            "node_id, node_instance_id, activity_id, attempt))"
+        )
+        self._connection.execute(
+            "CREATE INDEX IF NOT EXISTS "
+            "idx_agent_loop_activity_results_activity "
+            "ON agent_loop_activity_results(activity_id)"
+        )
 
 
 class AgentLoopGraphApplicationService:
@@ -274,3 +345,38 @@ def _result_from_dict(value: Mapping[str, Any]) -> HarnessGraphActivityResult:
             code="agent_loop_activity_result_checksum_invalid",
         )
     return result
+
+
+def _activity_identity(activity: HarnessGraphActivity) -> tuple[Any, ...]:
+    """Return the immutable Graph partition key for one activity receipt."""
+
+    if not isinstance(activity, HarnessGraphActivity):
+        raise TypeError("activity must be HarnessGraphActivity")
+    return (
+        activity.run_id,
+        activity.graph_ref.graph_id,
+        activity.graph_ref.identity_version,
+        activity.graph_ref.checksum,
+        activity.node_id,
+        activity.node_instance_id,
+        activity.activity_id,
+        activity.attempt,
+    )
+
+
+def _assert_result_matches_activity(
+    result: HarnessGraphActivityResult,
+    activity: HarnessGraphActivity,
+) -> None:
+    if not isinstance(result, HarnessGraphActivityResult):
+        raise TypeError("result must be HarnessGraphActivityResult")
+    if (
+        result.activity_id != activity.activity_id
+        or result.node_instance_id != activity.node_instance_id
+        or result.attempt != activity.attempt
+        or result.activity_ref != activity.activity_ref
+    ):
+        raise HarnessValidationError(
+            "AgentLoop activity result does not match its Graph activity",
+            code="agent_loop_activity_result_identity_mismatch",
+        )

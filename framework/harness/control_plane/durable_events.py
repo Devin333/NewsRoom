@@ -759,6 +759,10 @@ class DurableGraphEventContextWriter:
 class DurableHarnessEventPort:
     """Harness sink whose projection advances only after canonical commit."""
 
+    # Composition roots use this explicit capability marker to reject the
+    # in-memory test sink while allowing durable adapters to remain swappable.
+    is_durable = True
+
     def __init__(
         self,
         runtime: EventRuntimePort,
@@ -3970,10 +3974,13 @@ def _worker_result_from_recorded_activity(
         "error",
     }
     actual_fields = set(payload) if isinstance(payload, Mapping) else set()
-    if not isinstance(payload, Mapping) or actual_fields not in {
+    allowed_fields = {
         frozenset(expected_fields),
         frozenset((*expected_fields, "effect_intent")),
-    }:
+        frozenset((*expected_fields, "evidence")),
+        frozenset((*expected_fields, "effect_intent", "evidence")),
+    }
+    if not isinstance(payload, Mapping) or actual_fields not in allowed_fields:
         raise ReplayActivityCorruptionError(
             "recorded Harness worker result payload is invalid"
         )
@@ -4000,6 +4007,7 @@ def _worker_result_from_recorded_activity(
             artifacts=tuple(artifacts),
             diagnostics=dict(diagnostics),
             metrics=dict(metrics),
+            evidence=payload.get("evidence", ()),
             error=error,
             effect_intent=payload.get("effect_intent"),
         )

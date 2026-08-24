@@ -62,7 +62,10 @@ from framework.harness.side_effects.fake import (
     CountingHarnessSideEffectHandler,
     InMemoryHarnessSideEffectStore,
 )
-from framework.harness.side_effects.models import HarnessTerminalSideEffectPolicy
+from framework.harness.side_effects.models import (
+    HarnessTerminalFailureSideEffectPolicy,
+    HarnessTerminalSideEffectPolicy,
+)
 from framework.harness.side_effects.registry import (
     HarnessSideEffectHandlerBinding,
     HarnessSideEffectRegistry,
@@ -156,6 +159,33 @@ def test_signal_wait_survives_restart_and_duplicate_delivery() -> None:
         _node(completed.state, "after").status
         is HarnessNodeInstanceStatus.SUCCEEDED
     )
+
+
+def test_terminal_failure_side_effect_is_not_reconciled_while_waiting() -> None:
+    failure_policy = HarnessTerminalFailureSideEffectPolicy(
+        policy_id="test.wait-failure-terminal",
+        version="1",
+        handler="test.wait-failure-terminal@1",
+        kind="failure_diagnostic",
+        failure_record_schema="newsroom.harness-graph-terminal-failure-record/v1",
+        terminal_reason_codes=("graph_terminal_failure",),
+        requires_approval=False,
+        retry_limit=1,
+        not_required_evidence_ref=checksum_for("wait-failure-not-required"),
+    )
+    run_spec = _wait_run_spec(
+        "run-wait-with-failure-policy",
+        terminal_failure_policy=failure_policy,
+    )
+    port = InMemoryHarnessEventPort()
+    control_plane = _control_plane(port, terminal_failure=True)
+
+    result = control_plane.run(run_spec)
+
+    assert result.state is not None
+    assert result.state.lifecycle is RunLifecycle.WAITING
+    assert result.state.outcome is RunOutcome.NONE
+    assert control_plane.side_effect_store.decision_write_count == 0
 
 
 def test_concurrent_identical_signal_is_committed_once() -> None:
@@ -809,6 +839,7 @@ def _control_plane(
     calls: list[str] | None = None,
     max_active_nodes: int = 1,
     timer_wake_port=None,
+    terminal_failure: bool = False,
 ) -> HarnessControlPlane:
     worker_calls = calls if calls is not None else []
 
@@ -816,7 +847,10 @@ def _control_plane(
         _RecordingFunctionWorker(step_id, worker_calls)
         for step_id in ("after", "fast", "normal", "timeout")
     )
-    store, authority = _wait_authority(workers)
+    store, authority = _wait_authority(
+        workers,
+        terminal_failure=terminal_failure,
+    )
 
     control_plane = HarnessControlPlane(
         event_port=port,
@@ -856,6 +890,7 @@ def _wait_run_spec(
     *,
     wait_kind: str = "signal",
     timeout_policy: WaitTimeoutPolicy | None = None,
+    terminal_failure_policy: HarnessTerminalFailureSideEffectPolicy | None = None,
 ) -> HarnessRunSpec:
     wait_id = "approval-wait" if wait_kind == "approval" else "signal-wait"
     deadline_path = (
@@ -905,6 +940,7 @@ def _wait_run_spec(
             "subject_scope_ref": checksum_for({"subject": run_id}),
         },
         budget=HarnessBudget.safe_default(),
+        terminal_failure_policy=terminal_failure_policy,
     )
 
 
@@ -916,6 +952,7 @@ def _wait_graph_run_spec(
     inputs: dict[str, str],
     metadata: dict[str, str],
     budget: HarnessBudget,
+    terminal_failure_policy: HarnessTerminalFailureSideEffectPolicy | None = None,
 ) -> HarnessRunSpec:
     metadata = {
         **metadata,
@@ -958,6 +995,7 @@ def _wait_graph_run_spec(
             retry_limit=1,
             not_required_evidence_ref=checksum_for("wait-terminal-not-required"),
         ),
+        terminal_failure_side_effect_policy=terminal_failure_policy,
     )
     return HarnessRunSpec(
         run_id,
@@ -1005,17 +1043,25 @@ def _wait_authority(
     workers: tuple[_RecordingFunctionWorker, ...],
     *,
     gate_registry: DeterministicGateRegistry | None = None,
+    terminal_failure: bool = False,
 ) -> tuple[InMemoryHarnessSideEffectStore, HarnessRuntimeBindingAuthority]:
     store = InMemoryHarnessSideEffectStore()
-    terminal_registry = HarnessSideEffectRegistry(
-        (
-            HarnessSideEffectHandlerBinding(
-                "test.wait-terminal@1",
-                "artifact",
-                CountingHarnessSideEffectHandler(store, disposition="accepted"),
-            ),
+    handler_bindings = [
+        HarnessSideEffectHandlerBinding(
+            "test.wait-terminal@1",
+            "artifact",
+            CountingHarnessSideEffectHandler(store, disposition="accepted"),
         )
-    )
+    ]
+    if terminal_failure:
+        handler_bindings.append(
+            HarnessSideEffectHandlerBinding(
+                "test.wait-failure-terminal@1",
+                "failure_diagnostic",
+                CountingHarnessSideEffectHandler(store, disposition="quarantine"),
+            )
+        )
+    terminal_registry = HarnessSideEffectRegistry(tuple(handler_bindings))
     activity_ref = HarnessContractReference(
         HarnessContractKind.ACTIVITY,
         "newsroom.harness-worker-activity",

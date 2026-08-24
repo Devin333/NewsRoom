@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import Any, Self
+from typing import Any, Protocol, Self, runtime_checkable
 
 from framework.harness.control_plane.errors import HarnessValidationError
 from framework.harness.graph.decision import HarnessGraphDecisionType
@@ -31,6 +31,9 @@ from framework.harness.graph.reference import HarnessGraphReference
 
 HARNESS_GRAPH_TERMINAL_FAILURE_RECORD_SCHEMA = (
     "newsroom.harness-graph-terminal-failure-record/v1"
+)
+HARNESS_GRAPH_TERMINAL_FAILURE_CONTEXT_SCHEMA = (
+    "newsroom.harness-graph-terminal-failure-context/v1"
 )
 
 _FAILED_NODE_STATUSES = frozenset(
@@ -559,6 +562,109 @@ class HarnessGraphTerminalFailureRecord:
         return {**self.checksum_projection(), "record_checksum": self.record_checksum}
 
 
+@dataclass(frozen=True, slots=True)
+class HarnessGraphTerminalFailureContext:
+    """Durable Worker and gate facts available to a failure candidate builder."""
+
+    inputs: Mapping[str, Any]
+    outputs: Mapping[str, Any]
+    failed_gate_evidence_refs: tuple[str, ...]
+    schema_version: str = HARNESS_GRAPH_TERMINAL_FAILURE_CONTEXT_SCHEMA
+    context_checksum: str | None = field(default=None, compare=True)
+
+    def __post_init__(self) -> None:
+        inputs = freeze_json(self.inputs, "terminal_failure_context.inputs")
+        outputs = freeze_json(self.outputs, "terminal_failure_context.outputs")
+        if not isinstance(inputs, Mapping) or not isinstance(outputs, Mapping):
+            raise TypeError("terminal failure inputs and outputs must be mappings")
+        failed_refs = tuple(
+            sorted(
+                _checksum(item, "terminal_failure_context.failed_gate_evidence_refs")
+                for item in self.failed_gate_evidence_refs
+            )
+        )
+        if len(failed_refs) != len(set(failed_refs)):
+            raise _failure_error(
+                "graph_terminal_failure_gate_evidence_duplicate",
+                "terminal failure context gate evidence must be unique",
+            )
+        if self.schema_version != HARNESS_GRAPH_TERMINAL_FAILURE_CONTEXT_SCHEMA:
+            raise _failure_error(
+                "unsupported_graph_terminal_failure_context_schema",
+                "terminal failure context schema is unsupported",
+                schema_version=str(self.schema_version),
+            )
+        object.__setattr__(self, "inputs", inputs)
+        object.__setattr__(self, "outputs", outputs)
+        object.__setattr__(self, "failed_gate_evidence_refs", failed_refs)
+        expected = canonical_checksum(self.checksum_projection())
+        if self.context_checksum is not None and self.context_checksum != expected:
+            raise _failure_error(
+                "graph_terminal_failure_context_checksum_mismatch",
+                "terminal failure context checksum does not match canonical content",
+            )
+        object.__setattr__(self, "context_checksum", expected)
+
+    def checksum_projection(self) -> dict[str, Any]:
+        return {
+            "schema_version": self.schema_version,
+            "inputs": thaw_json(self.inputs),
+            "outputs": thaw_json(self.outputs),
+            "failed_gate_evidence_refs": list(self.failed_gate_evidence_refs),
+        }
+
+    def to_dict(self) -> dict[str, Any]:
+        return {**self.checksum_projection(), "context_checksum": self.context_checksum}
+
+
+@dataclass(frozen=True, slots=True)
+class HarnessGraphTerminalFailureSideEffectCandidate:
+    """Handler-owned domain candidate projected into a terminal side-effect intent."""
+
+    terminal_action: str
+    payload: Mapping[str, Any]
+    candidate_refs: tuple[str, ...]
+    completion_input_ref: str
+
+    def __post_init__(self) -> None:
+        terminal_action = required_text(
+            self.terminal_action,
+            "terminal_failure_candidate.terminal_action",
+        )
+        payload = freeze_json(
+            self.payload,
+            "terminal_failure_candidate.payload",
+        )
+        if not isinstance(payload, Mapping):
+            raise TypeError("terminal failure candidate payload must be a mapping")
+        candidate_refs = tuple(
+            _checksum(item, "terminal_failure_candidate.candidate_refs")
+            for item in self.candidate_refs
+        )
+        if not candidate_refs or len(candidate_refs) != len(set(candidate_refs)):
+            raise _failure_error(
+                "graph_terminal_failure_candidate_refs_invalid",
+                "terminal failure candidate refs must be unique and non-empty",
+            )
+        completion_input_ref = _checksum(
+            self.completion_input_ref,
+            "terminal_failure_candidate.completion_input_ref",
+        )
+        object.__setattr__(self, "terminal_action", terminal_action)
+        object.__setattr__(self, "payload", payload)
+        object.__setattr__(self, "candidate_refs", candidate_refs)
+        object.__setattr__(self, "completion_input_ref", completion_input_ref)
+
+
+@runtime_checkable
+class HarnessGraphTerminalFailureCandidateBuilder(Protocol):
+    def build_terminal_failure_candidate(
+        self,
+        record: HarnessGraphTerminalFailureRecord,
+        context: HarnessGraphTerminalFailureContext,
+    ) -> HarnessGraphTerminalFailureSideEffectCandidate | None: ...
+
+
 def _failure_error(code: str, message: str, **details: Any) -> HarnessValidationError:
     return HarnessValidationError(
         message,
@@ -651,7 +757,11 @@ def _exact_mapping(
 
 
 __all__ = [
+    "HARNESS_GRAPH_TERMINAL_FAILURE_CONTEXT_SCHEMA",
     "HARNESS_GRAPH_TERMINAL_FAILURE_RECORD_SCHEMA",
+    "HarnessGraphTerminalFailureCandidateBuilder",
+    "HarnessGraphTerminalFailureContext",
     "HarnessGraphFailedNodeRecord",
     "HarnessGraphTerminalFailureRecord",
+    "HarnessGraphTerminalFailureSideEffectCandidate",
 ]

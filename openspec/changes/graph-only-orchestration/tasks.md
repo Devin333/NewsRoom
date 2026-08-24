@@ -136,7 +136,7 @@ TaskPlan result contract 的 Gate A 子切片已由 commit `e7ec9d9c00ec63cd7688
 - [x] 5.2 将 paper analysis composition 返回 `HarnessGraphDefinition`，移除 `HarnessWorkflowSpec` 和 legacy routing fields
 - [x] 5.3 将 static Research path 固定为 Graph `Parallel-All + VerifiedAggregation`，验证 Graph checksum 与 gate version
 - [x] 5.4 将 dynamic analysis 作为 frozen Graph 内 opt-in dynamic stage，保留 bounded `PLAN -> EXECUTE -> VERIFY` 和 durable TaskPlan
-- [ ] 5.5 将 reader repair subagent declarations、memory write intent 和 promotion boundary 接到 Graph activity/gate contract
+- [x] 5.5 将 reader repair subagent declarations、memory write intent 和 promotion boundary 接到 Graph activity/gate contract
 - [x] 5.6 更新 `interfaces/composition/research.py`、Research application service 和 runtime wiring，确保 `business/research` 不导入任何旧 Workflow namespace
 - [ ] 5.7 增加 Research static、dynamic、reader repair、gated failure、artifact publication、replay 和 production-adapter composition tests
 - [x] 5.8 运行 Research import boundary scan，确认旧 `paper_radar`、interface、infrastructure、generic Workflow runtime 均无直接依赖
@@ -163,13 +163,13 @@ AgentLoop approval Wait 的 Gate A contract 已由 commit `ae977438a8c4711ebba39
 
 AgentLoop Graph smoke 与 control-evidence slice 已完成 task 6.5/6.6。worker diagnostics 汇总 action、tool-call record 与 approval/policy issue 中的 `requested_tools`，但只由 outer `ToolAllowlistGate` 决定通过或 halt；durable cumulative-budget tests 继续证明 worker decision 不能覆盖 Harness fact，managed structured-output repair/acceptance 由独立 provider/Harness contract tests证明。`news dev run-test-agent-loop` 经 application service/composition 运行单节点 Graph preflight、physical activity、node-output/result commit、deterministic VERIFY 与 terminal manifest；内置 fake 路径固定为 3 LLM calls、1 local tool、1 judge retry、60 tokens、16 events、zero network。VERIFY 对缺失 output 或畸形 tool-policy evidence fail closed。LLM call artifacts 已修正为 Artifact owner 可接纳的 `graph-result-<64hex>` internal contract，三个 call artifacts 与一个 outcome artifact 只在 VERIFY 后进入 `GraphTerminalManifest(publication=None)`；Artifact subsystem 保留，worker/AgentLoop 无 manifest API。实现提交为 `b857688633e30e259fd4950ae77a20087906a378`（tree `54764bee9c5ab94c520c7412fd62c935a24d9a94`）；验证为 final changed-surface `55 passed`、focused `151 passed`、architecture repair `10 passed`、mandatory smoke `2695 passed, 23 deselected, 22 warnings`、source validation `true/0/0`、change strict valid 与 strict-all `533 passed, 0 failed`；当前任务计数为 `28/102`，证据见 `evidence/agent-loop-graph-smoke-contract.json`。
 
-- [ ] 6.1 用 Graph activity binding 取代 `AgentLoopStepRunner`，明确 `AgentRunner` 只组装依赖，AgentLoop 只执行单 Agent loop
-- [ ] 6.2 将 AgentLoop LLM request/response artifact 持久化接入 artifact owner 和 Graph node outcome；AgentLoop 不得直接发布 manifest
+- [x] 6.1 用 Graph activity binding 取代 `AgentLoopStepRunner`，明确 `AgentRunner` 只组装依赖，AgentLoop 只执行单 Agent loop
+- [x] 6.2 将 AgentLoop LLM request/response artifact 持久化接入 artifact owner 和 Graph node outcome；AgentLoop 不得直接发布 manifest
 - [x] 6.3 将 conversation cursor 和 iteration checkpoint 的 outer identity 改为 Graph run/node/checkpoint ref
-- [ ] 6.4 将 approval request 的 waiting candidate 接回 Harness Graph Wait registration，禁止 AgentLoop 自己恢复或路由
+- [x] 6.4 将 approval request 的 waiting candidate 接回 Harness Graph Wait registration，禁止 AgentLoop 自己恢复或路由
 - [x] 6.5 更新 AgentLoop diagnostics、retry、judge、tool policy 和 structured-output tests，证明 outer gate/budget 仍由 Harness 决定
 - [x] 6.6 将 `test-agent-loop` 改为 Graph smoke fixture，检查 preflight、activity receipt、VERIFY evidence、manifest metrics 和 zero real network
-- [ ] 6.7 删除 `AgentLoopStepRunner`、旧 runner registry binding、旧 Workflow smoke fixture 和仅服务它们的测试
+- [x] 6.7 删除 `AgentLoopStepRunner`、旧 runner registry binding、旧 Workflow smoke fixture 和仅服务它们的测试
 
 ## 7. 外部接口和 approval decision / automatic resume
 

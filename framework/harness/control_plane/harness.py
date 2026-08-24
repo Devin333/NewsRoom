@@ -86,6 +86,9 @@ from framework.harness.graph.operations import (
     HARNESS_GRAPH_RUN_OPERATION_NODE_ID,
     HarnessGraphRunOperation,
 )
+from framework.harness.graph.output_projection import (
+    project_graph_worker_outputs,
+)
 from framework.harness.control_plane.graph_evaluator import (
     HarnessAcceptedGraphObservation,
     HarnessGraphEvaluationContext,
@@ -101,6 +104,11 @@ from framework.harness.control_plane.graph_runtime import (
     HarnessGraphRecovery,
     HarnessGraphTransitionPort,
     InMemoryHarnessGraphTransitionPort,
+)
+from framework.harness.control_plane.terminal_failure import (
+    HarnessGraphTerminalFailureContext,
+    HarnessGraphTerminalFailureRecord,
+    HarnessGraphTerminalFailureSideEffectCandidate,
 )
 from framework.harness.control_plane.graph_state import (
     HarnessAttemptEvidenceReference,
@@ -152,6 +160,7 @@ from framework.harness.side_effects import (
     HarnessSideEffectApprovalResolver,
     HarnessSideEffectAttemptLease,
     HarnessSideEffectDecision,
+    HarnessSideEffectDecisionStatus,
     HarnessSideEffectDisposition,
     HarnessSideEffectHandlerBinding,
     HarnessSideEffectIntent,
@@ -696,6 +705,9 @@ class HarnessControlPlane:
         self._terminal_side_effect_bindings: dict[
             str, HarnessSideEffectHandlerBinding
         ] = {}
+        self._terminal_failure_side_effect_bindings: dict[
+            str, HarnessSideEffectHandlerBinding
+        ] = {}
         self._side_effect_intents: dict[str, dict[str, HarnessSideEffectIntent]] = {}
         self._side_effect_outcomes: dict[str, dict[str, HarnessSideEffectOutcome]] = {}
         self._prepared_graphs: dict[str, NormalizedHarnessGraph] = {}
@@ -746,6 +758,7 @@ class HarnessControlPlane:
             self._gate_bindings_by_run,
             self._side_effect_bindings_by_run,
             self._terminal_side_effect_bindings,
+            self._terminal_failure_side_effect_bindings,
             self._prepared_graphs,
             self._resolved_graph_bindings,
             self._worker_bindings_by_run,
@@ -923,15 +936,40 @@ class HarnessControlPlane:
                         "allowed_attempts": allowed_attempts,
                     },
                 )
+        terminal_failure_policy = run_spec.graph.terminal_failure_side_effect_policy
+        terminal_failure_binding = resolved.terminal_failure_side_effect
+        if terminal_failure_policy is not None:
+            if terminal_failure_binding is None:
+                raise HarnessValidationError(
+                    "terminal failure side-effect binding was not resolved during graph preflight",
+                    code="terminal_failure_side_effect_binding_missing",
+                )
+            allowed_attempts = run_spec.budget.max_retries_per_step + 1
+            if terminal_failure_policy.retry_limit > allowed_attempts:
+                raise HarnessValidationError(
+                    "terminal failure side-effect retry limit exceeds the run retry budget",
+                    code="terminal_failure_side_effect_retry_limit_exceeded",
+                    details={
+                        "code": "terminal_failure_side_effect_retry_limit_exceeded",
+                        "retry_limit": terminal_failure_policy.retry_limit,
+                        "allowed_attempts": allowed_attempts,
+                    },
+                )
         if (
-            side_effect_bindings or terminal_policy is not None
+            side_effect_bindings
+            or terminal_policy is not None
+            or terminal_failure_policy is not None
         ) and self.side_effect_store is None:
             raise HarnessValidationError(
                 "declared side effects require an injected durable side-effect store",
                 code="side_effect_store_missing",
                 details={"code": "side_effect_store_missing"},
             )
-        if side_effect_bindings or terminal_policy is not None:
+        if (
+            side_effect_bindings
+            or terminal_policy is not None
+            or terminal_failure_policy is not None
+        ):
             for field_name in ("identity_scope_ref", "subject_scope_ref"):
                 scope_ref = run_spec.metadata.get(field_name)
                 if not _is_checksum_ref(scope_ref):
@@ -948,6 +986,10 @@ class HarnessControlPlane:
             and step.metadata.get("approval_required") is True
             for step in run_spec.graph.activities
         ) or bool(terminal_policy is not None and terminal_policy.requires_approval)
+        approval_required = approval_required or bool(
+            terminal_failure_policy is not None
+            and terminal_failure_policy.requires_approval
+        )
         if approval_required and self.approval_evidence_resolver is None:
             raise HarnessValidationError(
                 "declared side-effect approval policy requires an evidence resolver",
@@ -959,6 +1001,10 @@ class HarnessControlPlane:
         self._side_effect_bindings_by_run[run_spec.run_id] = side_effect_bindings
         if terminal_binding is not None:
             self._terminal_side_effect_bindings[run_spec.run_id] = terminal_binding
+        if terminal_failure_binding is not None:
+            self._terminal_failure_side_effect_bindings[run_spec.run_id] = (
+                terminal_failure_binding
+            )
         self._prepared_graphs[run_spec.run_id] = graph
         self._resolved_graph_bindings[run_spec.run_id] = resolved
         self._worker_bindings_by_run[run_spec.run_id] = worker_bindings
@@ -2133,15 +2179,10 @@ class HarnessControlPlane:
                 # Worker candidate reference is evidence inside that commit,
                 # never a substitute for the physical commit itself.
                 expected_payload_refs = set()
-                output_keys = tuple(definition.output_keys)
-                if len(output_keys) == 1:
-                    projected_outputs = {output_keys[0]: worker_result.output}
-                elif set(output_keys).issubset(worker_result.output):
-                    projected_outputs = {
-                        key: worker_result.output[key] for key in output_keys
-                    }
-                else:
-                    projected_outputs = {}
+                projected_outputs = project_graph_worker_outputs(
+                    worker_result.output,
+                    definition.output_keys,
+                )
                 if projected_outputs:
                     candidate = HarnessNodeOutputCandidate(
                         output_refs={
@@ -2452,11 +2493,367 @@ class HarnessControlPlane:
             self._graph_dispatch_queue.activities.clear()
             state = self.recover_graph(run_spec)
 
+        state = self.recover_graph(run_spec)
+        self._reconcile_terminal_failure_side_effect(run_spec, state)
         return self._graph_result(
             run_spec,
             state,
             decisions=decisions,
         )
+
+    def _reconcile_terminal_failure_side_effect(
+        self,
+        run_spec: HarnessRunSpec,
+        state: HarnessGraphState,
+    ) -> None:
+        """Commit a handler-built diagnostic only after durable Graph failure."""
+
+        policy = run_spec.graph.terminal_failure_side_effect_policy
+        if policy is None or state.lifecycle not in {
+            RunLifecycle.COMPLETED,
+            RunLifecycle.HALTED,
+        }:
+            return
+        if state.lifecycle is RunLifecycle.COMPLETED and state.outcome not in {
+            RunOutcome.FAILED,
+            RunOutcome.INDETERMINATE,
+            RunOutcome.COMPENSATION_FAILED,
+        }:
+            return
+        if state.lifecycle is RunLifecycle.HALTED and not state.terminal_reason_code:
+            return
+        binding = self._terminal_failure_side_effect_bindings.get(run_spec.run_id)
+        if binding is None:
+            raise HarnessValidationError(
+                "terminal failure side-effect handler binding is unavailable",
+                code="terminal_failure_side_effect_policy_missing",
+            )
+        record = self._terminal_failure_record(run_spec)
+        if record.terminal_reason_code not in policy.terminal_reason_codes:
+            return
+        builder = getattr(binding.handler, "build_terminal_failure_candidate", None)
+        if not callable(builder):
+            return
+        context = self._terminal_failure_context(run_spec, state, record)
+        candidate = builder(record, context)
+        if candidate is None:
+            return
+        if not isinstance(
+            candidate,
+            HarnessGraphTerminalFailureSideEffectCandidate,
+        ):
+            raise HarnessValidationError(
+                "terminal failure candidate builder returned an invalid candidate",
+                code="invalid_terminal_failure_candidate",
+            )
+        prepared = self._prepare_terminal_failure_side_effect(
+            run_spec,
+            state,
+            record,
+            policy,
+            binding,
+            candidate,
+        )
+        self._execute_prepared_side_effect(prepared)
+
+    def _terminal_failure_record(
+        self,
+        run_spec: HarnessRunSpec,
+    ) -> HarnessGraphTerminalFailureRecord:
+        recovery = self._require_graph_runtime().transition_port.recover_graph(
+            run_spec.run_id
+        )
+        terminal_decisions = tuple(
+            sorted(
+                (
+                    commit
+                    for commit in recovery.decision_commits
+                    if commit.decision.decision_type
+                    in {
+                        HarnessGraphDecisionType.COMPLETE_RUN,
+                        HarnessGraphDecisionType.HALT_RUN,
+                    }
+                ),
+                key=lambda item: item.sequence,
+                reverse=True,
+            )
+        )
+        for decision_commit in terminal_decisions:
+            projection_commit = next(
+                (
+                    item
+                    for item in recovery.projection_commits
+                    if item.sequence == decision_commit.sequence + 1
+                    and item.cause_checksum
+                    == decision_commit.decision.decision_checksum
+                ),
+                None,
+            )
+            if projection_commit is None:
+                continue
+            try:
+                return HarnessGraphTerminalFailureRecord.from_commits(
+                    decision_commit,
+                    projection_commit,
+                )
+            except HarnessValidationError:
+                continue
+        raise EventIncompleteHistoryError(
+            "terminal Graph failure lacks its adjacent decision and projection"
+        )
+
+    def _terminal_failure_context(
+        self,
+        run_spec: HarnessRunSpec,
+        state: HarnessGraphState,
+        record: HarnessGraphTerminalFailureRecord,
+    ) -> HarnessGraphTerminalFailureContext:
+        graph = self._prepared_graphs.get(run_spec.run_id)
+        outputs_by_key: dict[str, Any] = {}
+        outputs_by_instance: dict[str, Any] = {}
+        worker_results = self._graph_worker_results.get(run_spec.run_id, {})
+        if graph is not None:
+            definitions = {node.node_id: node for node in graph.nodes}
+            for node in state.node_instances:
+                result = worker_results.get(node.instance_id)
+                if result is None:
+                    continue
+                outputs_by_instance[node.instance_id] = result.to_dict()
+                definition = definitions.get(node.identity.node_id)
+                output_keys = getattr(definition, "output_keys", ())
+                projected_outputs = project_graph_worker_outputs(
+                    result.output,
+                    output_keys,
+                )
+                if projected_outputs is not None:
+                    outputs_by_key.update(projected_outputs)
+        failed_gate_refs = self._terminal_failure_gate_evidence_refs(
+            run_spec.run_id,
+            record,
+        )
+        return HarnessGraphTerminalFailureContext(
+            inputs=dict(run_spec.inputs),
+            outputs={
+                "by_output_key": outputs_by_key,
+                "by_node_instance": outputs_by_instance,
+            },
+            failed_gate_evidence_refs=failed_gate_refs,
+        )
+
+    def _terminal_failure_gate_evidence_refs(
+        self,
+        run_id: str,
+        record: HarnessGraphTerminalFailureRecord,
+    ) -> tuple[str, ...]:
+        allowed = set(record.gate_evidence_refs).intersection(
+            record.decision_evidence_refs
+        )
+        refs: set[str] = set()
+        for event in self._committed_events:
+            if (
+                event.run_id != run_id
+                or event.event_type is not HarnessEventType.GATE_EVALUATED
+            ):
+                continue
+            payload = event.payload
+            details = payload.get("details")
+            harness_gate = (
+                details.get("harness_gate")
+                if isinstance(details, Mapping)
+                else None
+            )
+            result_ref = (
+                harness_gate.get("result_ref")
+                if isinstance(harness_gate, Mapping)
+                else payload.get("result_ref")
+            )
+            if payload.get("passed") is False and result_ref in allowed:
+                refs.add(result_ref)
+        return tuple(sorted(refs))
+
+    def _prepare_terminal_failure_side_effect(
+        self,
+        run_spec: HarnessRunSpec,
+        state: HarnessGraphState,
+        record: HarnessGraphTerminalFailureRecord,
+        policy,
+        binding: HarnessSideEffectHandlerBinding,
+        candidate: HarnessGraphTerminalFailureSideEffectCandidate,
+    ) -> _PreparedSideEffect:
+        identity_scope_ref = _expected_identity_scope_ref(run_spec, state, None)
+        subject_scope_ref = _expected_subject_scope_ref(run_spec)
+        if identity_scope_ref is None or subject_scope_ref is None:
+            raise HarnessValidationError(
+                "terminal failure side effect has no authoritative scope refs",
+                code="side_effect_scope_missing",
+            )
+        if candidate.completion_input_ref != record.record_checksum:
+            raise HarnessValidationError(
+                "terminal failure candidate is not bound to its failure record",
+                code="terminal_failure_candidate_record_mismatch",
+            )
+        graph = self._prepared_graphs.get(run_spec.run_id)
+        graph_id = graph.graph_id if graph is not None else state.graph_ref.graph_id
+        graph_version = (
+            graph.graph_ref.version
+            if graph is not None
+            else state.graph_ref.identity_version
+        )
+        graph_checksum = graph.checksum if graph is not None else state.graph_ref.checksum
+        effect_identity = {
+            "run_id": run_spec.run_id,
+            "policy": policy.reference,
+            "record_ref": record.record_checksum,
+            "candidate_ref": checksum_for(candidate.payload),
+        }
+        intent = HarnessSideEffectIntent(
+            effect_id=(
+                "harness-terminal-failure-effect:"
+                f"{checksum_for(effect_identity).removeprefix('sha256:')}"
+            ),
+            kind=policy.kind,
+            run_id=run_spec.run_id,
+            graph_id=graph_id,
+            graph_version=graph_version,
+            graph_ref=f"{graph_id}@{graph_version}",
+            graph_checksum=graph_checksum,
+            origin=HarnessSideEffectOrigin.CONTROLLER_TERMINAL,
+            atomic_group=(
+                "terminal-failure:"
+                f"{checksum_for({'run_id': run_spec.run_id}).removeprefix('sha256:')}"
+            ),
+            identity_scope_ref=identity_scope_ref,
+            subject_scope_ref=subject_scope_ref,
+            terminal_action=candidate.terminal_action,
+            state_checksum=record.terminal_projection_ref,
+            completion_input_ref=candidate.completion_input_ref,
+            handler=policy.handler,
+            payload=dict(candidate.payload),
+            candidate_refs=candidate.candidate_refs,
+        )
+        approval_ref = policy.not_required_evidence_ref
+        if policy.requires_approval:
+            configured_ref = run_spec.metadata.get(
+                "terminal_failure_approval_evidence_ref"
+            )
+            if not isinstance(configured_ref, str) or not configured_ref.strip():
+                raise HarnessValidationError(
+                    "terminal failure side effect requires durable approval evidence",
+                    code="side_effect_approval_missing",
+                )
+            if self.approval_evidence_resolver is None:
+                raise HarnessValidationError(
+                    "terminal failure side effect requires an approval evidence resolver",
+                    code="side_effect_approval_resolver_missing",
+                )
+            evidence = self.approval_evidence_resolver.resolve(
+                HarnessSideEffectApprovalRequest(
+                    run_id=run_spec.run_id,
+                    graph_id=graph_id,
+                    graph_version=graph_version,
+                    graph_ref=intent.graph_ref,
+                    graph_checksum=graph_checksum,
+                    node_id=None,
+                    node_instance_id=None,
+                    activity_id=None,
+                    attempt=1,
+                    effect_id=intent.effect_id,
+                    candidate_checksum=checksum_for(candidate.payload),
+                    identity_scope_ref=identity_scope_ref,
+                    subject_scope_ref=subject_scope_ref,
+                    decision_version=policy.version,
+                    terminal_action=candidate.terminal_action,
+                ),
+                approval_ref=configured_ref,
+            )
+            approval_ref = evidence.approval_ref
+        if approval_ref is None:
+            raise HarnessValidationError(
+                "terminal failure side effect is missing approval policy evidence",
+                code="side_effect_approval_missing",
+            )
+        gate_pairs = self._terminal_failure_gate_pairs(
+            record,
+            selected_refs=candidate.candidate_refs,
+        )
+        gate_refs = tuple(item[0] for item in gate_pairs)
+        gate_result_refs = tuple(item[1] for item in gate_pairs)
+        budget_ref = checksum_for(self._budget_snapshot(run_spec, state).to_dict())
+        authorization = HarnessSideEffectDecision(
+            decision_id=(
+                "harness-terminal-failure-decision:"
+                f"{checksum_for({'intent_ref': intent.checksum, 'record_ref': record.record_checksum}).removeprefix('sha256:')}"
+            ),
+            intent_ref=intent.checksum,
+            effect_id=intent.effect_id,
+            kind=intent.kind,
+            origin=intent.origin,
+            run_id=intent.run_id,
+            graph_id=intent.graph_id,
+            graph_version=intent.graph_version,
+            graph_ref=intent.graph_ref,
+            graph_checksum=intent.graph_checksum,
+            handler=binding.reference,
+            identity_scope_ref=intent.identity_scope_ref,
+            subject_scope_ref=intent.subject_scope_ref,
+            atomic_group=intent.atomic_group,
+            idempotency_key=intent.idempotency_key,
+            command_ordinal=record.terminal_decision_sequence + 1,
+            causation_id=record.terminal_decision_ref,
+            disposition=HarnessSideEffectDisposition.QUARANTINE,
+            status=HarnessSideEffectDecisionStatus.AUTHORIZED,
+            terminal_action=intent.terminal_action,
+            terminal_state_ref=record.terminal_projection_ref,
+            gate_refs=gate_refs,
+            gate_result_refs=gate_result_refs,
+            aggregate_verdict_ref=checksum_for(
+                {
+                    "gate_refs": list(gate_refs),
+                    "gate_result_refs": list(gate_result_refs),
+                    "passed": False,
+                }
+            ),
+            approval_evidence_ref=approval_ref,
+            budget_ref=budget_ref,
+            effect_attempt=1,
+            effect_attempt_limit=policy.retry_limit,
+            decision_version=policy.version,
+            decided_at=_graph_time(run_spec, record.terminal_decision_sequence + 1),
+        )
+        return _PreparedSideEffect(
+            slot=f"terminal:{intent.effect_id}",
+            intent=intent,
+            authorization=authorization,
+            binding=binding,
+            prepare=False,
+        )
+
+    def _terminal_failure_gate_pairs(
+        self,
+        record: HarnessGraphTerminalFailureRecord,
+        *,
+        selected_refs: tuple[str, ...] | None = None,
+    ) -> tuple[tuple[str, str], ...]:
+        selected = (
+            set(record.gate_evidence_refs).intersection(record.decision_evidence_refs)
+            if selected_refs is None
+            else set(selected_refs).intersection(record.gate_evidence_refs)
+        )
+        pairs: set[tuple[str, str]] = set()
+        for node in record.failed_nodes:
+            for evidence in node.gate_evidence:
+                if evidence.evidence_ref not in selected:
+                    continue
+                if evidence.contract_ref is None:
+                    raise EventIncompleteHistoryError(
+                        "terminal failure gate evidence lacks exact gate identity"
+                    )
+                pairs.add((evidence.contract_ref.exact_ref, evidence.evidence_ref))
+        if len(pairs) != len(selected):
+            raise EventIncompleteHistoryError(
+                "terminal failure gate evidence cannot be resolved exactly"
+            )
+        return tuple(sorted(pairs))
 
     def _graph_result(
         self,
@@ -6522,13 +6919,15 @@ def _graph_executable_output_value(
         raise EventIncompleteHistoryError(
             "Worker output key is outside its pinned graph contract"
         )
-    if len(definition.output_keys) == 1:
-        return result.output
-    if not isinstance(result.output, Mapping) or output_key not in result.output:
+    projected_outputs = project_graph_worker_outputs(
+        result.output,
+        definition.output_keys,
+    )
+    if projected_outputs is None or output_key not in projected_outputs:
         raise EventIncompleteHistoryError(
-            "multi-output Worker result is missing one pinned output key"
+            "Worker result is missing one pinned output key"
         )
-    return result.output[output_key]
+    return projected_outputs[output_key]
 
 
 

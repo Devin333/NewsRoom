@@ -131,7 +131,9 @@ class _DurableApplicationReceiptResolver:
             lambda: HarnessNodeOutputCandidate(
                 output_refs={
                     READER_REPAIR_APPLICATION_OUTPUT_KEY: checksum_for(
-                        application.to_dict()
+                        {
+                            READER_REPAIR_APPLICATION_OUTPUT_KEY: application.to_dict()
+                        }
                     )
                 },
                 evidence_refs=(checksum_for({"source_ref": _SOURCE_REF}),),
@@ -154,7 +156,9 @@ class _DurableApplicationReceiptResolver:
             definition=definition,
             binding_id=READER_REPAIR_COMMITTED_OUTPUT_BINDING_ID,
             producer_activity=self.activity,
-            payload=application.to_dict(),
+            payload={
+                READER_REPAIR_APPLICATION_OUTPUT_KEY: application.to_dict(),
+            },
         )
 
 

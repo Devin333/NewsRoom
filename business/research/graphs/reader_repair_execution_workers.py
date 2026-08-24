@@ -139,7 +139,9 @@ def build_reader_repair_committed_result(
             "mismatches": receipt_mismatches,
         }
     try:
-        receipt.assert_matches_payload(application.to_dict())
+        receipt.assert_matches_payload(
+            {READER_REPAIR_APPLICATION_OUTPUT_KEY: application.to_dict()}
+        )
     except HarnessValidationError as exc:
         violations["committed_output_payload"] = exc.code
     if violations:

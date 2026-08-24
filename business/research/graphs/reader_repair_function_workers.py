@@ -38,6 +38,7 @@ from business.research.domain import (
     stable_research_id,
 )
 from business.research.graphs.reader_repair import (
+    READER_REPAIR_APPLICATION_OUTPUT_KEY,
     READER_REPAIR_GRAPH_ID,
     build_reader_repair_graph_definition,
 )
@@ -720,7 +721,7 @@ def _model_input(
     key: str,
     model_type: type[_MODEL],
 ) -> _MODEL:
-    value = task.inputs[key]
+    value = _single_output_value(task.inputs[key], key)
     try:
         return model_type.model_validate(value)
     except (TypeError, ValueError, ValidationError) as exc:
@@ -782,7 +783,7 @@ def _mapping_input(
     task: _ReaderRepairFunctionTask,
     key: str,
 ) -> dict[str, Any]:
-    value = task.inputs[key]
+    value = _single_output_value(task.inputs[key], key)
     if not isinstance(value, Mapping):
         raise _worker_error(
             "Reader Repair Function mapping input is invalid",
@@ -790,6 +791,14 @@ def _mapping_input(
             input_key=key,
         )
     return dict(value)
+
+
+def _single_output_value(value: Any, output_key: str) -> Any:
+    """Unwrap the complete mapping stored in a Graph single-output slot."""
+
+    if isinstance(value, Mapping) and output_key in value:
+        return value[output_key]
+    return value
 
 
 def _text_input(task: _ReaderRepairFunctionTask, key: str) -> str:

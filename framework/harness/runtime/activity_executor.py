@@ -35,6 +35,9 @@ from framework.harness.graph.canonical import (
     mapping_to_dict,
     required_text,
 )
+from framework.harness.graph.output_projection import (
+    project_graph_worker_outputs,
+)
 from framework.harness.runtime.node_output import (
     HarnessAdmittedGraphActivityOutputAdapter,
     HarnessGraphActivityOutputAttemptResult,
@@ -648,9 +651,11 @@ def _node_output_candidate(
     worker_result: HarnessWorkerResult,
 ) -> HarnessNodeOutputCandidate:
     output_keys = tuple(execution_input.output_keys)
-    if len(output_keys) == 1:
-        projected_outputs = {output_keys[0]: worker_result.output}
-    elif not set(output_keys).issubset(worker_result.output):
+    projected_outputs = project_graph_worker_outputs(
+        worker_result.output,
+        output_keys,
+    )
+    if projected_outputs is None:
         raise HarnessValidationError(
             "Graph worker outputs do not match the physical activity contract",
             code="graph_activity_worker_output_mismatch",
@@ -659,11 +664,6 @@ def _node_output_candidate(
                 "actual_output_keys": sorted(worker_result.output),
             },
         )
-    else:
-        projected_outputs = {
-            output_key: worker_result.output[output_key]
-            for output_key in output_keys
-        }
     output_refs = {
         output_key: canonical_checksum(value)
         for output_key, value in projected_outputs.items()

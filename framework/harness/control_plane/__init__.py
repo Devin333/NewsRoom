@@ -89,9 +89,13 @@ from framework.harness.control_plane.graph_runtime import (
     InMemoryHarnessGraphTransitionPort,
 )
 from framework.harness.control_plane.terminal_failure import (
+    HARNESS_GRAPH_TERMINAL_FAILURE_CONTEXT_SCHEMA,
     HARNESS_GRAPH_TERMINAL_FAILURE_RECORD_SCHEMA,
+    HarnessGraphTerminalFailureCandidateBuilder,
+    HarnessGraphTerminalFailureContext,
     HarnessGraphFailedNodeRecord,
     HarnessGraphTerminalFailureRecord,
+    HarnessGraphTerminalFailureSideEffectCandidate,
 )
 from framework.harness.control_plane.node_output import (
     HARNESS_ADMITTED_GRAPH_ACTIVITY_SCHEMA,

@@ -39,9 +39,10 @@ _MEMORY_GATE_REF = "ReaderRepairMemoryPolicyGate@1"
 class ReaderRepairMemorySideEffectHandler:
     """Prepare a hidden candidate and atomically commit it at run completion.
 
-    The handler is deliberately not registered by production composition yet.
-    Its commit port is a stricter future boundary than the legacy per-object
-    ``ReaderRepairMemoryPort`` and must supply atomic idempotency itself.
+    Production composition registers the handler only when it can provide the
+    durable Reader Repair memory ports. Its commit port is a stricter boundary
+    than the legacy per-object ``ReaderRepairMemoryPort`` and must supply
+    atomic idempotency itself.
     """
 
     def __init__(

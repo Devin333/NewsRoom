@@ -18,6 +18,9 @@ from framework.harness.graph.model import (
     HarnessContractKind,
     HarnessContractReference,
 )
+from framework.harness.graph.output_projection import (
+    project_graph_worker_outputs,
+)
 from framework.harness.workers.result import HarnessWorkerResult
 from framework.shared.time import ensure_utc, format_datetime, parse_datetime
 
@@ -1242,20 +1245,18 @@ def _validated_worker_result_payload(
             code="graph_node_output_worker_result_invalid",
         ) from exc
     declared_output_keys = tuple(output_refs)
-    if len(declared_output_keys) == 1:
-        expected_output_refs = {
-            declared_output_keys[0]: checksum_for(result.output),
-        }
-    elif not set(declared_output_keys).issubset(result.output):
+    projected_outputs = project_graph_worker_outputs(
+        result.output,
+        declared_output_keys,
+    )
+    if projected_outputs is None:
         raise HarnessValidationError(
             "node-output worker result keys conflict with output refs",
             code="graph_node_output_worker_result_mismatch",
         )
-    else:
-        expected_output_refs = {
-            key: checksum_for(result.output[key])
-            for key in declared_output_keys
-        }
+    expected_output_refs = {
+        key: checksum_for(projected_outputs[key]) for key in declared_output_keys
+    }
     if dict(output_refs) != expected_output_refs:
         raise HarnessValidationError(
             "node-output worker result output refs conflict",

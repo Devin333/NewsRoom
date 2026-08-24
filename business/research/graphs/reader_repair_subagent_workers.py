@@ -529,7 +529,10 @@ def _model_input(
     key: str,
     model_type: type[_MODEL],
 ) -> _MODEL:
-    return _validate_model(task.inputs[key], model_type, task=task, input_key=key)
+    value = task.inputs[key]
+    if isinstance(value, Mapping) and key in value:
+        value = value[key]
+    return _validate_model(value, model_type, task=task, input_key=key)
 
 
 def _validate_model(

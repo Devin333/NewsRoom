@@ -250,7 +250,9 @@ def test_reader_repair_result_worker_binds_real_payload_and_commit_receipt() -> 
     assert result.committed_output is not None
     assert result.committed_output.receipt_ref == receipt.receipt_ref
     assert result.committed_output.commit_ref == receipt.commit.commit_ref
-    assert result.committed_output.output_ref == checksum_for(application.to_dict())
+    assert result.committed_output.output_ref == checksum_for(
+        {READER_REPAIR_APPLICATION_OUTPUT_KEY: application.to_dict()}
+    )
     assert result.committed_output.payload_checksum == (
         application.after_payload_checksum
     )
@@ -585,7 +587,9 @@ def _receipt(
     candidate = HarnessNodeOutputCandidate(
         output_refs={
             READER_REPAIR_APPLICATION_OUTPUT_KEY: checksum_for(
-                application.to_dict()
+                {
+                    READER_REPAIR_APPLICATION_OUTPUT_KEY: application.to_dict()
+                }
             )
         },
         evidence_refs=(checksum_for({"source_ref": SOURCE_REF}),),

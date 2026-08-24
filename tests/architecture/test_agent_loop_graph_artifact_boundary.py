@@ -16,6 +16,7 @@ _APPROVED_DEV_ADAPTER_PATHS = {
     "interfaces/services/agent_loop_smoke_service.py",
 }
 _APPROVED_PRODUCTION_ADAPTER_PATHS = {
+    "interfaces/composition/agent_loop_graph.py",
     "interfaces/services/agent_loop_graph_service.py",
 }
 _ADAPTER_NAMES = {

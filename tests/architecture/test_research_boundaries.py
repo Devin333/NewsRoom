@@ -70,7 +70,7 @@ def test_reader_repair_subagent_declarations_are_graph_owned() -> None:
         assert not any(module.endswith("reader_repair.workflow") for module in modules)
 
 
-def test_reader_repair_memory_side_effect_is_atomic_and_inactive() -> None:
+def test_reader_repair_memory_side_effect_is_atomic_and_composition_owned() -> None:
     handler_path = (
         PROJECT_ROOT
         / "infrastructure"
@@ -138,33 +138,39 @@ def test_reader_repair_memory_side_effect_is_atomic_and_inactive() -> None:
         handler_path
     )
 
-    inactive_module = (
+    memory_module = (
         "infrastructure.research.reader_repair_memory_side_effect"
     )
-    inactive_failure_module = (
+    failure_module = (
         "infrastructure.research.reader_repair_failure_diagnostic_side_effect"
     )
-    production_paths = (
-        PROJECT_ROOT / "business" / "research" / "application" / "single_paper_runtime.py",
-        PROJECT_ROOT / "interfaces" / "composition" / "research.py",
+    business_application_path = (
+        PROJECT_ROOT
+        / "business"
+        / "research"
+        / "application"
+        / "reader_repair_runtime.py"
     )
-    assert all(
-        inactive_module not in imported_modules(path)
-        for path in production_paths
+    composition_path = PROJECT_ROOT / "interfaces" / "composition" / "research.py"
+    legacy_application_path = (
+        PROJECT_ROOT
+        / "business"
+        / "research"
+        / "application"
+        / "single_paper_runtime.py"
     )
-    assert all(
-        inactive_failure_module not in imported_modules(path)
-        for path in production_paths
-    )
-    assert all(
-        "ReaderRepairMemorySideEffectHandler" not in path.read_text(encoding="utf-8")
-        for path in production_paths
-    )
-    assert all(
-        "ReaderRepairFailureDiagnosticSideEffectHandler"
-        not in path.read_text(encoding="utf-8")
-        for path in production_paths
-    )
+    assert memory_module not in imported_modules(business_application_path)
+    assert failure_module not in imported_modules(business_application_path)
+    assert memory_module in imported_modules(composition_path)
+    assert failure_module in imported_modules(composition_path)
+    assert memory_module not in imported_modules(legacy_application_path)
+    assert failure_module not in imported_modules(legacy_application_path)
+    composition_source = composition_path.read_text(encoding="utf-8")
+    assert "ReaderRepairMemorySideEffectHandler" in composition_source
+    assert "ReaderRepairFailureDiagnosticSideEffectHandler" in composition_source
+    application_source = business_application_path.read_text(encoding="utf-8")
+    assert ".write_case(" not in application_source
+    assert ".write_strategy(" not in application_source
 
 
 def test_reader_repair_execution_v2_contract_is_candidate_only_and_inactive() -> None:

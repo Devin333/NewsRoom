@@ -672,11 +672,7 @@ def _prior_model(
     model_type: type[BaseModel],
     gate_name: str,
 ) -> tuple[BaseModel | None, HarnessGateResult | None]:
-    state = getattr(context, "state", None)
-    metadata = getattr(state, "metadata", None)
-    outputs = metadata.get("outputs") if isinstance(metadata, Mapping) else None
-    record = outputs.get(output_key) if isinstance(outputs, Mapping) else None
-    payload = record.get(output_key) if isinstance(record, Mapping) else None
+    payload = _prior_payload(context, output_key)
     if not isinstance(payload, Mapping):
         return None, _invalid(
             gate_name,
@@ -700,11 +696,7 @@ def _prior_mapping(
     output_key: str,
     gate_name: str,
 ) -> tuple[Mapping[str, Any] | None, HarnessGateResult | None]:
-    state = getattr(context, "state", None)
-    metadata = getattr(state, "metadata", None)
-    outputs = metadata.get("outputs") if isinstance(metadata, Mapping) else None
-    record = outputs.get(output_key) if isinstance(outputs, Mapping) else None
-    payload = record.get(output_key) if isinstance(record, Mapping) else None
+    payload = _prior_payload(context, output_key)
     if not isinstance(payload, Mapping):
         return None, _invalid(
             gate_name,
@@ -727,6 +719,36 @@ def _model_bindings(**values: BaseModel) -> dict[str, str]:
         key: checksum_for(value.model_dump(mode="json", exclude_none=True))
         for key, value in values.items()
     }
+
+
+def _context_state(context: GateContext) -> Any:
+    """Use the canonical Harness state while keeping small test fakes valid."""
+
+    graph_state = getattr(context, "graph_state", None)
+    return graph_state if graph_state is not None else getattr(context, "state", None)
+
+
+def _prior_payload(context: GateContext, output_key: str) -> Any:
+    outputs = getattr(context, "outputs", None)
+    if isinstance(outputs, Mapping) and output_key in outputs:
+        return _single_output_value(outputs[output_key], output_key)
+    state = _context_state(context)
+    metadata = getattr(state, "metadata", None)
+    state_outputs = metadata.get("outputs") if isinstance(metadata, Mapping) else None
+    record = state_outputs.get(output_key) if isinstance(state_outputs, Mapping) else None
+    return (
+        _single_output_value(record, output_key)
+        if isinstance(record, Mapping)
+        else None
+    )
+
+
+def _single_output_value(value: Any, output_key: str) -> Any:
+    """Read a Graph single-output slot without assuming one wire shape."""
+
+    if isinstance(value, Mapping) and output_key in value:
+        return value[output_key]
+    return value
 
 
 def _nested_keys(value: Any) -> set[str]:

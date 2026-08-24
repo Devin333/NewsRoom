@@ -35,6 +35,11 @@ from business.research.application.run_disposition import (
     research_identity_scope_ref,
     research_subject_scope_ref,
 )
+from business.research.application.reader_repair_runtime import (
+    ReaderRepairGraphApplicationService,
+    ReaderRepairGraphRequest,
+    ReaderRepairGraphRunResult,
+)
 
 __all__ = [
     "AnalyzePaperUseCase",
@@ -65,4 +70,7 @@ __all__ = [
     "research_identity_scope_ref",
     "research_node_result_policy",
     "research_subject_scope_ref",
+    "ReaderRepairGraphApplicationService",
+    "ReaderRepairGraphRequest",
+    "ReaderRepairGraphRunResult",
 ]

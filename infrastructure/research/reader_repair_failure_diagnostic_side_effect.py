@@ -1,10 +1,17 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from copy import deepcopy
 from typing import Any
 
 from framework.events.canonical import checksum_for
 from framework.harness.control_plane.errors import HarnessValidationError
+from framework.harness.graph.canonical import thaw_json
+from framework.harness.control_plane.terminal_failure import (
+    HarnessGraphTerminalFailureContext,
+    HarnessGraphTerminalFailureRecord,
+    HarnessGraphTerminalFailureSideEffectCandidate,
+)
 from framework.harness.side_effects.models import (
     HarnessSideEffectDecision,
     HarnessSideEffectDecisionStatus,
@@ -12,6 +19,17 @@ from framework.harness.side_effects.models import (
     HarnessSideEffectIntent,
     HarnessSideEffectOrigin,
     HarnessSideEffectOutcome,
+)
+
+from business.research.domain.reader_repair import (
+    ReaderIssue,
+    ReaderRepairApplicationCandidate,
+    ReaderRepairApplicationObservationCandidate,
+    ReaderRepairApplicationVerificationRecord,
+    ReaderRepairContextPack,
+    ReaderRepairCase,
+    ReaderRepairPatchCandidate,
+    stable_research_id,
 )
 
 from business.research.ports.reader_repair_failure_diagnostic import (
@@ -38,6 +56,164 @@ class ReaderRepairFailureDiagnosticSideEffectHandler:
             )
         self._commit_port = commit_port
 
+    @staticmethod
+    def _single_output_value(value: Any, output_key: str) -> Any:
+        if isinstance(value, Mapping) and output_key in value:
+            return value[output_key]
+        return value
+
+    def build_terminal_failure_candidate(
+        self,
+        record: HarnessGraphTerminalFailureRecord,
+        context: HarnessGraphTerminalFailureContext,
+    ) -> HarnessGraphTerminalFailureSideEffectCandidate | None:
+        """Build diagnostics only from a complete durable repair lineage."""
+
+        if not isinstance(record, HarnessGraphTerminalFailureRecord):
+            raise TypeError("record must be HarnessGraphTerminalFailureRecord")
+        if not isinstance(context, HarnessGraphTerminalFailureContext):
+            raise TypeError("context must be HarnessGraphTerminalFailureContext")
+        context_outputs = thaw_json(context.outputs)
+        outputs = context_outputs.get("by_output_key")
+        if not isinstance(outputs, Mapping):
+            return None
+        required = (
+            "reader_issue",
+            "reader_repair_patch_candidate",
+            "reader_repair_application_candidate",
+            "reader_repair_application_observation",
+            "reader_repair_application_verification",
+        )
+        if any(key not in outputs for key in required):
+            return None
+        try:
+            issue = ReaderIssue.model_validate(
+                self._single_output_value(outputs["reader_issue"], "reader_issue")
+            )
+            candidate = ReaderRepairPatchCandidate.model_validate(
+                self._single_output_value(
+                    outputs["reader_repair_patch_candidate"],
+                    "reader_repair_patch_candidate",
+                )
+            )
+            application = ReaderRepairApplicationCandidate.model_validate(
+                self._single_output_value(
+                    outputs["reader_repair_application_candidate"],
+                    "reader_repair_application_candidate",
+                )
+            )
+            observation = ReaderRepairApplicationObservationCandidate.model_validate(
+                self._single_output_value(
+                    outputs["reader_repair_application_observation"],
+                    "reader_repair_application_observation",
+                )
+            )
+            verification = ReaderRepairApplicationVerificationRecord.model_validate(
+                self._single_output_value(
+                    outputs["reader_repair_application_verification"],
+                    "reader_repair_application_verification",
+                )
+            )
+            repair_case = (
+                ReaderRepairCase.model_validate(outputs["reader_repair_case"])
+                if "reader_repair_case" in outputs
+                else _build_failed_repair_case(
+                    issue=issue,
+                    candidate=candidate,
+                    verification=verification,
+                    context_pack=(
+                        ReaderRepairContextPack.model_validate(
+                            self._single_output_value(
+                                outputs["reader_repair_context_pack"],
+                                "reader_repair_context_pack",
+                            )
+                        )
+                        if "reader_repair_context_pack" in outputs
+                        else None
+                    ),
+                )
+            )
+        except (TypeError, ValueError):
+            return None
+        if repair_case is None:
+            return None
+        record_ref = record.record_checksum
+        if record_ref is None or issue.run_id != record.run_id:
+            return None
+        if not _lineage_is_bound(
+            issue=issue,
+            candidate=candidate,
+            application=application,
+            observation=observation,
+            verification=verification,
+        ):
+            return None
+        if (
+            repair_case.issue != issue
+            or repair_case.successful
+            or repair_case.payload_after_ref is not None
+            or not isinstance(repair_case.failure_reason, str)
+            or not repair_case.failure_reason.strip()
+            or not any(
+                isinstance(item, Mapping) and item.get("passed") is False
+                for item in repair_case.verification_results
+            )
+        ):
+            return None
+        failed_gate_refs = tuple(context.failed_gate_evidence_refs)
+        if not failed_gate_refs:
+            return None
+        diagnostic_case = ReaderRepairCase.model_validate(
+            {
+                **repair_case.to_dict(),
+                "metadata": {
+                    **deepcopy(dict(repair_case.metadata)),
+                    "active_skill_mutation": False,
+                    "memory_record_kind": "failed_repair_diagnostic",
+                    "terminal_failure_record_ref": record_ref,
+                    "input_bindings": {
+                        "terminal_failure_record": record_ref,
+                        "reader_issue": checksum_for(issue.to_dict()),
+                        "reader_repair_patch_candidate": checksum_for(
+                            candidate.to_dict()
+                        ),
+                        "reader_repair_application": checksum_for(
+                            application.to_dict()
+                        ),
+                        "reader_repair_application_observation": checksum_for(
+                            observation.to_dict()
+                        ),
+                        "reader_repair_application_verification": checksum_for(
+                            verification.to_dict()
+                        ),
+                    },
+                },
+            }
+        )
+        diagnostic = ReaderRepairFailureDiagnosticCandidate(
+            candidate_id=stable_research_id(
+                "repair_failure_diagnostic",
+                record.run_id,
+                record_ref,
+                diagnostic_case.repair_case_id,
+            ),
+            run_id=record.run_id,
+            terminal_failure=record,
+            repair_case=diagnostic_case,
+            repair_candidate_ref=checksum_for(candidate.to_dict()),
+            application_ref=checksum_for(application.to_dict()),
+            observation_ref=checksum_for(observation.to_dict()),
+            verification_ref=checksum_for(verification.to_dict()),
+            failed_gate_evidence_refs=failed_gate_refs,
+        )
+        if diagnostic.checksum is None:  # pragma: no cover - model invariant
+            raise AssertionError("failure diagnostic candidate checksum is missing")
+        return HarnessGraphTerminalFailureSideEffectCandidate(
+            terminal_action=READER_REPAIR_FAILURE_DIAGNOSTIC_TERMINAL_ACTION,
+            payload={"failure_diagnostic_candidate": diagnostic.to_dict()},
+            candidate_refs=(diagnostic.checksum, record_ref, *failed_gate_refs),
+            completion_input_ref=record_ref,
+        )
     def commit(
         self,
         intent: HarnessSideEffectIntent,
@@ -106,6 +282,98 @@ class ReaderRepairFailureDiagnosticSideEffectHandler:
         )
 
 
+def _build_failed_repair_case(
+    *,
+    issue: ReaderIssue,
+    candidate: ReaderRepairPatchCandidate,
+    verification: ReaderRepairApplicationVerificationRecord,
+    context_pack: ReaderRepairContextPack | None,
+) -> ReaderRepairCase | None:
+    """Materialize a failed case only after deterministic verification exists."""
+
+    if not issue.payload_ref or context_pack is None:
+        return None
+    if context_pack.issue != issue or verification.successful:
+        return None
+    failed_checks = [check for check in verification.checks if not check.passed]
+    if not failed_checks:
+        return None
+    failure_reason = "deterministic verification failed: " + ", ".join(
+        f"{check.check_id}={check.actual}" for check in failed_checks
+    )
+    return ReaderRepairCase(
+        repair_case_id=stable_research_id(
+            "repair_case_failure",
+            issue.issue_id,
+            verification.verification_id,
+        ),
+        issue=issue,
+        memory_kind="episodic",
+        repair_strategy=candidate.repair_summary,
+        repair_attempt_refs=[
+            stable_research_id(
+                "repair_attempt_failure",
+                issue.issue_id,
+                candidate.candidate_id,
+                verification.verification_id,
+            )
+        ],
+        successful=False,
+        verification_results=[
+            {
+                "gate_name": "ReaderRepairApplicationVerificationGate@1",
+                **check.to_dict(),
+            }
+            for check in verification.checks
+        ],
+        payload_before_ref=issue.payload_ref,
+        payload_after_ref=None,
+        source_refs=issue.source_refs,
+        constraints=context_pack.repair_constraints,
+        failure_reason=failure_reason,
+        created_at=issue.created_at,
+        tags=[issue.issue_type, issue.error_signature],
+        metadata={"active_skill_mutation": False},
+    )
+
+
+def _lineage_is_bound(
+    *,
+    issue: ReaderIssue,
+    candidate: ReaderRepairPatchCandidate,
+    application: ReaderRepairApplicationCandidate,
+    observation: ReaderRepairApplicationObservationCandidate,
+    verification: ReaderRepairApplicationVerificationRecord,
+) -> bool:
+    candidate_ref = checksum_for(candidate.to_dict())
+    application_ref = checksum_for(application.to_dict())
+    observation_ref = checksum_for(observation.to_dict())
+    return (
+        application.candidate_id == candidate.candidate_id
+        and application.input_bindings.get("reader_repair_patch_candidate")
+        == candidate_ref
+        and application.target_region_refs == candidate.target_region_refs
+        and application.source_refs == candidate.target_region_refs
+        and application.after_payload.payload_id == issue.payload_ref
+        and application.after_payload.paper.paper_id == issue.paper_id
+        and set(candidate.target_region_refs).issubset(set(issue.source_refs))
+        and observation.candidate_id == candidate.candidate_id
+        and observation.application_id == application.application_id
+        and observation.input_bindings
+        == {
+            "reader_repair_patch_candidate": candidate_ref,
+            "reader_repair_application_candidate": application_ref,
+        }
+        and set(observation.source_refs) == set(application.source_refs)
+        and verification.application_id == application.application_id
+        and verification.candidate_id == candidate.candidate_id
+        and verification.observation_candidate_checksum == observation_ref
+        and verification.before_payload_checksum
+        == application.before_payload_checksum
+        and verification.after_payload_checksum
+        == application.after_payload_checksum
+        and set(verification.source_refs) == set(application.source_refs)
+    )
 def _validate_authority(
     intent: HarnessSideEffectIntent,
     authorization: HarnessSideEffectDecision,

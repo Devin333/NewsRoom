@@ -27,8 +27,10 @@ from framework.events.canonical import checksum_for
 from framework.harness.agent_loop import (
     AGENT_LOOP_GRAPH_APPROVAL_WAIT_FACT_SCHEMA,
     AGENT_LOOP_GRAPH_ACTIVITY_TASK_SCHEMA,
+    AGENT_LOOP_GRAPH_WAIT_GATE_REF,
     AGENT_LOOP_GRAPH_WAIT_EVIDENCE_TYPE,
     AgentLoopGraphActivityOutput,
+    AgentLoopGraphActivityTask,
     AgentLoopGraphApprovalWaitBinding,
     AgentLoopGraphApprovalWaitFact,
     AgentLoopGraphWaitCandidate,
@@ -54,6 +56,7 @@ from framework.harness.control_plane.node_output import (
 from framework.harness.graph.activity import (
     HarnessLeafActivityKind,
     HarnessStepSpec,
+    HarnessWorkerType,
 )
 from framework.harness.graph.bindings import HarnessActivityUsage
 from framework.harness.graph.compiler import HarnessGraphCompiler
@@ -521,6 +524,41 @@ def test_waiting_result_produces_successful_candidate_for_explicit_graph_wait() 
         output.approval_wait.correlation_ref
     )
     assert port.manifest_calls == 0
+
+
+def test_binding_authority_resolves_the_exact_wait_gate() -> None:
+    bundle = _bundle(_Runner(_waiting_result()), _ArtifactPort())
+
+    bindings = bundle.authority.resolve_gate(AGENT_LOOP_GRAPH_WAIT_GATE_REF)
+
+    assert len(bindings) == 1
+    assert bindings[0].gate is bundle.wait_gate_registration.gate
+
+
+def test_graph_scheduler_task_projects_only_agent_loop_business_inputs() -> None:
+    raw_task = _raw_task()
+    activity = _activity(raw_task)
+    graph_task = {
+        "run_id": activity.run_id,
+        "step_id": activity.node_id,
+        "worker_type": HarnessWorkerType.AGENT_LOOP.value,
+        "inputs": {
+            "inputs": raw_task["inputs"],
+            "conversation_id": raw_task["conversation_id"],
+            "resume_from_cursor": raw_task["resume_from_cursor"],
+        },
+        "metadata": {"control_fact_paths": []},
+        HARNESS_GRAPH_ACTIVITY_TASK_CONTEXT_KEY: HarnessGraphActivityTaskContext(
+            activity=activity,
+            graph_checkpoint_ref=_CHECKPOINT_REF,
+        ).to_dict(),
+    }
+
+    parsed = AgentLoopGraphActivityTask.from_worker_task(graph_task)
+
+    assert dict(parsed.inputs) == raw_task["inputs"]
+    assert parsed.conversation_id == raw_task["conversation_id"]
+    assert parsed.task_context.activity == activity
 
 
 def test_approval_wait_binding_rejects_non_graph_wait_or_unverified_contract() -> None:

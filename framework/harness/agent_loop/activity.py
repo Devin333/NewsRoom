@@ -17,6 +17,7 @@ from framework.harness.agent_loop.artifacts import (
     AgentLoopGraphArtifactRecorder,
 )
 from framework.harness.control_plane.gate_registry import (
+    DeterministicGateRegistry,
     GateReference,
     GateRegistration,
 )
@@ -49,6 +50,7 @@ from framework.harness.graph.model import (
     HarnessContractKind,
     HarnessContractReference,
 )
+from framework.harness.side_effects.registry import HarnessSideEffectRegistry
 from framework.harness.control_plane.activity_execution import (
     HARNESS_GRAPH_ACTIVITY_TASK_CONTEXT_KEY,
     HarnessGraphActivityTaskContext,
@@ -153,16 +155,52 @@ class AgentLoopGraphActivityTask:
             "resume_from_cursor",
             HARNESS_GRAPH_ACTIVITY_TASK_CONTEXT_KEY,
         }
-        payload = _exact_mapping(value, expected, "activity task")
-        raw_context = payload.pop(HARNESS_GRAPH_ACTIVITY_TASK_CONTEXT_KEY)
+        if set(value) == expected:
+            payload = _exact_mapping(value, expected, "activity task")
+            raw_context = payload.pop(HARNESS_GRAPH_ACTIVITY_TASK_CONTEXT_KEY)
+            if not isinstance(raw_context, Mapping):
+                raise _activity_error("Harness Graph activity context must be an object")
+            return cls(
+                inputs=payload["inputs"],
+                conversation_id=payload["conversation_id"],
+                resume_from_cursor=payload["resume_from_cursor"],
+                task_context=HarnessGraphActivityTaskContext.from_dict(raw_context),
+                schema_version=payload["schema_version"],
+            )
+
+        graph_task_fields = {
+            "run_id",
+            "step_id",
+            "worker_type",
+            "inputs",
+            "metadata",
+            HARNESS_GRAPH_ACTIVITY_TASK_CONTEXT_KEY,
+        }
+        payload = _exact_mapping(value, graph_task_fields, "Graph activity task")
+        raw_context = payload[HARNESS_GRAPH_ACTIVITY_TASK_CONTEXT_KEY]
         if not isinstance(raw_context, Mapping):
             raise _activity_error("Harness Graph activity context must be an object")
+        context = HarnessGraphActivityTaskContext.from_dict(raw_context)
+        if (
+            payload["run_id"] != context.activity.run_id
+            or payload["step_id"] != context.activity.node_id
+            or payload["worker_type"] != HarnessWorkerType.AGENT_LOOP.value
+            or not isinstance(payload["metadata"], Mapping)
+        ):
+            raise _activity_error("Graph AgentLoop task conflicts with Harness context")
+        task_inputs = payload["inputs"]
+        if not isinstance(task_inputs, Mapping):
+            raise _activity_error("Graph AgentLoop task inputs must be an object")
+        exact_inputs = _exact_mapping(
+            task_inputs,
+            {"inputs", "conversation_id", "resume_from_cursor"},
+            "Graph AgentLoop task inputs",
+        )
         return cls(
-            inputs=payload["inputs"],
-            conversation_id=payload["conversation_id"],
-            resume_from_cursor=payload["resume_from_cursor"],
-            task_context=HarnessGraphActivityTaskContext.from_dict(raw_context),
-            schema_version=payload["schema_version"],
+            inputs=exact_inputs["inputs"],
+            conversation_id=exact_inputs["conversation_id"],
+            resume_from_cursor=exact_inputs["resume_from_cursor"],
+            task_context=context,
         )
 
 
@@ -1403,6 +1441,7 @@ def build_agent_loop_graph_activity_binding_bundle(
     result_output_key: str = "agent_loop_result",
     tenant_scope_input_key: str = "tenant_scope_ref",
     identity_scope_input_key: str = "identity_scope_ref",
+    side_effect_registry: HarnessSideEffectRegistry | None = None,
 ) -> AgentLoopGraphActivityBindingBundle:
     if not isinstance(worker_ref, HarnessContractReference) or (
         worker_ref.contract_kind is not HarnessContractKind.WORKER
@@ -1412,6 +1451,11 @@ def build_agent_loop_graph_activity_binding_bundle(
         activity_ref.contract_kind is not HarnessContractKind.ACTIVITY
     ):
         raise TypeError("activity_ref must be an activity HarnessContractReference")
+    if side_effect_registry is not None and not isinstance(
+        side_effect_registry,
+        HarnessSideEffectRegistry,
+    ):
+        raise TypeError("side_effect_registry must be HarnessSideEffectRegistry")
     worker = AgentLoopGraphWorker(
         worker_id=worker_ref.contract_id,
         worker_version=worker_ref.version,
@@ -1440,11 +1484,6 @@ def build_agent_loop_graph_activity_binding_bundle(
         worker_ref=worker_ref,
         activity_ref=activity_ref,
     )
-    authority = HarnessRuntimeBindingAuthority(
-        workers=(worker_binding,),
-        activities=(activity_binding,),
-        leaf_activities=(leaf_binding,),
-    )
     wait_gate_registration = GateRegistration(
         reference=GateReference.parse(AGENT_LOOP_GRAPH_WAIT_GATE_REF),
         gate=AgentLoopGraphWaitCandidateGate(
@@ -1452,6 +1491,13 @@ def build_agent_loop_graph_activity_binding_bundle(
             tenant_scope_input_key=tenant_scope_input_key,
             identity_scope_input_key=identity_scope_input_key,
         ),
+    )
+    authority = HarnessRuntimeBindingAuthority(
+        workers=(worker_binding,),
+        activities=(activity_binding,),
+        leaf_activities=(leaf_binding,),
+        gate_registry=DeterministicGateRegistry((wait_gate_registration,)),
+        side_effect_registry=side_effect_registry,
     )
     return AgentLoopGraphActivityBindingBundle(
         worker_binding=worker_binding,

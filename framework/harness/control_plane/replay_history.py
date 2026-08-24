@@ -65,6 +65,9 @@ _ACTIVITY_KIND_BY_TYPE = {
     "external_database": ReplayActivityKind.EXTERNAL_DATABASE,
     "http": ReplayActivityKind.HTTP,
     "llm": ReplayActivityKind.LLM,
+    # AgentLoop is a Harness-controlled LLM worker whose durable activity
+    # lineage uses the same replay family as direct LLM execution.
+    "agent_loop": ReplayActivityKind.LLM,
     "mcp": ReplayActivityKind.MCP,
     "memory": ReplayActivityKind.MEMORY_WRITE,
     "publication": ReplayActivityKind.PUBLICATION,

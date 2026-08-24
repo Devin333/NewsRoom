@@ -37,6 +37,9 @@ from business.research.application.artifact_context import (
 from business.research.application.graph_artifact_governance import (
     ResearchGraphArtifactGovernanceService,
 )
+from business.research.application.reader_repair_runtime import (
+    ReaderRepairGraphApplicationService,
+)
 from business.research.document.chunk_storage import PaperChunkStoreAdapter
 from business.research.domain import (
     research_event_tenant_id,
@@ -142,6 +145,12 @@ from infrastructure.research.github_repository import (
 )
 from infrastructure.research.local_chunk_store import LocalChunkPayloadStore
 from infrastructure.research.source_provider import ArxivResearchSourceProvider
+from infrastructure.research.reader_repair_failure_diagnostic_side_effect import (
+    ReaderRepairFailureDiagnosticSideEffectHandler,
+)
+from infrastructure.research.reader_repair_memory_side_effect import (
+    ReaderRepairMemorySideEffectHandler,
+)
 from infrastructure.storage.events.factory import durable_event_storage_from_env
 from infrastructure.storage.indexing import (
     GraphStorageIndexPublisher,
@@ -183,6 +192,11 @@ from interfaces.services.research_service import (
     ResearchServiceError,
 )
 from interfaces.services.source_runtime import SourceRuntimeProvider
+from interfaces.services.reader_repair_factory import (
+    build_reader_repair_failure_diagnostic_commit_port_from_env,
+    build_reader_repair_memory_commit_port_from_env,
+    build_reader_repair_memory_from_env,
+)
 
 
 class _ProductionResearchAnalysisWorker:
@@ -258,6 +272,7 @@ class ResearchRuntimeComposition:
         "_close_lock",
         "_closed",
         "_graph_artifact_governance_service",
+        "_reader_repair_service",
         "_resources",
         "_service",
         "_settings",
@@ -275,6 +290,7 @@ class ResearchRuntimeComposition:
         graph_artifact_governance_service: (
             ResearchGraphArtifactGovernanceService | None
         ) = None,
+        reader_repair_service: ReaderRepairGraphApplicationService | None = None,
     ) -> None:
         if settings is not None and not isinstance(settings, ResearchRuntimeSettings):
             raise TypeError("settings must be ResearchRuntimeSettings")
@@ -297,6 +313,14 @@ class ResearchRuntimeComposition:
                 "graph_artifact_governance_service must be "
                 "ResearchGraphArtifactGovernanceService"
             )
+        if reader_repair_service is not None and not isinstance(
+            reader_repair_service,
+            ReaderRepairGraphApplicationService,
+        ):
+            raise TypeError(
+                "reader_repair_service must be "
+                "ReaderRepairGraphApplicationService"
+            )
 
         unique_resources: list[Any] = []
         seen: set[int] = set()
@@ -314,6 +338,7 @@ class ResearchRuntimeComposition:
         self._graph_artifact_governance_service = (
             graph_artifact_governance_service
         )
+        self._reader_repair_service = reader_repair_service
         self._close_lock = Lock()
         self._closed = False
 
@@ -342,6 +367,12 @@ class ResearchRuntimeComposition:
         self,
     ) -> ResearchGraphArtifactGovernanceService | None:
         return self._graph_artifact_governance_service
+
+    @property
+    def reader_repair_service(
+        self,
+    ) -> ReaderRepairGraphApplicationService | None:
+        return self._reader_repair_service
 
     @property
     def available(self) -> bool:
@@ -1064,6 +1095,7 @@ def _unavailable_composition(
         source_runtime_provider=source_runtime_provider,
         resources=(rag_ask_provider,),
         availability_error=error,
+        reader_repair_service=None,
     )
 
 
@@ -1604,6 +1636,37 @@ def _build_configured_composition(
                 tenant_id=research_event_tenant_id(actor_metadata),
             )
 
+        reader_repair_service: ReaderRepairGraphApplicationService | None = None
+        reader_repair_memory = build_reader_repair_memory_from_env()
+        reader_repair_memory_commit = build_reader_repair_memory_commit_port_from_env()
+        reader_repair_failure_commit = (
+            build_reader_repair_failure_diagnostic_commit_port_from_env()
+        )
+        if (
+            reader_repair_memory is not None
+            and reader_repair_memory_commit is not None
+            and reader_repair_failure_commit is not None
+        ):
+            reader_repair_memory_handler = ReaderRepairMemorySideEffectHandler(
+                commit_port=reader_repair_memory_commit,
+                side_effect_store=side_effect_store,
+            )
+            reader_repair_failure_handler = (
+                ReaderRepairFailureDiagnosticSideEffectHandler(
+                    reader_repair_failure_commit
+                )
+            )
+            reader_repair_service = ReaderRepairGraphApplicationService(
+                event_port_factory=event_port_factory,
+                scoped_event_port_factory=scoped_event_port_factory,
+                node_output_resource=node_output_resource,
+                side_effect_store=side_effect_store,
+                memory=reader_repair_memory,
+                memory_side_effect_handler=reader_repair_memory_handler,
+                failure_diagnostic_side_effect_handler=reader_repair_failure_handler,
+                candidate_worker=candidate_worker,
+            )
+
         def graph_result_committer_factory(
             *,
             event_port: HarnessTransitionPort,
@@ -1762,6 +1825,7 @@ def _build_configured_composition(
             graph_artifact_governance_service=(
                 graph_artifact_components.governance_service
             ),
+            reader_repair_service=reader_repair_service,
         )
     except BaseException:
         for resource in reversed(owned_resources):
