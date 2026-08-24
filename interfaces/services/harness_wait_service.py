@@ -17,6 +17,7 @@ from framework.harness.waits.models import (
     HarnessWaitSignal,
     HarnessWaitTimeoutRecord,
     HarnessWaitTimerWakeRecord,
+    approval_event_ref_for,
 )
 from framework.harness.graph.canonical import (
     canonical_checksum,
@@ -137,6 +138,10 @@ class HarnessWaitApprovalDecision:
     approval_event_ref: str
     actor_identity_scope_ref: str
     approved: bool
+    graph_id: str | None = None
+    graph_version: str | None = None
+    graph_ref: str | None = None
+    graph_checksum: str | None = None
 
     def __post_init__(self) -> None:
         for field_name in ("approval_id", "run_id", "node_instance_id"):
@@ -154,6 +159,35 @@ class HarnessWaitApprovalDecision:
                 raise ValueError(f"{field_name} must be a sha256 reference")
         if not isinstance(self.approved, bool):
             raise TypeError("approved must be a boolean")
+        graph_values = (
+            self.graph_id,
+            self.graph_version,
+            self.graph_ref,
+            self.graph_checksum,
+        )
+        if any(value is not None for value in graph_values):
+            if any(value is None for value in graph_values):
+                raise ValueError("approval decision must bind all Graph identity fields")
+            object.__setattr__(
+                self, "graph_id", required_text(self.graph_id, "graph_id")
+            )
+            object.__setattr__(
+                self,
+                "graph_version",
+                required_text(self.graph_version, "graph_version"),
+            )
+            object.__setattr__(
+                self, "graph_ref", exact_reference(self.graph_ref, "graph_ref")
+            )
+            object.__setattr__(
+                self,
+                "graph_checksum",
+                _request_checksum(
+                    self.graph_checksum,
+                    "graph_checksum",
+                    code="approval_graph_checksum_invalid",
+                ),
+            )
 
 
 @runtime_checkable
@@ -386,6 +420,12 @@ class HarnessWaitApplicationService:
         self._require_permission(MANAGE_APPROVALS_PERMISSION)
         binding = self._binding(run_id)
         scope, actor_scope = self._authorized_scope(binding, node_instance_id)
+        state = binding.control_plane.recover_graph(binding.run_spec)
+        graph_ref = state.graph_ref
+        authoritative_approval_id = _approval_id_from_node(
+            state,
+            scope.node_instance_id,
+        )
         if self._approval_resolver is None:
             raise HarnessWaitApplicationError(
                 "approval evidence resolver is unavailable",
@@ -424,12 +464,50 @@ class HarnessWaitApplicationService:
                 "approval evidence is outside the authorized actor scope",
                 code="wait_approval_evidence_unauthorized",
             )
+        if (
+            authoritative_approval_id is not None
+            and approval_id != authoritative_approval_id
+        ):
+            raise HarnessWaitAuthorizationError(
+                "approval id does not match the authoritative Graph Wait",
+                code="wait_approval_id_mismatch",
+            )
+        if (
+            decision.graph_id != graph_ref.graph_id
+            or decision.graph_version != graph_ref.identity_version
+            or decision.graph_ref != graph_ref.identity_ref.exact_ref
+            or decision.graph_checksum != graph_ref.checksum
+        ):
+            raise HarnessWaitAuthorizationError(
+                "approval evidence is bound to another Graph",
+                code="wait_approval_graph_mismatch",
+            )
+        expected_event_ref = approval_event_ref_for(
+            approval_id=approval_id,
+            scope=scope,
+            actor_identity_scope_ref=actor_scope.actor_identity_scope_ref,
+            approved=approved,
+            graph_id=graph_ref.graph_id,
+            graph_version=graph_ref.identity_version,
+            graph_ref=graph_ref.identity_ref.exact_ref,
+            graph_checksum=graph_ref.checksum,
+        )
+        if decision.approval_event_ref != expected_event_ref:
+            raise HarnessWaitAuthorizationError(
+                "approval event evidence does not match canonical Graph content",
+                code="wait_approval_event_ref_invalid",
+            )
         cause = HarnessWaitApprovalEvidenceRecord(
             scope=scope,
             approval_event_ref=decision.approval_event_ref,
             actor_identity_scope_ref=decision.actor_identity_scope_ref,
             approved=decision.approved,
             recorded_sequence=0,
+            approval_id=decision.approval_id,
+            graph_id=decision.graph_id,
+            graph_version=decision.graph_version,
+            graph_ref=decision.graph_ref,
+            graph_checksum=decision.graph_checksum,
         )
         return self._submit(binding, cause, operation="approval")
 

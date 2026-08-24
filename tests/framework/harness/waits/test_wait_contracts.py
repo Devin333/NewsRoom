@@ -89,6 +89,18 @@ def test_all_wait_records_round_trip_with_versioned_schema() -> None:
         approved=True,
         recorded_sequence=13,
     )
+    bound_approval = HarnessWaitApprovalEvidenceRecord(
+        scope=scope,
+        approval_event_ref=_ref({"event": "graph-approved"}),
+        actor_identity_scope_ref=_ref({"actor": "reviewer-1"}),
+        approved=True,
+        recorded_sequence=14,
+        approval_id="approval-1",
+        graph_id="research.graph",
+        graph_version="1",
+        graph_ref="research.graph@1",
+        graph_checksum=_ref({"graph": "research"}),
+    )
     resume = HarnessWaitResumeRecord(
         scope=scope,
         cause_kind=HarnessWaitCauseKind.SIGNAL,
@@ -116,6 +128,7 @@ def test_all_wait_records_round_trip_with_versioned_schema() -> None:
         (HarnessSignalInboxEntry, inbox_entry),
         (HarnessWaitTimerWakeRecord, timer),
         (HarnessWaitApprovalEvidenceRecord, approval),
+        (HarnessWaitApprovalEvidenceRecord, bound_approval),
         (HarnessWaitResumeRecord, resume),
         (HarnessWaitTimeoutRecord, timeout),
         (HarnessWaitCancellationRecord, cancellation),

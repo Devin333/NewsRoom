@@ -457,10 +457,56 @@ class HarnessWaitApprovalEvidenceRecord:
     actor_identity_scope_ref: str
     approved: bool
     recorded_sequence: int
+    # These fields were added after the v1 wait record contract.  They are
+    # optional only for replaying historical v1 records; new application
+    # service submissions must provide the complete Graph binding.
+    approval_id: str | None = None
+    graph_id: str | None = None
+    graph_version: str | None = None
+    graph_ref: str | None = None
+    graph_checksum: str | None = None
     record_schema: str = field(default=HARNESS_WAIT_RECORD_SCHEMA, init=False)
 
     def __post_init__(self) -> None:
         _scope(self.scope)
+        if self.approval_id is not None:
+            object.__setattr__(
+                self,
+                "approval_id",
+                required_text(self.approval_id, "approval_evidence.approval_id"),
+            )
+        graph_values = (
+            self.graph_id,
+            self.graph_version,
+            self.graph_ref,
+            self.graph_checksum,
+        )
+        if any(value is not None for value in graph_values):
+            if any(value is None for value in graph_values):
+                raise HarnessValidationError(
+                    "approval evidence must bind all Graph identity fields",
+                    code="invalid_wait_approval_graph_binding",
+                )
+            object.__setattr__(
+                self,
+                "graph_id",
+                required_text(self.graph_id, "approval_evidence.graph_id"),
+            )
+            object.__setattr__(
+                self,
+                "graph_version",
+                required_text(self.graph_version, "approval_evidence.graph_version"),
+            )
+            object.__setattr__(
+                self,
+                "graph_ref",
+                exact_reference(self.graph_ref, "approval_evidence.graph_ref"),
+            )
+            object.__setattr__(
+                self,
+                "graph_checksum",
+                _checksum(self.graph_checksum, "approval_evidence.graph_checksum"),
+            )
         object.__setattr__(
             self,
             "approval_event_ref",
@@ -489,15 +535,26 @@ class HarnessWaitApprovalEvidenceRecord:
         return canonical_checksum(self.to_dict())
 
     def to_dict(self) -> dict[str, Any]:
+        values = {
+            "approval_event_ref": self.approval_event_ref,
+            "actor_identity_scope_ref": self.actor_identity_scope_ref,
+            "approved": self.approved,
+            "recorded_sequence": self.recorded_sequence,
+        }
+        if self.approval_id is not None:
+            values.update(
+                {
+                    "approval_id": self.approval_id,
+                    "graph_id": self.graph_id,
+                    "graph_version": self.graph_version,
+                    "graph_ref": self.graph_ref,
+                    "graph_checksum": self.graph_checksum,
+                }
+            )
         return _cause_dict(
             self.record_schema,
             self.scope,
-            {
-                "approval_event_ref": self.approval_event_ref,
-                "actor_identity_scope_ref": self.actor_identity_scope_ref,
-                "approved": self.approved,
-                "recorded_sequence": self.recorded_sequence,
-            },
+            values,
         )
 
     @classmethod
@@ -505,24 +562,64 @@ class HarnessWaitApprovalEvidenceRecord:
         cls,
         value: Mapping[str, Any],
     ) -> HarnessWaitApprovalEvidenceRecord:
-        _record_keys(
-            value,
-            {
-                "scope",
-                "approval_event_ref",
-                "actor_identity_scope_ref",
-                "approved",
-                "recorded_sequence",
-            },
-            "Wait approval evidence",
-        )
+        base_fields = {
+            "scope",
+            "approval_event_ref",
+            "actor_identity_scope_ref",
+            "approved",
+            "recorded_sequence",
+        }
+        graph_fields = {
+            "approval_id",
+            "graph_id",
+            "graph_version",
+            "graph_ref",
+            "graph_checksum",
+        }
+        expected_fields = base_fields | (graph_fields if "approval_id" in value else set())
+        _record_keys(value, expected_fields, "Wait approval evidence")
         return cls(
             scope=HarnessWaitScope.from_dict(_mapping(value["scope"], "scope")),
             approval_event_ref=value["approval_event_ref"],
             actor_identity_scope_ref=value["actor_identity_scope_ref"],
             approved=value["approved"],
             recorded_sequence=value["recorded_sequence"],
+            approval_id=value.get("approval_id"),
+            graph_id=value.get("graph_id"),
+            graph_version=value.get("graph_version"),
+            graph_ref=value.get("graph_ref"),
+            graph_checksum=value.get("graph_checksum"),
         )
+
+
+def approval_event_ref_for(
+    *,
+    approval_id: str,
+    scope: HarnessWaitScope,
+    actor_identity_scope_ref: str,
+    approved: bool,
+    graph_id: str,
+    graph_version: str,
+    graph_ref: str,
+    graph_checksum: str,
+) -> str:
+    """Return the canonical, Graph-bound approval event reference."""
+
+    return canonical_checksum(
+        {
+            "approval_id": required_text(approval_id, "approval_id"),
+            "scope": scope.to_dict(),
+            "actor_identity_scope_ref": _checksum(
+                actor_identity_scope_ref,
+                "actor_identity_scope_ref",
+            ),
+            "approved": approved,
+            "graph_id": required_text(graph_id, "graph_id"),
+            "graph_version": required_text(graph_version, "graph_version"),
+            "graph_ref": exact_reference(graph_ref, "graph_ref"),
+            "graph_checksum": _checksum(graph_checksum, "graph_checksum"),
+        }
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -878,6 +975,7 @@ __all__ = [
     "HarnessSignalInboxEntryStatus",
     "HarnessTimerWake",
     "HarnessWaitApprovalEvidenceRecord",
+    "approval_event_ref_for",
     "HarnessWaitCancellation",
     "HarnessWaitCancellationRecord",
     "HarnessWaitCauseKind",

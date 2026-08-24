@@ -30,7 +30,11 @@ from framework.harness.side_effects.fake import CountingHarnessSideEffectHandler
 from framework.harness.side_effects.models import HarnessTerminalSideEffectPolicy
 from framework.harness.side_effects.registry import HarnessSideEffectHandlerBinding, HarnessSideEffectRegistry
 from framework.harness.workers.result import HarnessWorkerResult
-from framework.harness.waits.models import HarnessWaitScope, HarnessWaitTimerWakeRecord
+from framework.harness.waits.models import (
+    HarnessWaitScope,
+    HarnessWaitTimerWakeRecord,
+    approval_event_ref_for,
+)
 from interfaces.models.actor import ActorContext
 from interfaces.services.harness_wait_service import (
     HarnessWaitActorScope,
@@ -76,9 +80,19 @@ class _ApprovalResolver:
         self,
         actor_identity_scope_ref: str,
         *,
+        scope: HarnessWaitScope | None = None,
+        graph_id: str | None = None,
+        graph_version: str | None = None,
+        graph_ref: str | None = None,
+        graph_checksum: str | None = None,
         evidence_overrides: dict[str, object] | None = None,
     ) -> None:
         self.actor_identity_scope_ref = actor_identity_scope_ref
+        self.scope = scope
+        self.graph_id = graph_id
+        self.graph_version = graph_version
+        self.graph_ref = graph_ref
+        self.graph_checksum = graph_checksum
         self.evidence_overrides = evidence_overrides or {}
         self.calls: list[tuple[str, str, str, bool]] = []
         self.decisions: dict[str, HarnessWaitApprovalDecision] = {}
@@ -107,12 +121,44 @@ class _ApprovalResolver:
             node_instance_id=str(
                 self.evidence_overrides.get("node_instance_id", node_instance_id)
             ),
-            approval_event_ref=checksum_for(
-                {
-                    "approval_id": approval_id,
-                    "actor_id": actor.actor_id,
-                    "approved": requested_approved,
-                }
+            graph_id=str(self.evidence_overrides.get("graph_id", self.graph_id))
+            if self.graph_id is not None
+            else None,
+            graph_version=str(
+                self.evidence_overrides.get("graph_version", self.graph_version)
+            )
+            if self.graph_version is not None
+            else None,
+            graph_ref=str(self.evidence_overrides.get("graph_ref", self.graph_ref))
+            if self.graph_ref is not None
+            else None,
+            graph_checksum=str(
+                self.evidence_overrides.get("graph_checksum", self.graph_checksum)
+            )
+            if self.graph_checksum is not None
+            else None,
+            approval_event_ref=(
+                str(self.evidence_overrides["approval_event_ref"])
+                if "approval_event_ref" in self.evidence_overrides
+                else
+                approval_event_ref_for(
+                    approval_id=approval_id,
+                    scope=self.scope,
+                    actor_identity_scope_ref=self.actor_identity_scope_ref,
+                    approved=requested_approved,
+                    graph_id=self.graph_id,
+                    graph_version=self.graph_version,
+                    graph_ref=self.graph_ref,
+                    graph_checksum=self.graph_checksum,
+                )
+                if self.scope is not None
+                else checksum_for(
+                    {
+                        "approval_id": approval_id,
+                        "actor_id": actor.actor_id,
+                        "approved": requested_approved,
+                    }
+                )
             ),
             actor_identity_scope_ref=self.actor_identity_scope_ref,
             approved=requested_approved,
@@ -324,6 +370,46 @@ def test_approval_rejects_evidence_bound_to_another_resource(
         )
 
     assert captured.value.code == "wait_approval_evidence_unauthorized"
+
+
+def test_approval_rejects_forged_event_reference() -> None:
+    service, registration, _ = _waiting_service(
+        "approval-forged-event",
+        wait_kind="approval",
+        approval_evidence_overrides={
+            "approval_event_ref": checksum_for({"forged": True}),
+        },
+    )
+
+    with pytest.raises(HarnessWaitAuthorizationError) as captured:
+        service.decide_approval(
+            "run-service-approval-forged-event",
+            registration.node_instance_id,
+            approval_id="approval-1",
+            approved=True,
+        )
+
+    assert captured.value.code == "wait_approval_event_ref_invalid"
+
+
+def test_approval_rejects_graph_checksum_tampering() -> None:
+    service, registration, _ = _waiting_service(
+        "approval-forged-graph",
+        wait_kind="approval",
+        approval_evidence_overrides={
+            "graph_checksum": checksum_for({"forged": "graph"}),
+        },
+    )
+
+    with pytest.raises(HarnessWaitAuthorizationError) as captured:
+        service.decide_approval(
+            "run-service-approval-forged-graph",
+            registration.node_instance_id,
+            approval_id="approval-1",
+            approved=True,
+        )
+
+    assert captured.value.code == "wait_approval_graph_mismatch"
 
 
 def test_cancellation_uses_authoritative_scope_and_completes_cancelled() -> None:
@@ -604,6 +690,11 @@ def _waiting_service(
     )
     approval_resolver = _ApprovalResolver(
         actor_identity_scope_ref,
+        scope=_wait_scope(run_id, registration),
+        graph_id=waiting.graph_ref.graph_id,
+        graph_version=waiting.graph_ref.identity_version,
+        graph_ref=waiting.graph_ref.identity_ref.exact_ref,
+        graph_checksum=waiting.graph_ref.checksum,
         evidence_overrides=approval_evidence_overrides,
     )
     service = HarnessWaitApplicationService(
