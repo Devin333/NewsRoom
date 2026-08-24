@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, Mapping
 
 from business.research.graphs import build_paper_analysis_graph_definition
@@ -152,8 +153,40 @@ def _media_type(relative_path: str) -> str:
     return "application/octet-stream"
 
 
+class _FixtureGraphIndexReader:
+    """Test-only index adapter for manifest and artifact transport tests."""
+
+    def read_for_manifest(self, manifest: GraphTerminalManifestV2):
+        records = tuple(
+            SimpleNamespace(
+                artifact_key=artifact.artifact_key,
+                artifact_id=artifact.artifact_id,
+                artifact_ref=artifact.ref,
+                relative_path=artifact.relative_path,
+                content_checksum=artifact.content_checksum,
+                byte_size=artifact.byte_size,
+                media_type=artifact.media_type,
+                required_for_replay=artifact.required_for_replay,
+                required_for_publication=artifact.required_for_publication,
+            )
+            for artifact in manifest.artifacts
+        )
+        return SimpleNamespace(
+            artifact_records=records,
+            event_records=(),
+            event_high_watermark=0,
+            snapshot_checksum="fixture-index",
+        )
+
+
+def graph_index_reader(root: str | Path) -> _FixtureGraphIndexReader:
+    del root
+    return _FixtureGraphIndexReader()
+
+
 __all__ = [
     "GraphTerminalRunFixture",
+    "graph_index_reader",
     "rewrite_graph_terminal_manifest",
     "write_graph_terminal_run",
 ]

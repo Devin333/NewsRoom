@@ -35,7 +35,7 @@ GRAPH_ARTIFACT_NODE_BINDING_SCHEMA = (
 GRAPH_ARTIFACT_INDEX_RECORD_SCHEMA = (
     "newsroom.graph-artifact-index-record/v2"
 )
-GRAPH_EVENT_INDEX_RECORD_SCHEMA = "newsroom.graph-event-index-record/v1"
+GRAPH_EVENT_INDEX_RECORD_SCHEMA = "newsroom.graph-event-index-record/v2"
 GRAPH_STORAGE_INDEX_CANDIDATE_REQUEST_SCHEMA = (
     "newsroom.graph-storage-index-candidate-request/v1"
 )
@@ -588,6 +588,8 @@ class GraphEventIndexRecord:
     data_schema: str
     node_id: str | None
     node_instance_id: str | None
+    activity_id: str | None
+    attempt: int | None
     occurred_at: datetime
     observed_at: datetime
     content_checksum: str
@@ -622,6 +624,24 @@ class GraphEventIndexRecord:
             )
         object.__setattr__(self, "node_id", node_id)
         object.__setattr__(self, "node_instance_id", node_instance_id)
+        activity_id = _optional_text(self.activity_id, "activity_id")
+        attempt = self.attempt
+        if (activity_id is None) != (attempt is None):
+            raise GraphStorageIndexError(
+                GraphStorageIndexErrorCode.REQUEST_INVALID,
+                "Graph event index activity identity must be complete",
+                field="activity_id",
+            )
+        if activity_id is not None and node_instance_id is None:
+            raise GraphStorageIndexError(
+                GraphStorageIndexErrorCode.REQUEST_INVALID,
+                "Graph activity identity requires a node instance",
+                field="node_instance_id",
+            )
+        if attempt is not None:
+            attempt = _nonnegative_int(attempt, "attempt")
+        object.__setattr__(self, "activity_id", activity_id)
+        object.__setattr__(self, "attempt", attempt)
         object.__setattr__(
             self,
             "occurred_at",
@@ -681,6 +701,8 @@ class GraphEventIndexRecord:
             data_schema=event.data_schema,
             node_id=context.node_id,
             node_instance_id=context.node_instance_id,
+            activity_id=context.activity_id,
+            attempt=context.attempt,
             occurred_at=event.occurred_at,
             observed_at=event.observed_at,
             content_checksum=event.content_checksum,
@@ -698,6 +720,8 @@ class GraphEventIndexRecord:
             "data_schema": self.data_schema,
             "node_id": self.node_id,
             "node_instance_id": self.node_instance_id,
+            "activity_id": self.activity_id,
+            "attempt": self.attempt,
             "occurred_at": format_datetime(self.occurred_at),
             "observed_at": format_datetime(self.observed_at),
             "content_checksum": self.content_checksum,
@@ -721,6 +745,8 @@ class GraphEventIndexRecord:
                 "data_schema",
                 "node_id",
                 "node_instance_id",
+                "activity_id",
+                "attempt",
                 "occurred_at",
                 "observed_at",
                 "content_checksum",
@@ -738,6 +764,8 @@ class GraphEventIndexRecord:
             data_schema=payload["data_schema"],
             node_id=payload["node_id"],
             node_instance_id=payload["node_instance_id"],
+            activity_id=payload["activity_id"],
+            attempt=payload["attempt"],
             occurred_at=_datetime_from_json(payload["occurred_at"], "occurred_at"),
             observed_at=_datetime_from_json(payload["observed_at"], "observed_at"),
             content_checksum=payload["content_checksum"],

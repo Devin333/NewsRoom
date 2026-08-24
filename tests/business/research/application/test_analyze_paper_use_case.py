@@ -51,6 +51,9 @@ class _WriteOnlyHarnessTransitionPort:
     def record_graph_activity_result(self, *args, **kwargs):
         return self._delegate.record_graph_activity_result(*args, **kwargs)
 
+    def record_graph_phase_transition(self, *args, **kwargs):
+        return self._delegate.record_graph_phase_transition(*args, **kwargs)
+
     def initialize_graph(self, *args, **kwargs):
         return self._delegate.initialize_graph(*args, **kwargs)
 

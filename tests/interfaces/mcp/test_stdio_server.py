@@ -5,8 +5,7 @@ from interfaces.mcp.stdio_server import handle_jsonrpc_request, run_stdio
 from interfaces.services.artifact_service import ArtifactInspectionService
 from interfaces.services.mcp_service import MCPApplicationService
 from interfaces.services.run_inspection_service import GraphRunInspectionService
-from tests.fixtures.graph_runs import write_graph_terminal_run
-from tests.fixtures.graph_runs import write_graph_terminal_run
+from tests.fixtures.graph_runs import graph_index_reader, write_graph_terminal_run
 
 
 def test_stdio_handles_tools_list() -> None:
@@ -187,7 +186,10 @@ def test_stdio_real_filesystem_integrity_failure_has_no_tampered_data(tmp_path) 
         encoding="utf-8",
     )
     service = MCPApplicationService(
-        graph_run_inspection_service_factory=lambda: GraphRunInspectionService(tmp_path),
+        graph_run_inspection_service_factory=lambda: GraphRunInspectionService(
+            tmp_path,
+            graph_index_reader=graph_index_reader(tmp_path),
+        ),
         artifact_service_factory=lambda: ArtifactInspectionService(tmp_path),
     )
     requests = [

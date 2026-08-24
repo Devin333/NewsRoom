@@ -11,6 +11,7 @@ from framework.events.errors import EventContractError
 from framework.events.ports import EventReaderPort
 from framework.events.projection import (
     GRAPH_EVENT_CONTEXT_EXTENSION,
+    GraphEventContext,
     GraphEventProjection,
     GraphEventProjectionExporter,
     graph_event_context,
@@ -21,6 +22,7 @@ from framework.events.runtime.models import (
     EventPage,
     StreamReadRequest,
 )
+from framework.events.runtime.publisher import EventPublishRequest
 from framework.events.schema.catalog import EventSchemaCatalog
 from framework.events.schema.security import EventSecurityProjector
 
@@ -37,6 +39,19 @@ _SHA256_PREFIX = "sha256:"
 class GraphEventProjectionApplicationStatus(StrEnum):
     PROJECTED = "projected"
     HISTORY_ONLY = "history_only"
+
+
+@runtime_checkable
+class GraphEventContextWriterPort(Protocol):
+    """Canonical write boundary for context-bound Graph events."""
+
+    def write_graph_event(
+        self,
+        request: EventPublishRequest,
+        *,
+        context: GraphEventContext,
+        expected_last_sequence: int | None = None,
+    ) -> StoredEvent: ...
 
 
 class GraphEventHistoryDiagnosticCode(StrEnum):

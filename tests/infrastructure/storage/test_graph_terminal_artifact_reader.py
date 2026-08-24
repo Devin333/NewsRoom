@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 
@@ -15,11 +16,17 @@ from framework.harness.artifacts import (
     GraphArtifactStrictContentReader,
     GraphTerminalArtifact,
     GraphTerminalManifest,
+    GraphTerminalManifestV2,
     GraphTerminalManifestError,
     GraphTerminalManifestErrorCode,
     GraphTerminalManifestHistoryError,
 )
+from framework.harness.graph import (
+    GraphExecutionVersionManifest,
+    HarnessGraphCompiler,
+)
 from infrastructure.storage.artifacts import FilesystemGraphTerminalArtifactReader
+from business.research.graphs import build_paper_analysis_graph_definition
 
 
 _NOW = datetime(2026, 8, 14, 10, 30, tzinfo=UTC)
@@ -46,22 +53,27 @@ def _write_run(root, content: bytes = b'{"status":"ok"}'):
         required_for_replay=True,
         required_for_publication=True,
     )
-    manifest = GraphTerminalManifest(
+    execution_versions = _execution_versions()
+    terminal = GraphTerminalManifest(
         tenant_id="tenant-1",
         run_id="run-1",
-        graph_id="research.paper-analysis",
-        graph_version="1",
-        graph_schema_version="1",
-        compiler_version="1",
-        normalized_graph_checksum=_SHA_A,
+        graph_id=execution_versions.graph_id,
+        graph_version=execution_versions.graph_version,
+        graph_schema_version=execution_versions.normalized_graph_schema_version,
+        compiler_version=execution_versions.compiler_version,
+        normalized_graph_checksum=execution_versions.normalized_graph_checksum,
         status="succeeded",
         started_at=_NOW,
         completed_at=_NOW + timedelta(seconds=1),
         terminal_state_ref=_SHA_B,
         checkpoint_ref="checkpoint://run-1/terminal",
-        terminal_node_ids=("publish",),
+        terminal_node_ids=execution_versions.terminal_node_ids,
         gate_evidence_refs=(_SHA_C,),
         artifacts=(artifact,),
+    )
+    manifest = GraphTerminalManifestV2(
+        terminal=terminal,
+        execution_versions=execution_versions,
     )
     (run_dir / "manifest.json").write_text(
         json.dumps(manifest.to_dict()),
@@ -129,10 +141,10 @@ def test_filesystem_reader_returns_typed_legacy_history_diagnostic(tmp_path) -> 
 
 def test_filesystem_reader_rejects_manifest_identity_mismatch(tmp_path) -> None:
     manifest, _ = _write_run(tmp_path)
-    payload = manifest.to_dict()
-    payload["run_id"] = "run-2"
-    payload["manifest_hash"] = None
-    rebuilt = GraphTerminalManifest.from_dict(payload)
+    rebuilt = GraphTerminalManifestV2(
+        terminal=replace(manifest.terminal, run_id="run-2", manifest_hash=None),
+        execution_versions=manifest.execution_versions,
+    )
     (tmp_path / "run-1" / "manifest.json").write_text(
         json.dumps(rebuilt.to_dict()),
         encoding="utf-8",
@@ -180,6 +192,13 @@ def test_filesystem_reader_rejects_symlink_escape(tmp_path) -> None:
         GraphArtifactStrictContentReader(
         FilesystemGraphTerminalArtifactReader(tmp_path)
         ).read(manifest, "analysis")
+
+
+def _execution_versions() -> GraphExecutionVersionManifest:
+    graph = HarnessGraphCompiler().compile(
+        build_paper_analysis_graph_definition()
+    ).graph
+    return GraphExecutionVersionManifest.from_normalized_graph(graph)
 
 
 def test_filesystem_reader_rejects_symlink_inside_artifact_root(tmp_path) -> None:

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from framework.harness.control_plane.durable_events import (
+    DurableGraphEventContextWriter,
     DurableHarnessEventPort,
     DurableHarnessTransitionPort,
     HarnessEventCanonicalAdapter,
@@ -203,6 +204,7 @@ __all__ = [
     "DeduplicationGate",
     "DeterministicGate",
     "DeterministicGateRegistry",
+    "DurableGraphEventContextWriter",
     "DurableHarnessEventPort",
     "DurableHarnessTransitionPort",
     "GateContext",

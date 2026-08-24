@@ -10,6 +10,10 @@ from framework.agent.artifacts import (
     ArtifactStoreRequiredError,
 )
 from framework.events.errors import EventStoreUnavailableError
+from infrastructure.storage.indexing import (
+    GraphStorageIndexError,
+    GraphStorageIndexErrorCode,
+)
 from interfaces.api import create_app
 from interfaces.api.app import _api_token_from_env
 from interfaces.events import AuditEmitter, InMemoryAuditSink
@@ -850,6 +854,44 @@ def test_run_compare_returns_comparison() -> None:
     assert response.status_code == 200
     assert payload["success"] is True
     assert payload["data"]["comparison"]["same_graph"] is True
+
+
+@pytest.mark.parametrize(
+    ("error_code", "status_code", "response_code"),
+    [
+        (
+            GraphStorageIndexErrorCode.INDEX_NOT_FOUND,
+            503,
+            "graph_index_unavailable",
+        ),
+        (
+            GraphStorageIndexErrorCode.INDEX_CORRUPT,
+            409,
+            "graph_index_integrity_failed",
+        ),
+    ],
+)
+def test_run_compare_maps_graph_index_failures_to_the_stable_contract(
+    error_code,
+    status_code,
+    response_code,
+) -> None:
+    service = _FailingRunComparisonService(
+        GraphStorageIndexError(error_code, "Graph index verification failed")
+    )
+    client = TestClient(
+        create_app(graph_run_inspection_service_factory=lambda: service)
+    )
+
+    response = client.get(
+        "/api/v2/graph-runs/compare?base_run_id=run-1&target_run_id=run-2"
+    )
+    payload = response.json()
+
+    assert response.status_code == status_code
+    assert payload["success"] is False
+    assert payload["data"] is None
+    assert payload["error"]["code"] == response_code
 
 
 def test_run_detail_missing_uses_unified_error() -> None:
@@ -1853,6 +1895,15 @@ class _MissingGraphRunInspectionService:
 class _InvalidReplayInspectionService:
     def replay_run(self, run_id):
         raise ValueError(f"invalid run id: {run_id}")
+
+
+class _FailingRunComparisonService:
+    def __init__(self, error) -> None:
+        self.error = error
+
+    def compare_runs(self, base_run_id, target_run_id):
+        del base_run_id, target_run_id
+        raise self.error
 
 
 class _FailingRunReplayService:

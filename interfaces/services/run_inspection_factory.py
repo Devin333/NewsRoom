@@ -11,6 +11,11 @@ from framework.events.application import DurableGraphEventProjectionAdapter
 from infrastructure.storage.artifacts.graph_terminal import (
     FilesystemGraphTerminalArtifactStore,
 )
+from infrastructure.storage.indexing import (
+    GraphStorageIndexReader,
+    GraphStorageIndexReaderPort,
+    LocalGraphStorageIndexStore,
+)
 from interfaces.services.event_projection_service import EventProjectionService
 from interfaces.services.event_reader_service import (
     EventAuthorizationContext,
@@ -68,7 +73,7 @@ def build_graph_run_inspection_service(
     tenant_id: str | None,
     principal_id: str = "newsroom-run-inspection",
     authentication_evidence_ref: str = "authn://service/run-inspection",
-    allow_stale_projection: bool = True,
+    graph_index_reader: GraphStorageIndexReaderPort | None = None,
 ) -> GraphRunInspectionService:
     """Compose application services from an already selected storage bundle."""
 
@@ -85,7 +90,9 @@ def build_graph_run_inspection_service(
         event_projection_service=projection,
         event_authorization=authorization,
         event_schema_catalog=schema_catalog,
-        allow_stale_projection=allow_stale_projection,
+        graph_index_reader=graph_index_reader or GraphStorageIndexReader(
+            LocalGraphStorageIndexStore(Path(artifact_root) / "graph-index")
+        ),
     )
 
 
@@ -131,7 +138,6 @@ def graph_run_inspection_service_from_env(
     artifact_root: str | Path | None = None,
     *,
     env: Mapping[str, str] | None = None,
-    allow_stale_projection: bool = True,
 ) -> GraphRunInspectionService:
     """Select durable storage once, then compose the application services."""
 
@@ -157,7 +163,9 @@ def graph_run_inspection_service_from_env(
     return GraphRunInspectionService(
         resolved_root,
         event_services_factory=compose_event_services,
-        allow_stale_projection=allow_stale_projection,
+        graph_index_reader=GraphStorageIndexReader(
+            LocalGraphStorageIndexStore(resolved_root / "graph-index")
+        ),
     )
 
 

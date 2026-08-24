@@ -15,10 +15,10 @@ from interfaces.services.mcp_service import MCPApplicationService
 from interfaces.services.report_service import ReportApplicationService
 from interfaces.services.run_inspection_service import GraphRunInspectionService
 from tests.fixtures.graph_runs import (
+    graph_index_reader,
     rewrite_graph_terminal_manifest,
     write_graph_terminal_run,
 )
-from tests.fixtures.graph_runs import rewrite_graph_terminal_manifest, write_graph_terminal_run
 
 
 def test_mcp_catalog_lists_research_tools_without_calling_factories() -> None:
@@ -382,7 +382,10 @@ def test_mcp_artifact_path_failures_preserve_typed_failure_envelopes(tmp_path) -
     graph_manifest["artifacts"][0]["relative_path"] = "../outside.txt"
     rewrite_graph_terminal_manifest(graph_fixture, graph_manifest)
     service = MCPApplicationService(
-        graph_run_inspection_service_factory=lambda: GraphRunInspectionService(tmp_path),
+        graph_run_inspection_service_factory=lambda: GraphRunInspectionService(
+            tmp_path,
+            graph_index_reader=graph_index_reader(tmp_path),
+        ),
         artifact_service_factory=lambda: ArtifactInspectionService(tmp_path),
     )
 
@@ -446,7 +449,10 @@ def test_mcp_real_filesystem_integrity_failures_preserve_typed_envelopes(tmp_pat
         files={"output": ("output.json", {"token": "fixture-secret-token"})},
     )
     service = MCPApplicationService(
-        graph_run_inspection_service_factory=lambda: GraphRunInspectionService(tmp_path),
+        graph_run_inspection_service_factory=lambda: GraphRunInspectionService(
+            tmp_path,
+            graph_index_reader=graph_index_reader(tmp_path),
+        ),
         artifact_service_factory=lambda: ArtifactInspectionService(tmp_path),
     )
     workflow_fixture.artifact_path("output").write_text(

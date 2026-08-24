@@ -8,13 +8,20 @@ from interfaces.api import create_app
 from interfaces.services.artifact_service import ArtifactInspectionService
 from interfaces.services.run_inspection_service import GraphRunInspectionService
 from business.research.graphs.contracts import RESEARCH_PAPER_ANALYSIS_GRAPH_ID
-from tests.fixtures.graph_runs import rewrite_graph_terminal_manifest, write_graph_terminal_run
+from tests.fixtures.graph_runs import (
+    graph_index_reader,
+    rewrite_graph_terminal_manifest,
+    write_graph_terminal_run,
+)
 
 
 def _client(root) -> TestClient:
     return TestClient(
         create_app(
-            graph_run_inspection_service_factory=lambda: GraphRunInspectionService(root),
+            graph_run_inspection_service_factory=lambda: GraphRunInspectionService(
+                root,
+                graph_index_reader=graph_index_reader(root),
+            ),
             artifact_service_factory=lambda: ArtifactInspectionService(root),
             audit_emitter_factory=None,
         )

@@ -38,6 +38,9 @@ from infrastructure.storage.indexing.contracts import (
     GraphStorageIndexMaterializationRequest,
     MAX_GRAPH_INDEX_EVENTS,
 )
+from infrastructure.storage.indexing.selection import (
+    graph_indexable_terminal_artifacts,
+)
 
 
 class GraphStorageIndexCandidateBuilder:
@@ -62,7 +65,7 @@ class GraphStorageIndexCandidateBuilder:
         identity = _identity_from_manifest(request.manifest)
         contexts = self._validate_events(request, identity)
         bindings = self._validate_bindings(request, contexts)
-        indexable_artifacts = _indexable_artifacts(request.manifest)
+        indexable_artifacts = graph_indexable_terminal_artifacts(request.manifest)
         artifact_records = tuple(
             GraphArtifactIndexRecord.from_artifact_binding(
                 identity=identity,
@@ -94,7 +97,7 @@ class GraphStorageIndexCandidateBuilder:
         """Extract only checksum-bound binding projections from a manifest."""
 
         bindings: list[GraphArtifactBindingProjection] = []
-        for artifact in _indexable_artifacts(manifest):
+        for artifact in graph_indexable_terminal_artifacts(manifest):
             metadata = artifact.metadata
             raw_binding = (
                 metadata.get("graph_artifact_binding")
@@ -219,7 +222,7 @@ class GraphStorageIndexCandidateBuilder:
 
         artifacts = {
             artifact.artifact_id: artifact
-            for artifact in _indexable_artifacts(request.manifest)
+            for artifact in graph_indexable_terminal_artifacts(request.manifest)
         }
         extra_ids = sorted(set(grouped).difference(artifacts))
         if extra_ids:
@@ -234,7 +237,7 @@ class GraphStorageIndexCandidateBuilder:
             for context in contexts.values()
             if context.node_instance_id is not None
         }
-        for artifact in _indexable_artifacts(request.manifest):
+        for artifact in graph_indexable_terminal_artifacts(request.manifest):
             try:
                 validate_relative_artifact_path(
                     artifact.relative_path,
@@ -363,32 +366,6 @@ def _reject(
     field: str,
 ) -> None:
     raise GraphStorageIndexError(code, message, field=field)
-
-
-def _indexable_artifacts(manifest: GraphTerminalManifestV2) -> tuple:
-    """Index only terminal-public artifacts with explicit producer bindings.
-
-    Context snapshots and Graph result references remain durable replay inputs,
-    but they are owned by their dedicated stores rather than the terminal
-    publication index.  Their ``required_for_publication`` flag may reflect
-    the result-persistence policy and must not promote an internal ref-only
-    artifact into the public artifact index without a terminal binding.
-    """
-
-    artifacts = tuple(
-        artifact
-        for artifact in manifest.artifacts
-        if artifact.required_for_publication
-        and not artifact.metadata.get("context_ref_only")
-        and not artifact.metadata.get("graph_result_ref_only")
-    )
-    if not artifacts:
-        _reject(
-            GraphStorageIndexErrorCode.CANDIDATE_NOT_QUALIFIED,
-            "Graph terminal manifest has no indexable publication artifacts",
-            field="artifacts",
-        )
-    return artifacts
 
 
 def _identity_from_manifest(

@@ -8,8 +8,7 @@ from interfaces.services.artifact_service import ArtifactInspectionService
 from interfaces.services.event_projection_service import EventProjectionConflictError
 from interfaces.services.mcp_service import MCPApplicationService
 from interfaces.services.run_inspection_service import GraphRunInspectionService
-from tests.fixtures.graph_runs import write_graph_terminal_run
-from tests.fixtures.graph_runs import write_graph_terminal_run
+from tests.fixtures.graph_runs import graph_index_reader, write_graph_terminal_run
 
 
 def test_api_mcp_catalog_and_manifest_match_service() -> None:
@@ -282,7 +281,10 @@ def test_api_mcp_default_service_maps_real_filesystem_tamper_without_data(tmp_pa
     )
     client = TestClient(
         create_app(
-            graph_run_inspection_service_factory=lambda: GraphRunInspectionService(tmp_path),
+            graph_run_inspection_service_factory=lambda: GraphRunInspectionService(
+                tmp_path,
+                graph_index_reader=graph_index_reader(tmp_path),
+            ),
             artifact_service_factory=lambda: ArtifactInspectionService(tmp_path),
             audit_emitter_factory=None,
         )

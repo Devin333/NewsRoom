@@ -20,6 +20,11 @@ DEFAULT_PRODUCTION_ROOTS = (
     "interfaces",
     "scripts",
 )
+# The zero-reference scanner is an audit tool whose forbidden symbol table is
+# intentionally made of retired names; it is not a runtime caller or export.
+NON_RUNTIME_AUDIT_FILES = frozenset(
+    {"scripts/graph_only_migration/zero_reference_scan.py"}
+)
 FORBIDDEN_NAMESPACE_PREFIXES = (
     "framework.workflow",
     "framework.harness.workflow",
@@ -517,7 +522,9 @@ def _production_python_files(
         path
         for root_name in production_roots
         for path in sorted((project_root / root_name).rglob("*.py"))
-        if path.is_file() and "__pycache__" not in path.parts
+        if path.is_file()
+        and path.relative_to(project_root).as_posix() not in NON_RUNTIME_AUDIT_FILES
+        and "__pycache__" not in path.parts
     )
 
 

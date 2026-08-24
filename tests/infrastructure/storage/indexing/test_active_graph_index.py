@@ -20,7 +20,9 @@ from tests.infrastructure.storage.indexing.test_inactive_graph_index import (
     _SHA_A,
     _SHA_B,
     _SHA_C,
+    _event,
     _events,
+    _identity,
     _manifest,
 )
 
@@ -91,6 +93,26 @@ def test_active_builder_excludes_internal_ref_only_artifacts_from_publication_in
         manifest.artifacts[0].artifact_id,
         manifest.artifacts[2].artifact_id,
     )
+
+
+def test_active_builder_persists_exact_activity_identity_in_event_records() -> None:
+    manifest = _manifest_with_node_binding()
+    events = (
+        _event(1, _identity(manifest)),
+        _event(2, _identity(manifest), with_activity=True),
+    )
+    request = GraphStorageIndexCandidateBuilder.from_manifest(
+        manifest=manifest,
+        events=events,
+    )
+
+    candidate = GraphStorageIndexCandidateBuilder().build(request)
+    record = candidate.event_records[1]
+
+    assert record.node_instance_id == "analyze:1"
+    assert record.activity_id == "activity-analyze-1"
+    assert record.attempt == 1
+    assert type(record).from_dict(record.to_dict()) == record
 
 
 def test_active_builder_rejects_missing_explicit_binding() -> None:

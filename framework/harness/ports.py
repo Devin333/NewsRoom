@@ -28,6 +28,7 @@ if TYPE_CHECKING:
     from framework.harness.control_plane.graph_runtime import HarnessGraphActivity
     from framework.harness.control_plane.graph_state import HarnessGraphState
     from framework.harness.graph.model import NormalizedHarnessGraph
+    from framework.events.graph_phase import GraphPhaseTransitionRecord
 
 
 @runtime_checkable
@@ -74,6 +75,15 @@ class HarnessEventPort(Protocol):
 
 @runtime_checkable
 class HarnessTransitionPort(HarnessEventPort, Protocol):
+    def record_graph_phase_transition(
+        self,
+        record: GraphPhaseTransitionRecord,
+        *,
+        expected_last_sequence: int,
+    ) -> HarnessEvent:
+        """Persist one exact Graph phase transition through the durable writer."""
+        ...
+
     def accept_graph_activity(
         self,
         activity: HarnessGraphActivity,

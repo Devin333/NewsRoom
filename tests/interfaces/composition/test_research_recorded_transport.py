@@ -664,7 +664,7 @@ def test_explicit_low_rag_replan_budget_halts_and_persists(
             settings.artifact.root / "graph-index"
         ).read(halted_identity)
         assert halted_snapshot.identity.run_id == "recorded-production-low-rag-budget"
-        assert halted_snapshot.identity.manifest_hash == halted_manifest[
+        assert halted_snapshot.identity.terminal_manifest_hash == halted_manifest[
             "manifest_hash"
         ]
         assert halted_snapshot.artifact_records

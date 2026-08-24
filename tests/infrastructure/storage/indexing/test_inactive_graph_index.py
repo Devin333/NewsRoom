@@ -11,6 +11,7 @@ from framework.events import (
     BusinessContext,
     EventCandidate,
     GraphEventContext,
+    GraphExecutionIdentity,
     GraphEventExecutionVersion,
     GraphRunIdentity,
     GraphStageIdentity,
@@ -356,7 +357,23 @@ def _event(
     identity: GraphRunIdentity,
     *,
     with_node: bool = False,
+    with_activity: bool = False,
 ) -> StoredEvent:
+    execution_identity = (
+        GraphExecutionIdentity(
+            run_id=identity.run_id,
+            graph_id=identity.graph_id,
+            graph_version=identity.graph_version,
+            graph_ref=identity.graph_ref,
+            graph_checksum=identity.graph_checksum,
+            node_id="analyze",
+            node_instance_id="analyze:1",
+            activity_id="activity-analyze-1",
+            attempt=1,
+        )
+        if with_activity
+        else None
+    )
     context = GraphEventContext(
         identity=identity,
         execution_version=GraphEventExecutionVersion(
@@ -374,9 +391,10 @@ def _event(
                 node_id="analyze",
                 node_instance_id="analyze:1",
             )
-            if with_node
+            if with_node and execution_identity is None
             else None
         ),
+        execution_identity=execution_identity,
     )
     candidate = EventCandidate(
         event_id=f"evt-index-{sequence}-{identity.graph_checksum[-1]}",
@@ -396,6 +414,7 @@ def _event(
             graph_version=identity.graph_version,
             graph_ref=f"{identity.graph_id}@{identity.graph_version}",
             graph_checksum=identity.graph_checksum,
+            execution_identity=context.execution_identity,
             stage_id=context.node_id,
             node_instance_id=context.node_instance_id,
         ),

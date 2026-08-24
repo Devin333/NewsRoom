@@ -10,6 +10,10 @@ from framework.agent.artifacts import (
     ArtifactStoreRequiredError,
 )
 from framework.events.errors import EventStoreUnavailableError
+from infrastructure.storage.indexing import (
+    GraphStorageIndexError,
+    GraphStorageIndexErrorCode,
+)
 from interfaces.api.deps import ApiRouteHelpers, ApiServices, get_actor_context
 from interfaces.models import ActorContext, GraphRunCancellationRequest
 
@@ -40,6 +44,8 @@ def create_router(services: ApiServices, helpers: ApiRouteHelpers) -> APIRouter:
                 status=status,
                 graph_id=graph_id,
             )
+        except GraphStorageIndexError as exc:
+            return _graph_index_error(exc, helpers=helpers)
         except ValueError as exc:
             return helpers.error(
                 status_code=400,
@@ -72,6 +78,8 @@ def create_router(services: ApiServices, helpers: ApiRouteHelpers) -> APIRouter:
             )
         except EventStoreUnavailableError:
             return _event_store_unavailable_error(helpers)
+        except GraphStorageIndexError as exc:
+            return _graph_index_error(exc, helpers=helpers)
         except ValueError as exc:
             return helpers.error(
                 status_code=400,
@@ -91,6 +99,8 @@ def create_router(services: ApiServices, helpers: ApiRouteHelpers) -> APIRouter:
                 message=str(exc),
                 user_action_required=True,
             )
+        except GraphStorageIndexError as exc:
+            return _graph_index_error(exc, helpers=helpers)
         except ValueError as exc:
             return helpers.error(status_code=400, code="invalid_graph_run_id", message=str(exc))
         return helpers.success(result.to_dict())
@@ -109,13 +119,17 @@ def create_router(services: ApiServices, helpers: ApiRouteHelpers) -> APIRouter:
         sequence_cursor: str | None = None,
     ):
         try:
+            event_kwargs = {
+                "event_type": event_type,
+                "limit": limit,
+                "offset": offset,
+                "sequence_cursor": sequence_cursor,
+            }
+            if node_instance_id is not None:
+                event_kwargs["node_instance_id"] = node_instance_id
             result = services.graph_run_inspection_service_factory().get_run_events(
                 run_id,
-                event_type=event_type,
-                node_instance_id=node_instance_id,
-                limit=limit,
-                offset=offset,
-                sequence_cursor=sequence_cursor,
+                **event_kwargs,
             )
         except FileNotFoundError as exc:
             return helpers.error(
@@ -131,6 +145,8 @@ def create_router(services: ApiServices, helpers: ApiRouteHelpers) -> APIRouter:
                 message=str(exc),
                 retryable=True,
             )
+        except GraphStorageIndexError as exc:
+            return _graph_index_error(exc, helpers=helpers)
         except ValueError as exc:
             return helpers.error(status_code=400, code="invalid_graph_run_events_request", message=str(exc))
         return helpers.success(result.to_dict())
@@ -141,6 +157,8 @@ def create_router(services: ApiServices, helpers: ApiRouteHelpers) -> APIRouter:
             result = services.graph_run_inspection_service_factory().get_run_steps(run_id)
         except FileNotFoundError as exc:
             return helpers.error(status_code=404, code="graph_run_not_found", message=str(exc))
+        except GraphStorageIndexError as exc:
+            return _graph_index_error(exc, helpers=helpers)
         except ValueError as exc:
             return helpers.error(status_code=400, code="invalid_graph_run_steps_request", message=str(exc))
         return helpers.success(result.to_dict())
@@ -166,6 +184,8 @@ def create_router(services: ApiServices, helpers: ApiRouteHelpers) -> APIRouter:
             return helpers.error(status_code=404, code="graph_run_events_not_found", message=str(exc))
         except EventStoreUnavailableError as exc:
             return helpers.error(status_code=503, code="event_store_unavailable", message=str(exc), retryable=True)
+        except GraphStorageIndexError as exc:
+            return _graph_index_error(exc, helpers=helpers)
         except ValueError as exc:
             return helpers.error(status_code=400, code="invalid_graph_run_events_request", message=str(exc))
         return StreamingResponse(
@@ -186,6 +206,8 @@ def create_router(services: ApiServices, helpers: ApiRouteHelpers) -> APIRouter:
             return helpers.error(status_code=404, code="graph_run_not_found", message=str(exc))
         except EventStoreUnavailableError:
             return _event_store_unavailable_error(helpers)
+        except GraphStorageIndexError as exc:
+            return _graph_index_error(exc, helpers=helpers)
         except ValueError as exc:
             return helpers.error(status_code=400, code="invalid_graph_replay_request", message=str(exc))
         return helpers.success(result.to_dict())
@@ -198,6 +220,8 @@ def create_router(services: ApiServices, helpers: ApiRouteHelpers) -> APIRouter:
             return helpers.error(status_code=404, code="graph_run_not_found", message=str(exc))
         except EventStoreUnavailableError:
             return _event_store_unavailable_error(helpers)
+        except GraphStorageIndexError as exc:
+            return _graph_index_error(exc, helpers=helpers)
         except ValueError as exc:
             return helpers.error(status_code=400, code="invalid_graph_run_diagnostics_request", message=str(exc))
         return helpers.success(result.to_dict())
@@ -210,6 +234,8 @@ def create_router(services: ApiServices, helpers: ApiRouteHelpers) -> APIRouter:
             return helpers.error(status_code=404, code="graph_run_not_found", message=str(exc))
         except EventStoreUnavailableError:
             return _event_store_unavailable_error(helpers)
+        except GraphStorageIndexError as exc:
+            return _graph_index_error(exc, helpers=helpers)
         except ValueError as exc:
             return helpers.error(status_code=400, code="invalid_graph_run_health_request", message=str(exc))
         return helpers.success(result.to_dict())
@@ -311,6 +337,25 @@ def _event_store_unavailable_error(helpers: ApiRouteHelpers):
         code="event_store_unavailable",
         message="event store is unavailable",
         retryable=True,
+    )
+
+
+def _graph_index_error(
+    exc: GraphStorageIndexError,
+    *,
+    helpers: ApiRouteHelpers,
+):
+    if exc.code is GraphStorageIndexErrorCode.INDEX_NOT_FOUND:
+        return helpers.error(
+            status_code=503,
+            code="graph_index_unavailable",
+            message=str(exc),
+            retryable=True,
+        )
+    return helpers.error(
+        status_code=409,
+        code="graph_index_integrity_failed",
+        message=str(exc),
     )
 
 

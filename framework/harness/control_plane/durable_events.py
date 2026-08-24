@@ -23,10 +23,12 @@ from framework.events.errors import (
     EventStoreCorruptionError,
 )
 from framework.events.ports import EventReaderPort, EventRuntimePort
+from framework.events.application import GraphEventContextWriterPort
 from framework.events.projection import (
     GRAPH_EVENT_CONTEXT_EXTENSION,
     GraphEventContext,
     GraphEventExecutionVersion,
+    graph_event_context,
 )
 from framework.events.graph_phase import GraphPhaseTransitionRecord
 from framework.shared.graph_identity import (
@@ -58,7 +60,11 @@ from framework.events.runtime.history import (
 from framework.events.runtime.publisher import EventPublishRequest
 from framework.events.schema.security import SecurityClassification
 from framework.harness.control_plane.errors import HarnessValidationError
-from framework.harness.control_plane.event import HarnessEvent, HARNESS_EVENT_SOURCE
+from framework.harness.control_plane.event import (
+    HARNESS_EVENT_SOURCE,
+    HarnessEvent,
+    HarnessEventType,
+)
 from framework.harness.control_plane.event_log import (
     HarnessEventLogEntry,
     event_log_entry_from_stored_event,
@@ -668,6 +674,88 @@ class HarnessEventCanonicalAdapter:
         )
 
 
+class DurableGraphEventContextWriter:
+    """Validate and commit one exact Graph event envelope."""
+
+    def __init__(
+        self,
+        runtime: EventRuntimePort,
+    ) -> None:
+        if not isinstance(runtime, EventRuntimePort):
+            raise TypeError("runtime must implement EventRuntimePort")
+        self._runtime = runtime
+
+    def write_graph_event(
+        self,
+        request: EventPublishRequest,
+        *,
+        context: GraphEventContext,
+        expected_last_sequence: int | None = None,
+    ) -> StoredEvent:
+        if not isinstance(request, EventPublishRequest):
+            raise TypeError("request must be EventPublishRequest")
+        if not isinstance(context, GraphEventContext):
+            raise TypeError("context must be GraphEventContext")
+        if request.stream_id != f"run:{context.identity.run_id}":
+            raise HarnessValidationError(
+                "Graph event writer request changed the canonical stream",
+                code="graph_event_stream_identity_mismatch",
+            )
+        raw_context = thaw_canonical_json(
+            request.extensions.get(GRAPH_EVENT_CONTEXT_EXTENSION)
+        )
+        if raw_context != context.to_dict():
+            raise HarnessValidationError(
+                "Graph event writer request changed the exact context",
+                code="graph_event_context_mismatch",
+            )
+        business = request.business_context
+        if (
+            business.run_id != context.identity.run_id
+            or business.graph_id != context.identity.graph_id
+            or business.graph_version != context.identity.graph_version
+            or business.graph_ref != context.identity.graph_ref
+            or business.graph_checksum != context.identity.graph_checksum
+            or business.execution_identity != context.execution_identity
+            or business.stage_id != context.node_id
+            or business.node_instance_id != context.node_instance_id
+        ):
+            raise HarnessValidationError(
+                "Graph event writer request changed the canonical identity",
+                code="graph_event_identity_mismatch",
+            )
+        if expected_last_sequence is not None:
+            if (
+                isinstance(expected_last_sequence, bool)
+                or not isinstance(expected_last_sequence, int)
+                or expected_last_sequence < 0
+            ):
+                raise HarnessValidationError(
+                    "expected_last_sequence must be a non-negative integer",
+                    code="graph_event_sequence_invalid",
+                )
+        stored = self._runtime.publish(
+            request,
+            expected_last_sequence=expected_last_sequence,
+        )
+        _validate_commit_result(stored, request)
+        try:
+            stored_context = graph_event_context(stored)
+        except Exception as exc:
+            raise EventStoreCorruptionError(
+                "durable Graph event context cannot be read back"
+            ) from exc
+        if stored_context.to_dict() != context.to_dict():
+            raise EventStoreCorruptionError(
+                "durable Graph event context changed during commit"
+            )
+        if expected_last_sequence is not None and stored.stream_sequence != expected_last_sequence + 1:
+            raise EventStoreCorruptionError(
+                "durable Graph event sequence differs from the requested position"
+            )
+        return stored
+
+
 class DurableHarnessEventPort:
     """Harness sink whose projection advances only after canonical commit."""
 
@@ -700,16 +788,32 @@ class DurableHarnessEventPort:
         )
         self._activity_handles: dict[str, ActivityRecordingHandle] = {}
         self._adapter = adapter or HarnessEventCanonicalAdapter()
+        self._graph_event_writer: GraphEventContextWriterPort = (
+            DurableGraphEventContextWriter(runtime)
+        )
         self.events: list[HarnessEvent] = []
         self.event_log_entries: list[HarnessEventLogEntry] = []
 
     def record(self, event: HarnessEvent) -> HarnessEvent:
+        if event.event_type is HarnessEventType.GRAPH_PHASE_TRANSITION_RECORDED:
+            raise HarnessValidationError(
+                "Graph phase transitions must use record_graph_phase_transition",
+                code="graph_phase_writer_required",
+            )
+        context = self.graph_context_for_event(event)
+        if context is None:
+            raise HarnessValidationError(
+                "Graph event context is required for durable Harness events",
+                code="graph_event_context_missing",
+            )
         request = self._adapter.to_publish_request(
             event,
-            graph_context=self.graph_context_for_event(event),
+            graph_context=context,
         )
-        stored = self._runtime.publish(request)
-        _validate_commit_result(stored, request)
+        stored = self._graph_event_writer.write_graph_event(
+            request,
+            context=context,
+        )
         projected = self._adapter.from_stored_event(stored)
         log_entry = event_log_entry_from_stored_event(stored)
         self._on_canonical_event_committed(stored)
@@ -718,6 +822,65 @@ class DurableHarnessEventPort:
         # it is never an authority or a fallback reader.
         self.events.append(projected)
         self.event_log_entries.append(log_entry)
+        return projected
+
+    def record_graph_phase_transition(
+        self,
+        record: GraphPhaseTransitionRecord,
+        *,
+        expected_last_sequence: int,
+    ) -> HarnessEvent:
+        if not isinstance(record, GraphPhaseTransitionRecord):
+            raise TypeError("record must be GraphPhaseTransitionRecord")
+        if (
+            isinstance(expected_last_sequence, bool)
+            or not isinstance(expected_last_sequence, int)
+            or expected_last_sequence < 0
+        ):
+            raise HarnessValidationError(
+                "expected_last_sequence must be a non-negative integer",
+                code="graph_phase_sequence_invalid",
+            )
+        record.verify_integrity()
+        if record.event_sequence != expected_last_sequence + 1:
+            raise HarnessValidationError(
+                "Graph phase transition sequence must follow the durable stream",
+                code="graph_phase_sequence_mismatch",
+            )
+        event = HarnessEvent(
+            event_type="graph_phase_transition_recorded",
+            run_id=record.context.identity.run_id,
+            node_id=record.context.node_id,
+            payload=record.to_dict(),
+            metadata={GRAPH_EVENT_CONTEXT_EXTENSION: record.context.to_dict()},
+            occurred_at=record.occurred_at,
+        )
+        request = self._adapter.to_publish_request(
+            event,
+            graph_context=record.context,
+        )
+        stored = self._graph_event_writer.write_graph_event(
+            request,
+            context=record.context,
+            expected_last_sequence=expected_last_sequence,
+        )
+        payload = thaw_canonical_json(stored.payload or {})
+        if not isinstance(payload, Mapping):
+            raise EventStoreCorruptionError(
+                "durable Graph phase payload is not an object"
+            )
+        restored = GraphPhaseTransitionRecord.from_dict(
+            payload.get("graph_phase_transition", {})
+        )
+        restored.assert_envelope_sequence(stored.stream_sequence)
+        if restored.to_dict() != record.to_dict():
+            raise EventStoreCorruptionError(
+                "durable Graph phase transition changed during commit"
+            )
+        projected = self._adapter.from_stored_event(stored)
+        self._on_canonical_event_committed(stored)
+        self.events.append(projected)
+        self.event_log_entries.append(event_log_entry_from_stored_event(stored))
         return projected
 
     def entries_for_run(self, run_id: str) -> tuple[HarnessEventLogEntry, ...]:
@@ -905,8 +1068,10 @@ class DurableHarnessEventPort:
             recorded,
             graph_context=graph_context,
         )
-        stored = self._runtime.publish(request)
-        _validate_commit_result(stored, request)
+        stored = self._graph_event_writer.write_graph_event(
+            request,
+            context=graph_context,
+        )
         self._resolve_graph_activity_event(stored, expected=activity)
         self._on_canonical_event_committed(stored)
         projected = self._adapter.from_stored_event(stored)
@@ -1655,11 +1820,12 @@ class DurableHarnessTransitionPort(DurableHarnessEventPort):
             graph_ref=self._graph_refs.get(run_id),
             activity=activity,
         )
-        stored = self._runtime.publish(
+        context = _stored_graph_context_from_request(request)
+        stored = self._graph_event_writer.write_graph_event(
             request,
+            context=context,
             expected_last_sequence=canonical_head,
         )
-        _validate_commit_result(stored, request)
         parsed = _stored_graph_commit(stored, adapter=self._adapter)
         if event_type == HARNESS_GRAPH_PROJECTION_EVENT_TYPE:
             matches = _graph_projection_commit_matches(parsed.commit, commit)
@@ -1940,6 +2106,30 @@ def _stored_graph_context(event: StoredEvent) -> GraphEventContext:
             code="graph_event_context_mismatch",
         )
     return context
+
+
+def _stored_graph_context_from_request(
+    request: EventPublishRequest,
+) -> GraphEventContext:
+    """Decode the context that the canonical publisher is about to persist."""
+
+    if not isinstance(request, EventPublishRequest):
+        raise TypeError("request must be EventPublishRequest")
+    raw = thaw_canonical_json(
+        request.extensions.get(GRAPH_EVENT_CONTEXT_EXTENSION)
+    )
+    if not isinstance(raw, Mapping):
+        raise HarnessValidationError(
+            "Graph publish request is missing its canonical context",
+            code="graph_event_context_missing",
+        )
+    try:
+        return GraphEventContext.from_dict(raw)
+    except (TypeError, ValueError, EventIntegrityError) as exc:
+        raise HarnessValidationError(
+            "Graph publish request has an invalid canonical context",
+            code="graph_event_context_invalid",
+        ) from exc
 
 
 def _stored_harness_node_id(
@@ -3851,6 +4041,7 @@ def _stored_deterministic_history(event: StoredEvent) -> dict[str, Any]:
 
 
 __all__ = [
+    "DurableGraphEventContextWriter",
     "DurableHarnessEventPort",
     "DurableHarnessTransitionPort",
     "HARNESS_DATA_SCHEMA",

@@ -59,6 +59,13 @@ from infrastructure.storage.indexing.publication import (
     GraphStorageIndexPublisher,
     GraphTerminalManifestReaderPort,
 )
+from infrastructure.storage.indexing.reader import (
+    GraphStorageIndexReader,
+    GraphStorageIndexReaderPort,
+)
+from infrastructure.storage.indexing.selection import (
+    graph_indexable_terminal_artifacts,
+)
 
 __all__ = [
     "DEFAULT_MAX_GRAPH_INDEX_CANDIDATE_BYTES",
@@ -102,8 +109,11 @@ __all__ = [
     "GraphStorageIndexWriteReceipt",
     "GraphStorageIndexWriteStatus",
     "GraphStorageIndexPublisher",
+    "GraphStorageIndexReader",
+    "GraphStorageIndexReaderPort",
     "GraphTerminalManifestReaderPort",
     "LocalGraphStorageIndexStore",
     "MAX_GRAPH_INDEX_ARTIFACTS",
     "MAX_GRAPH_INDEX_EVENTS",
+    "graph_indexable_terminal_artifacts",
 ]

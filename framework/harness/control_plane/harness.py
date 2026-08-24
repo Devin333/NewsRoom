@@ -431,6 +431,39 @@ class InMemoryHarnessEventPort:
         self.events.append(event)
         return event
 
+    def record_graph_phase_transition(
+        self,
+        record: GraphPhaseTransitionRecord,
+        *,
+        expected_last_sequence: int,
+    ) -> HarnessEvent:
+        if not isinstance(record, GraphPhaseTransitionRecord):
+            raise TypeError("record must be GraphPhaseTransitionRecord")
+        if (
+            isinstance(expected_last_sequence, bool)
+            or not isinstance(expected_last_sequence, int)
+            or expected_last_sequence < 0
+        ):
+            raise HarnessValidationError(
+                "expected_last_sequence must be a non-negative integer",
+                code="graph_phase_sequence_invalid",
+            )
+        record.verify_integrity()
+        if record.event_sequence != expected_last_sequence + 1:
+            raise HarnessValidationError(
+                "Graph phase transition sequence must follow the durable stream",
+                code="graph_phase_sequence_mismatch",
+            )
+        event = HarnessEvent(
+            event_type=HarnessEventType.GRAPH_PHASE_TRANSITION_RECORDED,
+            run_id=record.context.identity.run_id,
+            node_id=record.context.node_id,
+            payload=record.to_dict(),
+            metadata={GRAPH_EVENT_CONTEXT_EXTENSION: record.context.to_dict()},
+            occurred_at=record.occurred_at,
+        )
+        return self.record(event)
+
     def read_history(self, run_id: str) -> tuple[HarnessEvent, ...]:
         return tuple(event for event in self.events if event.run_id == run_id)
 
@@ -4551,16 +4584,15 @@ class HarnessControlPlane:
             gate_evidence_refs=gate_evidence_refs,
             occurred_at=_graph_time(run_spec, event_sequence),
         )
-        self._record_event(
-            HarnessEvent(
-                event_type=HarnessEventType.GRAPH_PHASE_TRANSITION_RECORDED,
-                run_id=run_spec.run_id,
-                node_id=node.identity.node_id,
-                payload=record.to_dict(),
-                metadata={GRAPH_EVENT_CONTEXT_EXTENSION: context.to_dict()},
-                occurred_at=record.occurred_at,
-            )
+        committed = self.event_port.record_graph_phase_transition(
+            record,
+            expected_last_sequence=event_sequence - 1,
         )
+        if committed.run_id != run_spec.run_id or committed.node_id != node.identity.node_id:
+            raise HarnessValidationError(
+                "Graph phase writer returned a conflicting committed projection"
+            )
+        self._committed_events.append(committed)
 
     def _graph_definition(
         self,
@@ -6511,6 +6543,7 @@ def _is_transition_port(value: Any) -> bool:
             "accept_graph_activity",
             "resolve_graph_replay_activity",
             "record_graph_activity_result",
+            "record_graph_phase_transition",
         )
     )
 
