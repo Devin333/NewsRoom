@@ -1,0 +1,60 @@
+{
+  "schema": "newsroom.research-graph-production-composition/v1",
+  "captured_at": "2026-08-24",
+  "change": "graph-only-orchestration",
+  "task_refs": ["5.1", "5.2", "5.3", "5.6", "5.8"],
+  "status": "complete_for_04a_scope",
+  "implementation": {
+    "definition_owner": "business.research.graphs.paper_analysis",
+    "production_run_spec": "business.research.application.single_paper_runtime.build_research_harness_run_spec",
+    "runtime_binding_owner": "business.research.graphs.paper_analysis_runtime.build_paper_analysis_runtime_binding_authority",
+    "physical_dispatcher": "framework.harness.runtime.graph_dispatcher.HarnessGraphPhysicalActivityDispatcher",
+    "production_installation": "business.research.application.single_paper_runtime.ResearchSinglePaperRuntime._run_bound",
+    "production_composition": "interfaces.composition.research.build_research_runtime_composition"
+  },
+  "static_graph": {
+    "graph_id": "research.paper_analysis.graph",
+    "graph_version": "1",
+    "definition_checksum": "sha256:97063702f2dbc5b20bab7297ee8d60c1d32c45d4736ee3e948ee4a544381d4cf",
+    "normalized_graph_checksum": "sha256:6e52cf17d7ce02f5bf161c3310d08f62a310248c9aa7d5eed6b6768e06d357f6",
+    "analysis_topology": "ParallelAll plus VerifiedAggregation",
+    "pinned_gate_references": [
+      "PaperSourceLineageGate@1",
+      "ResearchDocumentSchemaGate@1",
+      "ResearchRAGContextProjectionGate@1",
+      "ResearchEvidenceCoverageGate@1",
+      "SummarySchemaGate@1",
+      "SummaryEvidenceCoverageGate@1",
+      "BenchmarkEvidenceLineageGate@1",
+      "ClaimEvidenceGate@1",
+      "ResearchQualityGate@1",
+      "ReaderPayloadSchemaGate@1",
+      "ResearchPaperCardGate@1"
+    ]
+  },
+  "dynamic_graph_boundary": {
+    "graph_id": "research.paper_analysis.dynamic.graph",
+    "graph_version": "1",
+    "definition_checksum": "sha256:a0559e893ed9cc626f14ede1be07b8937dd93d55b37cc2cc8bd11af12eae88c4",
+    "normalized_graph_checksum": "sha256:4989c34af3b5a398ec7ecb0b4364e532cef9215168d8097babf4516667e2777b",
+    "status": "owned by 04b task 5.4; not closed by this evidence"
+  },
+  "boundaries": {
+    "harness_run_spec_uses_explicit_graph": true,
+    "legacy_routing_fields_present": false,
+    "business_research_workflow_python_sources_present": false,
+    "research_imports_legacy_workflow_namespace": false,
+    "research_imports_paper_radar_authority": false,
+    "research_imports_interfaces_or_infrastructure": false,
+    "worker_decides_routing_or_quality": false,
+    "worker_publishes_terminal_manifest": false
+  },
+  "verification": {
+    "focused_research_application_graphs_composition_and_boundary": ".\\.venv\\Scripts\\python.exe -m pytest tests/business/research/application tests/business/research/graphs tests/interfaces/composition/test_research_composition.py tests/architecture/test_research_boundaries.py -q",
+    "focused_result": "216 passed",
+    "static_graph_dispatcher_and_boundary": ".\\.venv\\Scripts\\python.exe -m pytest tests/business/research/integration/test_graph_physical_dispatcher_composition.py tests/business/research/graphs/test_paper_analysis_graph.py tests/architecture/test_research_boundaries.py -q",
+    "static_graph_dispatcher_and_boundary_result": "13 passed",
+    "source_scan": "rg -n --glob '*.py' 'business.research.workflows|framework.workflow|framework.harness.workflow|HarnessWorkflowSpec|paper_radar' business/research interfaces/composition tests/business/research tests/interfaces/composition",
+    "source_scan_result": "no active production match"
+  }
+}
