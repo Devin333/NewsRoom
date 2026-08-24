@@ -1,0 +1,77 @@
+{
+  "schema": "newsroom.research-agentloop-04a-04e-acceptance/v1",
+  "captured_at": "2026-08-24",
+  "change": "graph-only-orchestration",
+  "status": "complete_for_04a_04e_scope",
+  "scope": {
+    "research_prds": ["prd-04a", "prd-04b", "prd-04c"],
+    "agentloop_prds": ["prd-04d", "prd-04e"],
+    "task_refs": ["5.1", "5.2", "5.3", "5.4", "5.5", "5.6", "5.7", "5.8", "6.1", "6.2", "6.3", "6.4", "6.5", "6.6", "6.7"]
+  },
+  "research": {
+    "production_composition": "interfaces.composition.research.build_research_runtime_composition",
+    "static_graph": {
+      "graph_ref": "research.paper_analysis.graph@1",
+      "topology": "ParallelAll plus VerifiedAggregation",
+      "verification_authority": "deterministic Harness VERIFY",
+      "publication_authority": "Harness terminal side effect and Research artifact owner"
+    },
+    "dynamic_boundary": {
+      "graph_ref": "research.paper_analysis.dynamic.graph@1",
+      "default_mode": "static",
+      "durable_binding_required": true,
+      "validated_plan_required": true
+    },
+    "reader_repair": {
+      "graph_ref": "research.reader_repair.graph@2",
+      "worker_channel": "candidate and evidence only",
+      "memory_commit_authority": "Harness terminal side effect"
+    },
+    "verification": {
+      "core_and_composition": "325 passed, 1 deselected, 18 warnings",
+      "taskplan_and_reader_repair": "153 passed",
+      "research_full_composition": "1023 passed, 24 deselected, 18 warnings",
+      "boundary_and_authority": "11 passed"
+    }
+  },
+  "agentloop": {
+    "production_assembly_owner": "interfaces.composition.agent_loop_graph.build_agent_loop_graph_runtime_composition",
+    "runtime_authority": "framework.harness.control_plane.HarnessControlPlane",
+    "physical_dispatcher": "framework.harness.runtime.HarnessGraphPhysicalActivityDispatcher",
+    "agent_runner_role": "bounded single-agent worker only",
+    "agentloop_routing_or_publication_authority": false,
+    "durable_ports": {
+      "event": "HarnessTransitionPort with is_durable=true",
+      "node_output": "HarnessNodeOutputResourcePort",
+      "artifact": "RunBoundArtifactPort",
+      "side_effect_recovery": "SQLiteHarnessSideEffectStore in cross-instance acceptance"
+    },
+    "approval": {
+      "wait_registration_owner": "Harness Graph control plane",
+      "worker_registers_or_resumes_wait": false,
+      "gate_ref": "agent_loop_wait_candidate@1"
+    },
+    "legacy_cleanup": {
+      "zero_reference_scan": "valid",
+      "forbidden_production_references": 0
+    },
+    "verification": {
+      "activity_artifact_smoke": "117 passed",
+      "state_approval_interfaces": "507 passed, 2 skipped",
+      "agentloop_state_models": "24 passed",
+      "cli_smoke": {
+        "status": "succeeded",
+        "network_calls": 0,
+        "llm_calls": 3,
+        "tool_calls": 1,
+        "token_total": 60
+      }
+    }
+  },
+  "scope_boundary": {
+    "explicit_factory_is_production_assembly_entry": true,
+    "default_api_or_cli_caller": "deferred to graph-only-orchestration tasks 7.1-7.6",
+    "agentloop_bundle_does_not_install_outer_authority": true,
+    "outer_runtime_composition_installs_dispatcher_and_wait": true
+  }
+}
