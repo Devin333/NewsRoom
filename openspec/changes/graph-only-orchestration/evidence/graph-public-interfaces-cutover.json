@@ -3,6 +3,17 @@
   "captured_at": "2026-08-24",
   "change": "graph-only-orchestration",
   "task_refs": ["7.1", "7.2", "7.3", "7.4", "7.5", "7.6", "7.7", "7.8"],
+  "status": "partial",
+  "task_status": {
+    "7.1": "complete",
+    "7.2": "complete",
+    "7.3": "complete",
+    "7.4": "complete",
+    "7.5": "open",
+    "7.6": "complete",
+    "7.7": "complete",
+    "7.8": "complete"
+  },
   "implementation_commits": [
     "e0e4269b",
     "e728b975",
@@ -105,6 +116,32 @@
     "frontend_typecheck": "passed",
     "web_console_typecheck": "passed",
     "web_console_build": "passed",
-    "compile": "passed"
-  }
+    "compile": "passed",
+    "smoke": "2311 passed, 23 deselected, 22 warnings; AgentLoop smoke succeeded; source validation is_valid=true/error_count=0/warning_count=0",
+    "approval_production_composition": "open: API and MCP fail closed when no HarnessWait service factory/resolver is installed; current tests inject a fake approval resolver",
+    "approval_evidence_binding": "open: HarnessWaitApprovalDecision and HarnessWaitApprovalEvidenceRecord do not independently carry and validate approval_id plus Graph identity/checksum",
+    "approval_adversarial_tests": "open: forged evidence, stale approval, cross-Graph approval ID, graph checksum tamper, and actor provenance cases are not covered"
+  },
+  "open_items": [
+    {
+      "id": "approval-production-resolver",
+      "owner": "interfaces composition",
+      "references": [
+        "interfaces/services/harness_wait_service.py",
+        "interfaces/api/deps.py",
+        "interfaces/api/routers/harness_waits.py",
+        "interfaces/services/mcp_service.py"
+      ],
+      "reason": "Provide a durable Graph run-spec/runtime-binding/approval resolver in production composition; do not replace it with a test fake."
+    },
+    {
+      "id": "approval-evidence-provenance",
+      "owner": "framework harness wait contract",
+      "references": [
+        "framework/harness/waits/models.py",
+        "interfaces/services/harness_wait_service.py"
+      ],
+      "reason": "Bind approval evidence to approval_id, wait scope, Graph identity/checksum, actor provenance, and adversarial validation before marking task 7.5 complete."
+    }
+  ]
 }
