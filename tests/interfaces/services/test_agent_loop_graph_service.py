@@ -73,7 +73,10 @@ from framework.llm import FakeLLMClient
 from framework.tool import ToolRegistry
 from infrastructure.research.artifact_port import FilesystemHarnessArtifactPort
 from infrastructure.storage.conversation import LocalJsonConversationStore
-from infrastructure.storage.harness import SQLiteHarnessNodeOutputResource
+from infrastructure.storage.harness import (
+    SQLiteHarnessNodeOutputResource,
+    SQLiteHarnessSideEffectStore,
+)
 from infrastructure.storage.events import SQLiteEventStore
 from infrastructure.storage.events.activity_store import SQLiteRecordedActivityStore
 from interfaces.composition.agent_loop_graph import (
@@ -258,25 +261,30 @@ def _durable_event_port(root: Path) -> DurableHarnessTransitionPort:
     )
 
 
-def _terminal_side_effects() -> tuple[
+def _terminal_side_effects_for(
+    database: Path,
+) -> tuple[
     HarnessSideEffectRegistry,
-    InMemoryHarnessSideEffectStore,
+    SQLiteHarnessSideEffectStore,
+    CountingHarnessSideEffectHandler,
 ]:
-    store = InMemoryHarnessSideEffectStore()
+    store = SQLiteHarnessSideEffectStore(database)
+    handler = CountingHarnessSideEffectHandler(
+        store,
+        disposition=HarnessSideEffectDisposition.ACCEPTED,
+    )
     return (
         HarnessSideEffectRegistry(
             (
                 HarnessSideEffectHandlerBinding(
                     "production.agent-loop-terminal@1",
                     "artifact",
-                    CountingHarnessSideEffectHandler(
-                        store,
-                        disposition=HarnessSideEffectDisposition.ACCEPTED,
-                    ),
+                    handler,
                 ),
             )
         ),
         store,
+        handler,
     )
 
 
@@ -488,7 +496,9 @@ def test_runtime_composition_recovers_from_durable_history_in_new_instance(
         "agent-loop-cross-instance-recovery",
         identity_scope_ref=checksum_for("production"),
     )
-    registry, side_effect_store = _terminal_side_effects()
+    registry, side_effect_store, first_handler = _terminal_side_effects_for(
+        root / "side-effects.sqlite3"
+    )
     first = build_agent_loop_graph_runtime_composition(
         agent_runner=_runner(root, "runtime-topic"),
         agent=_agent(),
@@ -502,6 +512,9 @@ def test_runtime_composition_recovers_from_durable_history_in_new_instance(
     )
     assert first.run(run_spec).succeeded is True
 
+    second_registry, second_side_effect_store, second_handler = (
+        _terminal_side_effects_for(root / "side-effects.sqlite3")
+    )
     second = build_agent_loop_graph_runtime_composition(
         agent_runner=_runner(root, "runtime-topic"),
         agent=_agent(),
@@ -510,13 +523,15 @@ def test_runtime_composition_recovers_from_durable_history_in_new_instance(
         event_port=_durable_event_port(root),
         worker_ref=WORKER_REF,
         activity_ref=ACTIVITY_REF,
-        side_effect_registry=registry,
-        side_effect_store=side_effect_store,
+        side_effect_registry=second_registry,
+        side_effect_store=second_side_effect_store,
     )
     recovered = second.recover_and_run(run_spec)
     assert recovered.succeeded is True
     assert recovered.state is not None
     assert recovered.state.outcome.value == "succeeded"
+    assert first_handler.effect_count == 1
+    assert second_handler.effect_count == 0
 
 
 def test_runtime_composition_resumes_approval_in_new_instance(
@@ -527,7 +542,9 @@ def test_runtime_composition_resumes_approval_in_new_instance(
         "agent-loop-cross-instance-approval",
         identity_scope_ref=checksum_for("production"),
     )
-    registry, side_effect_store = _terminal_side_effects()
+    registry, side_effect_store, _first_handler = _terminal_side_effects_for(
+        root / "side-effects.sqlite3"
+    )
     first = build_agent_loop_graph_runtime_composition(
         agent_runner=_WaitingAgentRunner(
             llm_client=FakeLLMClient([]),
@@ -546,6 +563,9 @@ def test_runtime_composition_resumes_approval_in_new_instance(
     waiting = first.run(run_spec)
     assert waiting.status.value == "waiting_approval"
 
+    second_registry, second_side_effect_store, _second_handler = (
+        _terminal_side_effects_for(root / "side-effects.sqlite3")
+    )
     second = build_agent_loop_graph_runtime_composition(
         agent_runner=_WaitingAgentRunner(
             llm_client=FakeLLMClient([]),
@@ -558,8 +578,8 @@ def test_runtime_composition_resumes_approval_in_new_instance(
         event_port=_durable_event_port(root),
         worker_ref=WORKER_REF,
         activity_ref=ACTIVITY_REF,
-        side_effect_registry=registry,
-        side_effect_store=side_effect_store,
+        side_effect_registry=second_registry,
+        side_effect_store=second_side_effect_store,
     )
     resumed = second.resume_after_approval(
         run_spec,

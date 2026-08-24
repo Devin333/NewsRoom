@@ -14,7 +14,11 @@ from business.research.domain import (
     ReaderRepairSkillCandidateSeed,
     ReaderRepairStrategy,
 )
-from business.research.graphs import build_reader_repair_memory_worker_result
+from business.research.graphs import (
+    READER_REPAIR_MEMORY_STEP_ID,
+    build_reader_repair_context_graph_identity,
+    build_reader_repair_memory_worker_result,
+)
 from business.research.ports import (
     ReaderRepairMemoryCommitPort,
     ReaderRepairMemoryCommitRequest,
@@ -180,6 +184,10 @@ def test_postgres_reader_repair_memory_commit_port_rejects_invalid_record() -> N
 
 def _commit_request() -> ReaderRepairMemoryCommitRequest:
     repair_case = _commit_case()
+    graph_identity = build_reader_repair_context_graph_identity(
+        run_id="repair-run-1",
+        stage_id=READER_REPAIR_MEMORY_STEP_ID,
+    )
     strategy = ReaderRepairStrategy(
         strategy_id="repair-strategy-1",
         issue_type=repair_case.issue.issue_type,
@@ -211,6 +219,13 @@ def _commit_request() -> ReaderRepairMemoryCommitRequest:
         strategy_candidate_bundle=strategy_bundle,
         identity_scope_ref=IDENTITY_SCOPE,
         subject_scope_ref=SUBJECT_SCOPE,
+        graph_id=graph_identity.graph_id,
+        graph_version=graph_identity.graph_version,
+        graph_ref=graph_identity.graph_ref,
+        graph_checksum=graph_identity.graph_checksum,
+        node_id=graph_identity.stage_id,
+        node_instance_id=f"{graph_identity.stage_id}:1",
+        activity_id=graph_identity.stage_id,
     )
     raw_candidate = result.output["memory_write_candidate"]
     candidate = MemoryWriteCandidate(

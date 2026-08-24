@@ -17,6 +17,7 @@ from framework.events.runtime.models import (
     ConsumerEffectContract,
     DeliveryRecord,
     DurableSubscription,
+    EventPage,
     EffectIdempotencyStrategy,
     PendingDeliveryStats,
     QuarantinePage,
@@ -143,6 +144,17 @@ class _Store:
 
     def get_stream_high_watermark(self, stream_id, *, tenant_id=None):
         return None
+
+    def get_event(self, event_id, *, tenant_id=None):
+        return None
+
+    def read_stream(self, request):
+        return EventPage(
+            stream_id=request.stream_id,
+            events=(),
+            high_watermark=None,
+            tenant_id=request.tenant_id,
+        )
 
     def get_retirement_cancellation_report(
         self,

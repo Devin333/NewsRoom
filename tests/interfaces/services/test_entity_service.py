@@ -4,7 +4,7 @@ from interfaces.services.entity_service import EntityTrackingApplicationService
 from infrastructure.storage.entities import LocalJsonTrackedEntityStore
 
 
-RESEARCH_WORKFLOW_ID = "research-paper-analysis"
+RESEARCH_GRAPH_ID = "research.paper-analysis"
 
 
 def test_entity_service_creates_stable_id_and_lists(tmp_path) -> None:
@@ -30,7 +30,7 @@ def test_entity_service_matches_real_report_artifacts(tmp_path) -> None:
     result = service.match_reports(
         entity.entity_id,
         artifact_root=artifact_root,
-        workflow_id=RESEARCH_WORKFLOW_ID,
+        graph_id=RESEARCH_GRAPH_ID,
     )
     payload = result.to_dict()
 
@@ -39,7 +39,7 @@ def test_entity_service_matches_real_report_artifacts(tmp_path) -> None:
     assert payload["matches"][0]["matched_aliases"] == ["OpenAI", "ChatGPT"]
 
 
-def test_entity_service_keeps_workflow_family_as_request_metadata(tmp_path) -> None:
+def test_entity_service_filters_reports_by_graph_ids(tmp_path) -> None:
     store_path = tmp_path / "entities.json"
     artifact_root = tmp_path / "runs"
     service = EntityTrackingApplicationService(store_path=store_path)
@@ -49,21 +49,21 @@ def test_entity_service_keeps_workflow_family_as_request_metadata(tmp_path) -> N
         artifact_root,
         "run-other",
         "Other Analysis: ChatGPT",
-        workflow_id="other-workflow",
+        graph_id="other.graph",
     )
 
     result = service.match_reports(
         entity.entity_id,
         artifact_root=artifact_root,
-        workflow_family="research",
+        graph_ids=(RESEARCH_GRAPH_ID, "other.graph"),
     )
     payload = result.to_dict()
 
-    assert payload["workflow_family"] == "research"
+    assert payload["graph_ids"] == [RESEARCH_GRAPH_ID, "other.graph"]
     assert payload["match_count"] == 2
-    assert {match["workflow_id"] for match in payload["matches"]} == {
-        RESEARCH_WORKFLOW_ID,
-        "other-workflow",
+    assert {match["graph_id"] for match in payload["matches"]} == {
+        RESEARCH_GRAPH_ID,
+        "other.graph",
     }
 
 
@@ -72,7 +72,7 @@ def _write_report_run(
     run_id: str,
     title: str,
     *,
-    workflow_id: str = RESEARCH_WORKFLOW_ID,
+    graph_id: str = RESEARCH_GRAPH_ID,
 ) -> None:
     run_dir = root / run_id
     run_dir.mkdir(parents=True)
@@ -97,7 +97,8 @@ def _write_report_run(
         json.dumps(
             {
                 "run_id": run_id,
-                "workflow_id": workflow_id,
+                "graph_id": graph_id,
+                "graph_version": "2",
                 "profile": "live-offline",
                 "status": "succeeded",
                 "finished_at": "2026-05-11T00:00:00Z",
