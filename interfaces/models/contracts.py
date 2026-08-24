@@ -70,6 +70,10 @@ class ArtifactRef(BaseModel):
 
 class RunResponse(BaseModel):
     run_id: str | None = None
+    graph_id: str | None = None
+    graph_version: str | None = None
+    graph_ref: str | None = None
+    graph_checksum: str | None = None
     task_id: str | None = None
     status: RunStatus
     task_status: str | None = None
@@ -99,6 +103,28 @@ class GraphRunDetail(GraphRunListItem):
     output_preview: dict[str, Any] = Field(default_factory=dict)
     error: dict[str, Any] | None = None
     metrics: dict[str, Any] = Field(default_factory=dict)
+
+
+class HarnessWaitInspectionView(BaseModel):
+    run_id: str
+    node_instance_id: str
+    wait_id: str
+    kind: str
+    status: str
+    signal_schema_ref: str
+    lifecycle: str
+    outcome: str
+    registered_sequence: int | None = None
+    last_event_sequence: int
+    graph_id: str
+    graph_version: str
+    graph_ref: str
+    graph_checksum: str
+
+
+class HarnessWaitOperationView(BaseModel):
+    operation: Literal["signal", "approval", "cancellation", "timer", "timeout"]
+    wait: HarnessWaitInspectionView
 
 
 class RunEventView(BaseModel):

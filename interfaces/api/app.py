@@ -462,6 +462,10 @@ def _run_response_from_payload(payload: dict[str, Any]) -> RunResponse:
     report_projection = project_run_report_for_interface(payload)
     return RunResponse(
         run_id=payload.get("run_id"),
+        graph_id=payload.get("graph_id"),
+        graph_version=payload.get("graph_version"),
+        graph_ref=payload.get("graph_ref"),
+        graph_checksum=payload.get("graph_checksum"),
         status=_interface_status(run_status),
         run_status=run_status or None,
         report_status=report_projection.report_status,
@@ -945,10 +949,12 @@ def _audit_result(status_code: int) -> str:
 
 def _api_audit_action(method: str, path: str) -> str:
     prefix = "api_request"
-    if path.startswith("/api/v1/approvals") and method == "POST":
-        return "approval_decision_submitted" if any(
-            path.endswith(suffix) for suffix in ("/approve", "/reject", "/modify")
-        ) else "api_request_received"
+    if (
+        path.startswith("/api/v2/graph-runs/")
+        and path.endswith("/approval")
+        and method == "POST"
+    ):
+        return "graph_wait_approval_decision_submitted"
     if path.startswith("/api/v1/artifacts"):
         return "artifact_read"
     if path.startswith("/api/v1/reports") and method == "GET":

@@ -29,6 +29,10 @@ def test_api_router_parity_keeps_current_paths_registered() -> None:
         "/api/v2/graph-runs/{run_id}/artifacts",
         "/api/v2/graph-runs/{run_id}/artifacts/{artifact_key}",
         "/api/v2/graph-runs/{run_id}/cancel",
+        "/api/v2/graph-runs/{run_id}/waits/{node_instance_id}",
+        "/api/v2/graph-runs/{run_id}/waits/{node_instance_id}/signals",
+        "/api/v2/graph-runs/{run_id}/waits/{node_instance_id}/approval",
+        "/api/v2/graph-runs/{run_id}/waits/{node_instance_id}/cancel",
         "/api/v1/reports/latest",
         "/api/v1/reports",
         "/api/v1/reports/{report_id}",
@@ -61,12 +65,6 @@ def test_api_router_parity_keeps_current_paths_registered() -> None:
         "/api/v1/workers",
         "/api/v1/workers/{worker_id}",
         "/api/v1/queues",
-        "/api/v1/approvals",
-        "/api/v1/approvals/{approval_id}",
-        "/api/v1/approvals/{approval_id}/resume-context",
-        "/api/v1/approvals/{approval_id}/approve",
-        "/api/v1/approvals/{approval_id}/reject",
-        "/api/v1/approvals/{approval_id}/modify",
         "/api/v1/storage/metrics",
         "/api/v1/storage/retention/plan",
         "/api/v1/mcp/catalog",
@@ -93,5 +91,6 @@ def test_api_router_parity_keeps_current_paths_registered() -> None:
     assert "/api/v2/graph-runs/daily" not in paths
     assert "/api/v2/graph-runs/weekly" not in paths
     assert "/api/v1/approvals/{approval_id}/resume-workflow" not in paths
+    assert not any(path.startswith("/api/v1/approvals") for path in paths)
     assert "/api/v1/schedules/daily" not in paths
     assert "/api/v1/schedules/papers/ingest" not in paths

@@ -4,7 +4,6 @@ from fastapi import FastAPI
 
 from interfaces.api.deps import ApiRouteHelpers, ApiServices
 from interfaces.api.routers import (
-    approvals,
     auth,
     entities,
     events,
@@ -42,7 +41,6 @@ def include_routers(api: FastAPI, *, services: ApiServices, helpers: ApiRouteHel
         subscriptions.create_router(services, helpers),
         mcp.create_router(services, helpers),
         schedules.create_router(services, helpers),
-        approvals.create_router(services, helpers),
         harness_graph.create_router(services, helpers),
         harness_waits.create_router(services, helpers),
     ):

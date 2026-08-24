@@ -187,6 +187,10 @@ class HarnessWaitInspectionResult:
     outcome: str
     registered_sequence: int | None
     last_event_sequence: int
+    graph_id: str | None = None
+    graph_version: str | None = None
+    graph_ref: str | None = None
+    graph_checksum: str | None = None
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -200,6 +204,10 @@ class HarnessWaitInspectionResult:
             "outcome": self.outcome,
             "registered_sequence": self.registered_sequence,
             "last_event_sequence": self.last_event_sequence,
+            "graph_id": self.graph_id,
+            "graph_version": self.graph_version,
+            "graph_ref": self.graph_ref,
+            "graph_checksum": self.graph_checksum,
         }
 
 
@@ -558,6 +566,10 @@ class HarnessWaitApplicationService:
                 None if registration is None else registration.registered_sequence
             ),
             last_event_sequence=state.last_event_sequence,
+            graph_id=state.graph_ref.graph_id,
+            graph_version=state.graph_ref.identity_version,
+            graph_ref=state.graph_ref.identity_ref.exact_ref,
+            graph_checksum=state.graph_ref.checksum,
         )
 
     def _require_permission(self, permission: str) -> None:

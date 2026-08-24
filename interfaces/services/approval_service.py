@@ -40,27 +40,6 @@ class ApprovalDetailResult:
         }
 
 
-@dataclass(frozen=True)
-class ApprovalResumeContextResult:
-    approval: ApprovalRequest
-    decision_key: str
-    decision_payload: dict[str, Any]
-    buffer_updates: dict[str, Any]
-    resume_metadata: dict[str, Any]
-
-    def to_dict(self) -> dict[str, Any]:
-        resume_metadata = dict(self.resume_metadata)
-        resume_metadata.setdefault("reviewer_trace", _approval_reviewer_trace(self.approval))
-        return {
-            "approval_id": self.approval.approval_id,
-            "approval": self.approval.to_dict(),
-            "decision_key": self.decision_key,
-            "decision_payload": dict(self.decision_payload),
-            "buffer_updates": dict(self.buffer_updates),
-            "resume_metadata": resume_metadata,
-        }
-
-
 class ApprovalApplicationService:
     def __init__(
         self,
@@ -101,27 +80,6 @@ class ApprovalApplicationService:
 
     def get_approval(self, approval_id: str) -> ApprovalDetailResult:
         return ApprovalDetailResult(self.store.get_approval(approval_id))
-
-    def build_resume_context(
-        self,
-        approval_id: str,
-        *,
-        decision_key: str = "human_review_decision",
-    ) -> ApprovalResumeContextResult:
-        if not decision_key:
-            raise ValueError("decision_key is required")
-        approval = self.store.get_approval(approval_id)
-        if approval.decision is None or approval.status == ApprovalStatus.PENDING:
-            raise ValueError(f"approval decision is not recorded: {approval_id}")
-        decision_payload = _approval_decision_payload(approval)
-        resume_metadata = _approval_resume_metadata(approval)
-        return ApprovalResumeContextResult(
-            approval=approval,
-            decision_key=decision_key,
-            decision_payload=decision_payload,
-            buffer_updates={decision_key: decision_payload},
-            resume_metadata=resume_metadata,
-        )
 
     def approve(
         self,
@@ -188,66 +146,3 @@ class ApprovalApplicationService:
                 decision=decision,
             )
         )
-
-
-def _approval_decision_payload(approval: ApprovalRequest) -> dict[str, Any]:
-    if approval.decision is None:
-        raise ValueError(f"approval decision is not recorded: {approval.approval_id}")
-    decision_type = ApprovalDecisionType(approval.decision.decision_type).value
-    approval_status = ApprovalStatus(approval.status).value
-    return {
-        "decision": _resume_decision(decision_type),
-        "status": approval_status,
-        "decision_type": decision_type,
-        "approval_id": approval.approval_id,
-        "requested_action": approval.requested_action,
-        "risk_level": approval.risk_level,
-        "reason": approval.decision.reason,
-        "decided_by": approval.decision.decided_by,
-        "decided_at": approval.decision.to_dict()["decided_at"],
-        "modifications": dict(approval.decision.modifications),
-        "task_id": approval.task_id,
-        "run_id": approval.run_id,
-        "requested_by": approval.requested_by,
-    }
-
-
-def _approval_resume_metadata(approval: ApprovalRequest) -> dict[str, Any]:
-    if approval.decision is None:
-        raise ValueError(f"approval decision is not recorded: {approval.approval_id}")
-    metadata: dict[str, Any] = {
-        "approval_id": approval.approval_id,
-        "approval_status": ApprovalStatus(approval.status).value,
-        "decision_type": ApprovalDecisionType(approval.decision.decision_type).value,
-        "requested_action": approval.requested_action,
-        "risk_level": approval.risk_level,
-        "decided_by": approval.decision.decided_by,
-    }
-    if approval.task_id:
-        metadata["task_id"] = approval.task_id
-    if approval.run_id:
-        metadata["approval_run_id"] = approval.run_id
-    return metadata
-
-
-def _approval_reviewer_trace(approval: ApprovalRequest) -> dict[str, Any]:
-    if approval.decision is None:
-        raise ValueError(f"approval decision is not recorded: {approval.approval_id}")
-    return {
-        "approval_id": approval.approval_id,
-        "approval_status": ApprovalStatus(approval.status).value,
-        "decision_type": ApprovalDecisionType(approval.decision.decision_type).value,
-        "requested_action": approval.requested_action,
-        "risk_level": approval.risk_level,
-        "decided_by": approval.decision.decided_by,
-        "reason": approval.decision.reason,
-        "modifications": dict(approval.decision.modifications),
-    }
-
-
-def _resume_decision(decision_type: str) -> str:
-    if decision_type == ApprovalDecisionType.APPROVE.value:
-        return "approved"
-    if decision_type == ApprovalDecisionType.REJECT.value:
-        return "rejected"
-    return "approved"

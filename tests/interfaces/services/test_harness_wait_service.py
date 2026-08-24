@@ -133,6 +133,10 @@ def test_inspection_is_actor_scoped_and_returns_only_safe_wait_fields() -> None:
     assert "tenant_scope_ref" not in payload
     assert "identity_scope_ref" not in payload
     assert "signal_inbox" not in payload
+    assert result.graph_id == "graph-run-service-inspect"
+    assert result.graph_version == "1"
+    assert result.graph_ref == "graph-run-service-inspect@1"
+    assert result.graph_checksum.startswith("sha256:")
 
 
 def test_signal_operation_validates_schema_and_correlation_then_drives_run() -> None:
