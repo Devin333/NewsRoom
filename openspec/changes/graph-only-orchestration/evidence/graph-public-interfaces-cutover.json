@@ -110,9 +110,9 @@
     "violations": []
   },
   "verification": {
-    "backend_api_and_service": "49 passed, 58 warnings",
+    "backend_api_and_service": "31 API contract/wait/inspection tests passed with 62 warnings; interfaces/services full suite 397 passed, 2 skipped",
     "backend_cli_mcp_sdk": "204 passed, 8 warnings",
-    "architecture_openapi_acceptance": "12 passed, 16 warnings",
+    "architecture_openapi_acceptance": "32 focused composition/boundary tests passed; full architecture matrix included in mandatory smoke",
     "frontend_review": "7 passed",
     "frontend_typecheck": "passed",
     "web_console_typecheck": "passed",
