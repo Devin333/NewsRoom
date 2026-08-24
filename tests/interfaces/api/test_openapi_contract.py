@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
 from interfaces.api import create_app
 from interfaces.api.openapi import export_openapi_schema
 
@@ -62,6 +65,12 @@ def test_json_api_operations_reference_api_response_envelope() -> None:
             expected = (
                 "#/components/schemas/RunEventsApiResponse"
                 if path == "/api/v2/graph-runs/{run_id}/events"
+                else "#/components/schemas/HarnessWaitInspectionApiResponse"
+                if path.endswith("/waits/{node_instance_id}")
+                else "#/components/schemas/HarnessWaitInspectionListApiResponse"
+                if path.endswith("/waits")
+                else "#/components/schemas/HarnessWaitOperationApiResponse"
+                if "/waits/" in path
                 else "#/components/schemas/ApiResponse"
             )
             assert json_schema == {"$ref": expected}, path
@@ -78,3 +87,16 @@ def test_create_app_routes_have_operation_id_and_tags_before_schema_export() -> 
     assert api_routes
     assert all(getattr(route, "operation_id", None) for route in api_routes)
     assert all(getattr(route, "tags", None) for route in api_routes)
+
+
+def test_tracked_graph_openapi_snapshot_has_only_graph_run_wait_surface() -> None:
+    snapshot_path = Path(__file__).resolve().parents[3] / "interfaces" / "api" / "openapi_graph_contract.json"
+    snapshot = json.loads(snapshot_path.read_text(encoding="utf-8"))
+    paths = snapshot["paths"]
+
+    assert "/api/v2/graph-runs" in paths
+    assert "/api/v2/graph-runs/{run_id}/waits" in paths
+    assert "/api/v2/graph-runs/{run_id}/waits/{node_instance_id}/approval" in paths
+    assert not any(path.startswith("/api/v1/runs") for path in paths)
+    assert not any(path.startswith("/api/v1/approvals") for path in paths)
+    assert "workflow_id" not in snapshot["components"]["schemas"]["GraphRunListItem"]["properties"]

@@ -11,13 +11,13 @@ export function RunLiveEvents({ runId }: { runId: string }) {
 
   useEffect(() => {
     // 先拉一次历史事件
-    fetch(`/api/v1/runs/${runId}/events`, { cache: "no-store" })
+    fetch(`/api/v2/graph-runs/${encodeURIComponent(runId)}/events`, { cache: "no-store" })
       .then((r) => r.json())
       .then((d) => setEvents(d?.data?.events ?? d?.events ?? []))
       .catch(() => {})
 
     // 再开 SSE 流
-    const es = new EventSource(`/api/v1/runs/${runId}/events/stream`)
+    const es = new EventSource(`/api/v2/graph-runs/${encodeURIComponent(runId)}/events/stream`)
     esRef.current = es
 
     es.onopen = () => setConnected(true)

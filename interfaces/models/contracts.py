@@ -122,11 +122,29 @@ class HarnessWaitInspectionView(BaseModel):
     graph_version: str
     graph_ref: str
     graph_checksum: str
+    approval_id: str | None = None
 
 
 class HarnessWaitOperationView(BaseModel):
     operation: Literal["signal", "approval", "cancellation", "timer", "timeout"]
     wait: HarnessWaitInspectionView
+
+
+class HarnessWaitInspectionListView(BaseModel):
+    run_id: str
+    waits: list[HarnessWaitInspectionView] = Field(default_factory=list)
+
+
+class HarnessWaitInspectionApiResponse(ApiResponse):
+    data: HarnessWaitInspectionView | None = None
+
+
+class HarnessWaitOperationApiResponse(ApiResponse):
+    data: HarnessWaitOperationView | None = None
+
+
+class HarnessWaitInspectionListApiResponse(ApiResponse):
+    data: HarnessWaitInspectionListView | None = None
 
 
 class RunEventView(BaseModel):

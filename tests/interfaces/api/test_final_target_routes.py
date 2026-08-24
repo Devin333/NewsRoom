@@ -22,11 +22,9 @@ def test_health_ready_and_dependencies_routes_use_common_envelope() -> None:
 
 
 def test_report_markdown_quality_and_publish_request_routes() -> None:
-    approval = _FakeApprovalService()
     client = TestClient(
         create_app(
             report_service_factory=lambda: _FakeReportService(),
-            approval_service_factory=lambda: approval,
             audit_emitter_factory=None,
         )
     )
@@ -42,7 +40,7 @@ def test_report_markdown_quality_and_publish_request_routes() -> None:
     assert markdown.json()["data"]["markdown"] == "# Daily Intelligence"
     assert quality.json()["data"]["quality_score"] == 0.91
     assert publish.json()["data"]["status"] == "approval_required"
-    assert approval.requests[0]["requested_action"] == "publish_report"
+    assert publish.json()["data"]["approval_mode"] == "graph_wait"
 
 
 def test_source_detail_probe_artifact_alias_and_memory_document_routes() -> None:
@@ -184,15 +182,6 @@ class _FakeReport:
         self.report_markdown = "# Daily Intelligence"
         self.quality_score = 0.91
         self.manifest_path = ".newsroom/runs/run-1/manifest.json"
-
-
-class _FakeApprovalService:
-    def __init__(self) -> None:
-        self.requests = []
-
-    def submit_request(self, **kwargs):
-        self.requests.append(kwargs)
-        return _FakeResult({"approval_id": "approval-1", "approval": kwargs})
 
 
 class _FakeSourceService:

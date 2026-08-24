@@ -191,6 +191,7 @@ class HarnessWaitInspectionResult:
     graph_version: str | None = None
     graph_ref: str | None = None
     graph_checksum: str | None = None
+    approval_id: str | None = None
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -208,6 +209,7 @@ class HarnessWaitInspectionResult:
             "graph_version": self.graph_version,
             "graph_ref": self.graph_ref,
             "graph_checksum": self.graph_checksum,
+            "approval_id": self.approval_id,
         }
 
 
@@ -218,6 +220,18 @@ class HarnessWaitOperationResult:
 
     def to_dict(self) -> dict[str, object]:
         return {"operation": self.operation, "wait": self.wait.to_dict()}
+
+
+@dataclass(frozen=True, slots=True)
+class HarnessWaitInspectionListResult:
+    run_id: str
+    waits: tuple[HarnessWaitInspectionResult, ...]
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "run_id": self.run_id,
+            "waits": [item.to_dict() for item in self.waits],
+        }
 
 
 class HarnessWaitApplicationService:
@@ -266,6 +280,43 @@ class HarnessWaitApplicationService:
         binding = self._binding(run_id)
         scope, _ = self._authorized_scope(binding, node_instance_id)
         return self._inspection(binding, scope)
+
+    def list_waits(self, run_id: str) -> HarnessWaitInspectionListResult:
+        """Project unresolved Waits visible to the authenticated actor."""
+
+        self._require_permission(READ_REPORTS_PERMISSION)
+        binding = self._binding(run_id)
+        state = binding.control_plane.recover_graph(binding.run_spec)
+        actor_scope = self._actor_scope_resolver.resolve(self._actor)
+        if not isinstance(actor_scope, HarnessWaitActorScope):
+            raise HarnessWaitApplicationError(
+                "actor scope resolver returned an invalid scope",
+                code="wait_actor_scope_resolver_invalid",
+            )
+        inspections: list[HarnessWaitInspectionResult] = []
+        for registration in state.wait_registrations:
+            if not registration.unresolved:
+                continue
+            if (
+                registration.tenant_scope_ref != actor_scope.tenant_scope_ref
+                or registration.identity_scope_ref != actor_scope.identity_scope_ref
+            ):
+                continue
+            scope = HarnessWaitScope(
+                wait_id=registration.wait_id,
+                run_id=state.run_id,
+                node_instance_id=registration.node_instance_id,
+                tenant_scope_ref=registration.tenant_scope_ref,
+                identity_scope_ref=registration.identity_scope_ref,
+                signal_schema_ref=registration.signal_schema_ref,
+                correlation_ref=registration.correlation_ref,
+            )
+            inspections.append(self._inspection_from_state(state, scope))
+        inspections.sort(key=lambda item: (item.registered_sequence or 0, item.node_instance_id))
+        return HarnessWaitInspectionListResult(
+            run_id=state.run_id,
+            waits=tuple(inspections),
+        )
 
     def deliver_signal(
         self,
@@ -570,6 +621,7 @@ class HarnessWaitApplicationService:
             graph_version=state.graph_ref.identity_version,
             graph_ref=state.graph_ref.identity_ref.exact_ref,
             graph_checksum=state.graph_ref.checksum,
+            approval_id=_approval_id_from_node(state, scope.node_instance_id),
         )
 
     def _require_permission(self, permission: str) -> None:
@@ -579,6 +631,33 @@ class HarnessWaitApplicationService:
             "actor lacks the required Harness Wait permission",
             code="wait_permission_denied",
         )
+
+
+def _approval_id_from_node(state: HarnessGraphState, node_instance_id: str) -> str | None:
+    node = next(
+        (item for item in state.node_instances if item.instance_id == node_instance_id),
+        None,
+    )
+    if node is None:
+        return None
+
+    def find(value: object) -> str | None:
+        if isinstance(value, Mapping):
+            candidate = value.get("approval_id")
+            if isinstance(candidate, str) and candidate.strip():
+                return candidate.strip()
+            for nested in value.values():
+                found = find(nested)
+                if found is not None:
+                    return found
+        elif isinstance(value, (tuple, list)):
+            for nested in value:
+                found = find(nested)
+                if found is not None:
+                    return found
+        return None
+
+    return find(node.metadata) or find(node.output_refs)
 
 
 def _utc_now() -> datetime:
@@ -634,6 +713,7 @@ __all__ = [
     "HarnessWaitAuthorizationError",
     "HarnessWaitControlPlanePort",
     "HarnessWaitInspectionResult",
+    "HarnessWaitInspectionListResult",
     "HarnessWaitNotFoundError",
     "HarnessWaitOperationResult",
     "HarnessWaitRequestError",

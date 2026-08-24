@@ -27,7 +27,7 @@ export function reviewQueueMetrics(items: StudioReviewItem[]) {
     all: items.length,
     pending: items.filter((item) => item.status === "pending").length,
     highRisk: items.filter((item) => item.riskLevel === "high" || item.riskLevel === "critical").length,
-    blocked: items.filter((item) => item.actionKind === "resolve_blocked_run").length,
+    blocked: items.filter((item) => item.source === "run").length,
     history: items.filter((item) => item.status !== "pending").length
   }
 }
@@ -39,7 +39,7 @@ export function filterReviewItems(items: StudioReviewItem[], filter: ReviewQueue
       filter === "all" ||
       (filter === "pending" && item.status === "pending") ||
       (filter === "high-risk" && (item.riskLevel === "high" || item.riskLevel === "critical")) ||
-      (filter === "blocked" && item.actionKind === "resolve_blocked_run") ||
+      (filter === "blocked" && item.source === "run") ||
       (filter === "history" && item.status !== "pending")
 
     if (!matchesFilter) return false

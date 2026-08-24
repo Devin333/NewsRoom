@@ -516,6 +516,11 @@ class GraphWaitsClient:
     def inspect(self, run_id: str, node_instance_id: str) -> dict[str, Any]:
         return self.client.get(_wait_path(run_id, node_instance_id))
 
+    def list(self, run_id: str) -> dict[str, Any]:
+        return self.client.get(
+            f"/api/v2/graph-runs/{_quote_path_segment(run_id)}/waits"
+        )
+
     def deliver_signal(
         self,
         run_id: str,

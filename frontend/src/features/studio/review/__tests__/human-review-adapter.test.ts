@@ -1,69 +1,75 @@
 import { describe, expect, it } from "vitest"
 import {
-  mapApprovalToReviewItem,
   mapBlockedRunToReviewItem,
-  mapFallbackReportsToReviewItems
+  mapFallbackReportsToReviewItems,
+  mapGraphWaitToReviewItem
 } from "@/features/studio/review/lib/human-review-adapter"
 
 describe("human-review-adapter", () => {
-  it("maps approval responses to review queue items", () => {
-    const item = mapApprovalToReviewItem({
-      approval_id: "appr_123",
-      requested_action: "publish_report",
-      status: "pending",
-      risk_level: "critical",
-      reason: "External publishing",
-      payload: { report_id: "report-1" },
+  it("maps a durable Graph approval Wait to a review item", () => {
+    const item = mapGraphWaitToReviewItem({
       run_id: "run-1",
-      requested_by: "scheduler",
-      created_at: "2026-05-24T12:00:00Z",
-      expires_at: "2026-05-25T12:00:00Z"
+      node_instance_id: "node-approval",
+      wait_id: "wait-1",
+      kind: "approval",
+      status: "registered",
+      graph_id: "research",
+      graph_version: "2.0.0",
+      graph_ref: "research@2.0.0",
+      graph_checksum: "sha256:graph",
+      approval_id: "approval-1",
+      registered_sequence: 12
     })
 
     expect(item).toMatchObject({
-      approvalId: "appr_123",
-      requestedAction: "publish_report",
+      approvalId: "approval-1",
+      requestedAction: "graph_approval_decision",
       status: "pending",
-      riskLevel: "critical",
-      reportId: "report-1",
       runId: "run-1",
+      nodeInstanceId: "node-approval",
+      waitId: "wait-1",
+      graphRef: "research@2.0.0",
+      graphChecksum: "sha256:graph",
+      source: "graph_wait",
       actionKind: "approval_decision"
     })
-    expect(item.history?.[0]).toMatchObject({ type: "requested", actor: "scheduler" })
+    expect(item.actionDisabledReason).toBeUndefined()
   })
 
-  it("maps payload report_id to reportId", () => {
-    const item = mapApprovalToReviewItem({
-      approval_id: "appr_456",
-      requested_action: "review_report",
-      status: "pending",
-      payload: { report_id: "report-from-payload" },
-      metadata: { report_id: "report-from-metadata" }
+  it("disables a Graph approval decision when identity is incomplete", () => {
+    const item = mapGraphWaitToReviewItem({
+      run_id: "run-1",
+      node_instance_id: "node-approval",
+      wait_id: "wait-1",
+      kind: "approval",
+      status: "registered",
+      approval_id: "approval-1"
     })
 
-    expect(item.reportId).toBe("report-from-payload")
+    expect(item.actionDisabledReason).toContain("identity is incomplete")
   })
 
-  it("maps blocked run to a high-risk resolvable item", () => {
+  it("maps blocked runs as read-only inspection items", () => {
     const item = mapBlockedRunToReviewItem({
       run_id: "run-blocked",
       status: "waiting_for_human",
-      workflow_id: "daily",
+      profile: "daily",
       started_at: "2026-05-24T11:00:00Z",
       report_id: "report-blocked"
     })
 
     expect(item).toMatchObject({
       approvalId: "run:run-blocked:blocked",
-      requestedAction: "resolve_blocked_run",
+      requestedAction: "graph_run_blocked",
       riskLevel: "high",
-      actionKind: "resolve_blocked_run",
+      actionKind: "none",
       runId: "run-blocked",
       reportId: "report-blocked"
     })
+    expect(item.actionDisabledReason).toContain("no registered Graph Wait")
   })
 
-  it("creates disabled fallback report items with notices", () => {
+  it("creates disabled fallback report items with Graph Wait notices", () => {
     const items = mapFallbackReportsToReviewItems(
       [
         {
@@ -79,15 +85,15 @@ describe("human-review-adapter", () => {
           status: "published"
         }
       ],
-      "approvals offline"
+      "Graph Wait API offline"
     )
 
     expect(items).toHaveLength(1)
     expect(items[0]).toMatchObject({
       approvalId: "report:report-draft:review",
       actionKind: "none",
-      actionDisabledReason: "Approvals API is unavailable; fallback report items cannot be approved here."
+      actionDisabledReason: "Graph Wait data is unavailable; fallback report items cannot be approved here."
     })
-    expect(items[0].notices[0]).toContain("approvals offline")
+    expect(items[0].notices[0]).toContain("Graph Wait API offline")
   })
 })

@@ -15,7 +15,6 @@ const statusVariant: Record<StudioReviewItem["status"], BadgeProps["variant"]> =
   pending: "info",
   approved: "success",
   rejected: "danger",
-  modified: "warning",
   expired: "muted"
 }
 

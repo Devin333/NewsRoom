@@ -58,8 +58,8 @@ export type ReportListItem = {
 
 export type ReportList = {
   limit?: number
-  workflow_id?: string | null
-  workflow_family?: string | null
+  graph_id?: string | null
+  graph_ids?: string[] | null
   report_count: number
   reports: ReportListItem[]
 }
@@ -91,8 +91,10 @@ export type ReportQuality = {
 
 export type RunListItem = {
   run_id: string
-  workflow_id?: string | null
-  workflow_version?: string | null
+  graph_id?: string | null
+  graph_version?: string | null
+  graph_ref?: string | null
+  graph_checksum?: string | null
   profile?: string | null
   status: string
   started_at?: string | null
@@ -157,29 +159,6 @@ export type RunOperationResult = {
   message: string
   new_run_id?: string | null
   details?: Record<string, unknown>
-}
-
-export type ApprovalResumeContext = {
-  approval_id: string
-  approval?: ApprovalItem
-  decision_key: string
-  decision_payload: Record<string, unknown>
-  buffer_updates: Record<string, unknown>
-  resume_metadata: Record<string, unknown>
-}
-
-export type ApprovalWorkflowResumeResult = {
-  approval_context?: Record<string, unknown>
-  run_result?: Record<string, unknown>
-  run_id: string
-  workflow_id?: string | null
-  workflow_version?: string | null
-  status: string
-  output?: Record<string, unknown>
-  artifact_dir?: string | null
-  manifest_path?: string | null
-  events_path?: string | null
-  error?: Record<string, unknown> | null
 }
 
 export type WorkerSummary = {
@@ -257,20 +236,23 @@ export type MemorySearchResponse = {
   results: MemorySearchResult[]
 }
 
-export type ApprovalItem = {
-  approval_id: string
-  requested_action?: string | null
+export type GraphWaitItem = {
+  run_id: string
+  node_instance_id: string
+  wait_id: string
+  kind: string
   status: string
-  risk_level?: string | null
-  reason?: string | null
-  requested_by?: string | null
-  created_at?: string | null
-  expires_at?: string | null
-  payload?: Record<string, unknown>
+  lifecycle: string
+  outcome: string
+  graph_id: string
+  graph_version: string
+  graph_ref: string
+  graph_checksum: string
+  approval_id?: string | null
+  registered_sequence?: number | null
 }
 
-export type ApprovalListResponse = {
-  approval_count?: number
-  approvals?: ApprovalItem[]
-  items?: ApprovalItem[]
+export type GraphWaitListResponse = {
+  run_id: string
+  waits: GraphWaitItem[]
 }

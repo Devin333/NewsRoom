@@ -7,7 +7,7 @@ The Web Console is an HTTP API consumer. It must not import storage, workflow,
 worker, source, quality, or runtime modules directly, and it must not read or
 write the database or artifact filesystem outside the HTTP API.
 
-All page workflows use `/api/v1/*` endpoints and receive the shared
+Page workflows use versioned API endpoints and receive the shared
 `ApiResponse` / `ApiError` envelope with `request_id` and `schema_version`.
 
 ## Cross-Cutting Contract
@@ -34,17 +34,18 @@ Required views:
 
 HTTP API:
 
-- `GET /api/v1/runs`
-- `GET /api/v1/runs/{run_id}`
-- `GET /api/v1/runs/{run_id}/manifest`
-- `GET /api/v1/runs/{run_id}/events`
-- `GET /api/v1/runs/{run_id}/events/stream`
-- `GET /api/v1/runs/{run_id}/progress`
-- `GET /api/v1/runs/{run_id}/artifacts`
-- `GET /api/v1/runs/{run_id}/replay`
-- `GET /api/v1/runs/{run_id}/diagnostics`
-- `GET /api/v1/runs/{run_id}/health`
-- `GET /api/v1/runs/compare`
+- `GET /api/v2/graph-runs`
+- `GET /api/v2/graph-runs/{run_id}`
+- `GET /api/v2/graph-runs/{run_id}/manifest`
+- `GET /api/v2/graph-runs/{run_id}/events`
+- `GET /api/v2/graph-runs/{run_id}/events/stream`
+- `GET /api/v2/graph-runs/{run_id}/artifacts`
+- `GET /api/v2/graph-runs/{run_id}/replay`
+- `GET /api/v2/graph-runs/{run_id}/diagnostics`
+- `GET /api/v2/graph-runs/{run_id}/health`
+- `GET /api/v2/graph-runs/{run_id}/lineage`
+- `GET /api/v2/graph-runs/compare`
+- `POST /api/v2/graph-runs/{run_id}/cancel`
 
 ## Reports Page
 
@@ -115,6 +116,7 @@ Required views:
 
 HTTP API:
 
+- `GET /api/v2/graph-runs/{run_id}/waits`
 - `GET /api/v2/graph-runs/{run_id}/waits/{node_instance_id}`
 - `POST /api/v2/graph-runs/{run_id}/waits/{node_instance_id}/approval`
 - `POST /api/v2/graph-runs/{run_id}/waits/{node_instance_id}/signals`

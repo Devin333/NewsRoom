@@ -30,10 +30,10 @@ export default async function RunsPage({
   if (sp.from) qs.set("started_after", sp.from)
   if (sp.to) qs.set("started_before", sp.to)
 
-  const res = await safeApiGet<RunList>(`/api/v1/runs?${qs}`)
+  const res = await safeApiGet<RunList>(`/api/v2/graph-runs?${qs}`)
   // client-side keyword filter (run_id prefix match)
   let runs = res.data?.runs ?? []
-  if (sp.q) runs = runs.filter((r) => r.run_id.includes(sp.q!) || (r.workflow_id ?? "").includes(sp.q!))
+  if (sp.q) runs = runs.filter((r) => r.run_id.includes(sp.q!) || (r.graph_ref ?? r.graph_id ?? "").includes(sp.q!))
 
   function pageHref(newOffset: number) {
     const p = new URLSearchParams()
@@ -50,7 +50,7 @@ export default async function RunsPage({
     <div className="space-y-6">
       <div>
         <h1 className="text-xl font-semibold text-ink">Runs</h1>
-        <p className="mt-0.5 text-sm text-muted">Workflow execution history</p>
+        <p className="mt-0.5 text-sm text-muted">Graph execution history</p>
       </div>
 
       <div className="flex flex-wrap items-center gap-2">

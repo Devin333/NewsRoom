@@ -5,7 +5,7 @@ export default function HomePage() {
         <p className="text-sm font-medium text-slate-500">NewsRoom Console</p>
         <h1 className="mt-2 text-3xl font-semibold text-slate-950">Operations Dashboard</h1>
         <p className="mt-3 max-w-2xl text-sm leading-6 text-slate-600">
-          Monitor runs, reports, source health, worker status, memory, and approval queues from the API-backed console.
+          Monitor Graph runs, reports, source health, worker status, memory, and durable Waits from the API-backed console.
         </p>
       </section>
       <section className="grid gap-4 md:grid-cols-3">

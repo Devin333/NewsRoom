@@ -20,6 +20,12 @@ class WaitsResource:
             _wait_path(run_id, node_instance_id),
         )
 
+    def list(self, run_id: str) -> JsonDict:
+        return self.transport.request(
+            "GET",
+            f"/api/v2/graph-runs/{quote_path_segment(run_id)}/waits",
+        )
+
     def deliver_signal(
         self,
         run_id: str,

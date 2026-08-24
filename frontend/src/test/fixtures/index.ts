@@ -1,4 +1,3 @@
-export * from "@/test/fixtures/studio-approvals"
 export * from "@/test/fixtures/studio-artifacts"
 export * from "@/test/fixtures/studio-boards"
 export * from "@/test/fixtures/studio-evidence"

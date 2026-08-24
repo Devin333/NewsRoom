@@ -22,6 +22,10 @@ from interfaces.models import (
     GraphRunCancellationRequest,
     RunResponse,
     HarnessWaitInspectionView,
+    HarnessWaitInspectionListView,
+    HarnessWaitInspectionApiResponse,
+    HarnessWaitOperationApiResponse,
+    HarnessWaitInspectionListApiResponse,
     HarnessWaitOperationView,
     ScheduleView,
     SourceHealthView,
@@ -56,6 +60,10 @@ CONTRACT_MODELS = (
     GraphRunCancellationRequest,
     RunResponse,
     HarnessWaitInspectionView,
+    HarnessWaitInspectionListView,
+    HarnessWaitInspectionApiResponse,
+    HarnessWaitOperationApiResponse,
+    HarnessWaitInspectionListApiResponse,
     HarnessWaitOperationView,
     ScheduleView,
     SourceHealthView,
@@ -268,7 +276,18 @@ def _ensure_api_response_references(schema: dict[str, Any]) -> None:
             )
             if "text/event-stream" in content:
                 continue
-            response_schema = "RunEventsApiResponse" if path.endswith("/events") else "ApiResponse"
+            if path.endswith("/waits"):
+                response_schema = "HarnessWaitInspectionListApiResponse"
+            elif "/waits/" in path and path.endswith("/signals"):
+                response_schema = "HarnessWaitOperationApiResponse"
+            elif "/waits/" in path and path.endswith("/approval"):
+                response_schema = "HarnessWaitOperationApiResponse"
+            elif "/waits/" in path and path.endswith("/cancel"):
+                response_schema = "HarnessWaitOperationApiResponse"
+            elif "/waits/" in path:
+                response_schema = "HarnessWaitInspectionApiResponse"
+            else:
+                response_schema = "RunEventsApiResponse" if path.endswith("/events") else "ApiResponse"
             content["application/json"] = {
                 "schema": {"$ref": f"#/components/schemas/{response_schema}"}
             }

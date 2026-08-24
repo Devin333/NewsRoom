@@ -433,6 +433,10 @@ def _inspection(run_id: str, node_instance_id: str) -> HarnessWaitInspectionResu
         outcome="none",
         registered_sequence=3,
         last_event_sequence=3,
+        graph_id="graph-1",
+        graph_version="1",
+        graph_ref="graph-1@1",
+        graph_checksum=f"sha256:{'b' * 64}",
     )
 
 

@@ -120,7 +120,6 @@ class MCPApplicationService:
         subscription_service_factory: Callable[[], Any] | None = None,
         memory_service_factory: Callable[[], Any] | None = None,
         diagnostic_service_factory: Callable[[], Any] | None = None,
-        approval_service_factory: Callable[[], Any] | None = None,
         harness_wait_service_factory: Callable[[ActorContext], Any] | None = None,
         graph_run_inspection_service_factory: Callable[[], Any] | None = None,
         graph_run_operation_service_factory: Callable[[], Any] | None = None,
@@ -149,7 +148,6 @@ class MCPApplicationService:
         )
         self.memory_service_factory = memory_service_factory or _memory_service_factory
         self.diagnostic_service_factory = diagnostic_service_factory or _diagnostic_service_factory
-        self.approval_service_factory = approval_service_factory or _approval_service_factory
         self.harness_wait_service_factory = harness_wait_service_factory
         self.graph_run_inspection_service_factory = (
             graph_run_inspection_service_factory or _graph_run_inspection_service_factory
@@ -647,15 +645,8 @@ class MCPApplicationService:
             reason=_optional_arg(args, "reason"),
             metadata=dict(args.get("metadata") or {}),
         )
-        approval = self.approval_service_factory().submit_request(
-            requested_action="review_report",
-            risk_level="low",
-            reason=args.get("reason"),
-            payload={"report_id": report_id, **dict(args.get("metadata") or {})},
-            requested_by=args.get("requested_by"),
-        )
         data = action.to_dict()
-        data["approval"] = approval.to_dict()
+        data["approval_mode"] = "graph_wait"
         return MCPToolCallResult(
             tool_name="news.report.request_review",
             success=True,
@@ -670,15 +661,8 @@ class MCPApplicationService:
             reason=_optional_arg(args, "reason"),
             metadata=dict(args.get("metadata") or {}),
         )
-        approval = self.approval_service_factory().submit_request(
-            requested_action="publish_report",
-            risk_level="high",
-            reason=args.get("reason"),
-            payload={"report_id": report_id, **dict(args.get("metadata") or {})},
-            requested_by=args.get("requested_by"),
-        )
         data = action.to_dict()
-        data["approval"] = approval.to_dict()
+        data["approval_mode"] = "graph_wait"
         return MCPToolCallResult(
             tool_name="news.report.publish",
             success=True,
@@ -1493,7 +1477,7 @@ def _tools() -> list[MCPTool]:
         MCPTool(
             name="news.report.request_review",
             title="Request report review",
-            description="Request human review for a persisted report through application services.",
+            description="Request report review policy evaluation; any decision must use a durable Graph Wait.",
             input_schema={
                 "type": "object",
                 "required": ["report_id"],
@@ -1508,7 +1492,7 @@ def _tools() -> list[MCPTool]:
         MCPTool(
             name="news.report.publish",
             title="Request report publish",
-            description="Create an approval-gated publish request for a persisted report.",
+            description="Request report publication policy evaluation; any decision must use a durable Graph Wait.",
             input_schema={
                 "type": "object",
                 "required": ["report_id"],
@@ -2795,12 +2779,6 @@ def _diagnostic_service_factory():
     from interfaces.services.diagnose_service import DiagnosticApplicationService
 
     return DiagnosticApplicationService()
-
-
-def _approval_service_factory():
-    from interfaces.services.approval_service import ApprovalApplicationService
-
-    return ApprovalApplicationService()
 
 
 def _graph_run_inspection_service_factory():

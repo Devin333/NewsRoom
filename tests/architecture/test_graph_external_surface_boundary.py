@@ -12,6 +12,10 @@ SURFACE_ROOTS = (
     PROJECT_ROOT / "interfaces" / "sdk",
     PROJECT_ROOT / "sdk" / "python",
 )
+CLIENT_SURFACE_ROOTS = (
+    PROJECT_ROOT / "apps" / "web" / "src",
+    PROJECT_ROOT / "frontend" / "src" / "features" / "studio" / "review",
+)
 FORBIDDEN_PUBLIC_TOKENS = (
     "/api/v1/approvals",
     "news.approval.",
@@ -39,13 +43,26 @@ def _surface_files() -> list[Path]:
     ]
 
 
+def _client_surface_files() -> list[Path]:
+    return [
+        path
+        for root in CLIENT_SURFACE_ROOTS
+        for path in root.rglob("*")
+        if path.suffix in {".ts", ".tsx"} and path.is_file()
+    ]
+
+
 def test_external_surfaces_have_no_retired_approval_or_state_patch_contract() -> None:
     violations = []
-    for path in _surface_files():
+    for path in [*_surface_files(), *_client_surface_files()]:
         text = path.read_text(encoding="utf-8")
         for token in FORBIDDEN_PUBLIC_TOKENS:
             if token in text:
                 violations.append(f"{path.relative_to(PROJECT_ROOT)}: {token}")
+        if path in _client_surface_files():
+            for token in ("workflow_id", "workflow_version", "workflow_ref"):
+                if token in text:
+                    violations.append(f"{path.relative_to(PROJECT_ROOT)}: {token}")
     assert violations == []
 
 

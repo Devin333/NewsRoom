@@ -1,6 +1,5 @@
 """Application service package."""
 
-from interfaces.services.approval_service import ApprovalApplicationService
 from interfaces.services.auth_service import AuthApplicationService
 from interfaces.services.run_service import RunApplicationService
 from interfaces.services.artifact_service import ArtifactInspectionService
@@ -28,6 +27,7 @@ from interfaces.services.harness_graph_service import (
 from interfaces.services.harness_wait_service import (
     HarnessWaitApplicationService,
     HarnessWaitInspectionResult,
+    HarnessWaitInspectionListResult,
     HarnessWaitOperationResult,
 )
 from interfaces.services.memory_service import MemoryApplicationService
@@ -47,7 +47,6 @@ from interfaces.services.subscription_service import SubscriptionApplicationServ
 from interfaces.services.tool_service import ToolApplicationService
 
 __all__ = [
-    "ApprovalApplicationService",
     "AuthApplicationService",
     "DiagnosticApplicationService",
     "EntityTrackingApplicationService",
@@ -66,6 +65,7 @@ __all__ = [
     "HarnessGraphReplayResult",
     "HarnessGraphRunOperationResult",
     "HarnessWaitInspectionResult",
+    "HarnessWaitInspectionListResult",
     "HarnessWaitOperationResult",
     "ArtifactInspectionService",
     "MemoryApplicationService",

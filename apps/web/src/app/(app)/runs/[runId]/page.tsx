@@ -12,10 +12,10 @@ import type { RunDetail, RunEvents, RunArtifacts as RunArtifactsType, RunDiagnos
 export default async function RunDetailPage({ params }: { params: Promise<{ runId: string }> }) {
   const { runId } = await params
   const [run, events, artifacts, diagnostics] = await Promise.all([
-    safeApiGet<RunDetail>(`/api/v1/runs/${runId}`),
-    safeApiGet<RunEvents>(`/api/v1/runs/${runId}/events`),
-    safeApiGet<RunArtifactsType>(`/api/v1/runs/${runId}/artifacts`),
-    safeApiGet<RunDiagnostics>(`/api/v1/runs/${runId}/diagnostics`)
+    safeApiGet<RunDetail>(`/api/v2/graph-runs/${encodeURIComponent(runId)}`),
+    safeApiGet<RunEvents>(`/api/v2/graph-runs/${encodeURIComponent(runId)}/events`),
+    safeApiGet<RunArtifactsType>(`/api/v2/graph-runs/${encodeURIComponent(runId)}/artifacts`),
+    safeApiGet<RunDiagnostics>(`/api/v2/graph-runs/${encodeURIComponent(runId)}/diagnostics`)
   ])
 
   if (!run.ok || !run.data) return notFound()
@@ -28,7 +28,7 @@ export default async function RunDetailPage({ params }: { params: Promise<{ runI
       <div className="flex items-start justify-between gap-4">
         <div>
           <h1 className="font-mono text-lg font-semibold text-ink">{runId}</h1>
-          <p className="mt-0.5 text-sm text-muted">{r.workflow_id ?? "Unknown workflow"}{r.profile ? ` · ${r.profile}` : ""}</p>
+          <p className="mt-0.5 text-sm text-muted">{r.graph_ref ?? r.graph_id ?? "Unknown graph"}{r.profile ? ` · ${r.profile}` : ""}</p>
         </div>
         <StatusBadge status={r.status} />
       </div>
@@ -39,7 +39,7 @@ export default async function RunDetailPage({ params }: { params: Promise<{ runI
           { label: "Started", value: r.started_at ? formatDateTime(r.started_at) : "—" },
           { label: "Finished", value: r.finished_at ? formatDateTime(r.finished_at) : "—" },
           { label: "Report", value: r.report_id?.slice(0, 12) ?? "—" },
-          { label: "Version", value: r.workflow_version ?? "—" }
+          { label: "Graph version", value: r.graph_version ?? "—" }
         ].map(({ label, value }) => (
           <div key={label} className="rounded-lg border border-line bg-white p-3 shadow-card">
             <p className="text-xs font-medium text-muted">{label}</p>

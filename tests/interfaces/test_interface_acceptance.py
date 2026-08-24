@@ -30,7 +30,7 @@ def test_interface_acceptance_openapi_and_api_response_schema_version() -> None:
     meta = ApiMeta(request_id="acceptance")
 
     assert schema["openapi"]
-    assert "/api/v1/runs" in schema["paths"]
+    assert "/api/v2/graph-runs" in schema["paths"]
     assert "/api/v1/mcp/manifest" in schema["paths"]
     assert meta.schema_version == "1.0"
 

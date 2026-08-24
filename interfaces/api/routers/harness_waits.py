@@ -9,11 +9,17 @@ from framework.events import EventStoreUnavailableError
 from framework.harness import HarnessValidationError
 from interfaces.api.deps import ApiRouteHelpers, ApiServices
 from interfaces.models import ActorContext
+from interfaces.models import (
+    HarnessWaitInspectionApiResponse,
+    HarnessWaitInspectionListApiResponse,
+    HarnessWaitOperationApiResponse,
+)
 from interfaces.services.harness_wait_service import (
     HarnessWaitApplicationError,
     HarnessWaitApplicationService,
     HarnessWaitAuthorizationError,
     HarnessWaitInspectionResult,
+    HarnessWaitInspectionListResult,
     HarnessWaitNotFoundError,
     HarnessWaitOperationResult,
     HarnessWaitRequestError,
@@ -48,14 +54,32 @@ class HarnessWaitCancellationRequest(_StrictRequest):
 
 HarnessWaitCall = Callable[
     [HarnessWaitApplicationService],
-    HarnessWaitInspectionResult | HarnessWaitOperationResult,
+    HarnessWaitInspectionResult | HarnessWaitInspectionListResult | HarnessWaitOperationResult,
 ]
 
 
 def create_router(services: ApiServices, helpers: ApiRouteHelpers) -> APIRouter:
     router = APIRouter()
 
-    @router.get("/api/v2/graph-runs/{run_id}/waits/{node_instance_id}")
+    @router.get(
+        "/api/v2/graph-runs/{run_id}/waits",
+        response_model=HarnessWaitInspectionListApiResponse,
+    )
+    def list_waits(
+        request: Request,
+        run_id: str = Path(min_length=1, max_length=_MAX_ID_LENGTH),
+    ):
+        return _invoke(
+            request,
+            services=services,
+            helpers=helpers,
+            operation=lambda service: service.list_waits(run_id),
+        )
+
+    @router.get(
+        "/api/v2/graph-runs/{run_id}/waits/{node_instance_id}",
+        response_model=HarnessWaitInspectionApiResponse,
+    )
     def inspect_wait(
         request: Request,
         run_id: str = Path(min_length=1, max_length=_MAX_ID_LENGTH),
@@ -68,7 +92,10 @@ def create_router(services: ApiServices, helpers: ApiRouteHelpers) -> APIRouter:
             operation=lambda service: service.inspect_wait(run_id, node_instance_id),
         )
 
-    @router.post("/api/v2/graph-runs/{run_id}/waits/{node_instance_id}/signals")
+    @router.post(
+        "/api/v2/graph-runs/{run_id}/waits/{node_instance_id}/signals",
+        response_model=HarnessWaitOperationApiResponse,
+    )
     def deliver_signal(
         body: HarnessWaitSignalRequest,
         request: Request,
@@ -89,7 +116,10 @@ def create_router(services: ApiServices, helpers: ApiRouteHelpers) -> APIRouter:
             ),
         )
 
-    @router.post("/api/v2/graph-runs/{run_id}/waits/{node_instance_id}/approval")
+    @router.post(
+        "/api/v2/graph-runs/{run_id}/waits/{node_instance_id}/approval",
+        response_model=HarnessWaitOperationApiResponse,
+    )
     def decide_approval(
         body: HarnessWaitApprovalRequest,
         request: Request,
@@ -108,7 +138,10 @@ def create_router(services: ApiServices, helpers: ApiRouteHelpers) -> APIRouter:
             ),
         )
 
-    @router.post("/api/v2/graph-runs/{run_id}/waits/{node_instance_id}/cancel")
+    @router.post(
+        "/api/v2/graph-runs/{run_id}/waits/{node_instance_id}/cancel",
+        response_model=HarnessWaitOperationApiResponse,
+    )
     def cancel_wait(
         body: HarnessWaitCancellationRequest,
         request: Request,

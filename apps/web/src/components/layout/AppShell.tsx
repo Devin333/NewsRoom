@@ -11,7 +11,7 @@ const navItems = [
   { href: "/sources", label: "Sources", icon: "◎" },
   { href: "/workers", label: "Workers", icon: "⚙" },
   { href: "/memory", label: "Memory", icon: "◈" },
-  { href: "/approvals", label: "Approvals", icon: "✓" },
+  { href: "/waits", label: "Graph Waits", icon: "✓" },
   { href: "/settings", label: "Settings", icon: "⊙" }
 ]
 

@@ -30,11 +30,6 @@ export function ReviewHistoryPanel({
               {event.at ? <span className="text-xs text-muted-foreground">{formatLocalizedDateTime(locale, event.at)}</span> : null}
             </div>
             {event.reason ? <p className="mt-2 text-sm leading-6 text-muted-foreground">{event.reason}</p> : null}
-            {event.modifications && Object.keys(event.modifications).length ? (
-              <pre className="mt-2 max-h-40 overflow-auto rounded-md bg-muted p-3 text-xs text-foreground">
-                {JSON.stringify(event.modifications, null, 2)}
-              </pre>
-            ) : null}
           </div>
         ))
       ) : (

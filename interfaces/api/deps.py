@@ -7,7 +7,6 @@ from fastapi import Request
 
 from interfaces.composition.research import build_research_application_service
 from interfaces.models import ActorContext, actor_context_from_headers
-from interfaces.services.approval_service import ApprovalApplicationService
 from interfaces.services.artifact_service import ArtifactInspectionService
 from interfaces.services.auth_service import AuthApplicationService
 from interfaces.services.diagnose_service import DiagnosticApplicationService
@@ -53,7 +52,6 @@ GraphRunInspectionServiceFactory = Callable[[], GraphRunInspectionService]
 ArtifactInspectionServiceFactory = Callable[[], ArtifactInspectionService]
 StorageServiceFactory = Callable[[], StorageApplicationService]
 ScheduleServiceFactory = Callable[[], ScheduleApplicationService]
-ApprovalServiceFactory = Callable[[], ApprovalApplicationService]
 AuthServiceFactory = Callable[[], AuthApplicationService]
 ProjectServiceFactory = Callable[[], ProjectApplicationService]
 ResearchServiceFactory = Callable[[], ResearchApplicationService]
@@ -76,7 +74,6 @@ class ApiServices:
     artifact_service_factory: ArtifactInspectionServiceFactory
     storage_service_factory: StorageServiceFactory
     schedule_service_factory: ScheduleServiceFactory
-    approval_service_factory: ApprovalServiceFactory
     auth_service_factory: AuthServiceFactory
     project_service_factory: ProjectServiceFactory
     research_service_factory: ResearchServiceFactory
@@ -113,7 +110,6 @@ def build_api_services(
     artifact_service_factory: ArtifactInspectionServiceFactory = ArtifactInspectionService,
     storage_service_factory: StorageServiceFactory = StorageApplicationService,
     schedule_service_factory: ScheduleServiceFactory = ScheduleApplicationService,
-    approval_service_factory: ApprovalServiceFactory = ApprovalApplicationService,
     auth_service_factory: AuthServiceFactory = AuthApplicationService,
     project_service_factory: ProjectServiceFactory = ProjectApplicationService,
     research_service_factory: ResearchServiceFactory = build_research_application_service,
@@ -136,7 +132,6 @@ def build_api_services(
         artifact_service_factory=artifact_service_factory,
         storage_service_factory=storage_service_factory,
         schedule_service_factory=schedule_service_factory,
-        approval_service_factory=approval_service_factory,
         auth_service_factory=auth_service_factory,
         project_service_factory=project_service_factory,
         research_service_factory=research_service_factory,

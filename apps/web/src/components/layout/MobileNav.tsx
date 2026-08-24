@@ -7,7 +7,7 @@ const items = [
   { href: "/", label: "Home", icon: "⊞" },
   { href: "/runs", label: "Runs", icon: "▷" },
   { href: "/reports", label: "Reports", icon: "≡" },
-  { href: "/approvals", label: "Approvals", icon: "✓" },
+  { href: "/waits", label: "Waits", icon: "✓" },
   { href: "/sources", label: "Sources", icon: "◎" },
 ]
 

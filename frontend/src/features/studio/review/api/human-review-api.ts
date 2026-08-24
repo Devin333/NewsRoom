@@ -15,38 +15,17 @@ type ApiEnvelope<T> = {
 }
 
 export async function submitReviewAction(request: ReviewActionRequest): Promise<ReviewActionResult> {
-  if (request.action === "resolve_blocked_run") {
-    if (!request.item.runId) {
-      return {
-        ok: false,
-        errorCode: "missing_run_id",
-        errorMessage: "run id is required to resolve a blocked run"
-      }
+  if (!request.item.runId || !request.item.nodeInstanceId) {
+    return {
+      ok: false,
+      errorCode: "graph_wait_identity_required",
+      errorMessage: "run id and node instance id are required for a Graph Wait decision"
     }
-    return postReviewAction(`/api/v1/runs/${encodeURIComponent(request.item.runId)}/operations/mark-blocked-resolved`, {
-      resolved_by: request.decidedBy,
-      actor_id: request.decidedBy,
-      reason: request.reason || undefined,
-      resolution_type: "manual",
-      metadata: {
-        source: "studio-review",
-        review_item_id: request.item.approvalId
-      }
-    })
   }
-
-  const approvalPath = `/api/v1/approvals/${encodeURIComponent(request.item.approvalId)}/${request.action}`
-  if (request.action === "modify") {
-    return postReviewAction(approvalPath, {
-      decided_by: request.decidedBy,
-      reason: request.reason || undefined,
-      modifications: request.modifications ?? {}
-    })
-  }
-
+  const approvalPath = `/api/v2/graph-runs/${encodeURIComponent(request.item.runId)}/waits/${encodeURIComponent(request.item.nodeInstanceId)}/approval`
   return postReviewAction(approvalPath, {
-    decided_by: request.decidedBy,
-    reason: request.reason || undefined
+    approval_id: request.item.approvalId,
+    approved: request.action === "approve"
   })
 }
 

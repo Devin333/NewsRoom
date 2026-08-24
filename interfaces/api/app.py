@@ -51,7 +51,6 @@ from interfaces.api.errors import http_error_code
 from interfaces.composition.research import build_research_application_service
 from interfaces.events import AuditEmitter, audit_emitter_from_env
 from framework.shared.env import load_root_env
-from interfaces.services.approval_service import ApprovalApplicationService
 from interfaces.services.auth_service import AuthApplicationService
 from interfaces.services.diagnose_service import DiagnosticApplicationService
 from interfaces.services.run_report_projection import project_run_report_for_interface
@@ -100,7 +99,6 @@ GraphRunInspectionServiceFactory = Callable[[], GraphRunInspectionService]
 ArtifactInspectionServiceFactory = Callable[[], ArtifactInspectionService]
 StorageServiceFactory = Callable[[], StorageApplicationService]
 ScheduleServiceFactory = Callable[[], ScheduleApplicationService]
-ApprovalServiceFactory = Callable[[], ApprovalApplicationService]
 AuthServiceFactory = Callable[[], AuthApplicationService]
 ProjectServiceFactory = Callable[[], ProjectApplicationService]
 ResearchServiceFactory = Callable[[], ResearchApplicationService]
@@ -125,7 +123,6 @@ def create_app(
     artifact_service_factory: ArtifactInspectionServiceFactory = ArtifactInspectionService,
     storage_service_factory: StorageServiceFactory = StorageApplicationService,
     schedule_service_factory: ScheduleServiceFactory = ScheduleApplicationService,
-    approval_service_factory: ApprovalServiceFactory = ApprovalApplicationService,
     auth_service_factory: AuthServiceFactory = AuthApplicationService,
     project_service_factory: ProjectServiceFactory = ProjectApplicationService,
     research_service_factory: ResearchServiceFactory = build_research_application_service,
@@ -347,7 +344,6 @@ def create_app(
         graph_run_inspection_service_factory=graph_run_inspection_service_factory,
         artifact_service_factory=artifact_service_factory,
         storage_service_factory=storage_service_factory,
-        approval_service_factory=approval_service_factory,
         harness_wait_service_factory=harness_wait_service_factory,
         research_service_factory=research_service_factory,
     )
@@ -367,7 +363,6 @@ def create_app(
         artifact_service_factory=artifact_service_factory,
         storage_service_factory=storage_service_factory,
         schedule_service_factory=schedule_service_factory,
-        approval_service_factory=approval_service_factory,
         auth_service_factory=auth_service_factory,
         project_service_factory=project_service_factory,
         research_service_factory=research_service_factory,
@@ -428,7 +423,6 @@ def _mcp_service_factory(
     graph_run_inspection_service_factory: GraphRunInspectionServiceFactory,
     artifact_service_factory: ArtifactInspectionServiceFactory,
     storage_service_factory: StorageServiceFactory,
-    approval_service_factory: ApprovalServiceFactory,
     harness_wait_service_factory: HarnessWaitServiceFactory | None,
     research_service_factory: ResearchServiceFactory,
 ) -> MCPServiceFactory:
@@ -450,7 +444,6 @@ def _mcp_service_factory(
             graph_run_inspection_service_factory=graph_run_inspection_service_factory,
             artifact_service_factory=artifact_service_factory,
             storage_service_factory=storage_service_factory,
-            approval_service_factory=approval_service_factory,
             harness_wait_service_factory=harness_wait_service_factory,
             research_service_factory=research_service_factory,
         )

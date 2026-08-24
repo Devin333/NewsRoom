@@ -10,18 +10,19 @@ vi.mock("next/navigation", () => ({
 }))
 
 const pendingItem: StudioReviewItem = {
-  approvalId: "appr_test",
-  requestedAction: "publish_report",
+  approvalId: "approval-test",
+  requestedAction: "graph_approval_decision",
   status: "pending",
   riskLevel: "high",
-  reportId: "report-1",
-  payloadPreview: { report_id: "report-1" },
+  runId: "run-1",
+  nodeInstanceId: "node-approval",
+  graphChecksum: "sha256:graph",
   notices: [],
   actionKind: "approval_decision"
 }
 
 describe("ReviewDecisionPanel", () => {
-  it("submits approve payload with decided_by after confirmation", async () => {
+  it("submits an approval decision without caller-supplied actor or patch fields", async () => {
     const submitted: ReviewActionRequest[] = []
     render(
       <ReviewDecisionPanel
@@ -33,37 +34,18 @@ describe("ReviewDecisionPanel", () => {
       />
     )
 
-    fireEvent.change(screen.getByLabelText("decided_by"), { target: { value: "reviewer-1" } })
-    fireEvent.click(screen.getByRole("button", { name: "通过" }))
-    fireEvent.click(screen.getByRole("button", { name: /确认通过/ }))
+    fireEvent.click(screen.getByRole("button", { name: /通过|Approve/ }))
+    fireEvent.click(screen.getByRole("button", { name: /确认.*通过|Confirm.*approve/i }))
 
     await waitFor(() => expect(submitted).toHaveLength(1))
-    expect(submitted[0]).toMatchObject({
-      action: "approve",
-      decidedBy: "reviewer-1"
-    })
+    expect(submitted[0]).toEqual({ item: pendingItem, action: "approve" })
   })
 
-  it("requires decided_by for reject", async () => {
-    const submit = vi.fn()
-    render(<ReviewDecisionPanel item={pendingItem} onSubmitAction={submit} />)
+  it("does not expose a modify action or actor input", () => {
+    render(<ReviewDecisionPanel item={pendingItem} onSubmitAction={vi.fn()} />)
 
-    fireEvent.click(screen.getByRole("button", { name: "驳回" }))
-
-    expect(await screen.findByText("必须填写 decided_by。")).toBeInTheDocument()
-    expect(submit).not.toHaveBeenCalled()
-  })
-
-  it("requires non-empty modifications for modify", async () => {
-    const submit = vi.fn()
-    render(<ReviewDecisionPanel item={pendingItem} onSubmitAction={submit} />)
-
-    fireEvent.change(screen.getByLabelText("decided_by"), { target: { value: "reviewer-2" } })
-    fireEvent.change(screen.getByLabelText("modifications JSON"), { target: { value: "{}" } })
-    fireEvent.click(screen.getByRole("button", { name: "修改" }))
-
-    expect(await screen.findByText("修改决策必须提供 modifications。")).toBeInTheDocument()
-    expect(submit).not.toHaveBeenCalled()
+    expect(screen.queryByLabelText("decided_by")).not.toBeInTheDocument()
+    expect(screen.queryByRole("button", { name: /修改|Modify/ })).not.toBeInTheDocument()
   })
 
   it("disables approval actions for fallback items", () => {
@@ -73,15 +55,14 @@ describe("ReviewDecisionPanel", () => {
           ...pendingItem,
           approvalId: "report:report-1:review",
           actionKind: "none",
-          actionDisabledReason: "Approvals API is unavailable; fallback report items cannot be approved here."
+          actionDisabledReason: "Graph Wait data is unavailable; fallback report items cannot be approved here."
         }}
         onSubmitAction={vi.fn()}
       />
     )
 
-    expect(screen.getByRole("button", { name: "通过" })).toBeDisabled()
-    expect(screen.getByRole("button", { name: "驳回" })).toBeDisabled()
-    expect(screen.getByRole("button", { name: "修改" })).toBeDisabled()
-    expect(screen.getByText("Approvals API is unavailable; fallback report items cannot be approved here.")).toBeInTheDocument()
+    expect(screen.queryByRole("button", { name: /通过|Approve/ })).not.toBeInTheDocument()
+    expect(screen.queryByRole("button", { name: /驳回|Reject/ })).not.toBeInTheDocument()
+    expect(screen.getByText("Graph Wait data is unavailable; fallback report items cannot be approved here.")).toBeInTheDocument()
   })
 })

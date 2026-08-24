@@ -10,7 +10,7 @@ export function RunTable({ runs }: { runs: RunListItem[] }) {
         <thead>
           <tr className="border-b border-line">
             <th className="pb-3 pr-4 text-left text-xs font-medium text-muted">Run ID</th>
-            <th className="pb-3 pr-4 text-left text-xs font-medium text-muted">Workflow</th>
+            <th className="pb-3 pr-4 text-left text-xs font-medium text-muted">Graph</th>
             <th className="pb-3 pr-4 text-left text-xs font-medium text-muted">Profile</th>
             <th className="pb-3 pr-4 text-left text-xs font-medium text-muted">Status</th>
             <th className="pb-3 pr-4 text-left text-xs font-medium text-muted">Started</th>
@@ -22,7 +22,7 @@ export function RunTable({ runs }: { runs: RunListItem[] }) {
           {runs.map((run) => (
             <tr key={run.run_id} className="group">
               <td className="py-3 pr-4 font-mono text-xs text-ink">{run.run_id.slice(0, 12)}…</td>
-              <td className="py-3 pr-4 text-muted">{run.workflow_id ?? "—"}</td>
+              <td className="py-3 pr-4 text-muted">{run.graph_ref ?? run.graph_id ?? "—"}</td>
               <td className="py-3 pr-4 text-muted">{run.profile ?? "—"}</td>
               <td className="py-3 pr-4"><StatusBadge status={run.status} /></td>
               <td className="py-3 pr-4 text-muted">{run.started_at ? formatDateTime(run.started_at) : "—"}</td>

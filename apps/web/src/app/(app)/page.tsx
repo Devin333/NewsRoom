@@ -16,7 +16,7 @@ export default async function DashboardPage() {
   const [health, latestReport, recentRuns, workers] = await Promise.all([
     safeGet<HealthStatus>("/health"),
     safeGet<LatestReport>("/api/v1/reports/latest"),
-    safeGet<RunList>("/api/v1/runs?limit=5"),
+    safeGet<RunList>("/api/v2/graph-runs?limit=5"),
     safeGet<WorkerSummary>("/api/v1/workers")
   ])
 
@@ -62,7 +62,7 @@ export default async function DashboardPage() {
                       <Link href={`/runs/${run.run_id}`} className="font-mono text-xs text-ink hover:text-accent">
                         {run.run_id.slice(0, 12)}…
                       </Link>
-                      <p className="text-xs text-subtle">{run.workflow_id ?? ""}</p>
+                      <p className="text-xs text-subtle">{run.graph_ref ?? run.graph_id ?? ""}</p>
                     </td>
                     <td className="py-2.5 pr-4"><StatusBadge status={run.status} /></td>
                     <td className="py-2.5 text-xs text-muted">{run.started_at ? formatDateTime(run.started_at) : "—"}</td>

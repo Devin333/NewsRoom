@@ -113,19 +113,12 @@ def create_router(services: ApiServices, helpers: ApiRouteHelpers) -> APIRouter:
                 reason=actual_request.reason,
                 metadata=actual_request.metadata,
             )
-            approval = services.approval_service_factory().submit_request(
-                requested_action="review_report",
-                risk_level="low",
-                reason=actual_request.reason,
-                payload={"report_id": report_id, **actual_request.metadata},
-                requested_by=actual_request.requested_by,
-            )
         except FileNotFoundError as exc:
             return helpers.error(status_code=404, code="report_not_found", message=str(exc))
         except ValueError as exc:
             return helpers.error(status_code=400, code="invalid_report_action", message=str(exc))
         data = action.to_dict()
-        data["approval"] = approval.to_dict()
+        data["approval_mode"] = "graph_wait"
         return helpers.success(data)
 
     @router.post("/api/v1/reports/{report_id}/publish")
@@ -138,19 +131,12 @@ def create_router(services: ApiServices, helpers: ApiRouteHelpers) -> APIRouter:
                 reason=actual_request.reason,
                 metadata=actual_request.metadata,
             )
-            approval = services.approval_service_factory().submit_request(
-                requested_action="publish_report",
-                risk_level="high",
-                reason=actual_request.reason,
-                payload={"report_id": report_id, **actual_request.metadata},
-                requested_by=actual_request.requested_by,
-            )
         except FileNotFoundError as exc:
             return helpers.error(status_code=404, code="report_not_found", message=str(exc))
         except ValueError as exc:
             return helpers.error(status_code=400, code="invalid_report_action", message=str(exc))
         data = action.to_dict()
-        data["approval"] = approval.to_dict()
+        data["approval_mode"] = "graph_wait"
         return helpers.success(data)
 
     @router.get("/api/v1/search/reports")

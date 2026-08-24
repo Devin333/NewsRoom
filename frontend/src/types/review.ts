@@ -1,10 +1,10 @@
 export type ReviewRiskLevel = "low" | "medium" | "high" | "critical"
 
-export type ReviewStatus = "pending" | "approved" | "rejected" | "modified" | "expired"
+export type ReviewStatus = "pending" | "approved" | "rejected" | "expired"
 
-export type ReviewSource = "approval" | "run" | "report" | "fallback"
+export type ReviewSource = "graph_wait" | "run" | "report" | "fallback"
 
-export type ReviewActionKind = "approval_decision" | "resolve_blocked_run" | "none"
+export type ReviewActionKind = "approval_decision" | "none"
 
 export type ReviewHistoryEvent = {
   id: string
@@ -13,7 +13,6 @@ export type ReviewHistoryEvent = {
   at?: string
   reason?: string
   status?: string
-  modifications?: Record<string, unknown>
 }
 
 export type StudioReviewItem = {
@@ -23,6 +22,12 @@ export type StudioReviewItem = {
   riskLevel: ReviewRiskLevel
   reason?: string
   runId?: string
+  nodeInstanceId?: string
+  waitId?: string
+  graphId?: string
+  graphVersion?: string
+  graphRef?: string
+  graphChecksum?: string
   reportId?: string
   requestedBy?: string
   requestedAt?: string
@@ -49,14 +54,11 @@ export type StudioReviewDetail = {
   dataState: "ready" | "partial" | "fallback"
 }
 
-export type ReviewDecisionAction = "approve" | "reject" | "modify" | "resolve_blocked_run"
+export type ReviewDecisionAction = "approve" | "reject"
 
 export type ReviewActionRequest = {
   item: StudioReviewItem
   action: ReviewDecisionAction
-  decidedBy: string
-  reason?: string
-  modifications?: Record<string, unknown>
 }
 
 export type ReviewActionResult =
