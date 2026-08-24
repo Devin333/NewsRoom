@@ -1,0 +1,110 @@
+{
+  "schema": "newsroom.graph-only-public-interfaces-cutover/v1",
+  "captured_at": "2026-08-24",
+  "change": "graph-only-orchestration",
+  "task_refs": ["7.1", "7.2", "7.3", "7.4", "7.5", "7.6", "7.7", "7.8"],
+  "implementation_commits": [
+    "e0e4269b",
+    "e728b975",
+    "4210a8a66db28596ef4982807d6f70794fc818a9",
+    "c84af260"
+  ],
+  "major_cutover": {
+    "date": "2026-08-24",
+    "run_namespace": "/api/v2/graph-runs",
+    "wait_namespace": "/api/v2/graph-runs/{run_id}/waits",
+    "legacy_api_paths_removed": [
+      "/api/v1/runs*",
+      "/api/v1/approvals*"
+    ],
+    "legacy_decision_actions_removed": [
+      "modify",
+      "resume-context",
+      "resume-workflow"
+    ]
+  },
+  "client_inventory": {
+    "api": {
+      "run_service": "interfaces.services.GraphRunInspectionService",
+      "operation_service": "interfaces.services.GraphRunOperationApplicationService",
+      "wait_service": "interfaces.services.HarnessWaitApplicationService",
+      "report_actions": "policy evaluation only; decision requires a durable Graph Wait"
+    },
+    "cli": {
+      "run_commands": ["news runs list", "news runs show", "news runs events", "news runs replay"],
+      "wait_commands": ["news waits inspect", "news waits signal", "news waits approval", "news waits cancel"],
+      "retired_commands": ["approvals", "resume-workflow"]
+    },
+    "mcp": {
+      "run_tools": ["news.run.show", "news.run.events", "news.run.replay", "news.run.cancel"],
+      "wait_tools": [
+        "news.graph.wait.inspect",
+        "news.graph.wait.signal",
+        "news.graph.approval.decision",
+        "news.graph.wait.cancel"
+      ],
+      "actor_source": "authenticated operator context"
+    },
+    "sdk": {
+      "python_interfaces": ["NewsClient.runs", "NewsClient.waits"],
+      "python_package": ["newsroom_sdk.resources.runs", "newsroom_sdk.resources.waits"],
+      "typescript_contract": "interfaces/sdk/typescript_client.md"
+    },
+    "frontend": {
+      "web_console": ["apps/web/src/app/(app)/waits", "apps/web/src/components/waits", "apps/web/src/components/runs"],
+      "reader_studio": ["frontend/src/features/studio/review"],
+      "approval_body": {
+        "path": "/api/v2/graph-runs/{run_id}/waits/{node_instance_id}/approval",
+        "fields": ["approval_id", "approved"],
+        "actor": "authenticated API context"
+      }
+    }
+  },
+  "openapi": {
+    "snapshot": "interfaces/api/openapi_graph_contract.json",
+    "generation_command": ".\\.venv\\Scripts\\python.exe -c \"from interfaces.api.openapi import write_openapi_schema; write_openapi_schema('interfaces/api/openapi_graph_contract.json')\"",
+    "sha256": "67EEBB77DC2BA0B5BEE9E9E0819662A812C2F12F300630A93836A7A9E8654FCB",
+    "typed_wait_responses": [
+      "HarnessWaitInspectionListApiResponse",
+      "HarnessWaitInspectionApiResponse",
+      "HarnessWaitOperationApiResponse"
+    ],
+    "legacy_run_or_approval_paths_present": false,
+    "graph_run_identity_fields": ["graph_id", "graph_version", "graph_ref", "graph_checksum"]
+  },
+  "boundary_evidence": {
+    "test": "tests/architecture/test_graph_external_surface_boundary.py",
+    "scanned_roots": [
+      "interfaces/api",
+      "interfaces/cli",
+      "interfaces/mcp",
+      "interfaces/sdk",
+      "sdk/python",
+      "apps/web/src",
+      "frontend/src/features/studio/review"
+    ],
+    "forbidden_tokens": [
+      "/api/v1/approvals",
+      "client.approvals",
+      "resume_context",
+      "resume-workflow",
+      "buffer_updates",
+      "node_updates",
+      "resume_metadata",
+      "workflow_id",
+      "workflow_version",
+      "workflow_ref"
+    ],
+    "violations": []
+  },
+  "verification": {
+    "backend_api_and_service": "49 passed, 58 warnings",
+    "backend_cli_mcp_sdk": "204 passed, 8 warnings",
+    "architecture_openapi_acceptance": "12 passed, 16 warnings",
+    "frontend_review": "7 passed",
+    "frontend_typecheck": "passed",
+    "web_console_typecheck": "passed",
+    "web_console_build": "passed",
+    "compile": "passed"
+  }
+}

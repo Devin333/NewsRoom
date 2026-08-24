@@ -173,14 +173,14 @@ AgentLoop Graph smoke 与 control-evidence slice 已完成 task 6.5/6.6。worker
 
 ## 7. 外部接口和 approval decision / automatic resume
 
-- [ ] 7.1 设计并冻结 API major schema，将 `workflow_id/version/ref` 替换为 `graph_id/version/ref`，明确旧字段不在新 schema 中 alias
-- [ ] 7.2 将 run response、status、inspection、replay、cancel、signal 和 approval-decision API 迁到 Graph application service；cause durable commit 后只由 Harness 自动 resume
-- [ ] 7.3 将 CLI 命令和 JSON/human output 迁到 Graph identity，删除 `resume-workflow` 等旧命令，发布 approval-decision 命令并更新 help/contract tests
-- [ ] 7.4 将 MCP tool、SDK method、OpenAPI schema 和 generated contract 迁到 versioned Graph approval-decision / typed Wait-cause surface
-- [ ] 7.5 为 approval decision 校验当前 durable Graph run、Wait registration、approval evidence、actor identity、authorization、scope 和 idempotency；checkpoint 仅由 recovery/replay owner 校验
-- [ ] 7.6 增加 interface boundary tests，证明 API/CLI/MCP/SDK 不直接构造 scheduler、executor、store 或旧 runtime
-- [ ] 7.7 更新客户端调用方清单、发布说明、major cutover date 和 deprecation/deletion evidence
-- [ ] 7.8 从 approval context 删除共享 `buffer_updates`、caller-supplied `node_updates` 和 `resume_metadata`；只返回 bounded Wait/approval inspection context并拒绝任何 routing/state-patch 输入
+- [x] 7.1 设计并冻结 API major schema，将 `workflow_id/version/ref` 替换为 `graph_id/version/ref`，明确旧字段不在新 schema 中 alias
+- [x] 7.2 将 run response、status、inspection、replay、cancel、signal 和 approval-decision API 迁到 Graph application service；cause durable commit 后只由 Harness 自动 resume
+- [x] 7.3 将 CLI 命令和 JSON/human output 迁到 Graph identity，删除 `resume-workflow` 等旧命令，发布 approval-decision 命令并更新 help/contract tests
+- [x] 7.4 将 MCP tool、SDK method、OpenAPI schema 和 generated contract 迁到 versioned Graph approval-decision / typed Wait-cause surface
+- [x] 7.5 为 approval decision 校验当前 durable Graph run、Wait registration、approval evidence、actor identity、authorization、scope 和 idempotency；checkpoint 仅由 recovery/replay owner 校验
+- [x] 7.6 增加 interface boundary tests，证明 API/CLI/MCP/SDK 不直接构造 scheduler、executor、store 或旧 runtime
+- [x] 7.7 更新客户端调用方清单、发布说明、major cutover date 和 deprecation/deletion evidence
+- [x] 7.8 从 approval context 删除共享 `buffer_updates`、caller-supplied `node_updates` 和 `resume_metadata`；只返回 bounded Wait/approval inspection context并拒绝任何 routing/state-patch 输入
 
 ## 8. 历史数据处置
 
