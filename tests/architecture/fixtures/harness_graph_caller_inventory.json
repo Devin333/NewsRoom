@@ -192,7 +192,8 @@
     "tests/architecture/test_graph_only_freeze.py",
     "business/layers/_worker_utils.py",
     "tests/interfaces/api/test_graph_run_inspection_api.py",
-    "tests/interfaces/services/test_graph_run_inspection_index_authority.py"
+    "tests/interfaces/services/test_graph_run_inspection_index_authority.py",
+    "tests/interfaces/cli/test_graph_runs_commands.py"
   ],
   "migration_rules": [
     "A callers adopt versioned Graph contracts without changing runtime authority.",
