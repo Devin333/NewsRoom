@@ -1,0 +1,40 @@
+{
+  "schema": "newsroom.research-dynamic-taskplan-production/v1",
+  "captured_at": "2026-08-24",
+  "change": "graph-only-orchestration",
+  "task_refs": ["5.4"],
+  "status": "complete_for_dynamic_taskplan_scope",
+  "implementation": {
+    "outer_graph_definition": "business.research.graphs.paper_analysis.build_dynamic_paper_analysis_graph_definition",
+    "stage_id": "dynamic_analysis_stage",
+    "stage_binding": "framework.harness.graph.definition.HarnessGraphTaskPlanStageBinding",
+    "stage_worker": "business.research.graphs.task_plan.ResearchAnalysisTaskPlanStageWorker",
+    "production_factory": "interfaces.composition.research.build_research_runtime_composition.dynamic_task_plan_runner_factory",
+    "durable_store": "framework.harness.task_plan.store.DurableTaskPlanStore",
+    "durable_transcript": "framework.harness.subagents.transcript.FilesystemSubAgentTranscriptStore",
+    "result_materializer": "business.research.application.graph_result_committer.ResearchTaskPlanResultMaterializer"
+  },
+  "boundary": {
+    "static_path_unchanged_without_opt_in": true,
+    "opt_in_options": ["dynamic_analysis", "dynamic_task_plan"],
+    "outer_graph_frozen": true,
+    "task_plan_is_not_leaf_binding": true,
+    "plan_before_execute": true,
+    "deterministic_verify_before_successor": true,
+    "durable_storage_required": true,
+    "missing_capability_typed_unavailable": true,
+    "worker_decides_route_or_publication": false
+  },
+  "recovery": {
+    "post_receipt_crash_reopens_without_duplicate_worker": true,
+    "offline_replay_avoids_live_subagent_calls": true,
+    "plan_validation_failure_blocks_subagent_and_publication": true,
+    "claim_gate_failure_blocks_successors_and_publication": true
+  },
+  "verification": {
+    "command": ".\\.venv\\Scripts\\python.exe -m pytest tests/business/research/integration/test_dynamic_paper_analysis_task_plan.py tests/interfaces/composition/test_research_composition.py -q",
+    "result": "20 passed",
+    "broader_command": ".\\.venv\\Scripts\\python.exe -m pytest tests/framework/harness/task_plan tests/business/research/graphs tests/business/research/reader_repair tests/business/research/integration/test_research_rag_loop_fake_runtime.py tests/business/research/graphs/test_task_plan.py -q",
+    "broader_result": "227 passed"
+  }
+}

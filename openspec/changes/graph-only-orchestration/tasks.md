@@ -135,7 +135,7 @@ TaskPlan result contract 的 Gate A 子切片已由 commit `e7ec9d9c00ec63cd7688
 - [x] 5.1 将 `business/research/workflows` 迁为 `business/research/graphs`，同步 builder、module、fixture、test 和 import 名称
 - [x] 5.2 将 paper analysis composition 返回 `HarnessGraphDefinition`，移除 `HarnessWorkflowSpec` 和 legacy routing fields
 - [x] 5.3 将 static Research path 固定为 Graph `Parallel-All + VerifiedAggregation`，验证 Graph checksum 与 gate version
-- [ ] 5.4 将 dynamic analysis 作为 frozen Graph 内 opt-in dynamic stage，保留 bounded `PLAN -> EXECUTE -> VERIFY` 和 durable TaskPlan
+- [x] 5.4 将 dynamic analysis 作为 frozen Graph 内 opt-in dynamic stage，保留 bounded `PLAN -> EXECUTE -> VERIFY` 和 durable TaskPlan
 - [ ] 5.5 将 reader repair subagent declarations、memory write intent 和 promotion boundary 接到 Graph activity/gate contract
 - [x] 5.6 更新 `interfaces/composition/research.py`、Research application service 和 runtime wiring，确保 `business/research` 不导入任何旧 Workflow namespace
 - [ ] 5.7 增加 Research static、dynamic、reader repair、gated failure、artifact publication、replay 和 production-adapter composition tests
