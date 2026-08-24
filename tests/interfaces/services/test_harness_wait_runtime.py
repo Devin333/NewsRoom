@@ -281,6 +281,128 @@ def test_durable_approval_resolver_rejects_conflicting_retry(tmp_path: Path) -> 
     assert exc_info.value.code == "wait_approval_decision_conflict"
 
 
+def test_durable_approval_resolver_rejects_new_decision_after_wait_is_resolved(
+    tmp_path: Path,
+) -> None:
+    _service, registration, resolver = _waiting_service(
+        "registry-approval-stale",
+        wait_kind="approval",
+    )
+    binding = resolver.binding
+    registry = HarnessWaitRuntimeRegistry(tmp_path)
+    registry.register(
+        binding.run_spec,
+        binding.control_plane,
+        tenant_scope_ref=binding.run_spec.metadata["tenant_scope_ref"],
+        identity_scope_ref=binding.run_spec.metadata["identity_scope_ref"],
+    )
+    scope_resolver = _ActorScopeResolver(
+        HarnessWaitActorScope(
+            tenant_scope_ref=binding.run_spec.metadata["tenant_scope_ref"],
+            identity_scope_ref=binding.run_spec.metadata["identity_scope_ref"],
+            actor_identity_scope_ref=checksum_for({"actor": "actor-1"}),
+        )
+    )
+    service = HarnessWaitApplicationService(
+        actor=_actor(),
+        runtime_resolver=registry,
+        actor_scope_resolver=scope_resolver,
+        approval_resolver=DurableHarnessWaitApprovalResolver(
+            runtime_resolver=registry,
+            actor_scope_resolver=scope_resolver,
+            root=tmp_path,
+        ),
+    )
+    service.decide_approval(
+        binding.run_spec.run_id,
+        registration.node_instance_id,
+        approval_id="approval-1",
+        approved=True,
+    )
+
+    with pytest.raises(HarnessWaitRequestError) as exc_info:
+        service.decide_approval(
+            binding.run_spec.run_id,
+            registration.node_instance_id,
+            approval_id="another-approval",
+            approved=True,
+        )
+    assert exc_info.value.code == "wait_approval_stale"
+
+
+def test_durable_approval_resolver_rejects_same_approval_id_on_another_graph(
+    tmp_path: Path,
+) -> None:
+    _service_one, registration_one, resolver_one = _waiting_service(
+        "registry-approval-cross-graph-1",
+        wait_kind="approval",
+    )
+    _service_two, registration_two, resolver_two = _waiting_service(
+        "registry-approval-cross-graph-2",
+        wait_kind="approval",
+    )
+    binding_one = resolver_one.binding
+    binding_two = resolver_two.binding
+    registry = HarnessWaitRuntimeRegistry(tmp_path)
+    for binding in (binding_one, binding_two):
+        registry.register(
+            binding.run_spec,
+            binding.control_plane,
+            tenant_scope_ref=binding.run_spec.metadata["tenant_scope_ref"],
+            identity_scope_ref=binding.run_spec.metadata["identity_scope_ref"],
+        )
+    scope_one = _ActorScopeResolver(
+        HarnessWaitActorScope(
+            tenant_scope_ref=binding_one.run_spec.metadata["tenant_scope_ref"],
+            identity_scope_ref=binding_one.run_spec.metadata["identity_scope_ref"],
+            actor_identity_scope_ref=checksum_for({"actor": "actor-1"}),
+        )
+    )
+    approval_resolver = DurableHarnessWaitApprovalResolver(
+        runtime_resolver=registry,
+        actor_scope_resolver=scope_one,
+        root=tmp_path,
+    )
+    service_one = HarnessWaitApplicationService(
+        actor=_actor(),
+        runtime_resolver=registry,
+        actor_scope_resolver=scope_one,
+        approval_resolver=approval_resolver,
+    )
+    service_one.decide_approval(
+        binding_one.run_spec.run_id,
+        registration_one.node_instance_id,
+        approval_id="approval-1",
+        approved=True,
+    )
+
+    scope_two = _ActorScopeResolver(
+        HarnessWaitActorScope(
+            tenant_scope_ref=binding_two.run_spec.metadata["tenant_scope_ref"],
+            identity_scope_ref=binding_two.run_spec.metadata["identity_scope_ref"],
+            actor_identity_scope_ref=checksum_for({"actor": "actor-1"}),
+        )
+    )
+    service_two = HarnessWaitApplicationService(
+        actor=_actor(),
+        runtime_resolver=registry,
+        actor_scope_resolver=scope_two,
+        approval_resolver=DurableHarnessWaitApprovalResolver(
+            runtime_resolver=registry,
+            actor_scope_resolver=scope_two,
+            root=tmp_path,
+        ),
+    )
+    with pytest.raises(HarnessWaitRequestError) as exc_info:
+        service_two.decide_approval(
+            binding_two.run_spec.run_id,
+            registration_two.node_instance_id,
+            approval_id="approval-1",
+            approved=True,
+        )
+    assert exc_info.value.code == "wait_approval_decision_conflict"
+
+
 def test_durable_approval_resolver_rejects_tampered_event_reference(
     tmp_path: Path,
 ) -> None:

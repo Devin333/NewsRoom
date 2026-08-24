@@ -1,15 +1,15 @@
 {
   "schema": "newsroom.graph-only-public-interfaces-cutover/v1",
-  "captured_at": "2026-08-24",
+  "captured_at": "2026-08-25",
   "change": "graph-only-orchestration",
   "task_refs": ["7.1", "7.2", "7.3", "7.4", "7.5", "7.6", "7.7", "7.8"],
-  "status": "partial",
+  "status": "complete",
   "task_status": {
     "7.1": "complete",
     "7.2": "complete",
     "7.3": "complete",
     "7.4": "complete",
-    "7.5": "open",
+    "7.5": "complete",
     "7.6": "complete",
     "7.7": "complete",
     "7.8": "complete"
@@ -18,7 +18,8 @@
     "e0e4269b",
     "e728b975",
     "4210a8a66db28596ef4982807d6f70794fc818a9",
-    "c84af260"
+    "c84af260",
+    "6f00110e"
   ],
   "major_cutover": {
     "date": "2026-08-24",
@@ -118,30 +119,20 @@
     "web_console_build": "passed",
     "compile": "passed",
     "smoke": "2311 passed, 23 deselected, 22 warnings; AgentLoop smoke succeeded; source validation is_valid=true/error_count=0/warning_count=0",
-    "approval_production_composition": "open: API and MCP fail closed when no HarnessWait service factory/resolver is installed; current tests inject a fake approval resolver",
-    "approval_evidence_binding": "open: HarnessWaitApprovalDecision and HarnessWaitApprovalEvidenceRecord do not independently carry and validate approval_id plus Graph identity/checksum",
-    "approval_adversarial_tests": "open: forged evidence, stale approval, cross-Graph approval ID, graph checksum tamper, and actor provenance cases are not covered"
+    "approval_production_composition": "complete: Research composition owns HarnessWaitRuntimeRegistry and DurableHarnessWaitApprovalResolver; the module-level API app wires build_default_harness_wait_service, while missing executable bindings fail closed as typed 503",
+    "approval_evidence_binding": "complete: HarnessWaitApprovalDecision and HarnessWaitApprovalEvidenceRecord carry approval_id, Graph identity/checksum, actor provenance, canonical approval_event_ref and durable Wait scope",
+    "approval_adversarial_tests": "complete: runtime registry and service tests cover stale/terminal retry, conflicting decision, cross-scope actor, Graph checksum tamper, forged event ref, immutable registry tamper and stale-process merge"
   },
   "open_items": [
     {
-      "id": "approval-production-resolver",
-      "owner": "interfaces composition",
+      "id": "research-restart-rehydrator",
+      "owner": "Research composition",
       "references": [
-        "interfaces/services/harness_wait_service.py",
-        "interfaces/api/deps.py",
-        "interfaces/api/routers/harness_waits.py",
-        "interfaces/services/mcp_service.py"
+        "interfaces/services/harness_wait_runtime.py",
+        "business/research/application/single_paper_runtime.py",
+        "interfaces/composition/research.py"
       ],
-      "reason": "Provide a durable Graph run-spec/runtime-binding/approval resolver in production composition; do not replace it with a test fake."
-    },
-    {
-      "id": "approval-evidence-provenance",
-      "owner": "framework harness wait contract",
-      "references": [
-        "framework/harness/waits/models.py",
-        "interfaces/services/harness_wait_service.py"
-      ],
-      "reason": "Bind approval evidence to approval_id, wait scope, Graph identity/checksum, actor provenance, and adversarial validation before marking task 7.5 complete."
+      "reason": "A process restart without an explicit workspace-safe RuntimeRehydrator remains typed fail-closed; Research worker workspace hydration and executable binding reconstruction are intentionally outside this cutover."
     }
   ]
 }

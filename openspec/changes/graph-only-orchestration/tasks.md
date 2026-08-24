@@ -177,7 +177,7 @@ AgentLoop Graph smoke 与 control-evidence slice 已完成 task 6.5/6.6。worker
 - [x] 7.2 将 run response、status、inspection、replay、cancel、signal 和 approval-decision API 迁到 Graph application service；cause durable commit 后只由 Harness 自动 resume
 - [x] 7.3 将 CLI 命令和 JSON/human output 迁到 Graph identity，删除 `resume-workflow` 等旧命令，发布 approval-decision 命令并更新 help/contract tests
 - [x] 7.4 将 MCP tool、SDK method、OpenAPI schema 和 generated contract 迁到 versioned Graph approval-decision / typed Wait-cause surface
-- [ ] 7.5 为 approval decision 校验当前 durable Graph run、Wait registration、approval evidence、actor identity、authorization、scope 和 idempotency；checkpoint 仅由 recovery/replay owner 校验。当前 application-service 的条件校验与 Harness commit 已完成，但生产 `HarnessWaitApprovalResolverPort`/runtime binding 尚未接入，approval evidence 也尚未独立绑定完整 Graph identity，因此不能宣称完成。
+- [x] 7.5 为 approval decision 校验当前 durable Graph run、Wait registration、approval evidence、actor identity、authorization、scope 和 idempotency；checkpoint 仅由 recovery/replay owner 校验。commit `6f00110e` 接入 composition-owned `HarnessWaitRuntimeRegistry` 与 `DurableHarnessWaitApprovalResolver`：完整 `HarnessRunSpec`、scope、Graph checksum 和 approval decision 原子持久化，重复 decision 重新校验当前 Graph/Wait/scope 后幂等返回，冲突、stale、cross-Graph、actor scope 和 tampered event ref fail closed。Research 进程重启若没有显式 workspace-safe rehydrator 保持 typed 503，不从 inspection projection 猜测 executable binding。
 - [x] 7.6 增加 interface boundary tests，证明 API/CLI/MCP/SDK 不直接构造 scheduler、executor、store 或旧 runtime
 - [x] 7.7 更新客户端调用方清单、发布说明、major cutover date 和 deprecation/deletion evidence
 - [x] 7.8 从 approval context 删除共享 `buffer_updates`、caller-supplied `node_updates` 和 `resume_metadata`；只返回 bounded Wait/approval inspection context并拒绝任何 routing/state-patch 输入
