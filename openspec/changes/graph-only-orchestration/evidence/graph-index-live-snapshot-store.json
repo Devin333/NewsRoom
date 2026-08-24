@@ -1,18 +1,23 @@
 {
   "schema": "newsroom.graph-index-live-snapshot-store-evidence/v1",
-  "captured_at": "2026-08-23",
+  "captured_at": "2026-08-24",
   "change": "graph-only-orchestration",
   "task_refs": [
     "4.7",
     "4.12"
   ],
-  "status": "production_manifest_index_publication_and_read_back_complete_authority_cutover_open",
-  "implementation_commit": "fc3cc9ad",
+  "status": "production_graph_index_authority_cutover_complete",
+  "implementation_commit": "cf07ca788d7c5b235e47cef1fb875e93b5bf9196",
+  "implementation_tree": "b2dcf056fb98ad5fa261b61d7da046b6ef3dd3ed",
+  "publisher_commit": "fc3cc9ad",
   "owners": {
     "snapshot": "infrastructure.storage.indexing.local_store.GraphStorageIndexSnapshot",
     "port": "infrastructure.storage.indexing.local_store.GraphStorageIndexStorePort",
     "local_store": "infrastructure.storage.indexing.local_store.LocalGraphStorageIndexStore",
     "publisher": "infrastructure.storage.indexing.publication.GraphStorageIndexPublisher",
+    "reader_port": "infrastructure.storage.indexing.reader.GraphStorageIndexReaderPort",
+    "reader": "infrastructure.storage.indexing.reader.GraphStorageIndexReader",
+    "inspection_service": "interfaces.services.run_inspection_service.GraphRunInspectionService",
     "manifest_reader": "infrastructure.research.artifact_port.FilesystemHarnessArtifactPort",
     "identity": "infrastructure.storage.indexing.contracts.GraphStorageIndexIdentity",
     "binding_projection": "infrastructure.storage.indexing.bindings.GraphArtifactBindingProjection",
@@ -24,6 +29,7 @@
   "invariants": {
     "exact_graph_identity_path": true,
     "immutable_snapshot_schema": "newsroom.graph-storage-index-snapshot/v1",
+    "event_record_schema": "newsroom.graph-event-index-record/v2",
     "atomic_write": true,
     "exclusive_lock": true,
     "same_body_idempotency": true,
@@ -38,43 +44,43 @@
     "canonical_manifest_reread_before_materialization": true,
     "durable_event_reader_is_authoritative": true,
     "snapshot_write_and_exact_read_back": true,
+    "reader_rechecks_snapshot_identity_integrity_and_manifest_bindings": true,
+    "inspection_requires_graph_index_reader": true,
+    "inspection_has_no_manifest_step_or_replay_fallback": true,
+    "replay_rechecks_index_against_manifest_artifact_reader_and_durable_events": true,
+    "catalog_health_rejects_missing_or_corrupt_index": true,
     "internal_ref_only_artifacts_excluded_from_public_index": true,
     "research_artifact_node_instance_fabricated": false,
     "events_jsonl_is_not_index_authority": true
   },
   "verification": {
-    "live_index_focused": {
-      "command": ".\\.venv\\Scripts\\python.exe -m pytest tests/infrastructure/storage/indexing/test_local_graph_index_store.py -q",
-      "result": "4 passed"
+    "index_authority_and_interfaces": {
+      "command": ".\\.venv\\Scripts\\python.exe -m pytest tests/infrastructure/storage/indexing tests/interfaces/services/test_graph_run_inspection_index_authority.py tests/interfaces/api/test_graph_run_inspection_api.py tests/interfaces/api/test_api_mcp.py tests/interfaces/services/test_mcp_application_service.py tests/interfaces/mcp/test_stdio_server.py -q",
+      "result": "98 passed, 46 warnings"
     },
-    "candidate_and_boundary_focused": {
-      "command": ".\\.venv\\Scripts\\python.exe -m pytest tests/infrastructure/storage/indexing tests/architecture/test_graph_storage_index_boundary.py -q",
-      "result": "33 passed"
-    },
-    "publisher_focused": {
-      "command": ".\\.venv\\Scripts\\python.exe -m pytest tests/infrastructure/storage/indexing/test_publication.py -q",
-      "result": "3 passed"
-    },
-    "production_recorded_transport": {
-      "command": ".\\.venv\\Scripts\\python.exe -m pytest tests/interfaces/composition/test_research_recorded_transport.py::test_recorded_transports_execute_full_production_research_analysis -q",
-      "result": "1 passed, 4 warnings; two canonical Graph index snapshots read back"
-    },
-    "research_binding_focused": {
-      "command": ".\\.venv\\Scripts\\python.exe -m pytest tests/infrastructure/storage/indexing/test_bindings.py tests/infrastructure/research/test_artifact_publication.py -q",
-      "result": "24 passed"
-    },
-    "compile": {
-      "command": ".\\.venv\\Scripts\\python.exe -m scripts.dev compile",
-      "result": "passed"
+    "failed_terminal_production_read_back": {
+      "command": ".\\.venv\\Scripts\\python.exe -m pytest tests/interfaces/composition/test_research_recorded_transport.py::test_explicit_low_rag_replan_budget_halts_and_persists -q",
+      "result": "1 passed, 2 warnings; halted terminal manifest and Graph index snapshot read back with matching identity and checksum"
     },
     "mandatory_smoke": {
       "command": ".\\.venv\\Scripts\\python.exe -m scripts.dev smoke",
-      "result": "2292 passed, 23 deselected, 22 warnings; AgentLoop succeeded; source validation is_valid=true/error_count=0/warning_count=0"
+      "result": "2303 passed, 23 deselected, 22 warnings; AgentLoop smoke succeeded; source validation is_valid=true/error_count=0/warning_count=0; exit 0"
+    },
+    "change_validation": {
+      "command": "openspec validate graph-only-orchestration --strict",
+      "result": "passed"
+    },
+    "full_validation": {
+      "command": "openspec validate --all --strict",
+      "result": "passed"
     }
   },
-  "open_gaps": [
-    "The production success path now publishes a canonical Graph index, but an explicit production failed-terminal fixture and read-back assertion remain open.",
-    "Live artifact/event readers, inspection, replay checks and Graph index authority cutover remain open; the snapshot writer does not add a pointer or rollback mode.",
-    "Task 4.12 remains unchecked; this is not a final Graph-only release claim."
-  ]
+  "open_gaps": [],
+  "out_of_scope_open_work": [
+    "Other graph-only-orchestration tasks remain open; this evidence does not claim final Graph-only release completion."
+  ],
+  "task_status": {
+    "task_4_7_checked": true,
+    "task_4_12_checked": true
+  }
 }

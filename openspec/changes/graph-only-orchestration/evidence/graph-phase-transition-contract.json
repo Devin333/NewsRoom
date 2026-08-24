@@ -1,0 +1,117 @@
+{
+  "schema": "newsroom.graph-phase-transition-contract-evidence/v1",
+  "captured_at": "2026-08-24",
+  "change": "graph-only-orchestration",
+  "task_refs": [
+    "3.3",
+    "4.11"
+  ],
+  "status": "production_graph_phase_writer_active",
+  "implementation_commit": "cf07ca788d7c5b235e47cef1fb875e93b5bf9196",
+  "implementation_tree": "b2dcf056fb98ad5fa261b61d7da046b6ef3dd3ed",
+  "prior_gate_a_commit": "a368baee4d13108a27705ebc3134a5e563550a0d",
+  "owners": {
+    "record": "framework.events.graph_phase.GraphPhaseTransitionRecord",
+    "graph_identity": "framework.shared.graph_identity.GraphRunIdentity",
+    "node_context": "framework.events.projection.GraphEventContext",
+    "writer_port": "framework.events.application.GraphEventContextWriterPort",
+    "writer": "framework.harness.control_plane.durable_events.DurableGraphEventContextWriter",
+    "phase_entrypoint": "framework.harness.control_plane.harness.HarnessControlPlane._record_graph_phase",
+    "recovery_commit": "framework.harness.control_plane.durable_events.DurableHarnessTransitionPort",
+    "schema": "newsroom.harness-graph-phase-transition/v1"
+  },
+  "phase_contract": {
+    "checksum_bound": true,
+    "record_fields": [
+      "schema",
+      "context",
+      "phase",
+      "boundary",
+      "attempt",
+      "event_sequence",
+      "gate_evidence_refs",
+      "occurred_at",
+      "record_checksum"
+    ],
+    "supported_phases": [
+      "plan",
+      "execute",
+      "verify",
+      "replan",
+      "halt"
+    ],
+    "supported_boundaries": [
+      "entry",
+      "exit"
+    ],
+    "node_context_required": true,
+    "exact_graph_versions_required": true,
+    "event_sequence_positive": true,
+    "envelope_sequence_assertion": true,
+    "gate_evidence_ref_format": "unique canonical-order SHA-256 refs",
+    "utc_occurrence_time_required": true,
+    "workflow_identity_alias_allowed": false
+  },
+  "activation_invariants": {
+    "phase_entrypoint_uses_dedicated_writer": true,
+    "generic_durable_record_rejects_phase_transition": true,
+    "canonical_stream_is_exact": true,
+    "exact_graph_context_and_business_identity_are_checked": true,
+    "optional_expected_last_sequence_uses_compare_and_swap": true,
+    "stored_context_and_envelope_sequence_are_read_back": true,
+    "recovery_commit_reuses_the_writer": true,
+    "legacy_phase_writer_reachable_from_production": false,
+    "graph_projection_schema": "newsroom.graph-event-projection/v2"
+  },
+  "fail_closed_invariants": [
+    "missing node_id or node_instance_id",
+    "moving graph, graph-schema, or compiler version",
+    "unknown root or context field including Workflow aliases",
+    "unsupported phase or boundary",
+    "negative attempt or non-positive event sequence",
+    "duplicate, malformed, or non-canonical gate evidence refs",
+    "naive or malformed occurrence time",
+    "record checksum mismatch",
+    "record and durable envelope sequence mismatch",
+    "stale compare-and-swap sequence",
+    "generic event recording used to bypass the phase writer"
+  ],
+  "artifact_boundary": {
+    "artifact_owner_removed": false,
+    "artifact_runtime_and_storage_retained": true,
+    "artifact_publication_authority_changed": false,
+    "artifact_contract_imported_by_phase_record": false
+  },
+  "gate_classification": {
+    "direct_replacement": true,
+    "task_3_3_complete": true,
+    "task_4_11_complete": true,
+    "legacy_phase_writer_changed": true,
+    "production_event_schema_changed": true,
+    "recovery_or_replay_reader_changed": true,
+    "external_projection_schema_active": "newsroom.graph-event-projection/v2",
+    "reason": "The live Harness phase path and durable recovery commit now use the checksum-bound Graph context writer. Event projection remains owned by framework.events through GraphEventProjectionApplicationPort, and run inspection has no legacy reader fallback."
+  },
+  "verification": {
+    "event_application_and_inspection": {
+      "command": ".\\.venv\\Scripts\\python.exe -m pytest tests/framework/harness/control_plane/test_graph_event_context_writer.py tests/framework/events tests/interfaces/services/test_event_projection_service.py tests/interfaces/services/test_event_reader_service.py tests/interfaces/services/test_run_inspection_projection.py tests/architecture/test_graph_event_application_boundary.py -q",
+      "result": "493 passed"
+    },
+    "mandatory_smoke": {
+      "command": ".\\.venv\\Scripts\\python.exe -m scripts.dev smoke",
+      "result": "2303 passed, 23 deselected, 22 warnings; AgentLoop smoke succeeded; source validation is_valid=true/error_count=0/warning_count=0; exit 0"
+    },
+    "change_validation": {
+      "command": "openspec validate graph-only-orchestration --strict",
+      "result": "passed"
+    },
+    "full_validation": {
+      "command": "openspec validate --all --strict",
+      "result": "passed"
+    }
+  },
+  "task_status": {
+    "task_3_3_checked": true,
+    "task_4_11_checked": true
+  }
+}

@@ -1,0 +1,87 @@
+{
+  "schema": "newsroom.graph-only-event-application-port-contract/v1",
+  "captured_at": "2026-08-24",
+  "change": "graph-only-orchestration",
+  "task_refs": [
+    "4.4",
+    "4.11"
+  ],
+  "status": "production_graph_event_application_active",
+  "implementation_commit": "cf07ca788d7c5b235e47cef1fb875e93b5bf9196",
+  "implementation_tree": "b2dcf056fb98ad5fa261b61d7da046b6ef3dd3ed",
+  "prior_gate_a_commit": "2ca1387402ebddd9100666ad6f34ce0102c3d1d8",
+  "owner": {
+    "contract_namespace": "framework.events.application",
+    "context_writer_port": "GraphEventContextWriterPort",
+    "context_writer": "framework.harness.control_plane.durable_events.DurableGraphEventContextWriter",
+    "projection_port": "GraphEventProjectionApplicationPort",
+    "projection_service": "interfaces.services.event_projection_service.EventProjectionService",
+    "run_inspection_service": "interfaces.services.run_inspection_service.GraphRunInspectionService",
+    "durable_read_service": "interfaces.services.event_reader_service.EventReaderService",
+    "migration_port": "EventMigrationAssessmentApplicationPort",
+    "read_only_migration_adapter": "ReadOnlyEventMigrationAssessmentAdapter"
+  },
+  "installed_contract": {
+    "request_schema": "newsroom.graph-event-projection-application-request/v1",
+    "projection_schema": "newsroom.graph-event-projection/v2",
+    "history_diagnostic_schema": "newsroom.graph-event-history-diagnostic/v1",
+    "features": [
+      "checksum-bound exact-schema Graph projection request",
+      "Graph run and normalized Graph checksum identity binding",
+      "tenant and stream scope validation",
+      "fixed durable high-watermark projection",
+      "bounded projection paging",
+      "typed empty, missing, invalid, alias-present and identity-mismatch diagnostics",
+      "durable Graph context writer with exact stream/context/business identity validation",
+      "compare-and-swap phase transition sequence and stored read-back",
+      "run inspection reads durable Graph events through EventReaderService and never falls back to static manifest events",
+      "projection status is verified through GraphEventProjectionApplicationPort",
+      "history-only diagnostics cannot grant resumable, executable or projectable authority"
+    ],
+    "compatibility_facade_added": false,
+    "framework_workflow_imports": 0,
+    "production_writer_methods": 1,
+    "legacy_projection_reader_reachable_from_production": false
+  },
+  "artifact_alignment": {
+    "artifact_owner_removed": false,
+    "preserved_owner": "framework.harness.artifacts",
+    "statement": "The event application boundary is independent of the retained Graph Artifact owner and does not replace artifact catalog, governance, reporting, runtime or terminal manifest capabilities."
+  },
+  "gate_classification": {
+    "task_4_4_repository_preparation": "complete",
+    "task_4_11_direct_production_cutover": "complete",
+    "harness_graph_writer_switched": true,
+    "production_projection_reader_switched": true,
+    "run_inspection_reader_switched": true,
+    "external_projection_schema_active": "newsroom.graph-event-projection/v2",
+    "legacy_projection_reader_reachable_from_production": false,
+    "reason": "Durable Harness writes, projection verification, and inspection now use the Graph event owner and Graph-only application services. The service constructor has no stale projection or legacy reader fallback."
+  },
+  "remaining_gate_work": [],
+  "out_of_scope_open_work": [
+    "Other graph-only-orchestration tasks remain open; this evidence closes only tasks 4.4 and 4.11."
+  ],
+  "verification": {
+    "event_application_and_inspection": {
+      "command": ".\\.venv\\Scripts\\python.exe -m pytest tests/framework/harness/control_plane/test_graph_event_context_writer.py tests/framework/events tests/interfaces/services/test_event_projection_service.py tests/interfaces/services/test_event_reader_service.py tests/interfaces/services/test_run_inspection_projection.py tests/architecture/test_graph_event_application_boundary.py -q",
+      "result": "493 passed"
+    },
+    "mandatory_smoke": {
+      "command": ".\\.venv\\Scripts\\python.exe -m scripts.dev smoke",
+      "result": "2303 passed, 23 deselected, 22 warnings; AgentLoop smoke succeeded; source validation is_valid=true/error_count=0/warning_count=0; exit 0"
+    },
+    "change_validation": {
+      "command": "openspec validate graph-only-orchestration --strict",
+      "result": "passed"
+    },
+    "full_validation": {
+      "command": "openspec validate --all --strict",
+      "result": "passed"
+    }
+  },
+  "task_status": {
+    "task_4_4_checked": true,
+    "task_4_11_checked": true
+  }
+}
