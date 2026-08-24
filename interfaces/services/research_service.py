@@ -287,6 +287,26 @@ class ResearchApplicationService:
             raise service_error from exc
 
         record = ResearchRunRecord(run_id=run_id, paper_id=paper_id, result=result)
+        execution_error_type = _result_execution_error_type(result)
+        if execution_error_type is not None:
+            service_error = ResearchServiceError(
+                "research_run_failed",
+                "research run failed",
+                status_code=500,
+                details={"error_type": execution_error_type},
+                retryable=True,
+            )
+            try:
+                recovered = self._reconcile_failed_run(request, actor_scope)
+            except Exception as recovery_error:
+                _record_recovery_failure(service_error, recovery_error)
+                raise service_error from recovery_error
+            if recovered is None:
+                try:
+                    self._run_store.save(record)
+                except ResearchRunStoreError as exc:
+                    raise _run_store_service_error(exc, operation="save") from None
+            raise service_error
         try:
             self._run_store.save(record)
         except ResearchRunStoreError as exc:
@@ -986,6 +1006,33 @@ def _bounded_int(
 
 def _result_status(result: Any) -> str:
     return str(getattr(result, "status", None) or "unknown")
+
+
+def _result_execution_error_type(result: Any) -> str | None:
+    """Read physical worker exception evidence without routing from Worker data."""
+
+    if _result_status(result) != "failed":
+        return None
+    diagnostics = getattr(result, "diagnostics", None)
+    if not isinstance(diagnostics, Mapping):
+        return None
+    worker_results = diagnostics.get("worker_results")
+    if not isinstance(worker_results, Mapping):
+        return None
+    error_types = {
+        str(worker_diagnostics.get("execution_error_type")).strip()
+        for worker_result in worker_results.values()
+        if isinstance(worker_result, Mapping)
+        and isinstance(
+            worker_diagnostics := worker_result.get("diagnostics"),
+            Mapping,
+        )
+        and isinstance(worker_diagnostics.get("execution_error_type"), str)
+        and worker_diagnostics.get("execution_error_type", "").strip()
+    }
+    if len(error_types) != 1:
+        return None
+    return next(iter(error_types))
 
 
 def _artifact_refs(result: Any) -> dict[str, str]:

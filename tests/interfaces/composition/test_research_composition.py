@@ -19,6 +19,9 @@ from business.research.application.graph_result_committer import (
     ResearchGraphResultCommitter,
     ResearchTaskPlanResultMaterializer,
 )
+from business.research.application.reader_repair_runtime import (
+    ReaderRepairGraphApplicationService,
+)
 from business.research.application.artifact_context import (
     ResearchGraphArtifactContextProvider,
 )
@@ -123,6 +126,25 @@ class _BlockingClosable(_Closable):
         self.started.set()
         if not self.release.wait(timeout=5):
             raise TimeoutError("blocking close was not released")
+
+
+class _ReaderRepairMemoryAdapter:
+    def recall_cases(self, _query):
+        return ()
+
+    def recall_strategies(self, _issue_type, *, namespace):
+        del namespace
+        return []
+
+
+class _ReaderRepairMemoryCommitAdapter:
+    def commit(self, _request):
+        raise AssertionError("Reader Repair memory commit was not expected")
+
+
+class _ReaderRepairFailureCommitAdapter:
+    def commit_failure_diagnostic(self, _request):
+        raise AssertionError("Reader Repair diagnostic commit was not expected")
 
 
 def _settings(tmp_path: Path) -> ResearchRuntimeSettings:
@@ -314,6 +336,7 @@ def test_valid_settings_compose_full_durable_production_graph(
             "newsroom.research_run_record.v2",
         )
         assert service._run_reconciler is not None
+        assert composition.reader_repair_service is None
 
         runtime = service._analyze_use_case._runtime
         assert isinstance(runtime, ResearchSinglePaperRuntime)
@@ -453,6 +476,44 @@ def test_valid_settings_compose_full_durable_production_graph(
         composition.close()
         event_database.replace(moved_database)
         moved_database.replace(event_database)
+    finally:
+        composition.close()
+
+
+def test_production_composition_registers_reader_repair_only_with_durable_ports(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    settings = _settings(tmp_path)
+    monkeypatch.delenv("NEWS_DATABASE_DSN", raising=False)
+    monkeypatch.setenv(
+        "NEWS_ACTIVITY_ENCRYPTION_KEY",
+        Fernet.generate_key().decode("ascii"),
+    )
+    monkeypatch.setenv("NEWS_ARTIFACT_ROOT", str(settings.artifact.root))
+    monkeypatch.setenv(settings.llm.api_key_env, "sk-composition-reader-repair")
+    monkeypatch.setattr(
+        research_composition,
+        "build_reader_repair_memory_from_env",
+        lambda: _ReaderRepairMemoryAdapter(),
+    )
+    monkeypatch.setattr(
+        research_composition,
+        "build_reader_repair_memory_commit_port_from_env",
+        lambda: _ReaderRepairMemoryCommitAdapter(),
+    )
+    monkeypatch.setattr(
+        research_composition,
+        "build_reader_repair_failure_diagnostic_commit_port_from_env",
+        lambda: _ReaderRepairFailureCommitAdapter(),
+    )
+
+    composition = build_research_runtime_composition(settings=settings)
+    try:
+        assert isinstance(
+            composition.reader_repair_service,
+            ReaderRepairGraphApplicationService,
+        )
     finally:
         composition.close()
 

@@ -1,0 +1,105 @@
+{
+  "schema": "newsroom.research-e2e-acceptance/v1",
+  "captured_at": "2026-08-24",
+  "change": "graph-only-orchestration",
+  "prd": "prd-04c-research-e2e-and-boundaries",
+  "task_refs": ["5.7", "5.8"],
+  "status": "complete",
+  "identity": {
+    "static_graph_id": "research.paper_analysis.graph",
+    "static_graph_version": "1",
+    "static_topology": "ParallelAll plus VerifiedAggregation",
+    "dynamic_graph_id": "research.paper_analysis.dynamic.graph",
+    "dynamic_graph_version": "1",
+    "verification_authority": "deterministic Harness VERIFY",
+    "publication_authority": "Research artifact handler after terminal VERIFY"
+  },
+  "matrix": [
+    {
+      "case": "static_graph",
+      "evidence": [
+        "tests/business/research/integration/test_single_paper_loop_fake_runtime.py",
+        "tests/business/research/integration/test_graph_physical_dispatcher_composition.py"
+      ],
+      "command": ".venv\\Scripts\\python.exe -m pytest tests/business/research/integration/test_single_paper_loop_fake_runtime.py tests/business/research/integration/test_graph_physical_dispatcher_composition.py -q",
+      "result": "19 passed",
+      "assertions": [
+        "physical dispatcher is installed before the run",
+        "parallel branches are merged by VerifiedAggregation",
+        "failed verification does not publish a failed payload"
+      ]
+    },
+    {
+      "case": "dynamic_task_plan",
+      "evidence": [
+        "tests/business/research/integration/test_dynamic_paper_analysis_task_plan.py"
+      ],
+      "command": ".venv\\Scripts\\python.exe -m pytest tests/business/research/integration/test_dynamic_paper_analysis_task_plan.py -q",
+      "result": "9 passed",
+      "assertions": [
+        "dynamic analysis is opt-in inside the frozen outer graph",
+        "plan and claim gate failures block publication",
+        "replay and post-receipt crash recovery avoid duplicate live workers"
+      ]
+    },
+    {
+      "case": "reader_repair",
+      "evidence": [
+        "tests/business/research/application/test_reader_repair_runtime.py"
+      ],
+      "command": ".venv\\Scripts\\python.exe -m pytest tests/business/research/application/test_reader_repair_runtime.py -q",
+      "result": "3 passed",
+      "assertions": [
+        "reader repair executes through physical graph activity",
+        "deterministic verification accepts the repaired result",
+        "failed verification writes only a quarantined diagnostic"
+      ]
+    },
+    {
+      "case": "gated_failure_artifact_and_recovery",
+      "evidence": [
+        "tests/business/research/integration/test_research_artifact_publication.py",
+        "tests/interfaces/composition/test_research_recovery_composition.py"
+      ],
+      "command": ".venv\\Scripts\\python.exe -m pytest tests/business/research/integration/test_research_artifact_publication.py tests/interfaces/composition/test_research_recovery_composition.py -q",
+      "result": "17 passed",
+      "assertions": [
+        "terminal publication is authoritative and idempotent",
+        "gated member failure keeps public references hidden",
+        "crash reopen reconciles durable graph state without worker replay",
+        "physical worker exception returns typed service failure and no terminal manifest"
+      ]
+    },
+    {
+      "case": "production_adapter_composition",
+      "evidence": [
+        "tests/interfaces/composition/test_research_composition.py"
+      ],
+      "command": ".venv\\Scripts\\python.exe -m pytest tests/interfaces/composition/test_research_composition.py -q",
+      "result": "12 passed",
+      "assertions": [
+        "durable reader-repair ports register the production application service",
+        "missing durable ports leave reader repair unavailable",
+        "the composition shares the real graph dispatcher, stores, and artifact owner"
+      ]
+    }
+  ],
+  "boundary_scan": {
+    "command": ".venv\\Scripts\\python.exe -m pytest tests/architecture/test_research_boundaries.py tests/architecture/test_harness_graph_authority.py -q",
+    "result": "11 passed",
+    "assertions": [
+      "business/research has no active legacy paper_radar caller",
+      "business/research has no active legacy Workflow runtime caller",
+      "Research does not bypass Harness graph authority"
+    ]
+  },
+  "full_research_composition": {
+    "command": ".venv\\Scripts\\python.exe -m pytest tests/business/research tests/interfaces/composition -q",
+    "result": "1023 passed, 24 deselected, 18 warnings",
+    "duration": "543.28s"
+  },
+  "cross_surface_regression": {
+    "command": ".venv\\Scripts\\python.exe -m pytest tests/framework/harness/runtime/test_graph_physical_activity_executor.py tests/framework/harness/agent_loop tests/framework/harness/control_plane/test_wait_graph_control_plane.py tests/business/research/application/test_reader_repair_runtime.py tests/business/research/integration/test_graph_physical_dispatcher_composition.py -q",
+    "result": "65 passed"
+  }
+}

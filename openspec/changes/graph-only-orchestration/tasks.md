@@ -138,7 +138,7 @@ TaskPlan result contract 的 Gate A 子切片已由 commit `e7ec9d9c00ec63cd7688
 - [x] 5.4 将 dynamic analysis 作为 frozen Graph 内 opt-in dynamic stage，保留 bounded `PLAN -> EXECUTE -> VERIFY` 和 durable TaskPlan
 - [x] 5.5 将 reader repair subagent declarations、memory write intent 和 promotion boundary 接到 Graph activity/gate contract
 - [x] 5.6 更新 `interfaces/composition/research.py`、Research application service 和 runtime wiring，确保 `business/research` 不导入任何旧 Workflow namespace
-- [ ] 5.7 增加 Research static、dynamic、reader repair、gated failure、artifact publication、replay 和 production-adapter composition tests
+- [x] 5.7 增加 Research static、dynamic、reader repair、gated failure、artifact publication、replay 和 production-adapter composition tests
 - [x] 5.8 运行 Research import boundary scan，确认旧 `paper_radar`、interface、infrastructure、generic Workflow runtime 均无直接依赖
 
 TaskPlan event/store 的 Gate A 子切片已由 commit `7c7f648eca28b2af4989ecd8414279fcf49b9197`（tree `18ffdf7ac460f37533beb85639f736bdf17ec06d`）落地：event v2 固定完整 Graph/stage identity，Graph canonical envelope 不携带 `workflow_id` / `step_id`，in-memory 与 durable store 可写入并 reopen Graph-only candidate/accepted plan；v1 仍是默认 writer 且 wire/checksum 不变。TaskResultRecord、task lifecycle、checkpoint、queue、recovery/replay 与 production Research composition 尚未迁移，所以 2.7/5.4 保持未勾选，计数仍为 `29/102`。Artifact subsystem 完整保留，candidate/plan/projection documents 继续走既有 Artifact port，证据见 `evidence/graph-only-task-plan-event-store-contract.json`。

@@ -892,6 +892,8 @@ class _DurableResearchRunRecoverySource:
         if graph_recovery.state is None:
             return None
         status = graph_recovery.state.outcome.value
+        graph_id = graph_recovery.state.graph_ref.graph_id
+        graph_version = graph_recovery.state.graph_ref.identity_version
         # A finalized manifest can become durable immediately before the
         # controller commits COMPLETE_RUN.  It is not an accepted run yet,
         # and persisting that transient state as quarantine would make the
@@ -946,6 +948,8 @@ class _DurableResearchRunRecoverySource:
         result = ResearchAnalysisResult.from_dict(
             {
                 "run_id": run_id,
+                "graph_id": graph_id,
+                "graph_version": graph_version,
                 "status": status,
                 **optional,
                 "quality": quality,

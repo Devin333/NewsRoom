@@ -1163,6 +1163,7 @@ class ResearchSinglePaperRuntime:
             terminal_outcome is None
             and harness_result.status in failed_run_statuses
             and self.artifact_handler_factory is not None
+            and not _harness_result_has_execution_error(harness_result)
         ):
             if not isinstance(
                 self.artifact_port,
@@ -3012,6 +3013,20 @@ def _gate_failures(events: list[HarnessEvent]) -> list[dict[str, Any]]:
         if isinstance(payload, dict) and payload.get("passed") is False:
             failures.append(payload)
     return failures
+
+
+def _harness_result_has_execution_error(harness_result: Any) -> bool:
+    worker_results = getattr(harness_result, "worker_results", None)
+    if not isinstance(worker_results, Mapping):
+        return False
+    return any(
+        isinstance(diagnostics, Mapping)
+        and isinstance(diagnostics.get("execution_error_type"), str)
+        and bool(diagnostics["execution_error_type"].strip())
+        for worker_result in worker_results.values()
+        if isinstance(worker_result, HarnessWorkerResult)
+        for diagnostics in (worker_result.diagnostics,)
+    )
 
 
 __all__ = [

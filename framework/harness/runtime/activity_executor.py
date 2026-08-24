@@ -329,6 +329,10 @@ class HarnessGraphPhysicalActivityExecutor:
             worker_result = HarnessWorkerResult(
                 status=HarnessWorkerStatus.FAILED,
                 error=str(attempt.outcome.error),
+                diagnostics={
+                    "execution_error_type": type(attempt.outcome.error).__name__,
+                    "execution_error_reason_code": attempt.outcome.reason_code,
+                },
             )
         current_commit = self._node_output_resource.committed_output(
             resource_identity
