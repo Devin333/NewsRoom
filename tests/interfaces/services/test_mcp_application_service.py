@@ -9,7 +9,6 @@ from framework.agent.artifacts import (
     ArtifactStoreRequiredError,
 )
 from interfaces.models import ActorContext
-from interfaces.services.approval_service import ApprovalApplicationService
 from interfaces.services.artifact_service import ArtifactInspectionService
 from interfaces.services.mcp_service import MCPApplicationService
 from interfaces.services.report_service import ReportApplicationService
@@ -31,7 +30,6 @@ def test_mcp_catalog_lists_research_tools_without_calling_factories() -> None:
         subscription_service_factory=_raising_factory,
         memory_service_factory=_raising_factory,
         diagnostic_service_factory=_raising_factory,
-        approval_service_factory=_raising_factory,
         graph_run_inspection_service_factory=_raising_factory,
         artifact_service_factory=_raising_factory,
         storage_service_factory=_raising_factory,
@@ -55,7 +53,10 @@ def test_mcp_catalog_lists_research_tools_without_calling_factories() -> None:
         "news.source.github.releases",
         "news.worker.status",
         "news.queue.status",
-        "news.approval.resume_context",
+        "news.graph.wait.inspect",
+        "news.graph.wait.signal",
+        "news.graph.approval.decision",
+        "news.graph.wait.cancel",
     } <= tool_names
     assert not {"news.daily.enqueue", "news.daily.run", "news.weekly.run"} & tool_names
     assert {
@@ -81,7 +82,6 @@ def test_mcp_capability_manifest_describes_research_permissions() -> None:
         subscription_service_factory=_raising_factory,
         memory_service_factory=_raising_factory,
         diagnostic_service_factory=_raising_factory,
-        approval_service_factory=_raising_factory,
         graph_run_inspection_service_factory=_raising_factory,
         artifact_service_factory=_raising_factory,
         storage_service_factory=_raising_factory,
@@ -275,33 +275,51 @@ def test_mcp_worker_and_queue_tools_call_worker_service() -> None:
     assert fake_worker.queue_calls == [["news:queue:memory"], ["news:queue:memory"]]
 
 
-def test_mcp_approval_resume_context_stays_context_only(tmp_path) -> None:
-    approval_service = ApprovalApplicationService(store_path=tmp_path / "approvals.json")
-    service = MCPApplicationService(approval_service_factory=lambda: approval_service)
-    submitted = service.call_tool(
-        "news.approval.submit",
+def test_mcp_graph_wait_tools_use_harness_application_service() -> None:
+    wait_service = _FakeGraphWaitService()
+    actor = ActorContext(
+        actor_id="operator",
+        actor_type="mcp_client",
+        roles=["admin"],
+        request_id="request-1",
+    )
+    service = MCPApplicationService(
+        harness_wait_service_factory=lambda received_actor: wait_service,
+        operator_actor=actor,
+    )
+
+    inspected = service.call_tool(
+        "news.graph.wait.inspect",
+        {"run_id": "run-1", "node_instance_id": "node-1"},
+    )
+    decided = service.call_tool(
+        "news.graph.approval.decision",
         {
-            "requested_action": "review_report",
-            "reason": "operator review required",
-            "payload": {"report_id": "report-1"},
             "run_id": "run-1",
-            "requested_by": "worker",
+            "node_instance_id": "node-1",
+            "approval_id": "approval-1",
+            "approved": True,
+        },
+    )
+    rejected_legacy = service.call_tool(
+        "news.graph.approval.decision",
+        {
+            "run_id": "run-1",
+            "node_instance_id": "node-1",
+            "approval_id": "approval-1",
+            "approved": True,
+            "node_updates": {},
         },
     )
 
-    approval_id = submitted.data["approval_id"]
-    service.call_tool("news.approval.approve", {"approval_id": approval_id, "decided_by": "operator"})
-    resume_context = service.call_tool(
-        "news.approval.resume_context",
-        {"approval_id": approval_id, "decision_key": "editor_decision"},
-    )
-    resume_workflow = service.call_tool("news.approval.resume_workflow", {"approval_id": approval_id})
-
-    assert resume_context.success is True
-    assert resume_context.data["decision_key"] == "editor_decision"
-    assert resume_context.data["buffer_updates"]["editor_decision"]["approval_id"] == approval_id
-    assert resume_workflow.success is False
-    assert resume_workflow.error_type == "MCPToolNotFound"
+    assert inspected.success is True
+    assert decided.success is True
+    assert rejected_legacy.success is False
+    assert rejected_legacy.error_type == "ValueError"
+    assert wait_service.calls == [
+        ("inspect_wait", "run-1", "node-1"),
+        ("decide_approval", "run-1", "node-1", "approval-1", True),
+    ]
 
 
 def test_mcp_report_list_reads_real_local_report_artifacts(tmp_path) -> None:
@@ -642,6 +660,27 @@ class _FakeWorkerService:
             }
         )
 
+
+class _FakeGraphWaitService:
+    def __init__(self) -> None:
+        self.calls = []
+
+    def inspect_wait(self, run_id, node_instance_id):
+        self.calls.append(("inspect_wait", run_id, node_instance_id))
+        return {"run_id": run_id, "node_instance_id": node_instance_id, "status": "ready"}
+
+    def decide_approval(self, run_id, node_instance_id, *, approval_id, approved):
+        self.calls.append(
+            ("decide_approval", run_id, node_instance_id, approval_id, approved)
+        )
+        return {
+            "operation": "approval",
+            "wait": {
+                "run_id": run_id,
+                "node_instance_id": node_instance_id,
+                "status": "ready",
+            },
+        }
 
 class _FakeResult:
     def __init__(self, payload) -> None:

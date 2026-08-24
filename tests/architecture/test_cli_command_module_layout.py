@@ -6,7 +6,7 @@ import importlib
 def test_cli_command_group_modules_exist() -> None:
     command_groups = {
         "api",
-        "approvals",
+        "waits",
         "artifacts",
         "diagnose",
         "dev",

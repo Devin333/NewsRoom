@@ -58,6 +58,8 @@ class RunSummary:
     status: str
     graph_id: str | None = None
     graph_version: str | None = None
+    graph_ref: str | None = None
+    graph_checksum: str | None = None
     profile: str | None = None
     started_at: str | None = None
     finished_at: str | None = None
@@ -74,6 +76,8 @@ class RunSummary:
             "status": self.status,
             "graph_id": self.graph_id,
             "graph_version": self.graph_version,
+            "graph_ref": self.graph_ref,
+            "graph_checksum": self.graph_checksum,
             "profile": self.profile,
             "started_at": self.started_at,
             "finished_at": self.finished_at,
@@ -109,6 +113,8 @@ class RunDetail:
             "run_id": self.run_id,
             "graph_id": self.manifest.get("graph_id"),
             "graph_version": self.manifest.get("graph_version"),
+            "graph_ref": _manifest_graph_ref(self.manifest),
+            "graph_checksum": self.manifest.get("normalized_graph_checksum"),
             "status": self.manifest.get("status"),
             "started_at": self.manifest.get("started_at"),
             "finished_at": self.manifest.get("completed_at"),
@@ -701,6 +707,8 @@ def _summary_from_manifest(
         status=manifest.status.value,
         graph_id=manifest.graph_id,
         graph_version=manifest.graph_version,
+        graph_ref=_manifest_graph_ref(manifest.to_dict()),
+        graph_checksum=manifest.normalized_graph_checksum,
         started_at=manifest.started_at.isoformat(),
         finished_at=manifest.completed_at.isoformat(),
         artifact_dir=str(run_dir),
@@ -708,6 +716,14 @@ def _summary_from_manifest(
         event_count=index.event_high_watermark,
         manifest_path=str(run_dir / "manifest.json"),
     )
+
+
+def _manifest_graph_ref(manifest: Mapping[str, Any]) -> str | None:
+    graph_id = manifest.get("graph_id")
+    graph_version = manifest.get("graph_version")
+    if not graph_id or not graph_version:
+        return None
+    return f"{graph_id}@{graph_version}"
 
 
 def _projection_artifact_metadata(

@@ -60,7 +60,7 @@ class NewsClient:
         self.storage = StorageClient(self)
         self.sources = SourcesClient(self)
         self.schedules = SchedulesClient(self)
-        self.approvals = ApprovalsClient(self)
+        self.waits = GraphWaitsClient(self)
         self.research = ResearchClient(self)
 
     def get(self, path: str, *, params: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -509,38 +509,69 @@ class SchedulesClient:
         )
 
 
-class ApprovalsClient:
+class GraphWaitsClient:
     def __init__(self, client: NewsClient) -> None:
         self.client = client
 
-    def list(self, *, status: str | None = None) -> dict[str, Any]:
-        return self.client.get("/api/v1/approvals", params={"status": status})
+    def inspect(self, run_id: str, node_instance_id: str) -> dict[str, Any]:
+        return self.client.get(_wait_path(run_id, node_instance_id))
 
-    def get(self, approval_id: str) -> dict[str, Any]:
-        return self.client.get(f"/api/v1/approvals/{_quote_path_segment(approval_id)}")
-
-    def approve(self, approval_id: str, *, decided_by: str, reason: str | None = None) -> dict[str, Any]:
-        return self.client.post(
-            f"/api/v1/approvals/{_quote_path_segment(approval_id)}/approve",
-            json_body={"decided_by": decided_by, "reason": reason},
-        )
-
-    def reject(self, approval_id: str, *, decided_by: str, reason: str | None = None) -> dict[str, Any]:
-        return self.client.post(
-            f"/api/v1/approvals/{_quote_path_segment(approval_id)}/reject",
-            json_body={"decided_by": decided_by, "reason": reason},
-        )
-
-    def resume_context(
+    def deliver_signal(
         self,
-        approval_id: str,
+        run_id: str,
+        node_instance_id: str,
         *,
-        decision_key: str = "human_review_decision",
+        signal_id: str,
+        signal_schema_ref: str,
+        correlation: dict[str, Any],
+        payload_ref: str,
     ) -> dict[str, Any]:
         return self.client.post(
-            f"/api/v1/approvals/{_quote_path_segment(approval_id)}/resume-context",
-            json_body={"decision_key": decision_key},
+            f"{_wait_path(run_id, node_instance_id)}/signals",
+            json_body={
+                "signal_id": signal_id,
+                "signal_schema_ref": signal_schema_ref,
+                "correlation": correlation,
+                "payload_ref": payload_ref,
+            },
         )
+
+    def decide_approval(
+        self,
+        run_id: str,
+        node_instance_id: str,
+        *,
+        approval_id: str,
+        approved: bool,
+    ) -> dict[str, Any]:
+        return self.client.post(
+            f"{_wait_path(run_id, node_instance_id)}/approval",
+            json_body={"approval_id": approval_id, "approved": approved},
+        )
+
+    def cancel(
+        self,
+        run_id: str,
+        node_instance_id: str,
+        *,
+        cancellation_id: str,
+        reason_code: str,
+    ) -> dict[str, Any]:
+        return self.client.post(
+            f"{_wait_path(run_id, node_instance_id)}/cancel",
+            json_body={
+                "cancellation_id": cancellation_id,
+                "reason_code": reason_code,
+            },
+        )
+
+
+def _wait_path(run_id: str, node_instance_id: str) -> str:
+    return (
+        "/api/v2/graph-runs/"
+        f"{_quote_path_segment(run_id)}/waits/"
+        f"{_quote_path_segment(node_instance_id)}"
+    )
 
 class ResearchClient:
     def __init__(self, client: NewsClient) -> None:

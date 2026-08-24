@@ -104,26 +104,21 @@ HTTP API:
 - `POST /api/v1/schedules/tick`
 - `POST /api/v1/schedules/{schedule_id}/trigger`
 
-## Approvals Page
+## Graph Waits Page
 
 Required views:
 
-- list
-- show
-- approve
-- reject
-- modify
-- resume context
+- inspect Wait identity and bounded status
+- submit approval decision
+- deliver signal cause
+- cancel Wait cause
 
 HTTP API:
 
-- `GET /api/v1/approvals`
-- `POST /api/v1/approvals`
-- `GET /api/v1/approvals/{approval_id}`
-- `POST /api/v1/approvals/{approval_id}/approve`
-- `POST /api/v1/approvals/{approval_id}/reject`
-- `POST /api/v1/approvals/{approval_id}/modify`
-- `POST /api/v1/approvals/{approval_id}/resume-context`
+- `GET /api/v2/graph-runs/{run_id}/waits/{node_instance_id}`
+- `POST /api/v2/graph-runs/{run_id}/waits/{node_instance_id}/approval`
+- `POST /api/v2/graph-runs/{run_id}/waits/{node_instance_id}/signals`
+- `POST /api/v2/graph-runs/{run_id}/waits/{node_instance_id}/cancel`
 
 ## Memory Page
 

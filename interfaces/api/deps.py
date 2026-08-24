@@ -92,7 +92,6 @@ class ApiRouteHelpers:
     run_result_response: Callable[[Any], dict[str, Any]]
     provided_values: Callable[..., dict[str, Any]]
     artifact_lookup_ids: Callable[[str, str | None], tuple[str, str]]
-    approval_decision_response: Callable[[Callable[[], Any]], Any]
     run_progress_sse_frames: Callable[[dict[str, Any]], Any]
     run_events_sse_frames: Callable[[dict[str, Any]], Any]
 

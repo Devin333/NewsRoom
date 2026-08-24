@@ -27,7 +27,8 @@ def test_cli_build_parser_and_top_level_commands_exist() -> None:
         "diagnose",
         "dev",
         "storage",
-        "approvals",
+        "waits",
+        "approval-decision",
         "artifacts",
         "tools",
     }:
@@ -51,7 +52,8 @@ def test_cli_key_subcommands_and_handlers_are_bound() -> None:
         ["sources", "list"],
         ["mcp", "catalog"],
         ["storage", "metrics"],
-        ["approvals", "list"],
+        ["waits", "inspect", "run-1", "node-1"],
+        ["approval-decision", "run-1", "node-1", "--approval-id", "approval-1", "--approve"],
         ["artifacts", "list", "--run-id", "run-1"],
     ]:
         args = parser.parse_args(argv)

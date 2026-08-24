@@ -19,6 +19,7 @@ def test_client_instantiates_resources() -> None:
     assert client.reports is not None
     assert client.memory is not None
     assert client.mcp is not None
+    assert client.waits is not None
 
 
 def test_transport_sends_auth_request_id_and_unwraps_envelope() -> None:
@@ -97,6 +98,35 @@ def test_transport_rejects_non_envelope_response() -> None:
 
     with pytest.raises(NewsRoomResponseError):
         transport.request("GET", "/api/v1/reports/latest")
+
+
+def test_waits_resource_round_trips_versioned_graph_contract() -> None:
+    calls = []
+
+    def request_func(method, path, *, headers, json=None, params=None, timeout=None):
+        calls.append((method, path, json))
+        return {"success": True, "data": {"ok": True}}
+
+    client = NewsRoomClient(
+        "https://news.example",
+        request_func=request_func,
+    )
+
+    assert client.waits.inspect("run/1", "node/1") == {"ok": True}
+    assert client.waits.decide_approval(
+        "run/1",
+        "node/1",
+        approval_id="approval-1",
+        approved=True,
+    ) == {"ok": True}
+    assert calls == [
+        ("GET", "/api/v2/graph-runs/run%2F1/waits/node%2F1", None),
+        (
+            "POST",
+            "/api/v2/graph-runs/run%2F1/waits/node%2F1/approval",
+            {"approval_id": "approval-1", "approved": True},
+        ),
+    ]
 
 
 def test_client_can_use_fastapi_testclient_without_real_server() -> None:

@@ -1,8 +1,6 @@
 from interfaces.models import (
     ApiError,
     ApiResponse,
-    ApprovalResumeContextRequest,
-    ApprovalView,
     ArtifactRef,
     MemorySearchMatch,
     MemorySearchResponse,
@@ -11,6 +9,7 @@ from interfaces.models import (
     ReportDetail,
     ReportSummary,
     RunResponse,
+    HarnessWaitInspectionView,
     ScheduleUpsertRequest,
     ScheduleView,
     SourceHealthView,
@@ -20,7 +19,6 @@ from interfaces.models import (
 def test_contract_models_are_exported_from_shared_interfaces_models() -> None:
     assert RunResponse is not None
     assert ApiResponse is not None
-    assert ApprovalResumeContextRequest is not None
     assert ApiError is not None
     assert ArtifactRef is not None
     assert Pagination is not None
@@ -31,11 +29,10 @@ def test_contract_models_are_exported_from_shared_interfaces_models() -> None:
     assert MemorySearchResponse is not None
     assert ScheduleUpsertRequest is not None
     assert ScheduleView is not None
-    assert ApprovalView is not None
+    assert HarnessWaitInspectionView is not None
     assert RunResponse.__module__ == "interfaces.models.contracts"
     assert ReportSummary.__module__ == "interfaces.models.contracts"
     assert ReportDetail.__module__ == "interfaces.models.contracts"
-    assert ApprovalResumeContextRequest().decision_key == "human_review_decision"
     assert ScheduleUpsertRequest(
         schedule_id="memory-reindex",
         name="Memory reindex",
@@ -153,25 +150,32 @@ def test_target_view_models_are_serializable_and_schema_ready() -> None:
         interval_seconds=86400,
         payload={"run_id": "run-1"},
     )
-    approval = ApprovalView(
-        approval_id="approval-1",
-        requested_action="publish_report",
-        status="pending",
-        risk_level="high",
+    wait = HarnessWaitInspectionView(
         run_id="run-1",
-        requested_by="operator",
+        node_instance_id="node-1",
+        wait_id="wait-1",
+        kind="approval",
+        status="ready",
+        signal_schema_ref="news.wait.signal@1",
+        lifecycle="running",
+        outcome="waiting",
+        last_event_sequence=1,
+        graph_id="research.paper_analysis",
+        graph_version="1",
+        graph_ref="research.paper_analysis@1",
+        graph_checksum="sha256:" + "a" * 64,
     )
 
     payloads = [
         model.model_dump() if hasattr(model, "model_dump") else model.dict()
-        for model in (health, memory, schedule, approval)
+        for model in (health, memory, schedule, wait)
     ]
 
     assert payloads[0]["status"] == "healthy"
     assert payloads[1]["results"][0]["document_id"] == "doc-1"
     assert payloads[2]["payload"] == {"run_id": "run-1"}
-    assert payloads[3]["requested_action"] == "publish_report"
-    for model in (SourceHealthView, MemorySearchResponse, ScheduleView, ApprovalView):
+    assert payloads[3]["graph_id"] == "research.paper_analysis"
+    for model in (SourceHealthView, MemorySearchResponse, ScheduleView, HarnessWaitInspectionView):
         schema = (
             model.model_json_schema()
             if hasattr(model, "model_json_schema")

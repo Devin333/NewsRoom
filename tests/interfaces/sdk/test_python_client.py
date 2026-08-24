@@ -116,8 +116,7 @@ def test_news_client_reads_p1_p2_interface_surfaces() -> None:
     assert client.sources.validation() == {"ok": True}
     assert client.sources.get("source/1") == {"ok": True}
     assert client.schedules.list(include_disabled=True) == {"ok": True}
-    assert client.approvals.list(status="pending") == {"ok": True}
-    assert client.approvals.get("approval/1") == {"ok": True}
+    assert client.waits.inspect("run/1", "node/1") == {"ok": True}
 
     assert [request.full_url for request in opener.requests] == [
         "https://news.example/api/v1/mcp/catalog",
@@ -132,8 +131,7 @@ def test_news_client_reads_p1_p2_interface_surfaces() -> None:
         "https://news.example/api/v1/sources/validation",
         "https://news.example/api/v1/sources/source%2F1",
         "https://news.example/api/v1/schedules?include_disabled=True",
-        "https://news.example/api/v1/approvals?status=pending",
-        "https://news.example/api/v1/approvals/approval%2F1",
+        "https://news.example/api/v2/graph-runs/run%2F1/waits/node%2F1",
     ]
 
 
@@ -162,9 +160,15 @@ def test_news_client_writes_extended_interface_surfaces() -> None:
         queue_name="news:queue:memory",
     ) == {"ok": True}
     assert client.schedules.trigger("schedule/1", now="2026-05-14T00:00:00Z") == {"ok": True}
-    assert client.approvals.approve("approval/1", decided_by="reviewer", reason="ok") == {"ok": True}
-    assert client.approvals.reject("approval/2", decided_by="reviewer") == {"ok": True}
-    assert client.approvals.resume_context("approval/3", decision_key="editor_decision") == {"ok": True}
+    assert client.waits.decide_approval(
+        "run/1", "node/1", approval_id="approval/1", approved=True
+    ) == {"ok": True}
+    assert client.waits.decide_approval(
+        "run/2", "node/2", approval_id="approval/2", approved=False
+    ) == {"ok": True}
+    assert client.waits.cancel(
+        "run/3", "node/3", cancellation_id="cancel/3", reason_code="operator_requested"
+    ) == {"ok": True}
     assert client.research.analysis("paper/1") == {"ok": True}
     assert client.research.reader("paper/1") == {"ok": True}
     assert client.research.ask("paper/1", question="What changed?", locale="en-US") == {"ok": True}
@@ -177,9 +181,9 @@ def test_news_client_writes_extended_interface_surfaces() -> None:
         "https://news.example/api/v1/sources/github/releases",
         "https://news.example/api/v1/schedules",
         "https://news.example/api/v1/schedules/schedule%2F1/trigger",
-        "https://news.example/api/v1/approvals/approval%2F1/approve",
-        "https://news.example/api/v1/approvals/approval%2F2/reject",
-        "https://news.example/api/v1/approvals/approval%2F3/resume-context",
+        "https://news.example/api/v2/graph-runs/run%2F1/waits/node%2F1/approval",
+        "https://news.example/api/v2/graph-runs/run%2F2/waits/node%2F2/approval",
+        "https://news.example/api/v2/graph-runs/run%2F3/waits/node%2F3/cancel",
         "https://news.example/api/v1/research/papers/paper%2F1/analysis",
         "https://news.example/api/v1/research/papers/paper%2F1/reader",
         "https://news.example/api/v1/research/papers/paper%2F1/ask",
@@ -207,9 +211,9 @@ def test_news_client_writes_extended_interface_surfaces() -> None:
             "metadata": {},
         },
         {"now": "2026-05-14T00:00:00Z"},
-        {"decided_by": "reviewer", "reason": "ok"},
-        {"decided_by": "reviewer", "reason": None},
-        {"decision_key": "editor_decision"},
+        {"approval_id": "approval/1", "approved": True},
+        {"approval_id": "approval/2", "approved": False},
+        {"cancellation_id": "cancel/3", "reason_code": "operator_requested"},
         {"question": "What changed?", "locale": "en-US", "selection": {}, "options": {}},
     ]
 

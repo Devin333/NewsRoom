@@ -25,7 +25,6 @@ from framework.events import (
 )
 from framework.tool.governance.redaction import redact_sensitive_values
 from framework.shared.public_errors import project_public_error
-from framework.workers.approval import ApprovalAlreadyDecidedError, ApprovalNotFoundError
 from interfaces.models import (
     ActorContext,
     ArtifactRef,
@@ -349,6 +348,7 @@ def create_app(
         artifact_service_factory=artifact_service_factory,
         storage_service_factory=storage_service_factory,
         approval_service_factory=approval_service_factory,
+        harness_wait_service_factory=harness_wait_service_factory,
         research_service_factory=research_service_factory,
     )
     services = build_api_services(
@@ -381,7 +381,6 @@ def create_app(
         run_result_response=_run_result_response,
         provided_values=_provided_values,
         artifact_lookup_ids=_artifact_lookup_ids,
-        approval_decision_response=_approval_decision_response,
         run_progress_sse_frames=_run_progress_sse_frames,
         run_events_sse_frames=_run_events_sse_frames,
     )
@@ -430,6 +429,7 @@ def _mcp_service_factory(
     artifact_service_factory: ArtifactInspectionServiceFactory,
     storage_service_factory: StorageServiceFactory,
     approval_service_factory: ApprovalServiceFactory,
+    harness_wait_service_factory: HarnessWaitServiceFactory | None,
     research_service_factory: ResearchServiceFactory,
 ) -> MCPServiceFactory:
     if mcp_service_factory is not MCPApplicationService:
@@ -451,6 +451,7 @@ def _mcp_service_factory(
             artifact_service_factory=artifact_service_factory,
             storage_service_factory=storage_service_factory,
             approval_service_factory=approval_service_factory,
+            harness_wait_service_factory=harness_wait_service_factory,
             research_service_factory=research_service_factory,
         )
 
@@ -586,18 +587,6 @@ def _artifact_lookup_ids(artifact_id: str, run_id: str | None) -> tuple[str, str
     if not resolved_run_id or not artifact_key:
         raise ValueError("artifact_id must use run_id:artifact_key")
     return resolved_run_id, artifact_key
-
-
-def _approval_decision_response(call):
-    try:
-        result = call()
-    except ApprovalNotFoundError as exc:
-        return _error(status_code=404, code="approval_not_found", message=str(exc))
-    except ApprovalAlreadyDecidedError as exc:
-        return _error(status_code=409, code="approval_already_decided", message=str(exc))
-    except ValueError as exc:
-        return _error(status_code=400, code="invalid_approval_decision", message=str(exc))
-    return _success(result.to_dict())
 
 
 def _success(data: dict) -> dict:

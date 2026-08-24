@@ -1,174 +1,108 @@
+from __future__ import annotations
+
 import json
 
+import pytest
+
 from interfaces.cli import news as news_cli
+from interfaces.cli.commands import waits
 
 
-def test_news_cli_approval_lifecycle_uses_local_json_store(tmp_path, capsys) -> None:
-    store_path = tmp_path / "approvals.json"
+class _FakeWaits:
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, tuple, dict]] = []
 
-    submit_exit = news_cli.main(
-        [
-            "approvals",
-            "submit",
-            "--requested-action",
-            "publish_report",
-            "--risk-level",
-            "high",
-            "--reason",
-            "operator approval required",
-            "--payload-json",
-            '{"report_id":"report-1"}',
-            "--requested-by",
-            "worker",
-            "--store-path",
-            str(store_path),
-            "--json",
-        ]
-    )
-    submitted = json.loads(capsys.readouterr().out)
-    approval_id = submitted["approval_id"]
+    def inspect(self, run_id, node_instance_id):
+        self.calls.append(("inspect", (run_id, node_instance_id), {}))
+        return _wait_payload()
 
-    list_exit = news_cli.main(
-        [
-            "approvals",
-            "list",
-            "--status",
-            "pending",
-            "--store-path",
-            str(store_path),
-            "--json",
-        ]
-    )
-    listed = json.loads(capsys.readouterr().out)
+    def deliver_signal(self, run_id, node_instance_id, **kwargs):
+        self.calls.append(("signal", (run_id, node_instance_id), kwargs))
+        return {"operation": "signal", "wait": _wait_payload()}
 
-    approve_exit = news_cli.main(
-        [
-            "approvals",
-            "approve",
-            approval_id,
-            "--decided-by",
-            "operator",
-            "--reason",
-            "ready",
-            "--store-path",
-            str(store_path),
-            "--json",
-        ]
-    )
-    approved = json.loads(capsys.readouterr().out)
+    def decide_approval(self, run_id, node_instance_id, **kwargs):
+        self.calls.append(("approval", (run_id, node_instance_id), kwargs))
+        return {"operation": "approval", "wait": _wait_payload()}
 
-    show_exit = news_cli.main(
-        [
-            "approvals",
-            "show",
-            approval_id,
-            "--store-path",
-            str(store_path),
-            "--json",
-        ]
-    )
-    shown = json.loads(capsys.readouterr().out)
-
-    assert submit_exit == 0
-    assert list_exit == 0
-    assert approve_exit == 0
-    assert show_exit == 0
-    assert listed["approval_count"] == 1
-    assert approved["approval"]["status"] == "approved"
-    assert approved["approval"]["decision"]["decided_by"] == "operator"
-    assert shown["approval"]["status"] == "approved"
+    def cancel(self, run_id, node_instance_id, **kwargs):
+        self.calls.append(("cancel", (run_id, node_instance_id), kwargs))
+        return {"operation": "cancellation", "wait": _wait_payload()}
 
 
-def test_news_cli_approval_modify_uses_local_json_store(tmp_path, capsys) -> None:
-    store_path = tmp_path / "approvals.json"
+class _FakeClient:
+    def __init__(self, *args, **kwargs):
+        self.waits = _FakeWaits()
 
-    news_cli.main(
-        [
-            "approvals",
-            "submit",
-            "--requested-action",
-            "send_notification",
-            "--payload-json",
-            '{"channel":"email"}',
-            "--store-path",
-            str(store_path),
-            "--json",
-        ]
-    )
-    approval_id = json.loads(capsys.readouterr().out)["approval_id"]
+
+def _wait_payload() -> dict:
+    return {
+        "run_id": "run-1",
+        "node_instance_id": "node-1",
+        "wait_id": "wait-1",
+        "kind": "approval",
+        "status": "ready",
+        "lifecycle": "running",
+        "outcome": "waiting",
+        "graph_id": "research.paper_analysis",
+        "graph_version": "1",
+        "graph_ref": "research.paper_analysis@1",
+        "graph_checksum": "sha256:" + "a" * 64,
+    }
+
+
+def test_news_cli_approval_decision_posts_only_bounded_wait_cause(monkeypatch, capsys) -> None:
+    fake = _FakeClient()
+    monkeypatch.setattr(waits, "NewsClient", lambda *args, **kwargs: fake)
 
     exit_code = news_cli.main(
         [
-            "approvals",
-            "modify",
-            approval_id,
-            "--decided-by",
-            "operator",
-            "--modifications-json",
-            '{"channel":"slack"}',
-            "--reason",
-            "internal first",
-            "--store-path",
-            str(store_path),
+            "approval-decision",
+            "run-1",
+            "node-1",
+            "--approval-id",
+            "approval-1",
+            "--approve",
             "--json",
         ]
     )
+
     payload = json.loads(capsys.readouterr().out)
-
     assert exit_code == 0
-    assert payload["approval"]["status"] == "modified"
-    assert payload["approval"]["decision"]["modifications"] == {"channel": "slack"}
+    assert payload["operation"] == "approval"
+    assert fake.waits.calls == [
+        ("approval", ("run-1", "node-1"), {"approval_id": "approval-1", "approved": True})
+    ]
+    assert "buffer_updates" not in payload
+    assert "resume_metadata" not in payload
 
 
-def test_news_cli_approval_resume_context_uses_local_json_store(tmp_path, capsys) -> None:
-    store_path = tmp_path / "approvals.json"
+def test_news_cli_wait_commands_render_graph_identity(monkeypatch, capsys) -> None:
+    fake = _FakeClient()
+    monkeypatch.setattr(waits, "NewsClient", lambda *args, **kwargs: fake)
 
-    news_cli.main(
-        [
-            "approvals",
-            "submit",
-            "--requested-action",
-            "continue_agent",
-            "--task-id",
-            "task-paused",
-            "--run-id",
-            "run-paused",
-            "--store-path",
-            str(store_path),
-            "--json",
-        ]
-    )
-    approval_id = json.loads(capsys.readouterr().out)["approval_id"]
-    news_cli.main(
-        [
-            "approvals",
-            "approve",
-            approval_id,
-            "--decided-by",
-            "operator",
-            "--store-path",
-            str(store_path),
-            "--json",
-        ]
-    )
-    capsys.readouterr()
+    exit_code = news_cli.main(["waits", "inspect", "run-1", "node-1"])
 
-    exit_code = news_cli.main(
-        [
-            "approvals",
-            "resume-context",
-            approval_id,
-            "--decision-key",
-            "editor_decision",
-            "--store-path",
-            str(store_path),
-            "--json",
-        ]
-    )
-    payload = json.loads(capsys.readouterr().out)
-
+    output = capsys.readouterr().out
     assert exit_code == 0
-    assert payload["decision_key"] == "editor_decision"
-    assert payload["buffer_updates"]["editor_decision"]["approval_id"] == approval_id
-    assert payload["resume_metadata"]["approval_run_id"] == "run-paused"
-    assert payload["resume_metadata"]["task_id"] == "task-paused"
+    assert "run_id=run-1" in output
+    assert "node_instance_id=node-1" in output
+    assert "graph_checksum=sha256:" in output
+
+
+def test_news_cli_rejects_legacy_approval_commands_and_state_patch_flags() -> None:
+    parser = news_cli.build_parser()
+    with pytest.raises(SystemExit):
+        parser.parse_args(["approvals", "list"])
+    with pytest.raises(SystemExit):
+        parser.parse_args(
+            [
+                "approval-decision",
+                "run-1",
+                "node-1",
+                "--approval-id",
+                "approval-1",
+                "--approve",
+                "--node-updates",
+                "{}",
+            ]
+        )

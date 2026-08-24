@@ -1,6 +1,6 @@
 # TypeScript SDK Contract
 
-The TypeScript SDK should call the same `/api/v1` HTTP contract as `NewsClient`.
+The TypeScript SDK should call the same versioned HTTP contract as `NewsClient`.
 
 Minimum surface:
 
@@ -49,13 +49,12 @@ Minimum surface:
 - `client.schedules.list({ includeDisabled })`
 - `client.schedules.createPaperIngest({ scheduleId, name, triggerType, intervalSeconds, runAt, candidateLimit, minGithubStars, queueName })`
 - `client.schedules.trigger(scheduleId, { now })`
-- `client.approvals.list({ status })`
-- `client.approvals.get(approvalId)`
-- `client.approvals.approve(approvalId, { decidedBy, reason })`
-- `client.approvals.reject(approvalId, { decidedBy, reason })`
-- `client.approvals.resumeContext(approvalId, { decisionKey })`
+- `client.waits.inspect(runId, nodeInstanceId)`
+- `client.waits.deliverSignal(runId, nodeInstanceId, { signalId, signalSchemaRef, correlation, payloadRef })`
+- `client.waits.decideApproval(runId, nodeInstanceId, { approvalId, approved })`
+- `client.waits.cancel(runId, nodeInstanceId, { cancellationId, reasonCode })`
 
 SDK implementations must preserve the common `ApiResponse` / `ApiError` envelope and must not read runtime storage directly.
 Research helpers must call `/api/v1/research/...` endpoints and must not call retired `/api/v1/papers*` routes.
 Run inspection helpers must call `/api/v1/runs/...` endpoints and must not read `.newsroom/runs` directly.
-Approval resume helpers are context-only and must call `POST /api/v1/approvals/{approvalId}/resume-context`; workflow routing remains Harness-controlled.
+Wait helpers must call the `/api/v2/graph-runs/{runId}/waits/{nodeInstanceId}` contract. The SDK submits bounded Wait causes; Graph identity, evidence, authorization, routing, and automatic resume remain Harness-controlled.

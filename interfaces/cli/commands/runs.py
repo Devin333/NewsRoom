@@ -107,7 +107,7 @@ def list_runs(args: argparse.Namespace) -> int:
         for run in payload["runs"]:
             print(
                 f"- {run['run_id']} status={run['status']} "
-                f"graph={run.get('graph_id')}@{run.get('graph_version')}"
+                f"graph={run.get('graph_ref')} checksum={run.get('graph_checksum')}"
             )
             print(f"  started_at={run['started_at']} manifest={run['manifest_path']}")
     return 0
@@ -130,6 +130,8 @@ def show_run(args: argparse.Namespace) -> int:
         print(f"status={manifest.get('status')}")
         print(f"graph_id={manifest.get('graph_id')}")
         print(f"graph_version={manifest.get('graph_version')}")
+        print(f"graph_ref={payload.get('graph_ref')}")
+        print(f"graph_checksum={payload.get('graph_checksum')}")
         print(f"manifest_path={payload['manifest_path']}")
     return 0
 

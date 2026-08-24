@@ -4,11 +4,20 @@ import json
 
 import interfaces.cli.news as news_cli
 from business.research.graphs.contracts import RESEARCH_PAPER_ANALYSIS_GRAPH_ID
+from interfaces.services.run_inspection_service import GraphRunInspectionService
+from tests.fixtures.graph_runs import graph_index_reader
 from tests.fixtures.graph_runs import write_graph_terminal_run
 
 
-def test_graph_runs_cli_lists_graph_identity(tmp_path, capsys) -> None:
+def test_graph_runs_cli_lists_graph_identity(tmp_path, capsys, monkeypatch) -> None:
     write_graph_terminal_run(tmp_path, "run-1")
+    monkeypatch.setattr(
+        "interfaces.cli.commands.runs.graph_run_inspection_service_from_env",
+        lambda *args, **kwargs: GraphRunInspectionService(
+            tmp_path,
+            graph_index_reader=graph_index_reader(tmp_path),
+        ),
+    )
 
     exit_code = news_cli.main(
         ["runs", "list", "--artifact-root", str(tmp_path), "--json"]
@@ -19,11 +28,20 @@ def test_graph_runs_cli_lists_graph_identity(tmp_path, capsys) -> None:
     assert payload["run_count"] == 1
     assert payload["runs"][0]["graph_id"] == RESEARCH_PAPER_ANALYSIS_GRAPH_ID
     assert payload["runs"][0]["graph_version"] == "1"
+    assert payload["runs"][0]["graph_ref"] == f"{RESEARCH_PAPER_ANALYSIS_GRAPH_ID}@1"
+    assert payload["runs"][0]["graph_checksum"].startswith("sha256:")
 
 
-def test_graph_runs_cli_replay_verifies_artifact_integrity(tmp_path, capsys) -> None:
+def test_graph_runs_cli_replay_verifies_artifact_integrity(tmp_path, capsys, monkeypatch) -> None:
     fixture = write_graph_terminal_run(tmp_path, "run-1")
     fixture.artifact_path("output").write_text('{"result":"tampered"}', encoding="utf-8")
+    monkeypatch.setattr(
+        "interfaces.cli.commands.runs.graph_run_inspection_service_from_env",
+        lambda *args, **kwargs: GraphRunInspectionService(
+            tmp_path,
+            graph_index_reader=graph_index_reader(tmp_path),
+        ),
+    )
 
     exit_code = news_cli.main(
         ["runs", "replay", "run-1", "--artifact-root", str(tmp_path), "--json"]

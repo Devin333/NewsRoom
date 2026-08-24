@@ -90,6 +90,8 @@ class GraphRunListItem(BaseModel):
     run_id: str
     graph_id: str | None = None
     graph_version: str | None = None
+    graph_ref: str | None = None
+    graph_checksum: str | None = None
     profile: str | None = None
     status: str
     started_at: datetime | None = None
@@ -347,46 +349,3 @@ class ScheduleTickRequest(BaseModel):
 
 class ManualScheduleTriggerRequest(BaseModel):
     now: datetime | None = None
-
-
-class ApprovalSubmitRequest(BaseModel):
-    requested_action: str
-    risk_level: str = "medium"
-    reason: str | None = None
-    payload: dict[str, Any] = Field(default_factory=dict)
-    task_id: str | None = None
-    run_id: str | None = None
-    requested_by: str | None = None
-    expires_at: datetime | None = None
-    metadata: dict[str, Any] = Field(default_factory=dict)
-
-
-class ApprovalView(BaseModel):
-    approval_id: str
-    requested_action: str
-    status: str
-    risk_level: str = "medium"
-    reason: str | None = None
-    task_id: str | None = None
-    run_id: str | None = None
-    requested_by: str | None = None
-    requested_at: datetime | None = None
-    expires_at: datetime | None = None
-    decided_by: str | None = None
-    decided_at: datetime | None = None
-    decision_type: str | None = None
-    modifications: dict[str, Any] = Field(default_factory=dict)
-    metadata: dict[str, Any] = Field(default_factory=dict)
-
-
-class ApprovalDecisionRequest(BaseModel):
-    decided_by: str
-    reason: str | None = None
-
-
-class ApprovalModifyRequest(ApprovalDecisionRequest):
-    modifications: dict[str, Any] = Field(default_factory=dict)
-
-
-class ApprovalResumeContextRequest(BaseModel):
-    decision_key: str = Field(default="human_review_decision", min_length=1)

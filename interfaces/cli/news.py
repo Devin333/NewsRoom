@@ -6,7 +6,6 @@ from typing import Any, Sequence
 
 from interfaces.cli.commands import (
     api,
-    approvals,
     artifacts,
     dev,
     diagnose,
@@ -23,6 +22,7 @@ from interfaces.cli.commands import (
     subscriptions,
     tools,
     workers,
+    waits,
 )
 
 
@@ -35,7 +35,7 @@ COMMAND_MODULES = (
     api,
     workers,
     schedules,
-    approvals,
+    waits,
     memory,
     diagnose,
     storage,

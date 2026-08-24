@@ -14,7 +14,7 @@ def test_stdio_handles_tools_list() -> None:
     assert response["id"] == 1
     tool_names = [tool["name"] for tool in response["result"]["tools"]]
     assert "news.research.analyze_paper" in tool_names
-    assert "news.approval.submit" in tool_names
+    assert "news.graph.approval.decision" in tool_names
     assert "news.worker.status" in tool_names
     assert "news.queue.status" in tool_names
 

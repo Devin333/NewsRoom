@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from interfaces.services.mcp_service import MCPApplicationService
+from interfaces.models import ActorContext
 
 
 STABLE_TOOLS = {
@@ -19,15 +20,14 @@ STABLE_TOOLS = {
     "news.queue.status",
     "news.run.diagnostics",
     "news.run.events",
-    "news.approval.list",
+    "news.graph.wait.inspect",
+    "news.graph.approval.decision",
 }
 
 DANGEROUS_TOOLS = {
     "news.report.publish",
     "news.run.cancel",
-    "news.run.rerun_from_step",
-    "news.approval.approve",
-    "news.approval.reject",
+    "news.graph.approval.decision",
 }
 
 STABLE_RESOURCES = {
@@ -116,66 +116,50 @@ def test_mcp_unknown_tool_and_resource_return_structured_errors() -> None:
 
 def test_mcp_run_operation_tools_delegate_to_application_service() -> None:
     fake_service = _FakeRunOperationService()
-    service = MCPApplicationService(run_operation_service_factory=lambda: fake_service)
+    service = MCPApplicationService(
+        graph_run_operation_service_factory=lambda: fake_service,
+        operator_actor=ActorContext(
+            actor_id="operator",
+            actor_type="mcp_client",
+            roles=["admin"],
+            request_id="request-1",
+        ),
+    )
 
     cancelled = service.call_tool(
         "news.run.cancel",
         {
             "run_id": "run-1",
-            "reason": "manual stop",
-            "actor_id": "operator",
-            "metadata": {"source": "mcp"},
+            "reason_code": "operator_requested",
+            "cancellation_id": "cancel-1",
         },
     )
-    rerun = service.call_tool(
-        "news.run.rerun_from_step",
-        {
-            "run_id": "run-1",
-            "step_id": "write_report",
-            "actor_id": "operator",
-            "metadata": {"source": "mcp"},
-        },
-    )
-
     assert cancelled.success is True
-    assert rerun.success is True
     assert fake_service.calls == [
         (
             "cancel_run",
             {
                 "run_id": "run-1",
-                "reason": "manual stop",
-                "actor_id": "operator",
-                "metadata": {"source": "mcp"},
-            },
-        ),
-        (
-            "rerun_from_step",
-            {
-                "run_id": "run-1",
-                "step_id": "write_report",
-                "actor_id": "operator",
-                "metadata": {"source": "mcp"},
+                "reason_code": "operator_requested",
+                "cancellation_id": "cancel-1",
             },
         ),
     ]
     assert cancelled.data["operation_type"] == "cancel_run"
-    assert rerun.data["operation_type"] == "rerun_from_step"
 
 
 class _FakeRunOperationService:
     def __init__(self) -> None:
         self.calls: list[tuple[str, dict]] = []
 
-    def cancel_run(self, run_id, *, reason=None, actor_id=None, metadata=None):
+    def cancel_run(self, run_id, *, reason_code, cancellation_id, actor):
         self.calls.append(
             (
                 "cancel_run",
                 {
                     "run_id": run_id,
-                    "reason": reason,
-                    "actor_id": actor_id,
-                    "metadata": dict(metadata or {}),
+                    "reason_code": reason_code,
+                    "cancellation_id": cancellation_id,
                 },
             )
         )

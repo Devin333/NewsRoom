@@ -38,6 +38,7 @@ from interfaces.services.event_delivery_operations_service import (
     EventOperationNotFoundError,
 )
 from interfaces.services.event_reader_service import EventAuthorizationError
+from interfaces.services.harness_wait_service import HarnessWaitApplicationError
 from infrastructure.storage.lifecycle import RetentionPolicy
 
 
@@ -91,8 +92,7 @@ DANGEROUS_MCP_TOOLS = frozenset(
     {
         "news.report.publish",
         "news.run.cancel",
-        "news.approval.approve",
-        "news.approval.reject",
+        "news.graph.approval.decision",
         "news.event.dead_letters.resolve",
         "news.event.dead_letters.requeue",
     }
@@ -121,6 +121,7 @@ class MCPApplicationService:
         memory_service_factory: Callable[[], Any] | None = None,
         diagnostic_service_factory: Callable[[], Any] | None = None,
         approval_service_factory: Callable[[], Any] | None = None,
+        harness_wait_service_factory: Callable[[ActorContext], Any] | None = None,
         graph_run_inspection_service_factory: Callable[[], Any] | None = None,
         graph_run_operation_service_factory: Callable[[], Any] | None = None,
         artifact_service_factory: Callable[[], Any] | None = None,
@@ -149,6 +150,7 @@ class MCPApplicationService:
         self.memory_service_factory = memory_service_factory or _memory_service_factory
         self.diagnostic_service_factory = diagnostic_service_factory or _diagnostic_service_factory
         self.approval_service_factory = approval_service_factory or _approval_service_factory
+        self.harness_wait_service_factory = harness_wait_service_factory
         self.graph_run_inspection_service_factory = (
             graph_run_inspection_service_factory or _graph_run_inspection_service_factory
         )
@@ -388,22 +390,14 @@ class MCPApplicationService:
                 return self._worker_status(args)
             if tool_name == "news.queue.status":
                 return self._queue_status(args)
-            if tool_name == "news.approval.submit":
-                return self._approval_submit(args)
-            if tool_name == "news.approval.list":
-                return self._approval_list(args)
-            if tool_name == "news.approval.get":
-                return self._approval_get(args)
-            if tool_name == "news.approval.approve":
-                return self._approval_approve(args)
-            if tool_name == "news.approval.reject":
-                return self._approval_reject(args)
-            if tool_name == "news.approval.modify":
-                return self._approval_modify(args)
-            if tool_name == "news.approval.submit_decision":
-                return self._approval_submit_decision(args)
-            if tool_name == "news.approval.resume_context":
-                return self._approval_resume_context(args)
+            if tool_name == "news.graph.wait.inspect":
+                return self._graph_wait_inspect(args)
+            if tool_name == "news.graph.wait.signal":
+                return self._graph_wait_signal(args)
+            if tool_name == "news.graph.approval.decision":
+                return self._graph_approval_decision(args)
+            if tool_name == "news.graph.wait.cancel":
+                return self._graph_wait_cancel(args)
             return MCPToolCallResult(
                 tool_name=tool_name,
                 success=False,
@@ -1082,121 +1076,96 @@ class MCPApplicationService:
             data=result.to_dict(),
         )
 
-    def _approval_submit(self, args: dict[str, Any]) -> MCPToolCallResult:
-        requested_action = str(args.get("requested_action") or "")
-        if not requested_action:
-            raise ValueError("requested_action is required")
-        result = self.approval_service_factory().submit_request(
-            requested_action=requested_action,
-            risk_level=str(args.get("risk_level") or "medium"),
-            reason=args.get("reason"),
-            payload=dict(args.get("payload") or {}),
-            task_id=args.get("task_id"),
-            run_id=args.get("run_id"),
-            requested_by=args.get("requested_by"),
-            metadata=dict(args.get("metadata") or {}),
+    def _graph_wait_inspect(self, args: dict[str, Any]) -> MCPToolCallResult:
+        _validate_graph_wait_args(args, required=("run_id", "node_instance_id"))
+        result = self._graph_wait_service().inspect_wait(
+            args["run_id"],
+            args["node_instance_id"],
         )
         return MCPToolCallResult(
-            tool_name="news.approval.submit",
+            tool_name="news.graph.wait.inspect",
             success=True,
-            data=result.to_dict(),
+            data=_to_dict(result),
         )
 
-    def _approval_list(self, args: dict[str, Any]) -> MCPToolCallResult:
-        result = self.approval_service_factory().list_approvals(status=args.get("status"))
-        return MCPToolCallResult(
-            tool_name="news.approval.list",
-            success=True,
-            data=result.to_dict(),
+    def _graph_wait_signal(self, args: dict[str, Any]) -> MCPToolCallResult:
+        _validate_graph_wait_args(
+            args,
+            required=(
+                "run_id",
+                "node_instance_id",
+                "signal_id",
+                "signal_schema_ref",
+                "correlation",
+                "payload_ref",
+            ),
         )
-
-    def _approval_get(self, args: dict[str, Any]) -> MCPToolCallResult:
-        approval_id = str(args.get("approval_id") or "")
-        if not approval_id:
-            raise ValueError("approval_id is required")
-        result = self.approval_service_factory().get_approval(approval_id)
-        return MCPToolCallResult(
-            tool_name="news.approval.get",
-            success=True,
-            data=result.to_dict(),
-        )
-
-    def _approval_approve(self, args: dict[str, Any]) -> MCPToolCallResult:
-        result = self.approval_service_factory().approve(
-            _approval_id(args),
-            decided_by=_decided_by(args),
-            reason=args.get("reason"),
+        correlation = args["correlation"]
+        if not isinstance(correlation, dict):
+            raise ValueError("correlation must be an object")
+        result = self._graph_wait_service().deliver_signal(
+            args["run_id"],
+            args["node_instance_id"],
+            signal_id=args["signal_id"],
+            signal_schema_ref=args["signal_schema_ref"],
+            correlation=correlation,
+            payload_ref=args["payload_ref"],
         )
         return MCPToolCallResult(
-            tool_name="news.approval.approve",
+            tool_name="news.graph.wait.signal",
             success=True,
-            data=result.to_dict(),
+            data=_to_dict(result),
         )
 
-    def _approval_reject(self, args: dict[str, Any]) -> MCPToolCallResult:
-        result = self.approval_service_factory().reject(
-            _approval_id(args),
-            decided_by=_decided_by(args),
-            reason=args.get("reason"),
+    def _graph_approval_decision(self, args: dict[str, Any]) -> MCPToolCallResult:
+        _validate_graph_wait_args(
+            args,
+            required=("run_id", "node_instance_id", "approval_id", "approved"),
+        )
+        if not isinstance(args["approved"], bool):
+            raise ValueError("approved must be a boolean")
+        result = self._graph_wait_service().decide_approval(
+            args["run_id"],
+            args["node_instance_id"],
+            approval_id=args["approval_id"],
+            approved=args["approved"],
         )
         return MCPToolCallResult(
-            tool_name="news.approval.reject",
+            tool_name="news.graph.approval.decision",
             success=True,
-            data=result.to_dict(),
+            data=_to_dict(result),
         )
 
-    def _approval_modify(self, args: dict[str, Any]) -> MCPToolCallResult:
-        result = self.approval_service_factory().modify(
-            _approval_id(args),
-            decided_by=_decided_by(args),
-            modifications=dict(args.get("modifications") or {}),
-            reason=args.get("reason"),
+    def _graph_wait_cancel(self, args: dict[str, Any]) -> MCPToolCallResult:
+        _validate_graph_wait_args(
+            args,
+            required=("run_id", "node_instance_id", "cancellation_id", "reason_code"),
+        )
+        result = self._graph_wait_service().cancel_wait(
+            args["run_id"],
+            args["node_instance_id"],
+            cancellation_id=args["cancellation_id"],
+            reason_code=args["reason_code"],
         )
         return MCPToolCallResult(
-            tool_name="news.approval.modify",
+            tool_name="news.graph.wait.cancel",
             success=True,
-            data=result.to_dict(),
+            data=_to_dict(result),
         )
 
-    def _approval_submit_decision(self, args: dict[str, Any]) -> MCPToolCallResult:
-        decision = str(args.get("decision") or "").strip().lower()
-        if decision == "approve":
-            result = self.approval_service_factory().approve(
-                _approval_id(args),
-                decided_by=_decided_by(args),
-                reason=args.get("reason"),
+    def _graph_wait_service(self):
+        if self.harness_wait_service_factory is None:
+            raise HarnessWaitApplicationError(
+                "Graph Wait service capability is unavailable",
+                code="harness_wait_capability_unavailable",
             )
-        elif decision == "reject":
-            result = self.approval_service_factory().reject(
-                _approval_id(args),
-                decided_by=_decided_by(args),
-                reason=args.get("reason"),
+        actor = self._operator_actor
+        if not isinstance(actor, ActorContext):
+            raise HarnessWaitApplicationError(
+                "Graph Wait requires an authenticated actor",
+                code="harness_wait_actor_unavailable",
             )
-        elif decision == "modify":
-            result = self.approval_service_factory().modify(
-                _approval_id(args),
-                decided_by=_decided_by(args),
-                modifications=dict(args.get("modifications") or {}),
-                reason=args.get("reason"),
-            )
-        else:
-            raise ValueError("decision must be approve, reject, or modify")
-        return MCPToolCallResult(
-            tool_name="news.approval.submit_decision",
-            success=True,
-            data=result.to_dict(),
-        )
-
-    def _approval_resume_context(self, args: dict[str, Any]) -> MCPToolCallResult:
-        result = self.approval_service_factory().build_resume_context(
-            _approval_id(args),
-            decision_key=str(args.get("decision_key") or "human_review_decision"),
-        )
-        return MCPToolCallResult(
-            tool_name="news.approval.resume_context",
-            success=True,
-            data=result.to_dict(),
-        )
+        return self.harness_wait_service_factory(actor)
 
     def _read_latest_report_resource(self) -> MCPResourceReadResult:
         record = self.report_service_factory().latest_report()
@@ -1954,123 +1923,73 @@ def _tools() -> list[MCPTool]:
             },
         ),
         MCPTool(
-            name="news.approval.submit",
-            title="Submit approval request",
-            description="Submit a human approval request through ApprovalApplicationService.",
+            name="news.graph.wait.inspect",
+            title="Inspect Graph Wait",
+            description="Read the bounded durable Graph Wait inspection through Harness.",
             input_schema={
                 "type": "object",
-                "required": ["requested_action"],
+                "additionalProperties": False,
+                "required": ["run_id", "node_instance_id"],
                 "properties": {
-                    "requested_action": {"type": "string"},
-                    "risk_level": {"type": "string"},
-                    "reason": {"type": "string"},
-                    "payload": {"type": "object"},
-                    "task_id": {"type": "string"},
                     "run_id": {"type": "string"},
-                    "requested_by": {"type": "string"},
-                    "metadata": {"type": "object"},
+                    "node_instance_id": {"type": "string"},
                 },
             },
         ),
         MCPTool(
-            name="news.approval.list",
-            title="List approvals",
-            description="List human approval requests.",
+            name="news.graph.wait.signal",
+            title="Deliver Graph Wait signal",
+            description="Submit a typed signal cause; Harness owns validation and resume.",
             input_schema={
                 "type": "object",
+                "additionalProperties": False,
+                "required": [
+                    "run_id",
+                    "node_instance_id",
+                    "signal_id",
+                    "signal_schema_ref",
+                    "correlation",
+                    "payload_ref",
+                ],
                 "properties": {
-                    "status": {
-                        "type": "string",
-                        "enum": ["pending", "approved", "rejected", "modified", "expired", "cancelled"],
-                    }
+                    "run_id": {"type": "string"},
+                    "node_instance_id": {"type": "string"},
+                    "signal_id": {"type": "string"},
+                    "signal_schema_ref": {"type": "string"},
+                    "correlation": {"type": "object"},
+                    "payload_ref": {"type": "string"},
                 },
             },
         ),
         MCPTool(
-            name="news.approval.get",
-            title="Get approval",
-            description="Read one human approval request.",
+            name="news.graph.approval.decision",
+            title="Submit Graph approval decision",
+            description="Submit a bounded approval cause; Harness owns evidence, routing, and resume.",
             input_schema={
                 "type": "object",
-                "required": ["approval_id"],
-                "properties": {"approval_id": {"type": "string"}},
-            },
-        ),
-        MCPTool(
-            name="news.approval.approve",
-            title="Approve request",
-            description="Approve a pending human approval request.",
-            input_schema={
-                "type": "object",
-                "required": ["approval_id", "decided_by"],
+                "additionalProperties": False,
+                "required": ["run_id", "node_instance_id", "approval_id", "approved"],
                 "properties": {
+                    "run_id": {"type": "string"},
+                    "node_instance_id": {"type": "string"},
                     "approval_id": {"type": "string"},
-                    "decided_by": {"type": "string"},
-                    "reason": {"type": "string"},
+                    "approved": {"type": "boolean"},
                 },
             },
         ),
         MCPTool(
-            name="news.approval.reject",
-            title="Reject request",
-            description="Reject a pending human approval request.",
+            name="news.graph.wait.cancel",
+            title="Cancel Graph Wait",
+            description="Submit a bounded cancellation cause through Harness.",
             input_schema={
                 "type": "object",
-                "required": ["approval_id", "decided_by"],
+                "additionalProperties": False,
+                "required": ["run_id", "node_instance_id", "cancellation_id", "reason_code"],
                 "properties": {
-                    "approval_id": {"type": "string"},
-                    "decided_by": {"type": "string"},
-                    "reason": {"type": "string"},
-                },
-            },
-        ),
-        MCPTool(
-            name="news.approval.modify",
-            title="Modify request",
-            description="Approve a pending human approval request with modifications.",
-            input_schema={
-                "type": "object",
-                "required": ["approval_id", "decided_by", "modifications"],
-                "properties": {
-                    "approval_id": {"type": "string"},
-                    "decided_by": {"type": "string"},
-                    "modifications": {"type": "object"},
-                    "reason": {"type": "string"},
-                },
-            },
-        ),
-        MCPTool(
-            name="news.approval.submit_decision",
-            title="Submit approval decision",
-            description="Submit an approve, reject, or modify decision for a pending approval request.",
-            input_schema={
-                "type": "object",
-                "required": ["approval_id", "decision", "decided_by"],
-                "properties": {
-                    "approval_id": {"type": "string"},
-                    "decision": {
-                        "type": "string",
-                        "enum": ["approve", "reject", "modify"],
-                    },
-                    "decided_by": {"type": "string"},
-                    "modifications": {"type": "object"},
-                    "reason": {"type": "string"},
-                },
-            },
-        ),
-        MCPTool(
-            name="news.approval.resume_context",
-            title="Build approval resume context",
-            description="Build DataBuffer updates and resume metadata from a decided approval.",
-            input_schema={
-                "type": "object",
-                "required": ["approval_id"],
-                "properties": {
-                    "approval_id": {"type": "string"},
-                    "decision_key": {
-                        "type": "string",
-                        "default": "human_review_decision",
-                    },
+                    "run_id": {"type": "string"},
+                    "node_instance_id": {"type": "string"},
+                    "cancellation_id": {"type": "string"},
+                    "reason_code": {"type": "string"},
                 },
             },
         ),
@@ -2510,6 +2429,11 @@ def _project_mcp_error(
             "EventRuntimeError",
             "event runtime operation failed",
         )
+    if isinstance(exc, HarnessWaitApplicationError):
+        return PublicErrorProjection(
+            "GraphWaitCapabilityUnavailable",
+            "Graph Wait service capability is unavailable",
+        )
     return project_public_error(exc, context="mcp", operation=operation)
 
 
@@ -2527,8 +2451,10 @@ def _tool_permission(tool_name: str) -> str:
         return "manage:approvals"
     if tool_name in {"news.report.request_review"}:
         return "manage:approvals"
-    if tool_name.startswith("news.approval."):
-        return "manage:approvals" if not tool_name.endswith((".list", ".get")) else "read:reports"
+    if tool_name == "news.graph.wait.inspect":
+        return "read:reports"
+    if tool_name.startswith("news.graph.wait.") or tool_name == "news.graph.approval.decision":
+        return "manage:approvals"
     if tool_name == "news.research.analyze_paper":
         return "write:runs"
     if tool_name.startswith("news.research."):
@@ -2594,7 +2520,7 @@ def _mcp_category(name: str) -> str:
         return "workers"
     if value.startswith("queue.") or value.startswith("queues"):
         return "workers"
-    if value.startswith("approval."):
+    if value.startswith("graph.wait") or value.startswith("graph.approval"):
         return "approvals"
     if value.startswith("entity."):
         return "entities"
@@ -2630,7 +2556,7 @@ def _tool_is_read_only(tool_name: str) -> bool:
         ".approve",
         ".reject",
         ".modify",
-        ".submit_decision",
+        ".decision",
     )
     return not any(tool_name.endswith(marker) for marker in write_markers)
 
@@ -3256,11 +3182,30 @@ def _validate_event_operator_tool_args(
         raise ValueError(f"unsupported event operator argument: {unexpected[0]}")
 
 
-def _approval_id(args: dict[str, Any]) -> str:
-    approval_id = str(args.get("approval_id") or "")
-    if not approval_id:
-        raise ValueError("approval_id is required")
-    return approval_id
+def _validate_graph_wait_args(
+    args: dict[str, Any],
+    *,
+    required: tuple[str, ...],
+) -> None:
+    allowed = {
+        "run_id",
+        "node_instance_id",
+        "signal_id",
+        "signal_schema_ref",
+        "correlation",
+        "payload_ref",
+        "approval_id",
+        "approved",
+        "cancellation_id",
+        "reason_code",
+    }
+    unexpected = sorted(set(args).difference(allowed))
+    if unexpected:
+        raise ValueError(f"unsupported Graph Wait argument: {unexpected[0]}")
+    for name in required:
+        value = args.get(name)
+        if value is None or value == "":
+            raise ValueError(f"{name} is required")
 
 
 def _required_arg(args: dict[str, Any], name: str) -> str:
