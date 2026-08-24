@@ -1,8 +1,8 @@
 """Graph run inspection application service.
 
-Inspection reads the Graph terminal manifest and Graph event projection only.
-Non-Graph manifests are reported as history quarantine and are never parsed for
-resume, replay, or publication.
+Inspection reads Graph terminal manifests, canonical Graph index snapshots, and
+durable Graph events only. Non-Graph manifests are reported as history
+quarantine and are never parsed for resume, replay, or publication.
 """
 
 from __future__ import annotations
