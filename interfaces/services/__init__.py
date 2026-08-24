@@ -30,6 +30,13 @@ from interfaces.services.harness_wait_service import (
     HarnessWaitInspectionListResult,
     HarnessWaitOperationResult,
 )
+from interfaces.services.harness_wait_runtime import (
+    DurableHarnessWaitApprovalResolver,
+    HarnessWaitRuntimeRegistration,
+    HarnessWaitRuntimeRegistry,
+    HarnessWaitRuntimeStoreError,
+    HarnessWaitRuntimeUnavailableError,
+)
 from interfaces.services.memory_service import MemoryApplicationService
 from interfaces.services.mcp_service import MCPApplicationService
 from interfaces.services.project_service import ProjectApplicationService, ProjectsApplicationService
@@ -67,6 +74,11 @@ __all__ = [
     "HarnessWaitInspectionResult",
     "HarnessWaitInspectionListResult",
     "HarnessWaitOperationResult",
+    "DurableHarnessWaitApprovalResolver",
+    "HarnessWaitRuntimeRegistration",
+    "HarnessWaitRuntimeRegistry",
+    "HarnessWaitRuntimeStoreError",
+    "HarnessWaitRuntimeUnavailableError",
     "ArtifactInspectionService",
     "MemoryApplicationService",
     "MCPApplicationService",

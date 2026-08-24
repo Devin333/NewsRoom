@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Protocol, runtime_checkable
+from typing import Any, Protocol, runtime_checkable
+
+from framework.harness.control_plane.state import HarnessRunSpec
 
 from framework.harness.waits.models import (
     HarnessSignalInboxEntry,
@@ -107,6 +109,20 @@ class HarnessTimerDeadlineResolverPort(Protocol):
 
 
 @runtime_checkable
+class HarnessWaitRuntimeRegistrationPort(Protocol):
+    """Framework-owned hook for publishing a live Graph runtime binding."""
+
+    def register(
+        self,
+        run_spec: HarnessRunSpec,
+        control_plane: Any,
+        *,
+        tenant_scope_ref: str,
+        identity_scope_ref: str,
+    ) -> None: ...
+
+
+@runtime_checkable
 class HarnessTimerWakeSinkPort(Protocol):
     """Submit a live timer wake to the canonical Wait-cause boundary."""
 
@@ -126,6 +142,7 @@ HarnessWaitStorePort = HarnessWaitRecordPort
 __all__ = [
     "HarnessSignalInboxPort",
     "HarnessTimerDeadlineResolverPort",
+    "HarnessWaitRuntimeRegistrationPort",
     "HarnessTimerWakePort",
     "HarnessTimerWakeSinkPort",
     "HarnessWaitTimeoutSinkPort",

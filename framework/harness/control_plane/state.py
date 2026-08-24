@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import StrEnum
+from collections.abc import Mapping
 from typing import Any
 
 from framework.events.canonical import checksum_for
@@ -10,7 +11,7 @@ from framework.harness.control_plane.errors import HarnessValidationError
 from framework.harness.control_plane.policy import HarnessBudget
 from framework.harness.graph.definition import HarnessGraphDefinition
 from framework.shared.json import stable_json_dumps, to_jsonable
-from framework.shared.time import ensure_utc, format_datetime, utc_now
+from framework.shared.time import ensure_utc, format_datetime, parse_datetime, utc_now
 
 
 class HarnessRunStatus(StrEnum):
@@ -84,6 +85,42 @@ class HarnessRunSpec:
             "budget": self.budget.to_dict(),
             "created_at": format_datetime(self.created_at),
         }
+
+    @classmethod
+    def from_dict(cls, value: Mapping[str, Any]) -> "HarnessRunSpec":
+        """Restore the exact immutable run specification from durable JSON."""
+
+        if not isinstance(value, Mapping):
+            raise HarnessValidationError("run specification must be an object")
+        expected = {"run_id", "graph", "inputs", "metadata", "budget", "created_at"}
+        if set(value) != expected:
+            raise HarnessValidationError(
+                "run specification fields do not match the versioned contract"
+            )
+        inputs = value["inputs"]
+        metadata = value["metadata"]
+        budget = value["budget"]
+        if not isinstance(inputs, Mapping) or not isinstance(metadata, Mapping):
+            raise HarnessValidationError(
+                "run specification inputs and metadata must be objects"
+            )
+        if not isinstance(budget, Mapping):
+            raise HarnessValidationError("run specification budget must be an object")
+        created_at = parse_datetime(value["created_at"])
+        if created_at is None:
+            raise HarnessValidationError("run specification created_at is required")
+        try:
+            actual_budget = HarnessBudget(**dict(budget))
+        except TypeError as exc:
+            raise HarnessValidationError("run specification budget is invalid") from exc
+        return cls(
+            run_id=value["run_id"],
+            graph=HarnessGraphDefinition.from_dict(value["graph"]),
+            inputs=dict(inputs),
+            metadata=dict(metadata),
+            budget=actual_budget,
+            created_at=created_at,
+        )
 
 
 def run_spec_checksum(run_spec: HarnessRunSpec) -> str:

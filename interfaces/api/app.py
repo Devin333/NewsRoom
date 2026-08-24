@@ -48,7 +48,10 @@ from interfaces.api.responses import (
     success,
 )
 from interfaces.api.errors import http_error_code
-from interfaces.composition.research import build_research_application_service
+from interfaces.composition.research import (
+    build_default_harness_wait_service,
+    build_research_application_service,
+)
 from interfaces.events import AuditEmitter, audit_emitter_from_env
 from framework.shared.env import load_root_env
 from interfaces.services.auth_service import AuthApplicationService
@@ -997,4 +1000,5 @@ app = create_app(
     api_token=_api_token_from_env(),
     api_keys=_api_keys_from_env(),
     api_rate_limit_per_minute=_optional_positive_int_env("NEWS_API_RATE_LIMIT_PER_MINUTE"),
+    harness_wait_service_factory=build_default_harness_wait_service,
 )

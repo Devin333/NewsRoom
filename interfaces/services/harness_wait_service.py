@@ -425,6 +425,7 @@ class HarnessWaitApplicationService:
         authoritative_approval_id = _approval_id_from_node(
             state,
             scope.node_instance_id,
+            run_spec=binding.run_spec,
         )
         if self._approval_resolver is None:
             raise HarnessWaitApplicationError(
@@ -576,7 +577,15 @@ class HarnessWaitApplicationService:
 
     def _binding(self, run_id: str) -> HarnessWaitRuntimeBinding:
         run_id = _request_text(run_id, "run_id", code="wait_run_id_invalid")
-        binding = self._runtime_resolver.resolve(run_id, actor=self._actor)
+        try:
+            binding = self._runtime_resolver.resolve(run_id, actor=self._actor)
+        except HarnessWaitApplicationError:
+            raise
+        except (RuntimeError, ValueError, TypeError) as exc:
+            raise HarnessWaitApplicationError(
+                "runtime resolver is unavailable",
+                code="wait_runtime_resolver_unavailable",
+            ) from exc
         if not isinstance(binding, HarnessWaitRuntimeBinding):
             raise HarnessWaitApplicationError(
                 "runtime resolver returned an invalid binding",
@@ -711,7 +720,12 @@ class HarnessWaitApplicationService:
         )
 
 
-def _approval_id_from_node(state: HarnessGraphState, node_instance_id: str) -> str | None:
+def _approval_id_from_node(
+    state: HarnessGraphState,
+    node_instance_id: str,
+    *,
+    run_spec: HarnessRunSpec | None = None,
+) -> str | None:
     node = next(
         (item for item in state.node_instances if item.instance_id == node_instance_id),
         None,
@@ -723,7 +737,12 @@ def _approval_id_from_node(state: HarnessGraphState, node_instance_id: str) -> s
         if isinstance(value, Mapping):
             candidate = value.get("approval_id")
             if isinstance(candidate, str) and candidate.strip():
-                return candidate.strip()
+                candidate = candidate.strip()
+                if candidate.startswith("graph.inputs.") and run_spec is not None:
+                    input_key = candidate.removeprefix("graph.inputs.")
+                    resolved = run_spec.inputs.get(input_key)
+                    return resolved.strip() if isinstance(resolved, str) and resolved.strip() else None
+                return candidate
             for nested in value.values():
                 found = find(nested)
                 if found is not None:

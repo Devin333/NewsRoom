@@ -197,6 +197,16 @@ from interfaces.services.reader_repair_factory import (
     build_reader_repair_memory_commit_port_from_env,
     build_reader_repair_memory_from_env,
 )
+from interfaces.services.harness_wait_runtime import (
+    DurableHarnessWaitApprovalResolver,
+    HarnessWaitRuntimeRegistry,
+)
+from interfaces.services.harness_wait_service import (
+    HarnessWaitActorScope,
+    HarnessWaitApplicationService,
+    HarnessWaitApplicationError,
+)
+from interfaces.models.actor import ActorContext
 
 
 class _ProductionResearchAnalysisWorker:
@@ -264,6 +274,33 @@ def _dynamic_research_gate_context(
 _RESEARCH_EVENT_TENANT_ID = "research-runtime"
 
 
+class _ResearchHarnessWaitActorScopeResolver:
+    """Derive Wait scope only from authenticated actor metadata."""
+
+    def resolve(self, actor: ActorContext) -> HarnessWaitActorScope:
+        if not isinstance(actor, ActorContext):
+            raise TypeError("actor must be ActorContext")
+        metadata = actor.metadata if isinstance(actor.metadata, Mapping) else {}
+        scope = AskPaperUseCase().resolve_actor_scope(
+            tenant_id=metadata.get("tenant_id"),
+            user_id=metadata.get("user_id"),
+            memory_namespace=metadata.get("memory_namespace"),
+        )
+        scope_ref = research_identity_scope_ref(scope.to_metadata())
+        actor_ref = checksum_for(
+            {
+                "actor_id": actor.actor_id,
+                "tenant_scope_ref": scope_ref,
+                "identity_scope_ref": scope_ref,
+            }
+        )
+        return HarnessWaitActorScope(
+            tenant_scope_ref=scope_ref,
+            identity_scope_ref=scope_ref,
+            actor_identity_scope_ref=actor_ref,
+        )
+
+
 class ResearchRuntimeComposition:
     """Own one composed Research service and its process-scoped resources."""
 
@@ -272,6 +309,9 @@ class ResearchRuntimeComposition:
         "_close_lock",
         "_closed",
         "_graph_artifact_governance_service",
+        "_harness_wait_approval_resolver",
+        "_harness_wait_actor_scope_resolver",
+        "_harness_wait_runtime_registry",
         "_reader_repair_service",
         "_resources",
         "_service",
@@ -291,6 +331,9 @@ class ResearchRuntimeComposition:
             ResearchGraphArtifactGovernanceService | None
         ) = None,
         reader_repair_service: ReaderRepairGraphApplicationService | None = None,
+        harness_wait_runtime_registry: HarnessWaitRuntimeRegistry | None = None,
+        harness_wait_approval_resolver: DurableHarnessWaitApprovalResolver | None = None,
+        harness_wait_actor_scope_resolver: _ResearchHarnessWaitActorScopeResolver | None = None,
     ) -> None:
         if settings is not None and not isinstance(settings, ResearchRuntimeSettings):
             raise TypeError("settings must be ResearchRuntimeSettings")
@@ -339,6 +382,9 @@ class ResearchRuntimeComposition:
             graph_artifact_governance_service
         )
         self._reader_repair_service = reader_repair_service
+        self._harness_wait_runtime_registry = harness_wait_runtime_registry
+        self._harness_wait_approval_resolver = harness_wait_approval_resolver
+        self._harness_wait_actor_scope_resolver = harness_wait_actor_scope_resolver
         self._close_lock = Lock()
         self._closed = False
 
@@ -373,6 +419,26 @@ class ResearchRuntimeComposition:
         self,
     ) -> ReaderRepairGraphApplicationService | None:
         return self._reader_repair_service
+
+    def harness_wait_service_factory(
+        self,
+    ) -> Callable[[ActorContext], HarnessWaitApplicationService] | None:
+        if (
+            self._harness_wait_runtime_registry is None
+            or self._harness_wait_approval_resolver is None
+            or self._harness_wait_actor_scope_resolver is None
+        ):
+            return None
+
+        def factory(actor: ActorContext) -> HarnessWaitApplicationService:
+            return HarnessWaitApplicationService(
+                actor=actor,
+                runtime_resolver=self._harness_wait_runtime_registry,
+                actor_scope_resolver=self._harness_wait_actor_scope_resolver,
+                approval_resolver=self._harness_wait_approval_resolver,
+            )
+
+        return factory
 
     @property
     def available(self) -> bool:
@@ -658,6 +724,21 @@ def default_research_runtime_provider() -> ResearchRuntimeProvider:
 
 def build_research_application_service() -> ResearchApplicationService:
     return _DEFAULT_RESEARCH_RUNTIME_PROVIDER.service_factory()
+
+
+def build_default_harness_wait_service(
+    actor: ActorContext,
+) -> HarnessWaitApplicationService:
+    """Resolve the composition-owned Wait service lazily for the production app."""
+
+    composition = _DEFAULT_RESEARCH_RUNTIME_PROVIDER.get()
+    factory = composition.harness_wait_service_factory()
+    if factory is None:
+        raise HarnessWaitApplicationError(
+            "Research Harness Wait capability is unavailable",
+            code="wait_runtime_resolver_missing",
+        )
+    return factory(actor)
 
 
 def reset_default_research_runtime() -> None:
@@ -1333,6 +1414,16 @@ def _build_configured_composition(
                 ),
             ),
         )
+        harness_wait_runtime_registry = HarnessWaitRuntimeRegistry(
+            settings.run_store.root / "harness-waits"
+        )
+        harness_wait_actor_scope_resolver = _ResearchHarnessWaitActorScopeResolver()
+        harness_wait_approval_resolver = DurableHarnessWaitApprovalResolver(
+            runtime_resolver=harness_wait_runtime_registry,
+            actor_scope_resolver=harness_wait_actor_scope_resolver,
+            root=settings.run_store.root / "harness-waits",
+        )
+        owned_resources.append(harness_wait_runtime_registry)
         durable_events = _compose_component(
             ResearchCapability.EVENT_LOG,
             lambda: durable_event_storage_from_env(
@@ -1809,6 +1900,7 @@ def _build_configured_composition(
             graph_event_projection=graph_event_projection,
             graph_index_publisher=graph_index_publisher,
             node_output_resource_factory=lambda _run_id: node_output_resource,
+            runtime_binding_registrar=harness_wait_runtime_registry,
         )
         ask_use_case = AskPaperUseCase()
         rag_ask_provider = _PaperRagUseCaseProvider(ask_use_case)
@@ -1830,6 +1922,9 @@ def _build_configured_composition(
                 graph_artifact_components.governance_service
             ),
             reader_repair_service=reader_repair_service,
+            harness_wait_runtime_registry=harness_wait_runtime_registry,
+            harness_wait_approval_resolver=harness_wait_approval_resolver,
+            harness_wait_actor_scope_resolver=harness_wait_actor_scope_resolver,
         )
     except BaseException:
         for resource in reversed(owned_resources):
@@ -2200,6 +2295,7 @@ __all__ = [
     "ResearchRuntimeProvider",
     "build_research_application_service",
     "build_research_runtime_composition",
+    "build_default_harness_wait_service",
     "close_default_research_runtime",
     "default_research_runtime_provider",
     "get_default_paper_rag_runtime_resources",

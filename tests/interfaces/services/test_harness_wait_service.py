@@ -557,6 +557,7 @@ def _waiting_service(
     actor_identity_scope_ref = checksum_for({"actor": "actor-1"})
     inputs = {
         "request_id": f"request-{run_id}",
+        **({"approval_id": "approval-1"} if wait_kind == "approval" else {}),
         "tenant_scope_ref": tenant_scope_ref,
         "identity_scope_ref": identity_scope_ref,
         "deadline_ref": checksum_for({"deadline": run_id}),
@@ -574,7 +575,14 @@ def _waiting_service(
                 Wait(
                     "approval-wait" if wait_kind == "approval" else "signal-wait",
                     wait_kind,
-                    {"request_id": "graph.inputs.request_id"},
+                    {
+                        "request_id": "graph.inputs.request_id",
+                        **(
+                            {"approval_id": "graph.inputs.approval_id"}
+                            if wait_kind == "approval"
+                            else {}
+                        ),
+                    },
                     "newsroom.wait",
                     "1",
                     "graph.inputs.tenant_scope_ref",

@@ -57,6 +57,7 @@ from framework.harness.graph import GraphExecutionVersionManifest, HarnessGraphC
 from framework.harness.control_plane.node_output import (
     HarnessNodeOutputResourcePort,
 )
+from framework.harness.waits.ports import HarnessWaitRuntimeRegistrationPort
 from framework.harness.control_plane.activity_execution import (
     HARNESS_GRAPH_ACTIVITY_TASK_CONTEXT_KEY,
     HarnessGraphActivityTaskContext,
@@ -855,6 +856,7 @@ class ResearchSinglePaperRuntime:
         graph_index_publisher: ResearchGraphStorageIndexPublisherPort | None = None,
         node_output_resource_factory: Callable[[str], HarnessNodeOutputResourcePort]
         | None = None,
+        runtime_binding_registrar: HarnessWaitRuntimeRegistrationPort | None = None,
     ) -> None:
         self.source_provider = source_provider
         self.document_compiler = document_compiler
@@ -885,6 +887,15 @@ class ResearchSinglePaperRuntime:
         ):
             raise TypeError("node_output_resource_factory must be callable")
         self.node_output_resource_factory = node_output_resource_factory
+        if runtime_binding_registrar is not None and not isinstance(
+            runtime_binding_registrar,
+            HarnessWaitRuntimeRegistrationPort,
+        ):
+            raise TypeError(
+                "runtime_binding_registrar must implement "
+                "HarnessWaitRuntimeRegistrationPort"
+            )
+        self.runtime_binding_registrar = runtime_binding_registrar
         if not callable(event_port_factory):
             raise TypeError("event_port_factory must be callable")
         if scoped_event_port_factory is not None and not callable(
@@ -1102,6 +1113,13 @@ class ResearchSinglePaperRuntime:
         # The installed physical dispatcher owns both execution and the
         # cooperative cancellation events referenced by durable Graph decisions.
         control_plane.install_graph_activity_dispatcher(dispatcher)
+        if self.runtime_binding_registrar is not None:
+            self.runtime_binding_registrar.register(
+                run_spec,
+                control_plane,
+                tenant_scope_ref=run_spec.metadata["tenant_scope_ref"],
+                identity_scope_ref=run_spec.metadata["identity_scope_ref"],
+            )
         # The control plane persists quarantine before this lifecycle hook
         # removes owned hidden candidates. Preserve a primary worker or
         # handler failure if cleanup itself encounters a secondary I/O error.
