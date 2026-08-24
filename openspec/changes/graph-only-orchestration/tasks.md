@@ -123,7 +123,7 @@ TaskPlan result contract 的 Gate A 子切片已由 commit `e7ec9d9c00ec63cd7688
 - [x] 4.5 将 cancel、signal、approval、resume、inspect、replay 和 run operation 组合到 Harness Graph application services
 - [x] 4.6 将 artifact inspection 改为读取 Graph terminal manifest，并对未迁移历史返回 typed quarantine/history diagnostic
 - [x] 4.7 `[Gate A]` 建立消费 Graph run/event contracts 的 artifact/event index owner contract、inactive adapter、dry-run 和 read-back tests，保持路径、checksum、sequence 和 idempotency 防护且不切换 production index pointer
-- [ ] 4.8 迁移 `scripts/dev.py`、`interfaces/services` 和 `infrastructure/research` 的所有 live 旧 runtime imports，并删除 fallback
+- [x] 4.8 迁移 `scripts/dev.py`、`interfaces/services` 和 `infrastructure/research` 的所有 live 旧 runtime imports，并删除 fallback；AST zero-reference scanner 覆盖 imports、exports、schema/reflection strings 和 ImportError fallback，证据见 `evidence/production-zero-reference.json`
 - [x] 4.9 为每个迁出职责添加 owner-level contract tests，证明既有 catalog/quota/usage/GC/cost/alert 行为保持不变，且 artifact owner、lifecycle、composition 和 caller 均不反向导入 `framework.workflow`
 - [x] 4.10 `[Gate A]` 建立 Graph node-instance output resource owner、原子 monotonic lease、staged write/commit、typed stale-owner rejection 与 inactive admitted-activity adapter contract；资源世代不得来自 Graph/local attempt、budget、retry credit 或 event sequence
 - [ ] 4.11 激活 Harness durable Graph context writer，并将 event projection、run inspection 与 projection schema 切到 Graph event application port；删除旧 reader，不保留回退
