@@ -100,7 +100,7 @@ def register(subparsers: argparse._SubParsersAction) -> None:
 
 
 def mcp_catalog(args: argparse.Namespace) -> int:
-    service = _mcp_service()
+    service = _mcp_service(args)
     catalog = service.catalog().to_dict()
     if args.json:
         print(json.dumps(catalog, ensure_ascii=False, sort_keys=True))
@@ -118,7 +118,7 @@ def mcp_catalog(args: argparse.Namespace) -> int:
 
 
 def mcp_capabilities(args: argparse.Namespace) -> int:
-    service = _mcp_service()
+    service = _mcp_service(args)
     manifest = service.capability_manifest().to_dict()
     if args.json:
         print(json.dumps(manifest, ensure_ascii=False, sort_keys=True))
@@ -134,7 +134,7 @@ def mcp_capabilities(args: argparse.Namespace) -> int:
 
 
 def mcp_tools_list(args: argparse.Namespace) -> int:
-    service = _mcp_service()
+    service = _mcp_service(args)
     catalog = service.catalog().to_dict()
     tools = catalog.get("tools") or []
     payload = {"tool_count": len(tools), "tools": tools}
@@ -148,7 +148,7 @@ def mcp_tools_list(args: argparse.Namespace) -> int:
 
 
 def mcp_prompts_list(args: argparse.Namespace) -> int:
-    service = _mcp_service()
+    service = _mcp_service(args)
     catalog = service.catalog().to_dict()
     prompts = catalog.get("prompts") or []
     payload = {"prompt_count": len(prompts), "prompts": prompts}
@@ -162,7 +162,7 @@ def mcp_prompts_list(args: argparse.Namespace) -> int:
 
 
 def mcp_call(args: argparse.Namespace) -> int:
-    service = _mcp_service()
+    service = _mcp_service(args)
     arguments = parse_json_object(args.args_json)
     result = service.call_tool(args.tool_name, arguments)
     payload = result.to_dict()
@@ -179,7 +179,7 @@ def mcp_call(args: argparse.Namespace) -> int:
 
 
 def mcp_read_resource(args: argparse.Namespace) -> int:
-    service = _mcp_service()
+    service = _mcp_service(args)
     result = service.read_resource(args.uri)
     payload = result.to_dict()
     if args.json:
@@ -195,7 +195,7 @@ def mcp_read_resource(args: argparse.Namespace) -> int:
 
 
 def mcp_get_prompt(args: argparse.Namespace) -> int:
-    service = _mcp_service()
+    service = _mcp_service(args)
     arguments = parse_json_object(args.args_json)
     result = service.get_prompt(args.prompt_name, arguments)
     payload = result.to_dict()
@@ -222,12 +222,15 @@ def parse_json_object(value: str) -> dict:
 def mcp_serve_stdio(args: argparse.Namespace) -> int:
     from interfaces.mcp.stdio_server import run_stdio
 
-    run_stdio()
+    run_stdio(service=_mcp_service(args))
     return 0
 
 
-def _mcp_service():
-    return MCPApplicationService()
+def _mcp_service(args: argparse.Namespace | None = None):
+    provider = getattr(args, "source_runtime_provider", None)
+    if provider is None:
+        return MCPApplicationService()
+    return MCPApplicationService(source_runtime_provider=provider)
 
 
 add_mcp_commands = register

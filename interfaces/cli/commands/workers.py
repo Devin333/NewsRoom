@@ -139,7 +139,10 @@ def _register_worker_tree(subparsers: argparse._SubParsersAction, command_name: 
 
 
 def enqueue_memory_reindex(args: argparse.Namespace) -> int:
-    service = _worker_service(redis_url=args.redis_url)
+    service = _worker_service(
+        redis_url=args.redis_url,
+        source_runtime_provider=getattr(args, "source_runtime_provider", None),
+    )
     result = service.enqueue_memory_reindex(
         run_id=args.run_id,
         topic=args.topic,
@@ -161,7 +164,10 @@ def enqueue_memory_reindex(args: argparse.Namespace) -> int:
 
 
 def enqueue_source_health(args: argparse.Namespace) -> int:
-    service = _worker_service(redis_url=args.redis_url)
+    service = _worker_service(
+        redis_url=args.redis_url,
+        source_runtime_provider=getattr(args, "source_runtime_provider", None),
+    )
     try:
         result = service.enqueue_source_health_check(
             source_id=args.source_id,
@@ -186,7 +192,11 @@ def enqueue_source_health(args: argparse.Namespace) -> int:
 
 
 def run_once(args: argparse.Namespace) -> int:
-    service = _worker_service(artifact_root=args.artifact_root, redis_url=args.redis_url)
+    service = _worker_service(
+        artifact_root=args.artifact_root,
+        redis_url=args.redis_url,
+        source_runtime_provider=getattr(args, "source_runtime_provider", None),
+    )
     try:
         result = service.run_once(
             worker_id=args.worker_id,
@@ -218,7 +228,11 @@ def run_once(args: argparse.Namespace) -> int:
 
 
 def run_loop(args: argparse.Namespace) -> int:
-    service = _worker_service(artifact_root=args.artifact_root, redis_url=args.redis_url)
+    service = _worker_service(
+        artifact_root=args.artifact_root,
+        redis_url=args.redis_url,
+        source_runtime_provider=getattr(args, "source_runtime_provider", None),
+    )
     try:
         result = service.run_loop(
             worker_id=args.worker_id,
@@ -251,7 +265,10 @@ def run_loop(args: argparse.Namespace) -> int:
 
 
 def heartbeat(args: argparse.Namespace) -> int:
-    service = _worker_service(redis_url=args.redis_url)
+    service = _worker_service(
+        redis_url=args.redis_url,
+        source_runtime_provider=getattr(args, "source_runtime_provider", None),
+    )
     result = service.record_heartbeat(
         worker_id=args.worker_id,
         queue_names=args.queue_names or [DEFAULT_MEMORY_QUEUE],
@@ -273,7 +290,10 @@ def heartbeat(args: argparse.Namespace) -> int:
 
 def status(args: argparse.Namespace) -> int:
     try:
-        result = _worker_service(redis_url=args.redis_url).list_worker_status(
+        result = _worker_service(
+            redis_url=args.redis_url,
+            source_runtime_provider=getattr(args, "source_runtime_provider", None),
+        ).list_worker_status(
             worker_id=args.worker_id,
             stale_after_seconds=args.stale_after_seconds,
         )
@@ -296,7 +316,10 @@ def status(args: argparse.Namespace) -> int:
 
 
 def queues(args: argparse.Namespace) -> int:
-    result = _worker_service(redis_url=args.redis_url).queue_status(
+    result = _worker_service(
+        redis_url=args.redis_url,
+        source_runtime_provider=getattr(args, "source_runtime_provider", None),
+    ).queue_status(
         queue_names=args.queue_names
         or [DEFAULT_MEMORY_QUEUE, DEFAULT_SOURCE_QUEUE, DEFAULT_DEAD_LETTER_QUEUE]
     )

@@ -54,7 +54,7 @@ def add_tool_policy_args(parser: argparse.ArgumentParser) -> None:
 
 
 def list_tools(args: argparse.Namespace) -> int:
-    result = _tool_service().list_tools(
+    result = _tool_service(args).list_tools(
         allowed_tools=args.allowed_tools,
         blocked_tools=args.blocked_tools,
         allow_mcp=bool(args.allow_mcp),
@@ -74,7 +74,7 @@ def list_tools(args: argparse.Namespace) -> int:
 
 
 def schema(args: argparse.Namespace) -> int:
-    result = _tool_service().export_schema(
+    result = _tool_service(args).export_schema(
         agent_id=args.agent_id,
         allowed_tools=args.allowed_tools,
         blocked_tools=args.blocked_tools,
@@ -93,7 +93,7 @@ def schema(args: argparse.Namespace) -> int:
 
 
 def tool_policy_from_args(args: argparse.Namespace):
-    return _tool_service().tool_policy(
+    return _tool_service(args).tool_policy(
         allowed_tools=args.allowed_tools,
         blocked_tools=args.blocked_tools,
         allow_mcp=bool(args.allow_mcp),
@@ -101,8 +101,9 @@ def tool_policy_from_args(args: argparse.Namespace):
     )
 
 
-def _tool_service():
-    return ToolApplicationService()
+def _tool_service(args: argparse.Namespace | None = None):
+    provider = getattr(args, "source_runtime_provider", None)
+    return ToolApplicationService(source_runtime_provider=provider)
 
 
 def _print_json(payload: dict) -> None:

@@ -51,6 +51,7 @@ from interfaces.api.errors import http_error_code
 from interfaces.composition.research import (
     build_default_harness_wait_service,
     build_research_application_service,
+    default_source_runtime_provider,
 )
 from interfaces.events import AuditEmitter, audit_emitter_from_env
 from framework.shared.env import load_root_env
@@ -320,8 +321,9 @@ def create_app(
         finally:
             reset_request_id(context_token)
 
+    source_runtime_provider: SourceRuntimeProvider | None = None
     if source_service_factory is SourceApplicationService:
-        source_runtime_provider = SourceRuntimeProvider()
+        source_runtime_provider = default_source_runtime_provider()
         source_service_factory = source_runtime_provider.source_service_factory
         if worker_service_factory is WorkerApplicationService:
 
@@ -334,6 +336,7 @@ def create_app(
 
     resolved_mcp_service_factory = _mcp_service_factory(
         mcp_service_factory=mcp_service_factory,
+        source_runtime_provider=source_runtime_provider,
         event_operator_service_factory=event_operator_service_factory,
         worker_service_factory=worker_service_factory,
         run_service_factory=run_service_factory,
@@ -413,6 +416,7 @@ def _run_result_response(result) -> dict[str, Any]:
 def _mcp_service_factory(
     *,
     mcp_service_factory: MCPServiceFactory,
+    source_runtime_provider: SourceRuntimeProvider | None,
     event_operator_service_factory: EventOperatorServiceFactory,
     worker_service_factory: WorkerServiceFactory,
     run_service_factory: RunServiceFactory,
@@ -434,6 +438,7 @@ def _mcp_service_factory(
 
     def factory() -> MCPApplicationService:
         return MCPApplicationService(
+            source_runtime_provider=source_runtime_provider,
             event_operator_service_factory=event_operator_service_factory,
             worker_service_factory=worker_service_factory,
             run_service_factory=run_service_factory,
@@ -441,7 +446,9 @@ def _mcp_service_factory(
             report_service_factory=report_service_factory,
             memory_service_factory=memory_service_factory,
             diagnostic_service_factory=diagnostic_service_factory,
-            source_service_factory=source_service_factory,
+            source_service_factory=(
+                None if source_runtime_provider is not None else source_service_factory
+            ),
             entity_service_factory=entity_service_factory,
             subscription_service_factory=subscription_service_factory,
             graph_run_inspection_service_factory=graph_run_inspection_service_factory,

@@ -722,8 +722,30 @@ def default_research_runtime_provider() -> ResearchRuntimeProvider:
     return _DEFAULT_RESEARCH_RUNTIME_PROVIDER
 
 
-def build_research_application_service() -> ResearchApplicationService:
-    return _DEFAULT_RESEARCH_RUNTIME_PROVIDER.service_factory()
+def default_source_runtime_provider() -> SourceRuntimeProvider:
+    """Return the Source provider owned by the default Research process root."""
+
+    return _DEFAULT_RESEARCH_RUNTIME_PROVIDER.source_runtime_provider
+
+
+def build_research_application_service(
+    *,
+    source_runtime_provider: SourceRuntimeProvider | None = None,
+) -> ResearchApplicationService:
+    """Resolve Research through its composition root.
+
+    Entry-point compositions may supply their already-owned Source provider so
+    Research observes the same source policy and quota state.
+    """
+
+    if (
+        source_runtime_provider is None
+        or source_runtime_provider is default_source_runtime_provider()
+    ):
+        return _DEFAULT_RESEARCH_RUNTIME_PROVIDER.service_factory()
+    return ResearchRuntimeProvider(
+        source_runtime_provider=source_runtime_provider,
+    ).service_factory()
 
 
 def build_default_harness_wait_service(
@@ -2297,6 +2319,7 @@ __all__ = [
     "build_research_runtime_composition",
     "build_default_harness_wait_service",
     "close_default_research_runtime",
+    "default_source_runtime_provider",
     "default_research_runtime_provider",
     "get_default_paper_rag_runtime_resources",
     "get_default_research_reranker",

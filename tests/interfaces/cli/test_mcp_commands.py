@@ -17,6 +17,24 @@ def test_news_cli_mcp_catalog_json(monkeypatch, capsys) -> None:
     assert payload["tools"][0]["name"] == "news.source.health"
 
 
+def test_news_cli_mcp_reuses_parser_source_runtime_provider(monkeypatch, capsys) -> None:
+    provider = object()
+    parser = news_cli.build_parser()
+    parser.set_defaults(source_runtime_provider=provider)
+    captured: list[object] = []
+
+    class CapturingMCPService(_FakeMCPService):
+        def __init__(self, **kwargs) -> None:
+            captured.append(kwargs["source_runtime_provider"])
+
+    monkeypatch.setattr(mcp_commands, "MCPApplicationService", CapturingMCPService)
+    args = parser.parse_args(["mcp", "manifest", "--json"])
+
+    assert args.handler(args) == 0
+    capsys.readouterr()
+    assert captured == [provider]
+
+
 def test_news_cli_mcp_capabilities_json(monkeypatch, capsys) -> None:
     monkeypatch.setattr(mcp_commands, "MCPApplicationService", _FakeMCPService)
 
@@ -246,6 +264,9 @@ def test_news_cli_mcp_real_prompt_get_json(capsys) -> None:
 
 
 class _FakeMCPService:
+    def __init__(self, **_kwargs) -> None:
+        pass
+
     def catalog(self):
         return _FakeResult(
             {

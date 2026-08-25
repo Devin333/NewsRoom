@@ -4,7 +4,7 @@ import argparse
 import json
 
 from interfaces.cli.commands.dispatch import CommandHandler, call_handler
-from interfaces.services.source_runtime import build_source_runtime_composition
+from interfaces.composition.source import build_source_runtime_provider
 
 
 def register(subparsers: argparse._SubParsersAction) -> None:
@@ -102,7 +102,7 @@ def register(subparsers: argparse._SubParsersAction) -> None:
 
 
 def list_sources(args: argparse.Namespace) -> int:
-    result = _source_service().list_sources(enabled_only=not args.include_disabled)
+    result = _source_service(args).list_sources(enabled_only=not args.include_disabled)
     payload = result.to_dict()
 
     if args.json:
@@ -120,7 +120,7 @@ def list_sources(args: argparse.Namespace) -> int:
 
 def inspect_source(args: argparse.Namespace) -> int:
     try:
-        result = _source_service().get_source(args.source_id)
+        result = _source_service(args).get_source(args.source_id)
     except (KeyError, ValueError) as exc:
         print(str(exc))
         return 1
@@ -142,7 +142,7 @@ def inspect_source(args: argparse.Namespace) -> int:
 
 def fetch_arxiv(args: argparse.Namespace) -> int:
     try:
-        result = _source_service().fetch_arxiv(query=args.query, limit=args.limit)
+        result = _source_service(args).fetch_arxiv(query=args.query, limit=args.limit)
     except ValueError as exc:
         print(str(exc))
         return 1
@@ -157,7 +157,7 @@ def fetch_arxiv(args: argparse.Namespace) -> int:
 
 def fetch_github(args: argparse.Namespace) -> int:
     try:
-        result = _source_service().fetch_github_releases(
+        result = _source_service(args).fetch_github_releases(
             repository=args.repo,
             limit=args.limit,
         )
@@ -174,7 +174,7 @@ def fetch_github(args: argparse.Namespace) -> int:
 
 
 def source_health(args: argparse.Namespace) -> int:
-    result = _source_service().source_health(enabled_only=not args.include_disabled)
+    result = _source_service(args).source_health(enabled_only=not args.include_disabled)
     payload = result.to_dict()
 
     if args.json:
@@ -194,7 +194,7 @@ def source_health(args: argparse.Namespace) -> int:
 
 def check_source_health(args: argparse.Namespace) -> int:
     try:
-        result = _source_service().check_source_health(
+        result = _source_service(args).check_source_health(
             source_id=args.source_id,
             enabled_only=not args.include_disabled,
             limit=args.limit,
@@ -221,7 +221,7 @@ def check_source_health(args: argparse.Namespace) -> int:
 
 
 def validate_sources(args: argparse.Namespace) -> int:
-    result = _source_service().validate_sources()
+    result = _source_service(args).validate_sources()
     payload = result.to_dict()
 
     if args.json:
@@ -242,7 +242,7 @@ def validate_sources(args: argparse.Namespace) -> int:
 
 def fetch_source(args: argparse.Namespace) -> int:
     try:
-        result = _source_service().fetch_source(
+        result = _source_service(args).fetch_source(
             source_id=args.source_id,
             limit=args.limit,
             query=args.query,
@@ -262,7 +262,7 @@ def fetch_source(args: argparse.Namespace) -> int:
 
 def fetch_category(args: argparse.Namespace) -> int:
     try:
-        result = _source_service().fetch_category(
+        result = _source_service(args).fetch_category(
             category=args.category,
             limit_per_source=args.limit_per_source,
             enabled_only=not args.include_disabled,
@@ -285,7 +285,7 @@ def fetch_category(args: argparse.Namespace) -> int:
 
 def fetch_priority(args: argparse.Namespace) -> int:
     try:
-        result = _source_service().fetch_priority(
+        result = _source_service(args).fetch_priority(
             priority=args.priority,
             limit_per_source=args.limit_per_source,
             enabled_only=not args.include_disabled,
@@ -305,7 +305,7 @@ def fetch_priority(args: argparse.Namespace) -> int:
 
 def fetch_topic(args: argparse.Namespace) -> int:
     try:
-        result = _source_service().fetch_topic_sources(
+        result = _source_service(args).fetch_topic_sources(
             topic=args.topic,
             limit_per_source=args.limit_per_source,
             enabled_only=not args.include_disabled,
@@ -328,7 +328,7 @@ def fetch_topic(args: argparse.Namespace) -> int:
 
 
 def source_categories(args: argparse.Namespace) -> int:
-    payload = _source_service().source_categories()
+    payload = _source_service(args).source_categories()
     if args.json:
         _print_json(payload)
     else:
@@ -339,7 +339,7 @@ def source_categories(args: argparse.Namespace) -> int:
 
 
 def source_priorities(args: argparse.Namespace) -> int:
-    payload = _source_service().source_priorities()
+    payload = _source_service(args).source_priorities()
     if args.json:
         _print_json(payload)
     else:
@@ -349,8 +349,11 @@ def source_priorities(args: argparse.Namespace) -> int:
     return 0
 
 
-def _source_service():
-    return build_source_runtime_composition().source_service
+def _source_service(args: argparse.Namespace):
+    provider = getattr(args, "source_runtime_provider", None)
+    if provider is not None:
+        return provider.get().source_service
+    return build_source_runtime_provider().get().source_service
 
 
 def _print_source_fetch_result(payload: dict) -> None:

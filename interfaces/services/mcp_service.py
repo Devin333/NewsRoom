@@ -112,6 +112,7 @@ class MCPApplicationService:
     def __init__(
         self,
         *,
+        source_runtime_provider: Any | None = None,
         worker_service_factory: Callable[[], Any] | None = None,
         run_service_factory: Callable[[], Any] | None = None,
         report_service_factory: Callable[[], Any] | None = None,
@@ -129,19 +130,34 @@ class MCPApplicationService:
         event_operator_service_factory: Callable[[ActorContext], Any] | None = None,
         operator_actor: ActorContext | None = None,
     ) -> None:
-        self.worker_service_factory = worker_service_factory or _worker_service_factory
+        if source_runtime_provider is not None and source_service_factory is not None:
+            raise ValueError(
+                "source_runtime_provider and source_service_factory are mutually exclusive"
+            )
         self.run_service_factory = run_service_factory or _run_service_factory
         self.report_service_factory = report_service_factory or _report_service_factory
-        self._source_runtime_provider = None
-        if source_service_factory is None:
-            from interfaces.services.source_runtime import SourceRuntimeProvider
+        self._source_runtime_provider = source_runtime_provider
+        if source_service_factory is None and self._source_runtime_provider is None:
+            from interfaces.composition.research import default_source_runtime_provider
 
-            self._source_runtime_provider = SourceRuntimeProvider()
+            self._source_runtime_provider = default_source_runtime_provider()
+            self.source_service_factory = (
+                self._source_runtime_provider.source_service_factory
+            )
+        elif source_service_factory is None:
             self.source_service_factory = (
                 self._source_runtime_provider.source_service_factory
             )
         else:
             self.source_service_factory = source_service_factory
+        if worker_service_factory is not None:
+            self.worker_service_factory = worker_service_factory
+        elif self._source_runtime_provider is not None:
+            self.worker_service_factory = _worker_service_factory_for_source_runtime(
+                self._source_runtime_provider
+            )
+        else:
+            self.worker_service_factory = _worker_service_factory
         self.entity_service_factory = entity_service_factory or _entity_service_factory
         self.subscription_service_factory = (
             subscription_service_factory or _subscription_service_factory
@@ -157,7 +173,14 @@ class MCPApplicationService:
         )
         self.artifact_service_factory = artifact_service_factory or _artifact_service_factory
         self.storage_service_factory = storage_service_factory or _storage_service_factory
-        self.research_service_factory = research_service_factory or _research_service_factory
+        if research_service_factory is not None:
+            self.research_service_factory = research_service_factory
+        elif self._source_runtime_provider is not None:
+            self.research_service_factory = _research_service_factory_for_source_runtime(
+                self._source_runtime_provider
+            )
+        else:
+            self.research_service_factory = _research_service_factory
         self.event_operator_service_factory = (
             event_operator_service_factory or _event_operator_service_factory
         )
@@ -2733,6 +2756,15 @@ def _worker_service_factory():
     return WorkerApplicationService()
 
 
+def _worker_service_factory_for_source_runtime(source_runtime_provider: Any):
+    def factory():
+        from interfaces.services.worker_service import WorkerApplicationService
+
+        return WorkerApplicationService(source_runtime_provider=source_runtime_provider)
+
+    return factory
+
+
 def _run_service_factory():
     from interfaces.services.run_service import RunApplicationService
 
@@ -2745,16 +2777,32 @@ def _research_service_factory():
     return build_research_application_service()
 
 
+def _research_service_factory_for_source_runtime(source_runtime_provider: Any):
+    from threading import Lock
+
+    service: Any | None = None
+    lock = Lock()
+
+    def factory() -> Any:
+        nonlocal service
+        if service is not None:
+            return service
+        with lock:
+            if service is None:
+                from interfaces.composition.research import build_research_application_service
+
+                service = build_research_application_service(
+                    source_runtime_provider=source_runtime_provider
+                )
+            return service
+
+    return factory
+
+
 def _report_service_factory():
     from interfaces.services.report_service import ReportApplicationService
 
     return ReportApplicationService()
-
-
-def _source_service_factory():
-    from interfaces.services.source_service import SourceApplicationService
-
-    return SourceApplicationService()
 
 
 def _entity_service_factory():

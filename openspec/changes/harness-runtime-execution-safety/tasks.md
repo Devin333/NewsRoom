@@ -1,9 +1,9 @@
 ## 1. Existing Contract Closure
 
 - [ ] 1.1 Complete `model-aware-llm-context-preflight` tasks 7.1-7.6 with focused tests, compile, smoke, strict validation, redaction/dependency audit, evidence, and path-scoped commit.
-- [ ] 1.2 Audit `source-policy-contract-convergence` current composition against the live tree and update stale evidence before changing task status.
-- [ ] 1.3 Bind API, MCP, worker, CLI, Source-tool registry/Harness, and Research package/PDF paths to the intended `SourceRuntimeComposition`, or record an explicit Harness unsupported-capability decision.
-- [ ] 1.4 Add consecutive-call quota and no-network typed-denial tests for every Source entry surface, including Research package/PDF factories; complete source evidence task 3.10 and 7.5.
+- [x] 1.2 Audit `source-policy-contract-convergence` current composition against the live tree and update stale evidence before changing task status.
+- [x] 1.3 Bind API, MCP, worker, CLI, Source-tool registry/Harness, and Research package/PDF paths to the intended `SourceRuntimeComposition`, with an explicit unsupported-capability decision for the absent Harness Source ToolPort.
+- [x] 1.4 Add consecutive-call quota and no-network typed-denial tests for every Source entry surface, including Research package/PDF factories; complete source evidence task 3.10 and 7.5.
 - [ ] 1.5 Record `durable-event-runtime` 9.5 and `harness-workflow-graph-runtime` 1.1 as external production qualification blockers without fabricating governance signatures, deployment observations, or rollback evidence.
 
 ## 2. Execution Environment Contract

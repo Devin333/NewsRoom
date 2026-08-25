@@ -33,6 +33,35 @@ def test_cli_worker_and_workers_alias_use_worker_service(monkeypatch, capsys) ->
     assert calls[1]["stale_after_seconds"] == 7
 
 
+def test_cli_worker_reuses_parser_source_runtime_provider(monkeypatch, capsys) -> None:
+    provider = object()
+    parser = news_cli.build_parser()
+    parser.set_defaults(source_runtime_provider=provider)
+    captured = []
+
+    class FakeWorkerService:
+        def __init__(self, **kwargs):
+            captured.append(kwargs["source_runtime_provider"])
+
+        def list_worker_status(self, **kwargs):
+            return _FakeResult(
+                {
+                    "worker_count": 0,
+                    "workers": [],
+                    "stale_after_seconds": kwargs["stale_after_seconds"],
+                }
+            )
+
+    monkeypatch.setattr(worker_commands, "WorkerApplicationService", FakeWorkerService)
+    args = parser.parse_args(
+        ["worker", "status", "--stale-after-seconds", "5", "--json"]
+    )
+
+    assert args.handler(args) == 0
+    capsys.readouterr()
+    assert captured == [provider]
+
+
 class _FakeResult:
     def __init__(self, payload):
         self.payload = payload

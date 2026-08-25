@@ -267,6 +267,7 @@ class WorkerApplicationService:
         worker_registry: RedisWorkerRegistry | None = None,
         handlers: dict[str, TaskHandler] | None = None,
         source_service_factory: Callable[[], SourceApplicationService] | None = None,
+        source_runtime_provider: SourceRuntimeProvider | None = None,
         trace_propagator: W3CTracePropagator | None = None,
         telemetry: EventTelemetry | None = None,
         attempt_event_sink_factory: Callable[
@@ -274,6 +275,10 @@ class WorkerApplicationService:
         ]
         | None = None,
     ) -> None:
+        if source_service_factory is not None and source_runtime_provider is not None:
+            raise ValueError(
+                "source_service_factory and source_runtime_provider are mutually exclusive"
+            )
         self.artifact_root = Path(artifact_root)
         redis_client = None
         if queue is None:
@@ -283,9 +288,11 @@ class WorkerApplicationService:
         if self.worker_registry is None and queue is None:
             self.worker_registry = RedisWorkerRegistry(redis_client)
         self._handlers = handlers
-        self._source_runtime_provider = None
+        self._source_runtime_provider = source_runtime_provider
         if source_service_factory is None:
-            self._source_runtime_provider = SourceRuntimeProvider()
+            self._source_runtime_provider = (
+                source_runtime_provider or SourceRuntimeProvider()
+            )
             self._source_service_factory = (
                 self._source_runtime_provider.source_service_factory
             )

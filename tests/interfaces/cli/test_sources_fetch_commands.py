@@ -2,7 +2,6 @@ import json
 from types import SimpleNamespace
 
 import interfaces.cli.news as news_cli
-from interfaces.cli.commands import sources as source_commands
 
 
 def test_news_cli_sources_fetch_json(monkeypatch, capsys) -> None:
@@ -61,6 +60,24 @@ def test_news_cli_sources_inspect_json(monkeypatch, capsys) -> None:
     payload = json.loads(capsys.readouterr().out)
     assert exit_code == 0
     assert payload["source_id"] == "source-1"
+
+
+def test_sources_command_reuses_one_runtime_provider_for_consecutive_handlers(
+    monkeypatch,
+    capsys,
+) -> None:
+    _patch_source_service(monkeypatch)
+    parser = news_cli.build_parser()
+    args = parser.parse_args(
+        ["sources", "fetch", "--source-id", "source-1", "--json"]
+    )
+
+    first = args.handler(args)
+    second = args.handler(args)
+
+    assert first == 0
+    assert second == 0
+    assert capsys.readouterr().out.count('"source_id": "source-1"') == 2
 
 
 def test_news_cli_sources_categories_and_priorities_json(monkeypatch, capsys) -> None:
@@ -177,7 +194,15 @@ class _FakeResult:
 
 def _patch_source_service(monkeypatch) -> None:
     monkeypatch.setattr(
-        source_commands,
-        "build_source_runtime_composition",
-        lambda: SimpleNamespace(source_service=_FakeSourceService()),
+        news_cli,
+        "build_source_runtime_provider",
+        lambda: _FakeSourceRuntimeProvider(),
     )
+
+
+class _FakeSourceRuntimeProvider:
+    def __init__(self) -> None:
+        self._composition = SimpleNamespace(source_service=_FakeSourceService())
+
+    def get(self):
+        return self._composition

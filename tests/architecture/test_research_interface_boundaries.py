@@ -108,7 +108,10 @@ EXPECTED_RESEARCH_GATEWAYS = {
     "mcp_application": {"self.research_service_factory"},
 }
 APPROVED_COMPOSITION_IMPORTS = {
-    "mcp_application": {"build_research_application_service"},
+    "mcp_application": {
+        "build_research_application_service",
+        "default_source_runtime_provider",
+    },
 }
 
 LEGACY_RESEARCH_SINGLETON_NAMES = {

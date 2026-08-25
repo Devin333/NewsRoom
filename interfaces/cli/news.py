@@ -4,6 +4,7 @@ import argparse
 import json
 from typing import Any, Sequence
 
+from interfaces.composition.source import build_source_runtime_provider
 from interfaces.cli.commands import (
     api,
     artifacts,
@@ -50,6 +51,7 @@ COMMAND_MODULES = (
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="news", description="NewsRoom command line interface")
+    parser.set_defaults(source_runtime_provider=build_source_runtime_provider())
     subparsers = parser.add_subparsers(dest="command", required=True)
     for command_module in COMMAND_MODULES:
         command_module.register(subparsers)

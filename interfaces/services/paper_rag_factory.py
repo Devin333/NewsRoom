@@ -47,7 +47,6 @@ from business.research.rag.retrieval.paper_retriever import (
 )
 from interfaces.services.source_runtime import (
     SourceRuntimeComposition,
-    build_source_runtime_composition,
 )
 
 
@@ -405,7 +404,7 @@ def build_chunk_pipeline(
     with_propositions: bool = False,
     source_runtime: SourceRuntimeComposition | None = None,
 ) -> ChunkPaperPipeline:
-    actual_source_runtime = source_runtime or build_source_runtime_composition()
+    actual_source_runtime = source_runtime or _default_source_runtime()
     return ChunkPaperPipeline(
         build_chunk_store(),
         build_chunk_repository(),
@@ -453,6 +452,12 @@ def _default_runtime_resources() -> PaperRagRuntimeResources:
     if not isinstance(resources, PaperRagRuntimeResources):
         raise RuntimeError("default Research composition returned invalid RAG resources")
     return resources
+
+
+def _default_source_runtime() -> SourceRuntimeComposition:
+    from interfaces.composition.research import default_research_runtime_provider
+
+    return default_research_runtime_provider().source_runtime_provider.get()
 
 
 def _build_optional_plan_worker() -> Any | None:

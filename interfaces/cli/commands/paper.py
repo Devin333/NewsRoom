@@ -47,7 +47,13 @@ def ingest_papers(args: argparse.Namespace) -> int:
         build_chunk_store,
     )
 
-    pipeline = build_chunk_pipeline(with_propositions=args.with_propositions)
+    source_runtime_provider = getattr(args, "source_runtime_provider", None)
+    pipeline = build_chunk_pipeline(
+        with_propositions=args.with_propositions,
+        source_runtime=(
+            source_runtime_provider.get() if source_runtime_provider is not None else None
+        ),
+    )
     service = BatchIngestService(pipeline, build_chunk_store(), build_chunk_repository())
 
     def _progress(index: int, total: int, outcome) -> None:
