@@ -56,6 +56,7 @@ def test_agent_loop_contract_records_tool_trajectory() -> None:
         {"topic": "trace"},
         registry.export_schema_for_llm(agent.agent_id, agent.resolved_tool_policy()),
         run_id="run-agent-contract",
+        standalone=True,
     )
 
     assert result.success is True

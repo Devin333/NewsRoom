@@ -191,8 +191,8 @@ def test_record_builder_and_local_writer_single_write_only_golden_identity(
     normalized = normalize_item(raw)
     input_model = RunPersistenceInput(
         run_id="new-source-record-run",
-        workflow_id="source-policy-contract",
-        workflow_version="1",
+        graph_id="source-policy-contract",
+        graph_version="1",
         status="succeeded",
         profile="contract",
         raw_items=(

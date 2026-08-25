@@ -46,6 +46,7 @@ _BUSINESS_CONTEXT_FIELDS = frozenset(
         "request_id",
     }
 )
+_HISTORY_ONLY_NULL_CONTEXT_FIELDS = frozenset({"step_id", "workflow_id"})
 _PRODUCER_FIELDS = frozenset({"component", "version", "instance_id"})
 _TRACE_FIELDS = frozenset(
     {
@@ -400,6 +401,10 @@ class EventCandidate:
     payload_ref: PayloadReference | None = None
     extensions: Mapping[str, Any] = field(default_factory=dict)
     envelope_schema: str = ENVELOPE_SCHEMA_V2
+    legacy_business_context: Mapping[str, Any] | None = field(
+        default=None,
+        repr=False,
+    )
     max_inline_payload_bytes: int = field(
         default=DEFAULT_MAX_INLINE_PAYLOAD_BYTES,
         repr=False,
@@ -454,6 +459,39 @@ class EventCandidate:
                 self,
                 "business_context",
                 BusinessContext.from_dict(self.business_context),
+            )
+        legacy_business_context = self.legacy_business_context
+        if legacy_business_context is not None:
+            if not isinstance(legacy_business_context, Mapping):
+                raise EventCanonicalizationError(
+                    "history business_context must be an object"
+                )
+            legacy_business_context = dict(legacy_business_context)
+            _reject_unknown_fields(
+                legacy_business_context,
+                _BUSINESS_CONTEXT_FIELDS | _HISTORY_ONLY_NULL_CONTEXT_FIELDS,
+                "history business_context",
+            )
+            if any(
+                legacy_business_context.get(field_name) is not None
+                for field_name in _HISTORY_ONLY_NULL_CONTEXT_FIELDS
+                if field_name in legacy_business_context
+            ):
+                raise EventCanonicalizationError(
+                    "history business_context legacy identity must be null"
+                )
+            normalized_legacy_context = normalize_canonical_json(
+                legacy_business_context,
+                path="$.history.business_context",
+            )
+            if not isinstance(normalized_legacy_context, Mapping):
+                raise EventCanonicalizationError(
+                    "history business_context must be an object"
+                )
+            object.__setattr__(
+                self,
+                "legacy_business_context",
+                normalized_legacy_context,
             )
         if not isinstance(self.producer, ProducerIdentity):
             object.__setattr__(self, "producer", ProducerIdentity.from_dict(self.producer))
@@ -523,7 +561,11 @@ class EventCandidate:
             "stream_id": self.stream_id,
             "correlation_id": self.correlation_id,
             "causation_id": self.causation_id,
-            "business_context": self.business_context.to_dict(),
+            "business_context": (
+                thaw_canonical_json(self.legacy_business_context)
+                if self.legacy_business_context is not None
+                else self.business_context.to_dict()
+            ),
             "producer": self.producer.to_dict(),
             "trace": self.trace.to_dict() if self.trace is not None else None,
             "tenant_id": self.tenant_id,
@@ -544,6 +586,7 @@ class EventCandidate:
         *,
         verify_checksum: bool = True,
         _allow_stored_fields: bool = False,
+        _allow_history_only_context: bool = False,
     ) -> EventCandidate:
         _reject_unknown_fields(
             value,
@@ -554,6 +597,23 @@ class EventCandidate:
         if occurred_at is None:
             raise EventTimeError("event occurred_at is required")
         payload_ref_raw = value.get("payload_ref")
+        raw_business_context = _required_mapping(
+            value.get("business_context"),
+            "business_context",
+        )
+        legacy_business_context = _history_only_context_projection(
+            raw_business_context,
+            allow_history_only=_allow_history_only_context,
+        )
+        business_context = (
+            {
+                key: item
+                for key, item in raw_business_context.items()
+                if key not in _HISTORY_ONLY_NULL_CONTEXT_FIELDS
+            }
+            if legacy_business_context is not None
+            else raw_business_context
+        )
         candidate = cls(
             envelope_schema=value.get("envelope_schema"),
             event_id=value.get("event_id"),
@@ -565,9 +625,7 @@ class EventCandidate:
             stream_id=value.get("stream_id"),
             correlation_id=value.get("correlation_id"),
             causation_id=value.get("causation_id"),
-            business_context=BusinessContext.from_dict(
-                _required_mapping(value.get("business_context"), "business_context")
-            ),
+            business_context=BusinessContext.from_dict(business_context),
             producer=ProducerIdentity.from_dict(
                 _required_mapping(value.get("producer"), "producer")
             ),
@@ -595,6 +653,7 @@ class EventCandidate:
                 else None
             ),
             extensions=_mapping_or_empty(value.get("extensions")),
+            legacy_business_context=legacy_business_context,
         )
         if verify_checksum:
             supplied = str(value.get("content_checksum") or "").lower()
@@ -744,6 +803,7 @@ class StoredEvent:
             value,
             verify_checksum=verify_checksum,
             _allow_stored_fields=True,
+            _allow_history_only_context=_is_history_only_source_event(value),
         )
         stored = cls(
             candidate=candidate,
@@ -755,6 +815,37 @@ class StoredEvent:
             if supplied != stored.record_checksum:
                 raise EventIntegrityError("event record checksum does not match")
         return stored
+
+
+def _is_history_only_source_event(value: Mapping[str, Any]) -> bool:
+    event_type = value.get("event_type")
+    data_schema = value.get("data_schema")
+    return (
+        isinstance(event_type, str)
+        and event_type.startswith("source_")
+        and isinstance(data_schema, str)
+        and data_schema.startswith("io.newsroom.source.")
+    )
+
+
+def _history_only_context_projection(
+    value: Mapping[str, Any],
+    *,
+    allow_history_only: bool,
+) -> Mapping[str, Any] | None:
+    if not _HISTORY_ONLY_NULL_CONTEXT_FIELDS.intersection(value):
+        return None
+    if not allow_history_only:
+        return None
+    if any(
+        value.get(field_name) is not None
+        for field_name in _HISTORY_ONLY_NULL_CONTEXT_FIELDS
+        if field_name in value
+    ):
+        raise EventCanonicalizationError(
+            "history source event legacy context identity must be null"
+        )
+    return dict(value)
 
 
 def normalize_canonical_json(value: Any, *, path: str = "$") -> CanonicalValue:

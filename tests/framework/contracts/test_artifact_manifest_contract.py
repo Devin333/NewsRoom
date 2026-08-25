@@ -5,9 +5,16 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
+from business.research.graphs import build_paper_analysis_graph_definition
 from framework.agent.artifacts import ArtifactStoreMetadataError
 from framework.events.canonical import checksum_for
-from framework.harness.artifacts import GraphTerminalArtifact, GraphTerminalManifest
+from framework.harness.artifacts import (
+    GraphTerminalArtifact,
+    GraphTerminalManifest,
+    GraphTerminalManifestV2,
+    build_graph_terminal_manifest_v2,
+)
+from framework.harness.graph import HarnessGraphCompiler
 from infrastructure.storage.artifacts import FilesystemGraphTerminalArtifactStore
 
 
@@ -84,21 +91,25 @@ def _artifact() -> GraphTerminalArtifact:
     )
 
 
-def _manifest(artifact: GraphTerminalArtifact) -> GraphTerminalManifest:
-    return GraphTerminalManifest(
+def _manifest(artifact: GraphTerminalArtifact) -> GraphTerminalManifestV2:
+    graph = HarnessGraphCompiler().compile(
+        build_paper_analysis_graph_definition()
+    ).graph
+    terminal = GraphTerminalManifest(
         tenant_id="tenant-1",
         run_id="run-artifact-contract",
-        graph_id="research.artifact-contract",
-        graph_version="1.0.0",
-        graph_schema_version="1.0.0",
-        compiler_version="1.0.0",
-        normalized_graph_checksum=checksum_for({"graph": "artifact-contract"}),
+        graph_id=graph.graph_id,
+        graph_version=graph.graph_version,
+        graph_schema_version=graph.schema_version,
+        compiler_version=graph.compiler_version,
+        normalized_graph_checksum=graph.checksum,
         status="succeeded",
         started_at=_STARTED_AT,
         completed_at=_STARTED_AT + timedelta(seconds=1),
         terminal_state_ref=checksum_for({"state": "terminal"}),
         checkpoint_ref="graph-state://run-artifact-contract/terminal",
-        terminal_node_ids=("publish",),
+        terminal_node_ids=graph.terminal_node_ids,
         gate_evidence_refs=(checksum_for({"gate": "accepted"}),),
         artifacts=(artifact,),
     )
+    return build_graph_terminal_manifest_v2(terminal, graph)
