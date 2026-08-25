@@ -1,0 +1,80 @@
+{
+  "schema": "newsroom.graph-only-recovery-replay-contract-evidence/v1",
+  "captured_at": "2026-08-17",
+  "change": "graph-only-orchestration",
+  "task_refs": [
+    "2.7",
+    "3.9"
+  ],
+  "status": "task_3_9_complete_task_2_7_remains_open",
+  "implementation": {
+    "commit": "621a9198f762754e870250a822a4ac7cdef1fe91",
+    "tree": "df11818350767708795969638bfe090785e70fe4",
+    "normalized_model": "framework/harness/graph/model.py",
+    "versioning": "framework/harness/graph/versioning.py",
+    "graph_reference_and_state": "framework/harness/control_plane/graph_state.py",
+    "graph_decision": "framework/harness/control_plane/graph_decision.py",
+    "checkpoint_and_replay": "framework/harness/control_plane/graph_checkpoint.py",
+    "runtime": "framework/harness/control_plane/graph_runtime.py",
+    "tests": "tests/framework/harness/control_plane/test_graph_only_checkpoint_replay.py"
+  },
+  "graph_only_contract": {
+    "normalized_schema": "newsroom.harness-normalized-graph/v2",
+    "compiler_version": "newsroom.harness-graph-compiler/v2",
+    "state_schema": "newsroom.harness-graph-state/v2",
+    "decision_schema": "newsroom.harness-graph-decision/v2",
+    "checkpoint_schema": "newsroom.harness-graph-checkpoint/v2",
+    "identity_field": "graph_ref",
+    "workflow_identity_emitted": false,
+    "compiler_and_condition_versions_fail_closed": true,
+    "mixed_identity_rejected": true,
+    "checkpoint_history_prefix_bound": true,
+    "offline_replay_calls_live_worker": false
+  },
+  "adversarial_matrix": {
+    "crash_after_decision_commit_before_projection": "recovered_to_sequence_3",
+    "checkpoint_replay": "verified_from_exact_history_prefix",
+    "gate_version_tamper": "pinned_decision_kernel_mismatch",
+    "missing_success_terminal_evidence": "graph_history_evidence_missing",
+    "v2_state_with_v1_schema": "graph_state_schema_mismatch",
+    "v2_checkpoint_with_v1_schema": "graph_checkpoint_schema_mismatch",
+    "v2_decision_with_v1_schema": "graph_decision_schema_mismatch",
+    "unknown_v2_compiler": "unsupported_graph_compiler"
+  },
+  "activation_boundary": {
+    "production_compiler_changed": false,
+    "production_run_admission_changed": false,
+    "production_event_writer_changed": false,
+    "production_checkpoint_store_changed": false,
+    "legacy_v1_wire_shape_changed": false,
+    "production_smoke_normalized_schema": "newsroom.harness-normalized-graph/v1",
+    "artifact_subsystem_removed": false,
+    "artifact_owner": "framework/harness/artifacts",
+    "artifact_publication_authority_changed": false
+  },
+  "verification": {
+    "graph_only_focused": "4 passed",
+    "affected_matrix": "215 passed",
+    "architecture_inventory_fixes": "19 passed",
+    "compile": "passed",
+    "mandatory_smoke": "2713 passed, 23 deselected, 22 warnings",
+    "embedded_graph_smoke": "status=succeeded, llm_calls=3, tool_calls=1, total_tokens=60, network_calls=0",
+    "source_validation": "is_valid=true, error_count=0, warning_count=0",
+    "openspec_change_strict": "valid",
+    "openspec_all_strict": "533 passed, 0 failed"
+  },
+  "remaining_blockers": [
+    "HarnessRunSpec.graph and production Graph-only admission",
+    "production durable event schema and writer activation",
+    "production checkpoint, manifest, and replay store cutover",
+    "Gate B environment replay and rollback qualification",
+    "Gate C removal of legacy Workflow readers and compiler"
+  ],
+  "task_status": {
+    "task_2_7_checked": false,
+    "task_3_9_checked": true,
+    "completed_tasks": 29,
+    "open_tasks": 73,
+    "total_tasks": 102
+  }
+}

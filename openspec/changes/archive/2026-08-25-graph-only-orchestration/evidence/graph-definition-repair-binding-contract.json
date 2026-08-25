@@ -1,0 +1,120 @@
+{
+  "schema": "newsroom.graph-definition-repair-binding-contract/v1",
+  "captured_at": "2026-08-16",
+  "change": "graph-only-orchestration",
+  "task_refs": [
+    "2.8"
+  ],
+  "status": "gate_a_definition_repair_contract_complete_task_open",
+  "implementation_commit": "13a207daa45334c11a5b80cab3721831df5281b3",
+  "implementation_tree": "6a42c8987d35e8437b3d83f732ab2b07618b983e",
+  "owners": {
+    "definition": "framework.harness.graph.definition.HarnessGraphDefinition",
+    "repair_binding": "framework.harness.graph.definition.HarnessGraphRepairBinding",
+    "repair_trigger": "framework.harness.graph.definition.HarnessGraphRepairTrigger",
+    "definition_schema": "newsroom.harness-graph-definition/v4"
+  },
+  "repair_contract": {
+    "checksum_bound": true,
+    "binding_fields": [
+      "binding_id",
+      "source_node_id",
+      "repair_node_id",
+      "repair_activity_id",
+      "triggers"
+    ],
+    "supported_triggers": [
+      "worker_failure_after_retry_exhaustion",
+      "verification_failure"
+    ],
+    "source_identity": "one exact executable StepRef node identity in the root Graph; activity-id alias fallback is forbidden",
+    "repair_target": "one independent repair node identity backed by an activity registered in the same definition",
+    "canonicalization": "repair bindings sort by binding_id and triggers sort by exact enum value before checksum projection",
+    "leaf_owned_repair_step_id_allowed": false,
+    "legacy_v3_upcast_allowed": false
+  },
+  "fail_closed_invariants": [
+    {
+      "condition": "empty, duplicate, or unsupported trigger",
+      "diagnostic": "invalid_graph_repair_binding"
+    },
+    {
+      "condition": "duplicate repair binding identity",
+      "diagnostic": "graph_duplicate_identity"
+    },
+    {
+      "condition": "repair node duplicates another repair node or collides with a root executable/control node",
+      "diagnostic": "graph_repair_node_identity_conflict"
+    },
+    {
+      "condition": "source node is unknown, control-only, or ambiguous",
+      "diagnostic": "graph_repair_source_node_invalid"
+    },
+    {
+      "condition": "repair activity is not registered by the definition",
+      "diagnostic": "graph_repair_activity_unknown"
+    },
+    {
+      "condition": "one source and trigger resolves to multiple repair targets",
+      "diagnostic": "graph_repair_trigger_ambiguous"
+    },
+    {
+      "condition": "a GraphDefinition activity carries HarnessRetryPolicy.repair_step_id",
+      "diagnostic": "graph_activity_repair_routing_forbidden"
+    }
+  ],
+  "artifact_boundary": {
+    "artifact_owner_removed": false,
+    "artifact_runtime_and_storage_retained": true,
+    "artifact_is_repair_or_worker_leaf": false,
+    "terminal_publication_authority_changed": false
+  },
+  "gate_classification": {
+    "gate_a_repository_preparation": "complete_for_inactive_definition_v4_repair_contract",
+    "gate_b_production_cutover": "not_authorized",
+    "gate_c_legacy_deletion": "not_authorized",
+    "task_2_8_complete": false,
+    "inactive_definition_schema_changed": true,
+    "normalized_production_graph_schema_changed": false,
+    "legacy_compiler_changed": false,
+    "scheduler_or_replay_changed": false,
+    "production_composition_changed": false,
+    "reason": "The active legacy compiler, normalized repair edge contract, scheduler, replay path, and Research composition still derive repair routing from the transitional repair_step_id field."
+  },
+  "verification": {
+    "focused_definition_and_namespace": {
+      "command": ".\\.venv\\Scripts\\python.exe -m pytest tests/framework/harness/graph/test_definition.py tests/architecture/test_harness_graph_namespace_boundary.py -q",
+      "result": "63 passed"
+    },
+    "graph_owner_tests": {
+      "command": ".\\.venv\\Scripts\\python.exe -m pytest tests/framework/harness/graph -q",
+      "result": "111 passed"
+    },
+    "all_harness_tests": {
+      "command": ".\\.venv\\Scripts\\python.exe -m pytest tests/framework/harness -q",
+      "result": "1453 passed"
+    },
+    "architecture_tests": {
+      "command": ".\\.venv\\Scripts\\python.exe -m pytest tests/architecture -q",
+      "result": "184 passed, 4 warnings"
+    },
+    "mandatory_smoke": {
+      "command": ".\\.venv\\Scripts\\python.exe -m scripts.dev smoke",
+      "result": "2529 passed, 23 deselected, 22 warnings; source validation is_valid=true, error_count=0, warning_count=0; exit 0"
+    },
+    "change_validation": {
+      "command": "openspec validate graph-only-orchestration --strict",
+      "result": "passed"
+    },
+    "full_validation": {
+      "command": "openspec validate --all --strict",
+      "result": "533 passed, 0 failed"
+    }
+  },
+  "task_status": {
+    "task_2_8_checked": false,
+    "completed_tasks": 25,
+    "open_tasks": 77,
+    "total_tasks": 102
+  }
+}

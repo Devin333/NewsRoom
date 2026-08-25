@@ -1,0 +1,75 @@
+{
+  "schema": "newsroom.graph-only-context-envelope-contract-evidence/v1",
+  "captured_at": "2026-08-17",
+  "change": "graph-only-orchestration",
+  "implementation": {
+    "commit": "4908b1f4d62c187a475d5516efdadf2c2d38fabc",
+    "tree": "606f8019a9a0b2c6e5903999cc397095181e8fa4",
+    "context_models": "framework/harness/context/models.py",
+    "context_snapshot": "framework/harness/context/snapshot.py",
+    "context_cache": "framework/harness/context/cache.py",
+    "context_replay": "framework/harness/runtime/context_replay.py",
+    "subagent_identity": "framework/harness/subagents/transcript.py",
+    "subagent_invocation": "framework/harness/subagents/models.py",
+    "task_plan_adapter": "framework/harness/task_plan/capability.py",
+    "task_plan_verifier": "framework/harness/task_plan/verification.py"
+  },
+  "schema_contract": {
+    "context_envelope_schema": "newsroom.context-envelope/v2",
+    "context_snapshot_schema": "newsroom.context-snapshot/v2",
+    "subagent_invocation_schema": "newsroom.subagent-invocation/v3",
+    "subagent_attempt_identity_schema": "newsroom.subagent-attempt-identity/v3",
+    "subagent_context_evidence_schema": "newsroom.subagent-context-evidence/v3",
+    "subagent_output_schema": "newsroom.subagent-output-document/v3",
+    "subagent_transcript_schema": "newsroom.subagent-transcript/v3",
+    "subagent_receipt_schema": "newsroom.subagent-transcript-receipt/v3",
+    "subagent_bundle_schema": "newsroom.subagent-attempt-bundle/v3",
+    "workflow_aliases_forbidden": true,
+    "graph_identity_nested": true,
+    "task_execution_identity_nested": true,
+    "v3_plan_identity_bound": true,
+    "v3_context_envelope_id_bound": true,
+    "v3_context_envelope_checksum_bound": true,
+    "v2_subagent_invocation_dispatch_allowed": false,
+    "v2_durable_transcript_replay_allowed": true,
+    "legacy_snapshot_replay_v2_allowed": false,
+    "cache_retry_attempt_reuse_stable": true
+  },
+  "authority_boundary": {
+    "worker_call_requires_deterministic_context_match": true,
+    "context_content_tamper_rejected_before_worker": true,
+    "task_plan_identity_derived_from_accepted_plan": true,
+    "snapshot_mode_mismatch_rejected": true,
+    "legacy_workflow_context_fallback": false,
+    "artifact_subsystem_removed": false,
+    "artifact_owner": "framework/harness/artifacts",
+    "artifact_publication_authority_changed": false,
+    "retired_scope": "legacy Workflow Artifact bridge/writer/reader and ARTIFACT leaf classification only"
+  },
+  "verification": {
+    "focused_context_subagent_task_plan": "23 passed",
+    "subagent_transcript_materialization_surface": "80 passed",
+    "framework_harness": "1606 passed",
+    "business_research": "926 passed, 23 deselected",
+    "infrastructure_storage_harness": "32 passed",
+    "compile": "passed",
+    "mandatory_smoke": "2778 passed, 23 deselected, 22 warnings",
+    "embedded_graph_smoke": "status=succeeded, llm_calls=3, tool_calls=1, total_tokens=60, network_calls=0",
+    "source_validation": "is_valid=true, error_count=0, warning_count=0",
+    "openspec_change_strict": "valid",
+    "openspec_all_strict": "533 passed, 0 failed"
+  },
+  "remaining_blockers": [
+    "Graph-only ContextEnvelope production activation through HarnessRunSpec.graph and run admission",
+    "Research production Graph-only composition and complete lifecycle activation",
+    "Gate B queue reader, worker, enqueue, lease and reclaim installation",
+    "Gate C legacy Workflow identity and runtime deletion"
+  ],
+  "task_status": {
+    "task_2_7_checked": false,
+    "task_5_4_checked": false,
+    "completed_tasks": 29,
+    "open_tasks": 73,
+    "total_tasks": 102
+  }
+}

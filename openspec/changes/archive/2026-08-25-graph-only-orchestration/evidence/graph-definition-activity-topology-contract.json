@@ -1,0 +1,81 @@
+{
+  "schema": "newsroom.graph-definition-activity-topology-contract/v1",
+  "captured_at": "2026-08-16",
+  "change": "graph-only-orchestration",
+  "task_refs": [
+    "2.1",
+    "2.4",
+    "2.10"
+  ],
+  "status": "gate_a_definition_topology_closed_tasks_open",
+  "implementation_commit": "83d8c8c99a5228e2a79716cc163f0a930d76e854",
+  "implementation_tree": "408fa778b32d2d8fe8adf660029dc7d8601d5d42",
+  "owner": "framework.harness.graph.definition.HarnessGraphDefinition",
+  "contract": {
+    "referenced_topology_classes": [
+      "root StepRef activity",
+      "compensation activity",
+      "repair activity"
+    ],
+    "all_references_must_be_declared": true,
+    "all_declared_activities_must_be_used": true,
+    "repair_only_activity_allowed": true,
+    "compensation_only_activity_allowed": true,
+    "compiler_inference_allowed": false,
+    "unused_activity_drop_allowed": false,
+    "diagnostic": "graph_activity_topology_coverage_mismatch",
+    "diagnostic_fields": [
+      "missing",
+      "unused"
+    ],
+    "existing_repair_specific_diagnostics_preserved": true,
+    "root_dsl_traversal_duplicated": false
+  },
+  "adversarial_reader": {
+    "checksum_valid_unknown_root_activity_rejected": true,
+    "rejection_happens_after_checksum_integrity_acceptance": true,
+    "legacy_fallback_used": false
+  },
+  "gate_a_non_activation": {
+    "normalized_graph_workflow_identity_changed": false,
+    "harness_graph_compiler_implemented": false,
+    "production_compiler_changed": false,
+    "production_composition_changed": false,
+    "run_admission_changed": false,
+    "artifact_owner_removed": false,
+    "artifact_publication_authority_changed": false,
+    "gate_b_cutover_authorized": false,
+    "gate_c_deletion_authorized": false
+  },
+  "replacement_tests": {
+    "unknown_root_activity": "tests/framework/harness/graph/test_definition.py::test_graph_definition_rejects_unknown_root_activity",
+    "checksum_valid_reader_attack": "tests/framework/harness/graph/test_definition.py::test_graph_reader_rejects_checksum_valid_unknown_root_activity",
+    "unknown_compensation_activity": "tests/framework/harness/graph/test_definition.py::test_graph_definition_rejects_unknown_compensation_activity",
+    "unused_repair_activity": "tests/framework/harness/graph/test_definition.py::test_graph_definition_rejects_unused_repair_activity",
+    "compensation_only_activity": "tests/framework/harness/graph/test_definition.py::test_graph_definition_accepts_compensation_only_activity",
+    "repair_only_activity": "tests/framework/harness/graph/test_definition.py::test_graph_definition_repair_binding_round_trips_canonically"
+  },
+  "verification": {
+    "focused_definition": "70 passed",
+    "graph_owner_namespace_freeze": "154 passed",
+    "architecture": "189 passed, 4 existing FastAPI deprecation warnings",
+    "framework_harness": "1471 passed",
+    "compile": "passed",
+    "mandatory_smoke": "2552 passed, 23 deselected, 22 warnings; exit 0",
+    "source_validation": {
+      "is_valid": true,
+      "error_count": 0,
+      "warning_count": 0
+    },
+    "openspec_change_strict": "passed",
+    "openspec_all_strict": "533 passed, 0 failed"
+  },
+  "task_status": {
+    "task_2_1_checked": false,
+    "task_2_4_checked": false,
+    "task_2_10_checked": false,
+    "completed_tasks": 25,
+    "open_tasks": 77,
+    "total_tasks": 102
+  }
+}

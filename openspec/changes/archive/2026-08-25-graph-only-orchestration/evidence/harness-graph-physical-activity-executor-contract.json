@@ -1,0 +1,123 @@
+{
+  "schema": "newsroom.harness-graph-physical-activity-executor-contract-evidence/v1",
+  "captured_at": "2026-08-16",
+  "change": "graph-only-orchestration",
+  "task_refs": [
+    "3.6",
+    "4.13",
+    "5.5"
+  ],
+  "status": "gate_a_physical_executor_contract_complete_production_activation_open",
+  "implementation": {
+    "commit": "b0756dd8b9683c3eb0d0b19b4dc9e283a71ebde8",
+    "tree": "a0b46eece9ab8cd48f25308c77f8e74c7f00a900",
+    "executor_module": "framework/harness/runtime/activity_executor.py",
+    "node_output_adapter_module": "framework/harness/runtime/node_output.py",
+    "node_output_resource_module": "framework/harness/control_plane/node_output.py",
+    "reader_repair_worker_module": "business/research/graphs/reader_repair_function_workers.py"
+  },
+  "execution_input_contract": {
+    "schema": "newsroom.harness-graph-activity-execution-input/v1",
+    "durable_activity_id_bound": true,
+    "durable_activity_checksum_bound": true,
+    "durable_input_ref_recomputed": true,
+    "exact_leaf_activity_kind_bound": true,
+    "required_activity_usage_bound": true,
+    "declared_output_keys_bound": true,
+    "timeout_bound": true,
+    "caller_harness_activity_context_rejected": true,
+    "strict_reader_and_checksum": true
+  },
+  "physical_executor": {
+    "class": "HarnessGraphPhysicalActivityExecutor",
+    "implements_graph_activity_dispatcher_shape": true,
+    "consumes_durable_harness_graph_activity": true,
+    "resolves_exact_worker_activity_pair": true,
+    "validates_leaf_kind_and_capabilities_before_attempt": true,
+    "calls_legacy_activity_implementation_dispatch": false,
+    "injects_context_key": "harness_graph_activity",
+    "injects_full_durable_activity_descriptor": true,
+    "worker_candidate_output_keys_must_match_declaration": true,
+    "worker_candidate_evidence_checksum_bound": true,
+    "result_bound_to_original_activity_attempt_and_scope": true,
+    "result_commit_port_explicit_and_idempotent": true
+  },
+  "admission_and_output_ordering": {
+    "lease_before_physical_admission_allowed": false,
+    "lease_acquired_after_admission": true,
+    "resource_generation_owned_by_resource": true,
+    "normal_output_requires_successful_determinate_attempt": true,
+    "deadline_rejection_lease_count": 0,
+    "deadline_rejection_worker_call_count": 0,
+    "deadline_rejection_result_count": 0,
+    "superseded_attempt_normal_output_count": 0,
+    "superseded_attempt_result_count": 0,
+    "indeterminate_attempt_normal_output_count": 0,
+    "indeterminate_result_status": "indeterminate"
+  },
+  "recovery": {
+    "existing_commit_resource_identity_revalidated": true,
+    "existing_commit_activity_identity_revalidated": true,
+    "existing_commit_output_keys_revalidated": true,
+    "output_committed_result_interrupted_recoverable": true,
+    "recovery_worker_reexecution_count": 0,
+    "conflicting_or_foreign_commit_rejected": true
+  },
+  "reader_repair_alignment": {
+    "memory_worker_context_key": "harness_graph_activity",
+    "legacy_harness_activity_context_fallback": false,
+    "production_runtime_bundle_installed": false,
+    "live_committed_receipt_injection": false
+  },
+  "artifact_boundary": {
+    "artifact_subsystem_removed": false,
+    "executor_imports_artifact_owner": false,
+    "executor_registers_artifact_handler": false,
+    "executor_registers_artifact_terminal_policy": false,
+    "reader_repair_registers_artifact_handler": false,
+    "artifact_owner_runtime_storage_publication_changed": false
+  },
+  "activation_boundary": {
+    "production_business_imports_executor": false,
+    "production_interfaces_import_executor": false,
+    "production_infrastructure_imports_executor": false,
+    "live_graph_dispatcher_installed": false,
+    "managed_durable_input_port_installed": false,
+    "managed_durable_result_port_installed": false,
+    "managed_durable_node_output_resource_installed": false,
+    "live_committed_output_receipt_resolver_installed": false,
+    "cancellation_and_reconciliation_authority_installed": false
+  },
+  "replacement_tests": {
+    "physical_executor": "tests/framework/harness/runtime/test_graph_physical_activity_executor.py",
+    "node_output_adapter": "tests/framework/harness/runtime/test_node_output_adapter.py",
+    "node_output_resource": "tests/framework/harness/control_plane/test_node_output_resource.py",
+    "owner_and_inactive_composition": "tests/architecture/test_graph_node_output_owner_boundary.py",
+    "reader_repair_graph_context": "tests/business/research/graphs/test_reader_repair_function_workers.py"
+  },
+  "verification": {
+    "executor_and_owner_focused": "15 passed",
+    "harness_runtime_reader_repair_graph_and_architecture": "258 passed",
+    "compile": "passed",
+    "mandatory_smoke": "2662 passed, 23 deselected, 22 warnings",
+    "source_validation": "is_valid=true, error_count=0, warning_count=0",
+    "openspec_change_strict": "valid",
+    "openspec_all_strict": "533 passed, 0 failed"
+  },
+  "remaining_blockers": [
+    "Bind HarnessGraphDefinition to normalized Graph through the final Graph-only compiler and admission path.",
+    "Install the executor as the live dispatcher with managed durable input, result, and node-output resource ports.",
+    "Install cancellation and reconciliation authority for concurrent external dispatch.",
+    "Inject committed-output receipts from the same durable current-commit resource into downstream workers.",
+    "Install the exact Reader Repair runtime authority and terminal success/failure handlers in production composition.",
+    "Remove the legacy synthetic repaired ref and direct ReaderRepairService memory writes after production cutover."
+  ],
+  "task_status": {
+    "task_3_6_checked": false,
+    "task_4_13_checked": false,
+    "task_5_5_checked": false,
+    "completed_tasks": 25,
+    "open_tasks": 77,
+    "total_tasks": 102
+  }
+}

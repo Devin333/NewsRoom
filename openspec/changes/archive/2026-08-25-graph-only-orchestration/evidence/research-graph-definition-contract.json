@@ -1,0 +1,127 @@
+{
+  "schema": "newsroom.research-graph-definition-contract/v1",
+  "captured_at": "2026-08-16",
+  "change": "graph-only-orchestration",
+  "task_refs": [
+    "5.1",
+    "5.2",
+    "5.3",
+    "5.4",
+    "5.7",
+    "5.8"
+  ],
+  "status": "gate_a_research_definition_slice_complete_tasks_open",
+  "implementation_commit": "d7c2fe6e712a490a6950e4490d7734372a0e8eaf",
+  "implementation_tree": "f338be290e56951fcc74a17b9286df64a6114182",
+  "owners": {
+    "graph_contracts": "business.research.graphs.contracts",
+    "paper_analysis_definition": "business.research.graphs.paper_analysis",
+    "artifact_publication_port": "business.research.ports.artifact_publication",
+    "terminal_publication_policy": "framework.harness.side_effects.models.HarnessTerminalSideEffectPolicy"
+  },
+  "definitions": {
+    "static": {
+      "graph_id": "research.paper_analysis.graph",
+      "graph_version": "1",
+      "definition_checksum": "sha256:34f36a12c12f4858a464a16bdcf5fb2ecc7c73060dad7ec1efae0e2a8edb6fcd",
+      "activity_count": 12,
+      "leaf_binding_count": 12,
+      "task_plan_binding_count": 0,
+      "analysis_topology": "ParallelAll plus VerifiedAggregation",
+      "analysis_leaf_kind": "subagent"
+    },
+    "dynamic": {
+      "graph_id": "research.paper_analysis.dynamic.graph",
+      "graph_version": "1",
+      "definition_checksum": "sha256:43c811b61bb809509f4c094518ec9c2a2d15f048dd3673a8af7356b46eebed98",
+      "activity_count": 10,
+      "leaf_binding_count": 9,
+      "task_plan_binding_count": 1,
+      "replaced_static_activities": [
+        "analyze_structure",
+        "analyze_contribution",
+        "analyze_experiments"
+      ],
+      "stage_id": "dynamic_analysis_stage",
+      "stage_policy_ref": "research.analysis@1",
+      "stage_schema": "newsroom.harness-task-plan/v1",
+      "support_refs_complete": true
+    },
+    "workflow_identity_fields_present": false,
+    "legacy_routing_fields_present": false,
+    "exact_gate_versions_resolve": true,
+    "canonical_strict_reader_round_trip": true
+  },
+  "artifact_boundary": {
+    "artifact_owner_removed": false,
+    "artifact_runtime_or_storage_removed": false,
+    "publish_activity_retained": true,
+    "publish_activity_leaf_kind": "function",
+    "publish_activity_output_key": "artifact_candidate_bundle",
+    "candidate_output_named_artifact_refs": false,
+    "worker_may_write_artifact_port": false,
+    "worker_may_commit_terminal_manifest": false,
+    "worker_origin_result": "checksum-bound pending bundle and HarnessSideEffectIntent",
+    "terminal_handler_ref": "research.artifact.bundle@1",
+    "terminal_inherited_gate_refs": [
+      "ResearchQualityGate@1"
+    ],
+    "controller_terminal_authority_required_for_publication": true,
+    "candidate_refs_are_public_refs": false
+  },
+  "namespace_boundary": {
+    "new_graph_package_imports_business_research_workflows": false,
+    "new_graph_package_imports_framework_harness_workflow": false,
+    "legacy_workflow_consumes_graph_owned_contracts": true,
+    "compatibility_facade_added": false,
+    "caller_inventory_phase": "D_research_adoption"
+  },
+  "gate_a_non_activation": {
+    "harness_run_spec_uses_graph_definition": false,
+    "production_research_composition_returns_graph_definition": false,
+    "legacy_compiler_replaced": false,
+    "normalized_graph_schema_changed": false,
+    "production_execution_or_persistence_changed": false,
+    "artifact_publication_behavior_changed": false,
+    "gate_b_cutover_authorized": false,
+    "gate_c_legacy_deletion_authorized": false
+  },
+  "replacement_tests": {
+    "static_topology": "tests/business/research/graphs/test_paper_analysis_graph.py::test_static_paper_analysis_declares_graph_only_parallel_topology",
+    "exact_leaf_and_gate_bindings": "tests/business/research/graphs/test_paper_analysis_graph.py::test_static_paper_analysis_pins_typed_leaf_and_gate_contracts",
+    "artifact_candidate_boundary": "tests/business/research/graphs/test_paper_analysis_graph.py::test_artifact_activity_prepares_candidate_and_terminal_policy_publishes",
+    "dynamic_stage_replacement": "tests/business/research/graphs/test_paper_analysis_graph.py::test_dynamic_graph_replaces_only_static_analysis_fanout",
+    "strict_round_trip": "tests/business/research/graphs/test_paper_analysis_graph.py::test_research_graph_definitions_are_canonical_and_strictly_readable",
+    "namespace_boundary": "tests/architecture/test_research_boundaries.py::test_research_graphs_do_not_depend_on_legacy_orchestration",
+    "runtime_candidate_isolation": "tests/business/research/integration/test_research_artifact_publication.py::test_publish_intent_uses_harness_activity_attempt"
+  },
+  "verification": {
+    "compile": "passed",
+    "focused_graph_and_legacy_contracts": "21 passed",
+    "research_workflows_and_graphs": "54 passed",
+    "architecture": "190 passed, 4 existing FastAPI deprecation warnings",
+    "dynamic_artifact_and_composition": "32 passed, 4 existing FastAPI deprecation warnings",
+    "graph_definition_and_migration_goldens": "71 passed",
+    "framework_harness": "1471 passed",
+    "mandatory_smoke": "2558 passed, 23 deselected, 22 warnings; exit 0",
+    "source_validation": {
+      "is_valid": true,
+      "error_count": 0,
+      "warning_count": 0
+    },
+    "openspec_change_strict": "passed",
+    "openspec_all_strict": "533 passed, 0 failed"
+  },
+  "task_status": {
+    "task_5_1_checked": false,
+    "task_5_2_checked": false,
+    "task_5_3_checked": false,
+    "task_5_4_checked": false,
+    "task_5_7_checked": false,
+    "task_5_8_checked": false,
+    "reason": "The GraphDefinition builders are inactive Gate A declarations. Production run admission, Graph compiler, composition, runtime bindings, persistence, replay, and final legacy package deletion remain open.",
+    "completed_tasks": 25,
+    "open_tasks": 77,
+    "total_tasks": 102
+  }
+}

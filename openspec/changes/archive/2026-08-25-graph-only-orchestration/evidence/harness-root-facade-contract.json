@@ -1,0 +1,100 @@
+{
+  "schema": "newsroom.harness-root-facade-contract/v1",
+  "captured_at": "2026-08-16",
+  "change": "graph-only-orchestration",
+  "task_refs": [
+    "2.9",
+    "3.1",
+    "5.1",
+    "5.2",
+    "5.6"
+  ],
+  "status": "gate_a_root_facade_retired_task_open",
+  "implementation_commit": "13477267b145a7ad83123bb6bc4209f883ca8e86",
+  "implementation_tree": "de4bda86649959eddf0ef9a42332226bc4f1e60e",
+  "root_facade": {
+    "owner": "framework.harness",
+    "removed_names": [
+      "DEFAULT_HARNESS_GRAPH_SCHEMA_REGISTRY",
+      "HarnessGraphCompileResult",
+      "HarnessGraphSchemaRegistry",
+      "HarnessRouteKind",
+      "HarnessRoutingRule",
+      "HarnessWorkflowContractReader",
+      "HarnessWorkflowGraphCompiler",
+      "HarnessWorkflowSpec"
+    ],
+    "production_callers_before": 0,
+    "production_callers_after": 0,
+    "tracked_python_root_import_callers_after": 0,
+    "root_attributes_after": 0,
+    "root_all_entries_after": 0,
+    "test_modules_migrated_to_concrete_legacy_owner": 21,
+    "compatibility_shim_added": false
+  },
+  "remaining_legacy_package_boundary": {
+    "package": "framework.harness.workflow",
+    "package_facade_retained": true,
+    "production_callers": [
+      "business/research/workflows/paper_analysis_workflow.py",
+      "interfaces/composition/research.py"
+    ],
+    "production_imports_moved_in_this_slice": false,
+    "final_package_deletion_authorized": false,
+    "task_2_9_complete": false
+  },
+  "freeze": {
+    "subtract_only_generation": 9,
+    "retired_entries_added": 17,
+    "new_legacy_dependency_entries": 0,
+    "source_commit": "d31fef488f72bdf7aeeba6918fa8fc0bbeda78cc",
+    "source_tree": "f0edf1b14ea559abbd56122ce578ec1aeb74ca20"
+  },
+  "artifact_boundary": {
+    "artifact_owner_removed": false,
+    "artifact_runtime_or_storage_removed": false,
+    "artifact_publication_authority_changed": false,
+    "retained_root_contracts": [
+      "ArtifactPort",
+      "ArtifactReferenceVerifierPort",
+      "GraphResultArtifactReadPort"
+    ],
+    "architecture_assertion": "tests/architecture/test_harness_graph_namespace_boundary.py::test_harness_root_public_api_retains_artifact_contracts"
+  },
+  "gate_a_non_activation": {
+    "graph_definition_activated": false,
+    "harness_run_spec_changed": false,
+    "legacy_compiler_changed": false,
+    "production_composition_changed": false,
+    "production_execution_or_persistence_changed": false,
+    "gate_b_cutover_authorized": false,
+    "gate_c_deletion_authorized": false
+  },
+  "replacement_tests": {
+    "root_facade_removed": "tests/architecture/test_harness_graph_namespace_boundary.py::test_harness_root_public_api_excludes_legacy_workflow_facade",
+    "artifact_contracts_retained": "tests/architecture/test_harness_graph_namespace_boundary.py::test_harness_root_public_api_retains_artifact_contracts",
+    "subtract_only_freeze": "tests/architecture/test_graph_only_freeze.py",
+    "caller_inventory": "tests/architecture/test_harness_graph_caller_inventory.py"
+  },
+  "verification": {
+    "compile": "passed",
+    "focused_facade_freeze_inventory": "28 passed",
+    "affected_test_modules": "265 passed",
+    "architecture": "188 passed, 4 existing FastAPI deprecation warnings",
+    "framework_harness": "1466 passed",
+    "mandatory_smoke": "2547 passed, 23 deselected, 22 warnings; exit 0",
+    "source_validation": {
+      "is_valid": true,
+      "error_count": 0,
+      "warning_count": 0
+    },
+    "openspec_change_strict": "passed",
+    "openspec_all_strict": "533 passed, 0 failed"
+  },
+  "task_status": {
+    "task_2_9_checked": false,
+    "completed_tasks": 25,
+    "open_tasks": 77,
+    "total_tasks": 102
+  }
+}

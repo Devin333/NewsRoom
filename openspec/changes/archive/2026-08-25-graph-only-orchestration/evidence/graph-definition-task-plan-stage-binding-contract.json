@@ -1,0 +1,132 @@
+{
+  "schema": "newsroom.graph-definition-task-plan-stage-binding-contract/v1",
+  "captured_at": "2026-08-15",
+  "change": "graph-only-orchestration",
+  "task_ref": "3.6",
+  "status": "gate_a_definition_task_plan_slice_complete_task_open",
+  "implementation_commit": "53067bdd8c1412714a1b6b1df2abdb9298a7d805",
+  "implementation_tree": "c67508581814de900f5b9e7e0b489244e5384c3d",
+  "owners": {
+    "definition": "framework.harness.graph.definition.HarnessGraphDefinition",
+    "typed_leaf_selection": "framework.harness.graph.definition.HarnessGraphLeafBinding",
+    "task_plan_stage_declaration": "framework.harness.graph.definition.HarnessGraphTaskPlanStageBinding",
+    "runtime_stage_binding": "framework.harness.task_plan.stage_binding.TaskPlanStageBinding",
+    "artifact_terminal_owner": "framework.harness.artifacts"
+  },
+  "definition_contract": {
+    "schema": "newsroom.harness-graph-definition/v3",
+    "ordinary_leaf_binding_fields": [
+      "activity_id",
+      "leaf_activity_kind",
+      "worker_ref",
+      "activity_ref"
+    ],
+    "task_plan_stage_binding_fields": [
+      "activity_id",
+      "worker_ref",
+      "activity_ref",
+      "policy_ref",
+      "task_plan_schema",
+      "required_output_roles",
+      "support_refs"
+    ],
+    "required_support_refs": [
+      "candidate_builder_ref",
+      "capability_registry_ref",
+      "gate_registry_ref",
+      "aggregator_ref",
+      "checkpoint_ref",
+      "result_store_ref",
+      "event_schema"
+    ],
+    "canonical_leaf_worker_types": [
+      "function",
+      "tool",
+      "skill",
+      "subagent",
+      "agent_loop"
+    ],
+    "internal_stage_worker_type": "task_plan",
+    "task_plan_is_leaf_alias": false,
+    "step_ref_source": "deterministic Graph compiler derivation from graph_id, graph_version, and activity_id",
+    "fail_closed_checks": [
+      "duplicate TaskPlan stage binding identity",
+      "missing, unknown, or unexpected TaskPlan stage binding coverage",
+      "wrong worker or activity contract kind",
+      "moving or malformed policy and support references",
+      "malformed TaskPlan or event schema",
+      "empty or duplicate required output roles",
+      "TaskPlan activity-owned side-effect handler",
+      "checksum tampering",
+      "v2 payload without v3 TaskPlan stage binding field"
+    ]
+  },
+  "legacy_inference_gap_closed": {
+    "v2_excluded_task_plan_from_leaf_aliases": true,
+    "v2_declared_task_plan_implementation_source": false,
+    "v3_pins_task_plan_implementation_and_policy_source": true,
+    "future_graph_compiler_may_read_step_metadata_for_binding_authority": false,
+    "future_graph_compiler_may_use_registry_defaults_or_moving_versions": false,
+    "runtime_task_plan_binding_must_trace_to_definition_checksum": true
+  },
+  "artifact_boundary": {
+    "artifact_owner_removed": false,
+    "artifact_owner_runtime_and_storage_retained": true,
+    "artifact_is_worker_leaf": false,
+    "artifact_publication_authority": "HarnessTerminalSideEffectPolicy plus artifact-owned authorized port",
+    "task_plan_stage_can_own_publication_side_effect": false,
+    "llm_or_worker_can_publish": false
+  },
+  "gate_a_non_activation": {
+    "harness_run_spec_uses_graph_definition_v3": false,
+    "legacy_compiler_replaced": false,
+    "normalized_graph_schema_changed": false,
+    "durable_graph_activity_schema_changed": false,
+    "live_dispatch_uses_definition_task_plan_binding": false,
+    "research_composition_returns_graph_definition": false,
+    "production_writer_or_persisted_pointer_changed": false,
+    "gate_b_production_cutover_authorized": false,
+    "gate_c_legacy_deletion_authorized": false
+  },
+  "verification": {
+    "focused_contract_tests": {
+      "command": ".\\.venv\\Scripts\\python.exe -m pytest tests/framework/harness/graph/test_definition.py tests/architecture/test_harness_graph_namespace_boundary.py -q",
+      "result": "45 passed"
+    },
+    "graph_tests": {
+      "command": ".\\.venv\\Scripts\\python.exe -m pytest tests/framework/harness/graph -q",
+      "result": "88 passed"
+    },
+    "task_plan_contract_and_runtime_tests": {
+      "command": ".\\.venv\\Scripts\\python.exe -m pytest tests/framework/harness/task_plan/test_task_plan_stage_binding.py tests/framework/harness/task_plan/test_task_plan_contract_matrix.py tests/framework/harness/task_plan/test_task_plan_runtime.py -q",
+      "result": "42 passed"
+    },
+    "all_harness_tests": {
+      "command": ".\\.venv\\Scripts\\python.exe -m pytest tests/framework/harness -q",
+      "result": "1433 passed"
+    },
+    "architecture_tests": {
+      "command": ".\\.venv\\Scripts\\python.exe -m pytest tests/architecture -q",
+      "result": "184 passed, 4 warnings"
+    },
+    "mandatory_smoke": {
+      "command": ".\\.venv\\Scripts\\python.exe -m scripts.dev smoke",
+      "result": "2509 passed, 23 deselected, 22 warnings; source validation is_valid=true; exit 0"
+    },
+    "change_validation": {
+      "command": "openspec validate graph-only-orchestration --strict",
+      "result": "passed"
+    },
+    "full_validation": {
+      "command": "openspec validate --all --strict",
+      "result": "533 passed, 0 failed"
+    }
+  },
+  "task_status": {
+    "task_3_6_checked": false,
+    "reason": "Graph-only compiler, normalized Graph and durable receipt wiring, live composition resolution, all five production leaf implementations, and AgentLoop replacement remain open.",
+    "completed_tasks": 25,
+    "open_tasks": 77,
+    "total_tasks": 102
+  }
+}

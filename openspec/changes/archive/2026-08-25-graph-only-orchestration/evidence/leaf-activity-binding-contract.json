@@ -1,0 +1,121 @@
+{
+  "schema": "newsroom.graph-only-leaf-activity-binding-contract/v1",
+  "captured_at": "2026-08-15",
+  "change": "graph-only-orchestration",
+  "task_ref": "3.6",
+  "status": "gate_a_contract_slice_complete_task_open",
+  "implementation_commit": "4ea5de2145f7b2745406063697b30c787cde0256",
+  "implementation_tree": "47b2fe133c091946549b32178e99a29fee52b6f4",
+  "owners": {
+    "leaf_kind": "framework.harness.graph.activity.HarnessLeafActivityKind",
+    "binding_snapshot": "framework.harness.graph.bindings.HarnessLeafActivityBinding",
+    "binding_authority": "framework.harness.graph.bindings.HarnessRuntimeBindingAuthority",
+    "worker_result": "framework.harness.workers.result.HarnessWorkerResult"
+  },
+  "contract": {
+    "leaf_activity_kinds": [
+      "function",
+      "tool",
+      "skill",
+      "subagent",
+      "agent_loop"
+    ],
+    "canonical_worker_types": [
+      "function",
+      "tool",
+      "skill",
+      "subagent",
+      "agent_loop"
+    ],
+    "binding_identity": "exact worker_ref plus exact activity_ref",
+    "resolution_checks": [
+      "registered leaf_activity_kind matches frozen caller expectation",
+      "registered worker type matches the canonical leaf activity kind",
+      "worker_ref and activity_ref resolve at exact versions",
+      "activity usage and capabilities remain valid"
+    ],
+    "legacy_aliases_rejected": {
+      "function": "script",
+      "tool": "mcp"
+    },
+    "worker_ingress": {
+      "strict_reader": "HarnessWorkerResult.from_dict",
+      "preserved_channels": [
+        "output",
+        "evidence",
+        "candidate artifact refs",
+        "diagnostics",
+        "metrics",
+        "effect intent"
+      ],
+      "rejected_top_level_authority": [
+        "route or next-node decisions",
+        "worker quality pass/fail or self-score",
+        "publication decisions",
+        "memory-write decisions",
+        "tool authorization decisions"
+      ],
+      "unknown_top_level_fields": "fail_closed"
+    }
+  },
+  "artifact_alignment": {
+    "artifact_owner_removed": false,
+    "artifact_worker_type_status": "transitional execution identifier",
+    "publication_authority": "Harness-owned gate and port boundary remains required by task 3.7",
+    "interpretation": "The Artifact rewrite remains an owner/runtime migration. It is not replaced by a generic leaf worker binding."
+  },
+  "non_activation": {
+    "leaf_kind_in_final_frozen_graph_schema": false,
+    "leaf_kind_in_dispatch_receipt": false,
+    "live_composition_registered": false,
+    "legacy_runner_registry_removed": false,
+    "agent_loop_step_runner_replaced": false,
+    "gate_b_production_cutover_authorized": false,
+    "gate_c_legacy_deletion_authorized": false
+  },
+  "verification": {
+    "focused_contract_tests": {
+      "command": ".\\.venv\\Scripts\\python.exe -m pytest tests/framework/harness/graph/test_bindings.py tests/framework/harness/test_worker_result_contract.py tests/framework/harness/control_plane/test_activity_contract.py tests/framework/harness/control_plane/test_llm_cannot_route.py -q",
+      "result": "148 passed"
+    },
+    "graph_runtime_tests": {
+      "result": "68 passed"
+    },
+    "control_plane_tests": {
+      "result": "587 passed"
+    },
+    "task_plan_tests": {
+      "result": "62 passed"
+    },
+    "all_harness_tests": {
+      "command": ".\\.venv\\Scripts\\python.exe -m pytest tests/framework/harness -q",
+      "result": "1408 passed"
+    },
+    "research_composition_tests": {
+      "result": "59 passed"
+    },
+    "mandatory_smoke": {
+      "command": ".\\.venv\\Scripts\\python.exe -m scripts.dev smoke",
+      "result": "2484 passed, 23 deselected, 22 warnings; source validation is_valid=true; exit 0"
+    },
+    "change_validation": {
+      "command": "openspec validate graph-only-orchestration --strict",
+      "result": "passed"
+    },
+    "full_validation": {
+      "command": "openspec validate --all --strict",
+      "result": "533 passed, 0 failed"
+    }
+  },
+  "implementation_notes": [
+    "An initial test fixture used an activity reference version that did not match its registered binding; the fixture was corrected to exercise exact-version semantics.",
+    "Binding classes remain exported from framework.harness.graph.bindings rather than the graph package root because a root re-export would create an import cycle with worker bindings."
+  ],
+  "task_status": {
+    "task_3_6_checked": false,
+    "reason": "The owner contract and worker ingress are complete for Gate A, but the final frozen Graph schema, dispatch receipt, live composition wiring, and AgentLoop replacement remain open.",
+    "completed_tasks": 25,
+    "open_tasks": 77,
+    "total_tasks": 102
+  }
+}

@@ -1,0 +1,98 @@
+{
+  "schema": "newsroom.graph-only-storage-index-owner-contract/v1",
+  "captured_at": "2026-08-15",
+  "change": "graph-only-orchestration",
+  "task_refs": [
+    "4.7"
+  ],
+  "status": "gate_a_graph_index_candidate_owner_installed",
+  "implementation_commit": "f8cecb42563b575bc10d585ceae2d14d58ee90ba",
+  "implementation_tree": "fd2118a3e2865b156213d781c6d3604b0af733ce",
+  "owner": {
+    "contract_namespace": "infrastructure.storage.indexing",
+    "candidate_adapter": "InactiveGraphStorageIndexAdapter",
+    "candidate_store": "LocalGraphIndexCandidateStore",
+    "terminal_manifest_owner": "framework.harness.artifacts",
+    "durable_event_owner": "framework.events",
+    "live_composition_binding": null,
+    "production_index_pointer": null
+  },
+  "installed_contract": {
+    "identity_schema": "newsroom.graph-storage-index-identity/v1",
+    "artifact_record_schema": "newsroom.graph-artifact-index-record/v1",
+    "event_record_schema": "newsroom.graph-event-index-record/v1",
+    "candidate_schema": "newsroom.graph-storage-index-candidate/v1",
+    "features": [
+      "terminal manifest hash and exact Graph run identity binding",
+      "artifact checksum, relative path and explicit Graph node-instance binding",
+      "binding verification against durable Graph event history",
+      "event source checksum and contiguous stream sequence preservation",
+      "typed manifest, event, binding and path dry-run diagnostics",
+      "candidate checksum and fixed event high-watermark",
+      "atomic candidate-only local staging",
+      "idempotent restage for identical candidate content",
+      "fail-closed conflict for the same identity with different candidate content",
+      "strict read-back with duplicate-key, unsafe-path, size and tamper rejection",
+      "no production writer, reader or pointer capability"
+    ],
+    "compatibility_facade_added": false,
+    "framework_workflow_imports": 0,
+    "production_factory_imports": 0,
+    "production_pointer_methods": 0
+  },
+  "artifact_alignment": {
+    "artifact_owner_removed": false,
+    "preserved_owner": "framework.harness.artifacts",
+    "consumed_contract": "GraphTerminalManifest",
+    "statement": "The storage index candidate owner consumes the retained Graph terminal Artifact contract. It does not replace or delete Artifact catalog, governance, reporting, runtime, lifecycle, terminal manifest, checksum or strict content-reader capabilities."
+  },
+  "gate_classification": {
+    "gate_a_repository_preparation": "complete_for_task_4_7",
+    "gate_b_production_cutover": "not_authorized",
+    "gate_c_legacy_deletion": "not_authorized",
+    "adapter_is_inactive": true,
+    "candidate_store_is_production_authority": false,
+    "artifact_index_factory_switched": false,
+    "event_store_factory_switched": false,
+    "production_index_pointer_switched": false,
+    "managed_history_migrated": false,
+    "legacy_index_reader_deleted": false,
+    "reason": "This Gate A slice installs checksum-bound consumer contracts, an inactive adapter, a candidate-only local store and replacement tests. Existing artifact and event production factories do not import the package, so no writer, reader, pointer, managed migration or legacy deletion is activated."
+  },
+  "remaining_gate_work": [
+    "task 4.12 Gate B: bind qualified Graph artifact and event index writers/readers",
+    "task 4.12 Gate B: verify production read-back and replay against the durable authority",
+    "task 4.12 Gate B: prove rollback and atomically switch the production index pointer",
+    "Gate C: remove legacy index readers only after migrated-history and zero-reference evidence"
+  ],
+  "verification": {
+    "focused_index_contract": {
+      "command": ".\\.venv\\Scripts\\python.exe -m pytest tests\\infrastructure\\storage\\indexing\\test_inactive_graph_index.py tests\\architecture\\test_graph_storage_index_boundary.py -q",
+      "result": "18 passed"
+    },
+    "related_storage_and_architecture": {
+      "command": ".\\.venv\\Scripts\\python.exe -m pytest tests\\infrastructure\\storage\\indexing tests\\infrastructure\\storage\\test_graph_terminal_artifact_reader.py tests\\infrastructure\\storage\\test_artifact_index_factory.py tests\\infrastructure\\storage\\test_event_store_factory.py tests\\infrastructure\\storage\\events\\test_sqlite.py tests\\architecture -q",
+      "result": "240 passed, 2 skipped, 4 warnings"
+    },
+    "compile": {
+      "command": ".\\.venv\\Scripts\\python.exe -m scripts.dev compile",
+      "result": "passed"
+    },
+    "mandatory_smoke": {
+      "command": ".\\.venv\\Scripts\\python.exe -m scripts.dev smoke",
+      "result": "2413 passed, 23 deselected, 22 warnings; source validation is_valid=true; exit 0"
+    },
+    "change_validation": {
+      "command": "openspec validate graph-only-orchestration --strict",
+      "result": "passed"
+    },
+    "full_validation": {
+      "command": "openspec validate --all --strict",
+      "result": "533 passed, 0 failed"
+    }
+  },
+  "task_status": {
+    "task_4_7_checked": true,
+    "task_4_12_checked": false
+  }
+}

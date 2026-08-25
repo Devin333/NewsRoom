@@ -1,0 +1,130 @@
+{
+  "schema": "newsroom.agent-loop-graph-wait-evidence/v1",
+  "captured_at": "2026-08-16",
+  "change": "graph-only-orchestration",
+  "task_refs": [
+    "6.1",
+    "6.2",
+    "6.4",
+    "6.5",
+    "6.6"
+  ],
+  "status": "gate_a_wait_contract_complete_production_installation_open",
+  "implementation": {
+    "commit": "ae977438a8c4711ebba39045a4c3dae57a89356d",
+    "tree": "be7f1622c929a25ba76f7b69450c197ac2ea0329",
+    "activity_adapter": "framework/harness/agent_loop/activity.py",
+    "graph_evaluator": "framework/harness/control_plane/graph_evaluator.py",
+    "graph_compatibility_projection": "framework/harness/control_plane/harness.py",
+    "dataflow_validator": "framework/harness/graph/validation/dataflow.py",
+    "artifact_owner_adapter": "framework/harness/agent_loop/artifacts.py"
+  },
+  "schemas": {
+    "activity_task": "newsroom.agent-loop-graph-activity-task/v1",
+    "activity_output": "newsroom.agent-loop-graph-activity-output/v2",
+    "approval_request": "newsroom.agent-loop-graph-approval-request/v1",
+    "wait_candidate": "newsroom.agent-loop-graph-wait-candidate/v2",
+    "approval_wait_fact": "newsroom.agent-loop-graph-approval-wait-fact/v1",
+    "approval_wait_binding": "newsroom.agent-loop-graph-approval-wait-binding/v1",
+    "binding_manifest": "newsroom.agent-loop-graph-activity-binding/v2",
+    "approval_signal": "newsroom.agent-loop.approval@1"
+  },
+  "candidate_contract": {
+    "waiting_worker_status": "succeeded",
+    "requires_exactly_one_approval_request": true,
+    "binds_run_id": true,
+    "binds_graph_id": true,
+    "binds_graph_version": true,
+    "binds_graph_checksum": true,
+    "binds_node_id": true,
+    "binds_node_instance_id": true,
+    "binds_activity_attempt": true,
+    "binds_graph_checkpoint_ref": true,
+    "binds_full_task_context_checksum": true,
+    "binds_tenant_scope_ref": true,
+    "binds_identity_scope_ref": true,
+    "binds_agent_and_conversation": true,
+    "worker_sets_outer_waiting_state": false
+  },
+  "deterministic_gate": {
+    "gate_ref": "agent_loop_wait_candidate@1",
+    "requires_successful_worker_candidate": true,
+    "rejects_worker_error": true,
+    "rehydrates_strict_output": true,
+    "requires_one_exact_wait_evidence": true,
+    "verifies_output_and_evidence_checksums": true,
+    "verifies_run_and_graph_identity": true,
+    "verifies_node_instance_and_attempt": true,
+    "verifies_authoritative_graph_input_scopes": true,
+    "verifies_checkpoint_task_context_internal_consistency": true,
+    "independently_resolves_current_checkpoint_authority": false,
+    "non_waiting_candidate_passes_without_wait_evidence": true
+  },
+  "graph_wait_contract": {
+    "choice_condition_path": "node.outputs.agent_loop_result.waiting",
+    "wait_correlation_path": "node.outputs.agent_loop.agent_loop_result.approval_wait",
+    "uses_explicit_choice": true,
+    "uses_explicit_wait_kind": "approval",
+    "graph_evaluator_emits_register_wait": true,
+    "graph_application_creates_durable_registration": true,
+    "typed_approval_cause_committed_before_resume": true,
+    "harness_automatically_resumes": true,
+    "binding_registers_wait": false,
+    "worker_registers_wait": false,
+    "agent_loop_resumes_graph": false,
+    "worker_decides_route": false,
+    "legacy_approval_required_metadata_accepted": false
+  },
+  "projection_contract": {
+    "physical_exact_output_key_mapping_supported": true,
+    "transitional_direct_value_shape_supported": true,
+    "single_output_key_duplicated": false,
+    "undeclared_wait_control_fact_accepted": false
+  },
+  "artifact_boundary": {
+    "artifact_subsystem_removed": false,
+    "artifact_owner_persists_llm_calls": true,
+    "artifact_refs_remain_candidate_only": true,
+    "binding_has_manifest_api": false,
+    "worker_has_publication_authority": false,
+    "manifest_calls_in_wait_integration": 0
+  },
+  "adversarial_coverage": [
+    "missing scope fails before Artifact write",
+    "multiple approval requests fail before Artifact write",
+    "output and candidate checksum tamper fail closed",
+    "cross-run candidate reuse fails closed",
+    "cross-Graph candidate reuse fails closed",
+    "cross-scope candidate reuse fails closed",
+    "cross-node-instance and cross-attempt reuse fail closed",
+    "legacy approval metadata and missing deterministic gate fail closed"
+  ],
+  "verification": {
+    "focused_contract_and_inventory": "20 passed",
+    "mandatory_smoke": "2693 passed, 23 deselected, 22 warnings",
+    "source_validation": "is_valid=true, error_count=0, warning_count=0",
+    "openspec_change_strict": "valid",
+    "openspec_all_strict": "533 passed, 0 failed"
+  },
+  "remaining_blockers": [
+    "production execution-input resolver and physical-executor composition",
+    "production installation of the inactive AgentLoop binding bundle",
+    "durable node-outcome and terminal-manifest acceptance",
+    "authoritative checkpoint resolution at the final production gate boundary",
+    "conversation-state and Artifact commit idempotency or recovery boundary",
+    "PostgreSQL agent_conversations parent-table Graph identity cutover",
+    "Gate C removal of AgentLoopStepRunner and Workflow smoke fixtures"
+  ],
+  "task_status": {
+    "task_6_1_checked": false,
+    "task_6_2_checked": false,
+    "task_6_3_checked": true,
+    "task_6_4_checked": false,
+    "task_6_5_checked": false,
+    "task_6_6_checked": false,
+    "task_6_7_checked": false,
+    "completed_tasks": 26,
+    "open_tasks": 76,
+    "total_tasks": 102
+  }
+}

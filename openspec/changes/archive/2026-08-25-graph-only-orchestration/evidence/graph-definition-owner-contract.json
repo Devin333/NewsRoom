@@ -1,0 +1,102 @@
+{
+  "schema": "newsroom.graph-only-definition-owner-contract/v1",
+  "captured_at": "2026-08-15",
+  "change": "graph-only-orchestration",
+  "task_refs": [
+    "2.1",
+    "2.2"
+  ],
+  "status": "gate_a_graph_definition_owner_installed",
+  "implementation_commit": "d6f3075edecf34006469265136a3c5f0e3757103",
+  "implementation_tree": "b0969b8852b115b5b8603da61017904c11bba1ac",
+  "owner": {
+    "graph_namespace": "framework.harness.graph",
+    "definition_contract": "HarnessGraphDefinition",
+    "strict_reader": "HarnessGraphDefinitionReader",
+    "declaration_modules": [
+      "framework.harness.graph.activity",
+      "framework.harness.graph.canonical",
+      "framework.harness.graph.conditions",
+      "framework.harness.graph.dsl",
+      "framework.harness.graph.versioning"
+    ],
+    "legacy_import_shims": [],
+    "production_composition_binding": null
+  },
+  "installed_contract": {
+    "schema": "newsroom.harness-graph-definition/v1",
+    "identity_fields": [
+      "graph_id",
+      "graph_version"
+    ],
+    "owned_fields": [
+      "root",
+      "activities",
+      "terminal_side_effect_policy",
+      "definition_checksum"
+    ],
+    "features": [
+      "immutable definition with canonical nested snapshots",
+      "exact non-moving Graph version references",
+      "root and definition Graph identity equality",
+      "stable activity ordering and duplicate identity rejection",
+      "canonical definition checksum and explicit integrity verification",
+      "strict exact-field deserialization",
+      "legacy schema and Workflow field rejection",
+      "Graph-native version constants separated from legacy schema constants",
+      "no Graph package import of framework.harness.workflow"
+    ],
+    "workflow_fields_accepted": [],
+    "compatibility_facade_added": false
+  },
+  "freeze_gate_alignment": {
+    "import_edge_comparison_granularity": "individual imported symbol",
+    "grouped_import_storage_preserved": true,
+    "removed_symbols_are_retired": true,
+    "reintroduction_is_rejected": true,
+    "baseline_parent_commit": "130acb481ddff545d43ca3b37ff283e47baebcf0",
+    "baseline_parent_tree": "2a7e3422ad1436b7421ad92e89cf1cce335df1fe"
+  },
+  "gate_classification": {
+    "gate_a_repository_preparation": "complete_for_task_2_2",
+    "gate_b_production_cutover": "not_authorized",
+    "gate_c_legacy_deletion": "not_authorized",
+    "definition_is_production_authority": false,
+    "production_composition_switched": false,
+    "legacy_compiler_deleted": false,
+    "legacy_reader_deleted": false,
+    "legacy_exports_deleted": false,
+    "reason": "This slice installs the immutable Graph declaration contract and moves declaration-owned modules without activating it in production composition or deleting the transitional compiler and reader."
+  },
+  "remaining_owner_work": [
+    "task 2.1: move normalized graph, compiler, reader, validation, bindings and runtime resolution to framework.harness.graph",
+    "task 2.3: replace HarnessRunSpec.workflow with HarnessRunSpec.graph",
+    "task 2.4: activate a Graph-only compiler accepting HarnessGraphDefinition",
+    "task 5.1: rename the Research workflows package to graphs",
+    "task 5.2: make Research composition return HarnessGraphDefinition",
+    "Gate C: delete the legacy Workflow namespace only after zero-reference and history gates pass"
+  ],
+  "verification": {
+    "focused_definition_namespace_architecture": {
+      "command": ".\\.venv\\Scripts\\python.exe -m pytest tests/framework/harness/graph tests/architecture/test_harness_graph_namespace_boundary.py tests/architecture/test_harness_graph_authority.py tests/architecture/test_harness_graph_caller_inventory.py tests/architecture/test_graph_only_freeze.py -q",
+      "result": "42 passed"
+    },
+    "mandatory_smoke": {
+      "command": ".\\.venv\\Scripts\\python.exe -m scripts.dev smoke",
+      "result": "2434 passed, 23 deselected, 22 warnings; source validation is_valid=true; exit 0"
+    },
+    "change_validation": {
+      "command": "openspec validate graph-only-orchestration --strict",
+      "result": "passed"
+    },
+    "full_validation": {
+      "command": "openspec validate --all --strict",
+      "result": "533 passed, 0 failed"
+    }
+  },
+  "task_status": {
+    "task_2_1_checked": false,
+    "task_2_2_checked": true,
+    "task_5_2_checked": false
+  }
+}

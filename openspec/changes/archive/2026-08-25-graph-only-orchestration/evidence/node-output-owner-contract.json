@@ -1,0 +1,101 @@
+{
+  "schema": "newsroom.graph-only-node-output-owner-contract/v1",
+  "captured_at": "2026-08-15",
+  "change": "graph-only-orchestration",
+  "task_refs": [
+    "4.10"
+  ],
+  "status": "gate_a_node_output_owner_contract_installed",
+  "implementation_commit": "11165e2f7273aa43a4cb7ce22b67154bdbfc0029",
+  "implementation_tree": "441112a39622859f9dc297bff26c66e2ed7bcc6e",
+  "owner": {
+    "contract_namespace": "framework.harness.control_plane.node_output",
+    "inactive_adapter_namespace": "framework.harness.runtime.node_output",
+    "resource_port": "HarnessNodeOutputResourcePort",
+    "reference_implementation": "InMemoryHarnessNodeOutputResource",
+    "live_dispatcher_binding": null
+  },
+  "installed_contract": {
+    "schemas": [
+      "newsroom.harness-node-output-resource/v1",
+      "newsroom.harness-admitted-graph-activity/v1",
+      "newsroom.harness-node-output-lease/v1",
+      "newsroom.harness-node-output-candidate/v1",
+      "newsroom.harness-node-output-staged-write/v1",
+      "newsroom.harness-node-output-commit/v1"
+    ],
+    "features": [
+      "checksum-bound Graph run, graph, node, node-instance and scope identity",
+      "lease acquisition only from an admitted physical attempt contract",
+      "resource-owned monotonic generation with no caller generation parameter",
+      "exact admission and owner-attempt idempotency",
+      "superseded and revoked owner reacquisition rejection",
+      "staged output remains invisible until terminal commit",
+      "typed stale-owner rejection for stage and commit",
+      "normal output rejection for failed, timed-out, unconfirmed or indeterminate attempts",
+      "reversible staging across authoritative terminal event failure",
+      "strict round-trip checksum and nested tamper validation"
+    ],
+    "generation_sources_rejected": [
+      "HarnessGraphActivity.fencing_generation",
+      "Graph attempt",
+      "local_attempt_no",
+      "budget counters",
+      "retry credits",
+      "event sequence"
+    ],
+    "compatibility_facade_added": false,
+    "workflow_imports": 0
+  },
+  "artifact_alignment": {
+    "artifact_owner_removed": false,
+    "preserved_owner": "framework.harness.artifacts",
+    "statement": "Node-output fencing is a Graph node-instance resource boundary and does not remove or replace the independent Artifact owner."
+  },
+  "gate_classification": {
+    "gate_a_repository_preparation": "complete_for_task_4_10",
+    "gate_b_production_cutover": "not_authorized",
+    "gate_c_legacy_deletion": "not_authorized",
+    "adapter_is_inactive": true,
+    "adapter_implements_live_dispatcher_port": false,
+    "managed_durable_resource_bound": false,
+    "live_graph_activity_executor_switched": false,
+    "legacy_data_buffer_deleted": false,
+    "reason": "This Gate A slice installs the resource owner, contracts, reference implementation and inactive admitted-attempt adapter. It does not bind a managed durable store, activate a live Graph activity executor, or remove legacy Workflow fencing."
+  },
+  "remaining_gate_work": [
+    "task 4.13 Gate B: inject the qualified durable node-output resource into the live physical admission and Graph activity executor path",
+    "task 4.13 Gate B: prove managed crash recovery, stale owner rejection and rollback behavior",
+    "task 9.4 Gate C: remove DataBuffer and Workflow attempt overlays after caller, history and rollback gates pass"
+  ],
+  "verification": {
+    "focused_contract_adapter_architecture": {
+      "command": ".\\.venv\\Scripts\\python.exe -m pytest tests/framework/harness/control_plane/test_node_output_resource.py tests/framework/harness/runtime/test_node_output_adapter.py tests/architecture/test_graph_node_output_owner_boundary.py -q",
+      "result": "18 passed"
+    },
+    "architecture_harness_attempt": {
+      "command": ".\\.venv\\Scripts\\python.exe -m pytest tests/architecture tests/framework/harness tests/framework/shared/test_attempt_execution_integrity.py -q",
+      "result": "1532 passed, 4 warnings"
+    },
+    "compile": {
+      "command": ".\\.venv\\Scripts\\python.exe -m scripts.dev compile",
+      "result": "passed"
+    },
+    "mandatory_smoke": {
+      "command": ".\\.venv\\Scripts\\python.exe -m scripts.dev smoke",
+      "result": "2405 passed, 23 deselected, 22 warnings; source validation is_valid=true; exit 0"
+    },
+    "change_validation": {
+      "command": "openspec validate graph-only-orchestration --strict",
+      "result": "passed"
+    },
+    "full_validation": {
+      "command": "openspec validate --all --strict",
+      "result": "533 passed, 0 failed"
+    }
+  },
+  "task_status": {
+    "task_4_10_checked": true,
+    "task_4_13_checked": false
+  }
+}

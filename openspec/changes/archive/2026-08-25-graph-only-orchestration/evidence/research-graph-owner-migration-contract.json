@@ -1,0 +1,106 @@
+{
+  "schema": "newsroom.research-graph-owner-migration-contract/v1",
+  "captured_at": "2026-08-16",
+  "change": "graph-only-orchestration",
+  "task_refs": [
+    "5.1",
+    "5.2",
+    "5.6",
+    "5.8"
+  ],
+  "status": "gate_a_owner_migration_slice_complete_tasks_open",
+  "implementation_commit": "4be33a0743cabc8843806bfde355325b831f0d04",
+  "implementation_tree": "b2e213b29527f0e7fc014ae97d2da88833aaf67f",
+  "owner_migration": {
+    "gate_registry_old_module": "business.research.workflows.paper_analysis_gates",
+    "gate_registry_new_module": "business.research.graphs.gates",
+    "task_plan_old_module": "business.research.workflows.paper_analysis_task_plan",
+    "task_plan_new_module": "business.research.graphs.task_plan",
+    "old_gate_registry_module_exists": false,
+    "old_task_plan_module_exists": false,
+    "canonical_public_package": "business.research.graphs",
+    "legacy_workflows_package_exports": [],
+    "compatibility_facade_added": false,
+    "moved_gate_tests": "tests/business/research/graphs/test_gates.py",
+    "moved_task_plan_tests": "tests/business/research/graphs/test_task_plan.py"
+  },
+  "namespace_boundary": {
+    "graphs_imports_business_research_workflows": false,
+    "graphs_imports_framework_harness_workflow": false,
+    "graphs_imports_framework_workflow": false,
+    "legacy_workflow_python_files": [
+      "business/research/workflows/__init__.py",
+      "business/research/workflows/paper_analysis_workflow.py"
+    ],
+    "production_legacy_import_count": 2,
+    "production_legacy_imports": [
+      "business/research/application/single_paper_runtime.py -> business.research.workflows.paper_analysis_workflow",
+      "interfaces/composition/research.py -> business.research.workflows.paper_analysis_workflow"
+    ],
+    "production_legacy_imports_use_package_facade": false,
+    "architecture_guard": "tests/architecture/test_research_boundaries.py::test_legacy_research_workflow_surface_is_declaration_only"
+  },
+  "remaining_legacy_boundary": {
+    "legacy_workflow_builder_exists": true,
+    "harness_run_spec_still_uses_workflow": true,
+    "legacy_workflow_compiler_still_active": true,
+    "production_composition_returns_graph_definition": false,
+    "task_plan_binding_still_validates_workflow_id": true,
+    "transitional_dynamic_workflow_id": "research.paper_analysis.dynamic",
+    "dynamic_workflow_id_exported_from_graphs_package": false,
+    "final_graph_only_run_admission_active": false
+  },
+  "artifact_boundary": {
+    "artifact_owner_removed": false,
+    "artifact_runtime_or_storage_removed": false,
+    "artifact_files_changed_by_commit": false,
+    "publish_activity_retained": true,
+    "publish_activity_role": "function candidate preparation",
+    "publish_activity_output_key": "artifact_candidate_bundle",
+    "worker_may_write_artifact_port": false,
+    "worker_may_commit_terminal_manifest": false,
+    "controller_terminal_authority_required_for_publication": true,
+    "publication_occurs_only_after_deterministic_verify": true
+  },
+  "gate_a_non_activation": {
+    "graph_definition_schema_changed": false,
+    "normalized_graph_schema_changed": false,
+    "production_execution_changed": false,
+    "production_persistence_changed": false,
+    "artifact_publication_behavior_changed": false,
+    "gate_b_cutover_authorized": false,
+    "gate_c_legacy_deletion_authorized": false
+  },
+  "replacement_tests": {
+    "graph_namespace_boundary": "tests/architecture/test_research_boundaries.py::test_research_graphs_do_not_depend_on_legacy_orchestration",
+    "legacy_surface_inventory": "tests/architecture/test_research_boundaries.py::test_legacy_research_workflow_surface_is_declaration_only",
+    "gate_authority_path": "tests/architecture/test_harness_graph_authority.py::test_research_workers_and_gates_do_not_own_harness_routing",
+    "gate_registry": "tests/business/research/graphs/test_gates.py",
+    "task_plan": "tests/business/research/graphs/test_task_plan.py",
+    "graph_definition": "tests/business/research/graphs/test_paper_analysis_graph.py"
+  },
+  "verification": {
+    "compile": "passed",
+    "research_graphs_workflows_integrations_and_composition": "107 passed, 4 existing FastAPI deprecation warnings",
+    "focused_architecture_guards": "28 passed",
+    "framework_harness": "1471 passed",
+    "mandatory_smoke": "2559 passed, 23 deselected, 22 warnings; exit 0",
+    "source_validation": {
+      "is_valid": true,
+      "error_count": 0,
+      "warning_count": 0
+    },
+    "openspec_change_strict": "passed",
+    "openspec_all_strict": "533 passed, 0 failed"
+  },
+  "task_status": {
+    "task_5_1_checked": false,
+    "task_5_2_checked": false,
+    "task_5_6_checked": false,
+    "task_5_8_checked": false,
+    "reason": "Owner modules and tests moved, but the legacy Research Workflow builder, HarnessRunSpec.workflow admission, legacy compiler, production composition, and workflow_id-bound TaskPlan identity remain active.",
+    "completed_tasks": 25,
+    "open_tasks": 77,
+    "total_tasks": 102
+  }
+}

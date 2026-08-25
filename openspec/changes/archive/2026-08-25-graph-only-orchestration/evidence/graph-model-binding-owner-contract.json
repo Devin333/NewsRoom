@@ -1,0 +1,90 @@
+{
+  "schema": "newsroom.graph-only-model-binding-owner-contract/v1",
+  "captured_at": "2026-08-15",
+  "change": "graph-only-orchestration",
+  "task_refs": [
+    "2.1",
+    "3.1",
+    "5.6"
+  ],
+  "status": "gate_a_graph_model_binding_owner_migrated",
+  "implementation_commit": "ffdefb730c2e495e809cba8c1460955e61f8202a",
+  "implementation_tree": "a9fb8ca9a72ea958f98e6b0f61c915c7588bad38",
+  "owner": {
+    "normalized_model": "framework.harness.graph.model",
+    "runtime_binding_authority": "framework.harness.graph.bindings",
+    "legacy_model_path": null,
+    "legacy_binding_path": null,
+    "legacy_package_reexports": []
+  },
+  "migrated_callers": [
+    "framework.harness.control_plane",
+    "framework.harness.runtime",
+    "framework.harness.task_plan",
+    "framework.harness.ports",
+    "business.research",
+    "interfaces.composition.research"
+  ],
+  "installed_guards": {
+    "old_module_imports": 0,
+    "old_package_reexports": 0,
+    "graph_owner_workflow_imports": 0,
+    "old_path_shims": 0,
+    "binding_root_export_is_eager": false,
+    "binding_module_is_explicit": true,
+    "reason": "Bindings remain an explicit submodule because eager package-root export would load control-plane gate registries during package initialization and create a circular dependency."
+  },
+  "freeze_gate_alignment": {
+    "generation": 5,
+    "baseline_parent_commit": "d6f3075edecf34006469265136a3c5f0e3757103",
+    "baseline_parent_tree": "b0969b8852b115b5b8603da61017904c11bba1ac",
+    "removed_namespace_files_are_retired": true,
+    "removed_import_edges_are_retired": true,
+    "removed_public_exports_are_retired": true,
+    "reintroduction_is_rejected": true
+  },
+  "gate_classification": {
+    "gate_a_repository_preparation": "complete_for_model_and_binding_owner_slice",
+    "gate_b_production_cutover": "not_authorized",
+    "gate_c_legacy_deletion": "not_authorized",
+    "task_2_1_complete": false,
+    "production_contract_changed": false,
+    "normalized_legacy_identity_removed": false,
+    "reason": "The existing normalized model and binding authority moved to their final owner namespace without changing the active schema or production composition."
+  },
+  "remaining_owner_work": [
+    "move the Graph compiler and strict reader to framework.harness.graph",
+    "move Graph validation and runtime resolution without importing HarnessWorkflowSpec",
+    "replace normalized workflow_id, workflow_version and workflow_ref fields under task 2.5",
+    "activate HarnessRunSpec.graph only after Gate B prerequisites are satisfied",
+    "remove the remaining business.research HarnessWorkflowSpec import during Research hard cutover"
+  ],
+  "verification": {
+    "owner_runtime_regression": {
+      "command": ".\\.venv\\Scripts\\python.exe -m pytest tests/framework/harness/graph/test_model.py tests/framework/harness/graph/test_bindings.py tests/framework/harness/workflow tests/framework/harness/control_plane tests/framework/harness/task_plan tests/framework/harness/runtime tests/business/research/application/test_graph_result_committer.py tests/business/research/integration/test_dynamic_paper_analysis_task_plan.py tests/business/research/workflows/test_paper_analysis_task_plan.py tests/architecture/test_harness_graph_namespace_boundary.py tests/architecture/test_harness_graph_authority.py -q",
+      "result": "886 passed"
+    },
+    "freeze_architecture": {
+      "command": ".\\.venv\\Scripts\\python.exe -m pytest tests/architecture/test_graph_only_freeze.py tests/architecture/test_harness_graph_namespace_boundary.py tests/architecture/test_harness_graph_authority.py tests/architecture/test_harness_graph_caller_inventory.py -q",
+      "result": "29 passed"
+    },
+    "mandatory_smoke": {
+      "command": ".\\.venv\\Scripts\\python.exe -m scripts.dev smoke",
+      "result": "2434 passed, 23 deselected, 22 warnings; source validation is_valid=true; exit 0"
+    },
+    "change_validation": {
+      "command": "openspec validate graph-only-orchestration --strict",
+      "result": "passed"
+    },
+    "full_validation": {
+      "command": "openspec validate --all --strict",
+      "result": "533 passed, 0 failed"
+    }
+  },
+  "task_status": {
+    "task_2_1_checked": false,
+    "task_2_2_checked": true,
+    "task_3_1_checked": false,
+    "task_5_6_checked": false
+  }
+}

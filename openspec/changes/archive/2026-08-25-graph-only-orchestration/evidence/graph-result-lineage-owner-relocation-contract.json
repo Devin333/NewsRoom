@@ -1,0 +1,40 @@
+{
+  "schema": "newsroom.graph-result-lineage-owner-relocation-contract/v1",
+  "captured_at": "2026-08-18",
+  "change": "graph-only-orchestration",
+  "task_refs": ["2.1", "3.1"],
+  "status": "gate_a_graph_result_lineage_owner_relocated",
+  "implementation": {
+    "commit": "98c3a97d47860340de6f46599de686e81642a791",
+    "tree": "c0b23b7b61fc5c47a284d93f8e71d3919cec969b"
+  },
+  "owner_relocation": {
+    "previous_module": "framework.harness.control_plane.graph_result_lineage",
+    "current_module": "framework.harness.graph.result_lineage",
+    "legacy_path_exists": false,
+    "compatibility_shim_added": false,
+    "control_plane_reexports_removed": true,
+    "graph_public_owner_exported": true,
+    "root_public_api_preserved_from_graph_owner": true,
+    "production_old_path_imports_after": 0
+  },
+  "non_activation": {
+    "harness_run_spec_changed": false,
+    "legacy_compiler_changed": false,
+    "scheduler_evaluator_state_checkpoint_relocated": false,
+    "production_execution_or_persistence_changed": false,
+    "artifact_authority_changed": false,
+    "gate_b_cutover_authorized": false,
+    "task_2_1_completed": false,
+    "task_3_1_completed": false
+  },
+  "verification": {
+    "focused_architecture": "17 passed",
+    "focused_runtime_durable_event_research_artifact": "87 passed",
+    "full_architecture": "213 passed, 4 warnings",
+    "compile": "passed",
+    "mandatory_smoke": "2801 passed, 23 deselected, 22 warnings",
+    "openspec_change_strict": "passed",
+    "openspec_all_strict": "533 passed, 0 failed"
+  }
+}

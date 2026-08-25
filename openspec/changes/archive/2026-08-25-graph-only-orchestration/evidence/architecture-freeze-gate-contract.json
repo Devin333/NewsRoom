@@ -1,0 +1,180 @@
+{
+  "schema": "newsroom.graph-only-architecture-freeze-gate-contract/v1",
+  "captured_at": "2026-08-14",
+  "change": "graph-only-orchestration",
+  "task_ref": "1.6",
+  "status": "installed_gate_a",
+  "authority": {
+    "source_commit": "8f1e4c83900ca151352d932312bbbdb3b9e04814",
+    "source_tree": "416e80c6c770c44cd859859995314b6bb7114929",
+    "snapshot_semantics": "The exact active dependency set was captured from this committed source tree. Test and OpenSpec files are excluded from production debt.",
+    "production_dependency_inventory": {
+      "path": "openspec/changes/graph-only-orchestration/evidence/production-dependency-inventory.json",
+      "sha256": "92a0b84a439197be67186857bcf7a3429a2c74aaedb0a4752dc4bf9eff69fc68"
+    },
+    "persistence_environment_inventory": {
+      "path": "openspec/changes/graph-only-orchestration/evidence/persistence-environment-inventory.json",
+      "sha256": "7ea236522955a5d81fb527af91cbf095d6b1ff96b93d1c54eb7ca508e319e183"
+    },
+    "baseline_fixture": {
+      "path": "tests/architecture/fixtures/graph_only_freeze_baseline.json",
+      "sha256": "7c88740616bee6908d40a4ff183d3892d01a17b5c482f1ed83f43e605e32486e",
+      "schema": "newsroom.graph-only-freeze-baseline/v1",
+      "generation": 1
+    },
+    "implementation_commit": "a46d0aa6c9f401b26078f46f4b6aa89353cc88cc",
+    "implementation_tree": "cd73759000e17101d3d70d8146d6d216b51fe09f",
+    "implementation_commit_semantics": "This commit installs the exact AST scanner, immutable generation-1 baseline, adversarial coverage, and exact audit self-exclusion."
+  },
+  "authorization": {
+    "gate_a_repository_preparation": "authorized",
+    "gate_b_production_cutover": "blocked",
+    "gate_c_legacy_deletion": "blocked",
+    "task_complete": true,
+    "gate_b_prerequisite": "harness-workflow-graph-runtime archived with harness-workflow-graph canonical",
+    "gate_b_prerequisite_status": "99/100 ready, not archived",
+    "gate_b_open_task": "harness-workflow-graph-runtime 1.1 dependency qualification",
+    "external_governance_status": "pending_external_activation",
+    "managed_environment_confirmation": "pending_external_confirmation",
+    "reason": "External authority and environment evidence block production cutover and deletion. They do not block a subtract-only repository freeze that prevents further legacy dependency growth."
+  },
+  "implementation": {
+    "scanner": "tests/architecture/_graph_only_freeze.py",
+    "test": "tests/architecture/test_graph_only_freeze.py",
+    "fixture": "tests/architecture/fixtures/graph_only_freeze_baseline.json",
+    "caller_inventory_update": "tests/architecture/fixtures/harness_graph_caller_inventory.json",
+    "caller_inventory_exclusion": "tests/architecture/_graph_only_freeze.py",
+    "caller_inventory_exclusion_reason": "The exact audit implementation file contains legacy tokens as scanner data and is excluded without any directory-wide wildcard.",
+    "smoke_integration": "python -m scripts.dev smoke already includes tests/architecture"
+  },
+  "scan_contract": {
+    "production_roots": [
+      "business",
+      "framework",
+      "infrastructure",
+      "interfaces",
+      "scripts"
+    ],
+    "parser": "Python ast.parse over every production .py file",
+    "parse_failure": "fail_closed",
+    "forbidden_namespace_prefixes": [
+      "framework.workflow",
+      "framework.harness.workflow"
+    ],
+    "categories": {
+      "namespace_files": {
+        "key_count": 112,
+        "occurrence_count": 112
+      },
+      "import_edges": {
+        "key_count": 471,
+        "occurrence_count": 471
+      },
+      "retired_symbols": {
+        "key_count": 1502,
+        "occurrence_count": 1944
+      },
+      "public_exports": {
+        "key_count": 407,
+        "occurrence_count": 407
+      },
+      "legacy_schema_writers": {
+        "key_count": 83,
+        "occurrence_count": 101
+      }
+    },
+    "key_semantics": "Every active entry is keyed by exact tracked path, lexical scope, AST node kind, module or symbol identity, and occurrence count as applicable.",
+    "count_only_allowlist_forbidden": true,
+    "path_only_allowlist_forbidden": true,
+    "duplicate_json_keys": "fail_closed",
+    "missing_or_incomplete_fields": "fail_closed"
+  },
+  "monotonic_debt_rule": {
+    "live_sets_must_be_subsets_of_installed_baseline": true,
+    "allowed_change": "Delete an exact active key or reduce its occurrence count, then record the removed identity in the retired generation.",
+    "forbidden_change": "Add a key, increase a count, move debt to another path or lexical scope, expand an import, or re-add a retired identity.",
+    "baseline_update_command": ".\\.venv\\Scripts\\python.exe tests\\architecture\\_graph_only_freeze.py update --project-root . --baseline tests\\architecture\\fixtures\\graph_only_freeze_baseline.json --previous-baseline <previous-fixture> --source-commit <commit> --source-tree <tree>",
+    "current_verification_command": ".\\.venv\\Scripts\\python.exe tests\\architecture\\_graph_only_freeze.py verify --project-root . --baseline tests\\architecture\\fixtures\\graph_only_freeze_baseline.json"
+  },
+  "migration_reader_exception_policy": {
+    "permanent_exception_allowed": false,
+    "current_exceptions": [],
+    "required_fields": [
+      "exact_path",
+      "owner",
+      "legacy_schema_ids",
+      "source_path_constraints",
+      "input_checksum_policy",
+      "zero_live_side_effect_test",
+      "removal_task",
+      "expiration_condition"
+    ],
+    "runtime_import_rule": "Graph runtime must not import a migration package.",
+    "wildcard_exception_allowed": false
+  },
+  "diagnostics": [
+    "graph_only_freeze_new_legacy_namespace_file",
+    "graph_only_freeze_new_legacy_import_edge",
+    "graph_only_freeze_legacy_import_edge_expanded",
+    "graph_only_freeze_new_workflow_runner_symbol",
+    "graph_only_freeze_new_workflow_executor_symbol",
+    "graph_only_freeze_new_legacy_public_export",
+    "graph_only_freeze_new_legacy_registry_binding",
+    "graph_only_freeze_new_legacy_reflection_binding",
+    "graph_only_freeze_new_legacy_schema_writer",
+    "graph_only_freeze_unregistered_migration_reader",
+    "graph_only_freeze_baseline_not_monotonic",
+    "graph_only_freeze_source_parse_failed"
+  ],
+  "verification": {
+    "focused_freeze_tests": {
+      "command": ".\\.venv\\Scripts\\python.exe -m pytest tests/architecture/test_graph_only_freeze.py -q",
+      "result": "17 passed"
+    },
+    "combined_inventory_tests": {
+      "command": ".\\.venv\\Scripts\\python.exe -m pytest tests/architecture/test_graph_only_freeze.py tests/architecture/test_harness_graph_caller_inventory.py -q",
+      "result": "18 passed"
+    },
+    "architecture_tests": {
+      "command": ".\\.venv\\Scripts\\python.exe -m pytest tests/architecture -q",
+      "result": "151 passed, 4 warnings"
+    },
+    "compile": {
+      "command": ".\\.venv\\Scripts\\python.exe -m scripts.dev compile",
+      "result": "passed"
+    },
+    "mandatory_smoke": {
+      "command": ".\\.venv\\Scripts\\python.exe -m scripts.dev smoke",
+      "result": "2326 passed, 23 deselected, 22 warnings; source validation is_valid=true; exit 0"
+    },
+    "change_validation": {
+      "command": "openspec validate graph-only-orchestration --strict",
+      "result": "passed"
+    },
+    "full_validation": {
+      "command": "openspec validate --all --strict",
+      "result": "533 passed, 0 failed"
+    }
+  },
+  "adversarial_coverage": [
+    "new external forbidden import fails",
+    "new legacy namespace file fails",
+    "new internal relative import fails",
+    "new symbol added to an existing import fails",
+    "new definition, alias, registry, reflection string, or lazy export fails",
+    "new legacy schema writer fails",
+    "legacy schema read comparison is not misclassified",
+    "unregistered migration reader fails",
+    "verified baseline subtraction passes and re-addition fails",
+    "source parse failure fails closed",
+    "missing, incomplete, or duplicate baseline data fails closed"
+  ],
+  "current_disposition": {
+    "architecture_gate_installed": true,
+    "runtime_source_modified_by_this_delivery": false,
+    "test_source_modified_by_this_delivery": true,
+    "task_1_6_checked": true,
+    "gate_b_or_gate_c_authorized": false,
+    "reason": "The exact AST baseline now freezes existing legacy dependency debt while allowing only verified subtraction during Gate A migration."
+  }
+}

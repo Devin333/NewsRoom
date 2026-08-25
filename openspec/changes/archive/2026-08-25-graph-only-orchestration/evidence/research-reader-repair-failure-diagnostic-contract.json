@@ -1,0 +1,166 @@
+{
+  "schema": "newsroom.research-reader-repair-failure-diagnostic-contract-evidence/v1",
+  "captured_at": "2026-08-16",
+  "change": "graph-only-orchestration",
+  "task_refs": [
+    "3.7",
+    "5.5",
+    "5.7"
+  ],
+  "status": "gate_a_failure_diagnostic_contract_complete_production_activation_open",
+  "implementation": {
+    "commit": "faec9fa7d4be80a05df5428452c3ac0791fbb663",
+    "tree": "ee6ee83d86cc1d40eaababf99a03a6b2dc42a397",
+    "graph_definition_module": "business/research/graphs/reader_repair.py",
+    "terminal_failure_record_module": "framework/harness/control_plane/terminal_failure.py",
+    "domain_port_module": "business/research/ports/reader_repair_failure_diagnostic.py",
+    "handler_module": "infrastructure/research/reader_repair_failure_diagnostic_side_effect.py",
+    "durable_adapter_module": "interfaces/services/reader_repair_memory.py"
+  },
+  "graph_identity": {
+    "graph_id": "research.reader_repair.graph",
+    "graph_version": "2",
+    "graph_definition_schema": "newsroom.harness-graph-definition/v6",
+    "definition_checksum": "sha256:fadbddd1dfb4e0880745f23e0be136a449ae23cd92d2b855c43be17f1a5d9307"
+  },
+  "terminal_failure_record": {
+    "schema": "newsroom.harness-graph-terminal-failure-record/v1",
+    "adjacent_durable_decision_projection_required": true,
+    "decision_projection_sequence_bound": true,
+    "decision_and_projection_checksums_bound": true,
+    "graph_and_run_identity_bound": true,
+    "failed_node_state_checksums_bound": true,
+    "node_attempt_and_replan_counts_bound": true,
+    "gate_evidence_attempt_and_event_sequence_bound": true,
+    "accepted_decision_evidence_required": true,
+    "supported_reader_repair_terminal_shapes": [
+      {
+        "decision_type": "complete_run",
+        "reason_code": "graph_terminal_failure",
+        "source": "worker retry exhaustion"
+      },
+      {
+        "decision_type": "halt_run",
+        "reason_code": "verification_failed_replans_exhausted",
+        "source": "deterministic VERIFY replan exhaustion"
+      }
+    ]
+  },
+  "authority_separation": {
+    "success_policy_ref": "research.reader_repair.memory@1",
+    "success_handler_ref": "research.reader_repair.memory.commit@1",
+    "success_disposition": "accepted",
+    "failure_policy_ref": "research.reader_repair.memory.failure_diagnostic@1",
+    "failure_handler_ref": "research.reader_repair.memory.failure_diagnostic.commit@1",
+    "failure_effect_kind": "memory_write_failure_diagnostic",
+    "failure_disposition": "quarantine",
+    "success_and_failure_policy_refs_distinct": true,
+    "success_and_failure_handler_refs_distinct": true,
+    "failure_policy_may_accept_failed_gate": false,
+    "failure_policy_inherits_run_budget": true
+  },
+  "diagnostic_candidate": {
+    "terminal_decision_reason_shape_exact": true,
+    "terminal_failure_record_checksum_required": true,
+    "failed_gate_evidence_required": true,
+    "issue_candidate_application_observation_verification_lineage_required": true,
+    "repair_case_successful": false,
+    "payload_after_ref_allowed": false,
+    "failed_verification_result_required": true,
+    "active_skill_mutation_allowed": false,
+    "strategy_or_skill_candidate_allowed": false,
+    "artifact_or_public_ref_allowed": false,
+    "early_failure_without_complete_domain_lineage_eligible": false,
+    "early_failure_behavior": "retain durable Graph terminal evidence without synthesizing a Reader Repair case"
+  },
+  "handler_contract": {
+    "origin": "controller_terminal",
+    "terminal_action": "record_failure_diagnostic",
+    "exact_terminal_decision_causation_required": true,
+    "exact_terminal_projection_and_record_required": true,
+    "exact_handler_kind_scope_atomic_group_and_idempotency_required": true,
+    "exact_gate_ref_and_result_ref_pairs_required": true,
+    "approval_evidence_required": true,
+    "budget_evidence_required": true,
+    "success_disposition_rejected": true,
+    "unpaired_gate_authority_rejected": true,
+    "terminal_decision_substitution_rejected": true,
+    "terminal_projection_substitution_rejected": true,
+    "outcome_disposition": "quarantine",
+    "outcome_public_ref_count": 0
+  },
+  "durable_memory_adapter": {
+    "port": "PostgresReaderRepairFailureDiagnosticCommitPort",
+    "inactive_factory": "build_reader_repair_failure_diagnostic_commit_port_from_env",
+    "repository": "PostgresReaderRepairMemoryRepository.commit_bundle",
+    "operation": "harness_failure_diagnostic",
+    "single_transaction": true,
+    "case_write_count": 1,
+    "strategy_write_count": 0,
+    "case_successful": false,
+    "versioned_diagnostic_case_ref": true,
+    "receipt_schema_distinct_from_success_memory_receipt": true,
+    "receipt_public_ref_count": 0,
+    "mixed_or_successful_diagnostic_bundle_rejected": true
+  },
+  "runtime_binding": {
+    "success_handler_registration_required": true,
+    "failure_handler_registration_required": true,
+    "failure_handler_controller_terminal_only": true,
+    "manifest_declares_failure_record_schema_and_quarantine": true,
+    "installs_runtime_authority": false,
+    "production_controller_emits_failure_candidate_intent_authorization": false,
+    "production_failure_handler_registered": false,
+    "single_paper_runtime_imports_failure_handler": false,
+    "research_composition_imports_failure_handler": false
+  },
+  "artifact_boundary": {
+    "artifact_subsystem_removed": false,
+    "artifact_owner_runtime_or_storage_changed": false,
+    "artifact_handler_registered_by_reader_repair": false,
+    "artifact_terminal_publication_policy_registered_by_reader_repair": false,
+    "artifact_or_public_ref_emitted_by_failure_handler": false,
+    "future_repaired_payload_publication_requires_separate_artifact_owned_change": true
+  },
+  "replacement_tests": {
+    "terminal_failure_record": "tests/framework/harness/control_plane/test_terminal_failure_record.py",
+    "failure_policy": "tests/framework/harness/side_effects/test_contracts.py",
+    "graph_definition_and_distinct_authority": "tests/framework/harness/graph/test_definition.py",
+    "reader_repair_graph_policy": "tests/business/research/graphs/test_reader_repair_graph.py",
+    "runtime_bundle": "tests/business/research/graphs/test_reader_repair_runtime.py",
+    "handler_and_durable_adapter": "tests/infrastructure/research/test_reader_repair_failure_diagnostic_side_effect.py",
+    "postgres_bundle_shape": "tests/infrastructure/storage/postgres/test_repair_memory_repository.py",
+    "inactive_factory": "tests/interfaces/services/test_reader_repair_factory.py",
+    "inactive_composition": "tests/architecture/test_research_boundaries.py",
+    "exact_infrastructure_port_exception": "tests/architecture/test_infrastructure_boundary.py",
+    "caller_inventory": "tests/architecture/test_harness_graph_caller_inventory.py"
+  },
+  "verification": {
+    "failure_handler_focused": "8 passed",
+    "architecture_and_inventory_focused": "14 passed",
+    "compile": "passed",
+    "mandatory_smoke": "2651 passed, 23 deselected, 22 warnings; exit 0",
+    "source_validation": {
+      "is_valid": true,
+      "error_count": 0,
+      "warning_count": 0
+    },
+    "openspec_change_strict": "passed",
+    "openspec_all_strict": "533 passed, 0 failed"
+  },
+  "remaining_blockers": [
+    "Bind HarnessGraphDefinition to normalized Graph through the final Graph-only compiler and admission path.",
+    "Install the Graph-native physical executor, durable node-output resource, and committed receipt resolver.",
+    "Generate eligible failure diagnostic candidate, intent, and authorization from the durable terminal state in the controller.",
+    "Install the exact success and failure handlers in production composition.",
+    "Remove the legacy synthetic repaired ref and direct ReaderRepairService memory writes after production cutover."
+  ],
+  "task_status": {
+    "task_3_7_checked": false,
+    "task_5_5_checked": false,
+    "task_5_7_checked": false,
+    "completed_tasks": 25,
+    "open_tasks": 77,
+    "total_tasks": 102
+  }
+}

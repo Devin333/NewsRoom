@@ -1,0 +1,128 @@
+{
+  "schema": "newsroom.graph-only-artifact-owner-contract/v1",
+  "captured_at": "2026-08-14",
+  "change": "graph-only-orchestration",
+  "task_refs": [
+    "4.1",
+    "4.2",
+    "4.6",
+    "4.9"
+  ],
+  "status": "gate_a_artifact_bridge_migrated",
+  "implementation_commit": "ed0bcbe8287b74586754e0e64b7ba57e081c82b8",
+  "implementation_tree": "167fc911cef06b0e804abdf5d647d4e49f9a34ad",
+  "owner": {
+    "contract_namespace": "framework.harness.artifacts",
+    "preserved_modules": [
+      "framework/harness/artifacts/catalog.py",
+      "framework/harness/artifacts/governance.py",
+      "framework/harness/artifacts/reporting.py",
+      "framework/harness/artifacts/runtime.py"
+    ],
+    "preserved_capabilities": [
+      "catalog deduplication",
+      "quota accounting",
+      "sanitized usage ledger",
+      "controlled garbage collection",
+      "cost reporting",
+      "operator alerts",
+      "approved context loading",
+      "physical lifecycle authority"
+    ]
+  },
+  "installed_contract": {
+    "schema_version": "newsroom.graph-terminal-manifest/v1",
+    "model_path": "framework/harness/artifacts/terminal_manifest.py",
+    "filesystem_reader_path": "infrastructure/storage/artifacts/graph_terminal.py",
+    "filesystem_store_path": "infrastructure/storage/artifacts/graph_terminal.py",
+    "test_paths": [
+      "tests/framework/harness/artifacts/test_terminal_manifest.py",
+      "tests/infrastructure/storage/test_graph_terminal_artifact_reader.py",
+      "tests/infrastructure/research/test_artifact_port.py",
+      "tests/infrastructure/research/test_artifact_publication.py",
+      "tests/infrastructure/research/test_graph_artifact_lifecycle.py",
+      "tests/interfaces/services/test_artifact_inspection_service.py",
+      "tests/architecture/test_graph_artifact_owner_boundary.py"
+    ],
+    "features": [
+      "immutable Graph terminal manifest",
+      "canonical manifest hash",
+      "immutable pre-terminal staging records",
+      "compare-and-swap lifecycle detach",
+      "unpublished failed and halted terminal records",
+      "Graph artifact identity and membership",
+      "Graph and checkpoint identity pinning",
+      "deterministic gate evidence references",
+      "terminal publication evidence",
+      "exact schema validation",
+      "typed legacy history quarantine",
+      "strict size and checksum content verification",
+      "structured content decoding and redaction",
+      "shared artifact path boundary",
+      "symlink junction and reparse-point rejection",
+      "regular-file identity verification"
+    ],
+    "legacy_workflow_imports": 0,
+    "compatibility_facade_added": false
+  },
+  "gate_classification": {
+    "gate_a_repository_preparation": "complete_for_tasks_4_1_4_2_4_6_4_9",
+    "gate_b_production_cutover": "not_authorized",
+    "gate_c_legacy_deletion": "not_authorized",
+    "repository_production_composition_wired": true,
+    "managed_environment_activated": false,
+    "production_writer_switched": false,
+    "production_reader_switched": false,
+    "persisted_pointer_switched": false,
+    "managed_history_migrated": false,
+    "legacy_bridge_deleted": false,
+    "reason": "This Gate A slice migrates repository callers and production composition code to the artifact-owned Graph contract. It does not deploy that code, switch a managed-environment pointer, migrate managed history, or authorize Gate B/C."
+  },
+  "remaining_bridge_work": [],
+  "remaining_gate_work": [
+    "managed-environment writer and reader activation",
+    "managed history conversion or typed quarantine",
+    "pointer and rollback drill",
+    "legacy Workflow owner zero-reference deletion gate"
+  ],
+  "verification": {
+    "terminal_contract_and_filesystem_reader": {
+      "command": ".\\.venv\\Scripts\\python.exe -m pytest tests/framework/harness/artifacts/test_terminal_manifest.py tests/infrastructure/storage/test_graph_terminal_artifact_reader.py -q",
+      "result": "51 passed, 2 skipped"
+    },
+    "artifact_owner_lifecycle_composition": {
+      "command": ".\\.venv\\Scripts\\python.exe -m pytest tests/framework/harness/artifacts tests/infrastructure/storage/test_graph_artifact_catalog.py tests/infrastructure/storage/test_graph_artifact_gc_ledger.py tests/infrastructure/storage/test_graph_artifact_governance_store.py tests/infrastructure/storage/test_graph_terminal_artifact_reader.py tests/infrastructure/research/test_graph_artifact_lifecycle.py tests/infrastructure/research/test_graph_artifact_governance_integration.py tests/interfaces/composition/test_research_graph_artifacts.py -q",
+      "result": "155 passed, 4 skipped"
+    },
+    "artifact_bridge_cutover": {
+      "command": ".\\.venv\\Scripts\\python.exe -m pytest tests/framework/harness/artifacts/test_terminal_manifest.py tests/framework/artifacts/test_artifact_manager.py tests/framework/contracts/test_artifact_manifest_contract.py tests/architecture/test_graph_artifact_owner_boundary.py tests/infrastructure/storage/test_graph_terminal_artifact_reader.py tests/infrastructure/storage/test_graph_result_store.py tests/infrastructure/research/test_artifact_port.py tests/infrastructure/research/test_artifact_publication.py tests/infrastructure/research/test_graph_artifact_lifecycle.py tests/infrastructure/research/test_graph_artifact_governance_integration.py tests/interfaces/services/test_artifact_inspection_service.py tests/interfaces/composition/test_research_graph_artifacts.py tests/interfaces/composition/test_research_recovery_composition.py tests/business/research/integration/test_research_artifact_publication.py tests/business/research/integration/test_graph_artifact_cutover.py -q --tb=short",
+      "result": "204 passed, 6 skipped"
+    },
+    "architecture": {
+      "command": ".\\.venv\\Scripts\\python.exe -m pytest tests/architecture -q",
+      "result": "151 passed, 4 warnings"
+    },
+    "compile": {
+      "command": ".\\.venv\\Scripts\\python.exe -m scripts.dev compile",
+      "result": "passed"
+    },
+    "mandatory_smoke": {
+      "command": ".\\.venv\\Scripts\\python.exe -m scripts.dev smoke",
+      "result": "2375 passed, 23 deselected, 22 warnings; source validation is_valid=true; exit 0"
+    },
+    "change_validation": {
+      "command": "openspec validate graph-only-orchestration --strict",
+      "result": "passed"
+    },
+    "full_validation": {
+      "command": "openspec validate --all --strict",
+      "result": "533 passed, 0 failed"
+    }
+  },
+  "task_status": {
+    "task_4_1_checked": true,
+    "task_4_2_checked": true,
+    "task_4_6_checked": true,
+    "task_4_9_checked": true
+  }
+}

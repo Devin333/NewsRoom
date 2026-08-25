@@ -1,0 +1,91 @@
+{
+  "schema": "newsroom.graph-only-compiler-contract-evidence/v1",
+  "captured_at": "2026-08-16",
+  "change": "graph-only-orchestration",
+  "task_refs": [
+    "2.1",
+    "2.4",
+    "2.7",
+    "2.8",
+    "2.10"
+  ],
+  "status": "gate_a_contract_complete_tasks_remain_open",
+  "implementation": {
+    "commit": "1f9e20e938fe92fac78e90c8ea2e774f390697fe",
+    "tree": "130fc388b9f26c0ce0aed72cdd6209c6ca3720d4",
+    "compiler": "framework/harness/graph/compiler.py",
+    "normalized_model": "framework/harness/graph/model.py",
+    "preflight": "framework/harness/graph/validation",
+    "runtime_resolution": "framework/harness/graph/runtime_resolution.py"
+  },
+  "graph_only_contract": {
+    "input_type": "HarnessGraphDefinition",
+    "normalized_schema": "newsroom.harness-normalized-graph/v2",
+    "compiler_version": "newsroom.harness-graph-compiler/v2",
+    "workflow_declaration_accepted": false,
+    "workflow_identity_emitted": false,
+    "definition_checksum_pinned": true,
+    "graph_identity_pinned": true,
+    "leaf_bindings_from_definition_only": true,
+    "task_plan_bindings_from_definition_only": true,
+    "repair_routes_from_definition_only": true,
+    "committed_output_lineage_pinned": true,
+    "success_terminal_policy_snapshot_pinned": true,
+    "failure_terminal_policy_snapshot_pinned": true
+  },
+  "semantic_validation": {
+    "control_constructs": [
+      "Sequence",
+      "Choice",
+      "ParallelAll",
+      "ParallelAny",
+      "PureMerge",
+      "VerifiedAggregation",
+      "BoundedLoop",
+      "Wait",
+      "Compensation"
+    ],
+    "legacy_repair_fallback_for_v2": false,
+    "committed_output_node_activity_and_key_validation": true,
+    "duplicate_repair_authority_rejected": true,
+    "terminal_policy_snapshot_required": true,
+    "graph_identity_registry_resolution": true,
+    "failure_terminal_handler_resolution": true
+  },
+  "activation_boundary": {
+    "production_compiler_changed": false,
+    "production_run_admission_changed": false,
+    "legacy_v1_checksum_or_wire_shape_changed": false,
+    "legacy_compiler_deleted": false,
+    "production_smoke_schema": "newsroom.harness-normalized-graph/v1",
+    "artifact_subsystem_removed": false,
+    "artifact_owner": "framework/harness/artifacts"
+  },
+  "verification": {
+    "focused_compiler_model_runtime_resolution": "28 passed",
+    "graph_package": "152 passed",
+    "architecture": "33 passed",
+    "compile": "passed",
+    "mandatory_smoke": "2709 passed, 23 deselected, 22 warnings",
+    "embedded_graph_smoke": "status=succeeded, llm_calls=3, tool_calls=1, total_tokens=60, network_calls=0",
+    "source_validation": "is_valid=true, error_count=0, warning_count=0",
+    "openspec_change_strict": "valid",
+    "openspec_all_strict": "533 passed, 0 failed"
+  },
+  "remaining_blockers": [
+    "HarnessRunSpec.graph and production run admission cutover",
+    "production control-plane compiler and runtime binding cutover",
+    "durable checkpoint, replay, event, manifest, and environment qualification",
+    "Gate C removal of the legacy compiler, declaration reader, and package exports"
+  ],
+  "task_status": {
+    "task_2_1_checked": false,
+    "task_2_4_checked": false,
+    "task_2_7_checked": false,
+    "task_2_8_checked": false,
+    "task_2_10_checked": false,
+    "completed_tasks": 28,
+    "open_tasks": 74,
+    "total_tasks": 102
+  }
+}

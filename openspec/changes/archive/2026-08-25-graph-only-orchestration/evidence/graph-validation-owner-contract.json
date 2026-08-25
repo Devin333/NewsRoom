@@ -1,0 +1,95 @@
+{
+  "schema": "newsroom.graph-only-validation-owner-contract/v1",
+  "captured_at": "2026-08-16",
+  "change": "graph-only-orchestration",
+  "task_refs": [
+    "2.1",
+    "2.4",
+    "3.1"
+  ],
+  "status": "gate_a_graph_validation_and_preflight_owner_migrated_tasks_open",
+  "implementation_commit": "d31fef488f72bdf7aeeba6918fa8fc0bbeda78cc",
+  "implementation_tree": "f0edf1b14ea559abbd56122ce578ec1aeb74ca20",
+  "owner": {
+    "package": "framework.harness.graph.validation",
+    "modules": [
+      "dataflow",
+      "models",
+      "policy",
+      "preflight",
+      "registry",
+      "semantic",
+      "structural"
+    ],
+    "graph_preflight": "framework.harness.graph.validation.preflight.HarnessGraphPreflight",
+    "legacy_preflight_path": "framework/harness/workflow/validation/preflight.py",
+    "legacy_preflight_removed": true,
+    "legacy_validation_package_removed": true,
+    "legacy_package_exports": [],
+    "legacy_graph_validation_reexports": []
+  },
+  "installed_guards": {
+    "old_pure_validation_module_imports": 0,
+    "old_graph_validation_package_reexports": 0,
+    "old_path_shims": 0,
+    "graph_owner_workflow_imports": 0,
+    "preflight_compiler_field_exists": false,
+    "preflight_prepare_workflow_method_exists": false,
+    "harness_prepared_graph_exists": false,
+    "exact_normalized_graph_schema_required": true,
+    "unknown_normalized_graph_schema_fails_closed": true
+  },
+  "freeze_gate_alignment": {
+    "generation": 8,
+    "baseline_parent_commit": "a07a35d0ed9e5a673251e3a427da32f6a3cf69fa",
+    "baseline_parent_tree": "93127f12321ed18a53ef6bc1e45010b5dd038db7",
+    "retired_entries_added": 24,
+    "new_legacy_dependency_entries": 0,
+    "removed_namespace_files_are_retired": true,
+    "removed_import_edges_are_retired": true,
+    "removed_public_exports_are_retired": true,
+    "reintroduction_is_rejected": true
+  },
+  "gate_classification": {
+    "gate_a_repository_preparation": "complete_for_validation_and_preflight_owner_slice",
+    "gate_b_production_cutover": "not_authorized",
+    "gate_c_legacy_deletion": "not_authorized",
+    "task_2_1_complete": false,
+    "task_2_4_complete": false,
+    "production_contract_changed": false,
+    "reason": "Validation and preflight ownership moved without changing HarnessRunSpec.workflow, the active Workflow compiler/reader, normalized Graph identity, or production composition."
+  },
+  "remaining_owner_work": [
+    "replace HarnessWorkflowGraphCompiler with a Graph-only compiler that accepts HarnessGraphDefinition",
+    "replace HarnessWorkflowContractReader with a strict Graph definition reader",
+    "replace HarnessRunSpec.workflow with HarnessRunSpec.graph",
+    "remove normalized Workflow identity fields under task 2.5",
+    "reject all legacy declarations at final run admission"
+  ],
+  "verification": {
+    "graph_owner_tests": "122 passed",
+    "preflight_boundary_tests": "9 passed",
+    "workflow_tests": "60 passed",
+    "architecture_tests": "187 passed, 4 existing FastAPI deprecation warnings",
+    "all_harness_tests": "1466 passed",
+    "mandatory_smoke": "2545 passed, 23 deselected, 22 warnings; exit 0",
+    "mandatory_smoke_first_attempt": "tool timeout after 604 seconds; not counted as a pass",
+    "source_validation": {
+      "is_valid": true,
+      "error_count": 0,
+      "warning_count": 0
+    },
+    "change_validation": "passed",
+    "full_validation": "533 passed, 0 failed"
+  },
+  "task_status": {
+    "task_2_1_checked": false,
+    "task_2_2_checked": true,
+    "task_2_4_checked": false,
+    "task_2_6_checked": false,
+    "task_3_1_checked": false,
+    "completed_tasks": 25,
+    "open_tasks": 77,
+    "total_tasks": 102
+  }
+}

@@ -1,0 +1,950 @@
+﻿{
+    "schema":  "newsroom.graph-only-persistence-environment-inventory/v1",
+    "captured_at":  "2026-08-13",
+    "last_verified_at":  "2026-08-14",
+    "inventory_revision":  "2026-08-14-graph-artifact-governance-refresh",
+    "source_commit":  "8511962f2c7406b467d23bde122a08818c760743",
+    "source_tree":  "419a3d579f7c9066443e38af158a721a9f6f101e",
+    "last_verified_source_commit":  "30178e151837d39db765bc1a8e605bc23d1ae3b2",
+    "last_verified_source_tree":  "ed9cf6ad4050e4729600d236621bd0878972aa67",
+    "task_refs":  [
+                      "1.4",
+                      "1.8"
+                  ],
+    "status":  "baseline_corrected_managed_environment_confirmation_pending",
+    "environment_confirmation":  {
+                                     "status":  "pending_external_confirmation",
+                                     "managed_environments":  [
+
+                                                              ],
+                                     "maintenance_window_owner":  null,
+                                     "rollback_approver":  null,
+                                     "reason":  "The repository defines composition defaults but contains no authoritative deployment inventory or owner attestations."
+                                 },
+    "local_workspace_observation":  {
+                                        "observed_at":  "2026-08-14",
+                                        "classification":  "local_unmanaged_evidence_only",
+                                        "environment_overrides_present":  {
+                                                                              "NEWS_RESEARCH_ARTIFACT_ROOT":  false,
+                                                                              "NEWS_ARTIFACT_ROOT":  false,
+                                                                              "NEWS_RESEARCH_ROOT":  false,
+                                                                              "NEWS_RESEARCH_RUN_STORE_ROOT":  false,
+                                                                              "NEWS_RESEARCH_RAG_LOCAL_ROOT":  false,
+                                                                              "NEWS_DATABASE_DSN":  false,
+                                                                              "NEWS_CHECKPOINT_ROOT":  false,
+                                                                              "NEWS_CONVERSATION_ROOT":  false
+                                                                          },
+                                        "resolved_repository_defaults":  {
+                                                                             "artifact_root":  ".newsroom/runs",
+                                                                             "research_root":  ".newsroom/research",
+                                                                             "research_run_store_root":  ".newsroom/research/runs",
+                                                                             "event_database":  ".newsroom/runs/_records/events.sqlite3",
+                                                                             "harness_side_effect_database":  ".newsroom/research/harness-side-effects.sqlite3",
+                                                                             "graph_artifact_catalog_root":  ".newsroom/runs/_records/graph_artifact_catalog",
+                                                                             "graph_result_database":  ".newsroom/research/graph-results.sqlite3",
+                                                                             "graph_artifact_rollout_default":  "shadow"
+                                                                         },
+                                        "observations":  {
+                                                             "artifact_root":  {
+                                                                                   "exists":  true,
+                                                                                   "file_count":  18232,
+                                                                                   "byte_count":  241225362,
+                                                                                   "manifest_count":  311,
+                                                                                   "artifact_index_json_count":  8439,
+                                                                                   "task_plan_document_count":  0,
+                                                                                   "subagent_attempt_bundle_count":  0
+                                                                               },
+                                                             "default_event_database":  {
+                                                                                            "exists":  false
+                                                                                        },
+                                                             "research_root":  {
+                                                                                   "exists":  true,
+                                                                                   "durable_file_count":  5,
+                                                                                   "durable_byte_count":  159919,
+                                                                                   "sqlite_sidecar_count":  2
+                                                                               },
+                                                             "research_run_store_root":  {
+                                                                                             "exists":  false
+                                                                                         },
+                                                             "harness_side_effect_database":  {
+                                                                                                  "exists":  true,
+                                                                                                  "sqlite_store_schema_version":  2,
+                                                                                                  "decision_count":  0,
+                                                                                                  "attempt_record_count":  0,
+                                                                                                  "attempt_lease_count":  0,
+                                                                                                  "outcome_count":  0
+                                                                                              },
+                                                             "legacy_checkpoint_root":  {
+                                                                                            "exists":  false
+                                                                                        },
+                                                             "graph_artifact_catalog_root":  {
+                                                                                                     "exists":  false,
+                                                                                                     "catalog_json_count":  0,
+                                                                                                     "catalog_lock_count":  0
+                                                                                                  },
+                                                             "graph_result_database":  {
+                                                                                           "exists":  false,
+                                                                                           "expected_store_schema_version":  2,
+                                                                                           "observed_store_schema_version":  null,
+                                                                                           "governance_record_count":  null,
+                                                                                           "note":  "The repository composes SQLiteGraphResultStore schema 2, but the unmanaged default database does not exist and provides no deployed record evidence."
+                                                                                       },
+                                                             "graph_result_materialization_bindings":  {
+                                                                                                          "configured_rollout_mode":  "shadow",
+                                                                                                          "mode_gated_production_composition_present":  true,
+                                                                                                          "result_materializer_instantiated_in_observed_default_mode":  false,
+                                                                                                          "tool_result_adapter_composition_present":  true,
+                                                                                                          "subagent_result_adapter_composition_present":  true,
+                                                                                                          "artifact_catalog_adapter_composition_present":  true,
+                                                                                                          "sqlite_quota_cache_attempt_adapter_composition_present":  true,
+                                                                                                          "research_result_committer_composition_present":  true,
+                                                                                                          "artifact_context_provider_composition_present":  true,
+                                                                                                          "graph_artifact_governance_runtime_composition_present":  true,
+                                                                                                          "filesystem_graph_artifact_lifecycle_composition_present":  true,
+                                                                                                          "sqlite_governance_ledger_composition_present":  true,
+                                                                                                          "operator_service_and_cli_composition_present":  true,
+                                                                                                          "managed_environment_activation_confirmed":  false
+                                                                                                      },
+                                                             "conversation_root":  {
+                                                                                       "exists":  false
+                                                                                   }
+                                                         },
+                                        "limitations":  [
+                                                            "The workspace contains local development, test, benchmark, and acceptance artifacts; counts are not production counts.",
+                                                            "No environment override or local default establishes a managed-environment owner, maintenance window, rollback approver, backup, or deletion authorization.",
+                                                            "This observation must not be used to mark task 1.8 complete or authorize migration or deletion."
+                                                        ]
+                                    },
+    "stores":  [
+                   {
+                       "record_kind":  "graph_artifact_catalog",
+                       "owner":  "framework.harness.artifacts",
+                       "writer":  "infrastructure/storage/artifacts/catalog_local_json.py:LocalJsonArtifactCatalog",
+                       "schema_versions":  [
+                                               "newsroom.graph-artifact-catalog/v1"
+                                           ],
+                       "local_location":  ".newsroom/runs/_records/graph_artifact_catalog/catalog.json",
+                       "postgres_location":  null,
+                       "identity_fields":  [
+                                               "entry_id",
+                                               "claim_id",
+                                               "reference_id",
+                                               "tenant_id",
+                                               "owner_run_id",
+                                               "content_checksum",
+                                               "state_checksum"
+                                           ],
+                       "disposition":  "keep",
+                       "replacement_owner":  "framework.harness.artifacts with infrastructure.storage.artifacts adapter",
+                       "production_callers":  [
+                                                   "framework/harness/runtime/materializer.py",
+                                                   "interfaces/composition/research.py"
+                                               ],
+                       "data_disposition":  "retain exact-version Graph artifact records from mode-gated Research composition; reconcile or quarantine checksum-invalid, identity-conflicting, dangling, or orphan catalog state before cutover",
+                       "migration_phase":  4,
+                       "verification_command":  ".\\.venv\\Scripts\\python.exe -m pytest tests/framework/harness/artifacts/test_catalog_contract.py tests/infrastructure/storage/test_graph_artifact_catalog.py tests/architecture/test_harness_artifact_catalog_boundary.py",
+                       "deletion_commit":  null,
+                       "replacement_contract":  "ArtifactCatalogPort with exact schema version, deterministic identity, atomic local JSON persistence, process-safe locking, reconciliation, and GC planning",
+                       "inventory_count":  null,
+                       "environment_owner":  null,
+                       "confirmation_status":  "mode_gated_production_composition_present_managed_environment_pending"
+                   },
+                   {
+                       "record_kind":  "graph_result_payload_artifact",
+                       "owner":  "framework.harness.runtime materialization with framework.harness.artifacts",
+                       "writer":  "framework/harness/runtime/materializer.py:ResultMaterializer -> ArtifactPort.write_artifact",
+                       "schema_versions":  [
+                                               "newsroom.graph-result-payload@1",
+                                               "newsroom.tool-node-result@1",
+                                               "newsroom.tool-result-envelope@1",
+                                               "newsroom.tool-side-effect-receipt@1",
+                                               "newsroom.subagent-node-result@1",
+                                               "newsroom.subagent-materialized-bundle@1",
+                                               "newsroom.subagent-handoff@1"
+                                           ],
+                       "local_location":  "<configured artifact root>/<run_id>/<FilesystemHarnessArtifactPort canonical derived graph-result path>",
+                       "postgres_location":  null,
+                       "identity_fields":  [
+                                               "tenant_id",
+                                               "run_id",
+                                               "graph_id",
+                                               "node_id",
+                                               "attempt_id",
+                                               "candidate_checksum",
+                                               "artifact_ref"
+                                           ],
+                       "disposition":  "keep",
+                       "replacement_owner":  "framework.harness.artifacts under final Graph activity identity",
+                       "production_callers":  [
+                                                   "framework/harness/runtime/materializer.py",
+                                                   "framework/harness/runtime/subagent_result_adapter.py",
+                                                   "framework/harness/runtime/tool_result_adapter.py",
+                                                   "business/research/application/graph_result_committer.py",
+                                                   "interfaces/composition/research.py"
+                                               ],
+                       "data_disposition":  "retain exact-version verified Graph result payloads; migrate supported legacy Tool spills and verified SubAgent transcript bundles to Graph activity identity or quarantine checksum, scope, media, schema, receipt, and handoff mismatches",
+                       "migration_phase":  4,
+                       "verification_command":  ".\\.venv\\Scripts\\python.exe -m pytest tests/framework/harness/runtime/test_materializer.py tests/framework/harness/runtime/test_tool_result_adapter.py tests/framework/harness/runtime/test_subagent_result_adapter.py tests/framework/tool/runtime/test_tool_result_envelope.py tests/infrastructure/research/test_artifact_port.py tests/architecture/test_harness_subagent_result_boundary.py",
+                       "deletion_commit":  null,
+                       "replacement_contract":  "Versioned GraphResultPayload stored through ArtifactPort, read back and checksum-verified, then claimed by ArtifactCatalogPort",
+                       "inventory_count":  null,
+                       "environment_owner":  null,
+                       "confirmation_status":  "mode_gated_production_composition_present_managed_environment_pending"
+                   },
+                   {
+                       "record_kind":  "graph_result_attempt_envelope",
+                       "owner":  "framework.harness.runtime",
+                       "writer":  "infrastructure/storage/artifacts/result_sqlite.py:SQLiteGraphResultStore",
+                       "schema_versions":  [
+                                               "newsroom.graph-node-result@1",
+                                               "SQLiteGraphResultStore schema 2"
+                                           ],
+                       "local_location":  "${NEWS_RESEARCH_ROOT|.newsroom/research}/graph-results.sqlite3:graph_result_attempts",
+                       "postgres_location":  null,
+                       "identity_fields":  [
+                                               "tenant_id",
+                                               "run_id",
+                                               "graph_id",
+                                               "graph_version",
+                                               "graph_checksum",
+                                               "node_id",
+                                               "node_instance_id",
+                                               "attempt_id",
+                                               "idempotency_key",
+                                               "candidate_checksum"
+                                           ],
+                       "disposition":  "keep",
+                       "replacement_owner":  "framework.harness.graph result runtime with infrastructure-owned durable adapter",
+                       "production_callers":  [
+                                                   "framework/harness/runtime/materializer.py",
+                                                   "framework/harness/runtime/subagent_result_adapter.py",
+                                                   "framework/harness/runtime/tool_result_adapter.py",
+                                                   "business/research/application/graph_result_committer.py",
+                                                   "interfaces/composition/research.py"
+                                               ],
+                       "data_disposition":  "retain the first committed exact envelope in the mode-gated SQLite production adapter and reject conflicting retries; enumerate and verify every managed environment before cutover",
+                       "migration_phase":  4,
+                       "verification_command":  ".\\.venv\\Scripts\\python.exe -m pytest tests/framework/harness/runtime/test_materializer.py tests/framework/harness/runtime/test_graph_result_runtime.py tests/framework/harness/runtime/test_tool_result_adapter.py tests/framework/harness/runtime/test_subagent_result_adapter.py",
+                       "deletion_commit":  null,
+                       "replacement_contract":  "Durable first-writer-wins NodeResultEnvelope ledger keyed by exact Graph node attempt binding",
+                       "inventory_count":  null,
+                       "environment_owner":  null,
+                       "confirmation_status":  "mode_gated_sqlite_production_binding_present_managed_environment_pending"
+                   },
+                   {
+                       "record_kind":  "graph_result_cache_entry",
+                       "owner":  "framework.harness.runtime result cache contract",
+                       "writer":  "infrastructure/storage/artifacts/result_sqlite.py:SQLiteGraphResultStore",
+                       "schema_versions":  [
+                                               "newsroom.graph-result-payload@1",
+                                               "ResultCacheWriteRequest current unversioned port contract",
+                                               "SQLiteGraphResultStore schema 2"
+                                           ],
+                       "local_location":  "${NEWS_RESEARCH_ROOT|.newsroom/research}/graph-results.sqlite3:graph_result_cache",
+                       "postgres_location":  null,
+                       "identity_fields":  [
+                                               "cache_key",
+                                               "tenant_id",
+                                               "content_checksum",
+                                               "dependency_digest",
+                                               "policy_version",
+                                               "expires_at"
+                                           ],
+                       "disposition":  "keep",
+                       "replacement_owner":  "framework.harness.graph result cache contract with infrastructure-owned durable adapter",
+                       "production_callers":  [
+                                                   "framework/harness/runtime/materializer.py",
+                                                   "interfaces/composition/research.py"
+                                               ],
+                       "data_disposition":  "retain only exact-policy, dependency-bound entries in the mode-gated SQLite production adapter and quarantine unsupported or checksum-invalid payloads; enumerate managed environments before cutover",
+                       "migration_phase":  4,
+                       "verification_command":  ".\\.venv\\Scripts\\python.exe -m pytest tests/framework/harness/runtime/test_materializer.py tests/framework/harness/runtime/test_result_policy.py",
+                       "deletion_commit":  null,
+                       "replacement_contract":  "Tenant-scoped, dependency-bound, expiring Graph result cache with exact payload read-back verification",
+                       "inventory_count":  null,
+                       "environment_owner":  null,
+                       "confirmation_status":  "mode_gated_sqlite_production_binding_present_managed_environment_pending"
+                   },
+                   {
+                       "record_kind":  "graph_result_quota_reservation",
+                       "owner":  "framework.harness.runtime result quota contract",
+                       "writer":  "infrastructure/storage/artifacts/result_sqlite.py:SQLiteGraphResultStore",
+                       "schema_versions":  [
+                                               "ResultQuotaReservation current unversioned port contract",
+                                               "ResultMaterializationOutcome current enum contract",
+                                               "SQLiteGraphResultStore schema 2"
+                                           ],
+                       "local_location":  "${NEWS_RESEARCH_ROOT|.newsroom/research}/graph-results.sqlite3:graph_result_quota_reservations",
+                       "postgres_location":  null,
+                       "identity_fields":  [
+                                               "reservation_id",
+                                                "tenant_id",
+                                                "run_id",
+                                                "graph_id",
+                                                "node_id",
+                                                "artifact_class",
+                                                "retention_class",
+                                                "policy_version",
+                                                "reservation_key",
+                                                "reserved_bytes",
+                                                "reserved_objects",
+                                                "outcome"
+                                           ],
+                       "disposition":  "keep",
+                       "replacement_owner":  "framework.harness.graph result quota contract with infrastructure-owned durable ledger",
+                       "production_callers":  [
+                                                   "framework/harness/runtime/materializer.py",
+                                                   "interfaces/composition/research.py"
+                                               ],
+                       "data_disposition":  "preserve exactly-once reservation and settlement evidence in the mode-gated SQLite production adapter across failures and retries; enumerate managed environments before cutover",
+                       "migration_phase":  4,
+                       "verification_command":  ".\\.venv\\Scripts\\python.exe -m pytest tests/framework/harness/runtime/test_materializer.py tests/framework/harness/runtime/test_result_policy.py",
+                       "deletion_commit":  null,
+                       "replacement_contract":  "Durable reserve/settle ledger keyed by Graph result attempt and persistence policy version",
+                       "inventory_count":  null,
+                       "environment_owner":  null,
+                       "confirmation_status":  "mode_gated_sqlite_production_binding_present_managed_environment_pending"
+                   },
+                   {
+                       "record_kind":  "graph_artifact_governance_ledger",
+                       "owner":  "framework.harness.artifacts governance contracts",
+                       "writer":  "infrastructure/storage/artifacts/result_sqlite.py:SQLiteGraphResultStore",
+                       "schema_versions":  [
+                                               "GraphArtifactUsageFact exact contract",
+                                               "GraphArtifactGcOperation exact contract",
+                                               "GraphArtifactDeletionTombstone exact contract",
+                                               "DailyGraphArtifactCostReport exact contract",
+                                               "GraphArtifactAlert exact contract",
+                                               "SQLiteGraphResultStore schema 2"
+                                           ],
+                       "local_location":  "${NEWS_RESEARCH_ROOT|.newsroom/research}/graph-results.sqlite3:graph_artifact_usage,graph_artifact_gc_plans,graph_artifact_gc_operations,graph_artifact_gc_tombstones,graph_artifact_cost_reports,graph_artifact_alerts",
+                       "postgres_location":  null,
+                       "identity_fields":  [
+                                               "fact_id",
+                                               "operation_id",
+                                               "plan_checksum",
+                                               "report_id",
+                                               "alert_id",
+                                               "tenant_id",
+                                               "policy_version",
+                                               "record_checksum"
+                                           ],
+                       "disposition":  "keep_and_verify_graph_compatibility",
+                       "replacement_owner":  "framework.harness.artifacts with infrastructure-owned SQLite governance ledger",
+                       "production_callers":  [
+                                                   "framework/harness/runtime/materializer.py",
+                                                   "framework/harness/runtime/artifact_context.py",
+                                                   "framework/harness/artifacts/runtime.py",
+                                                   "business/research/application/graph_artifact_governance.py",
+                                                   "interfaces/composition/research_graph_artifacts.py",
+                                                   "interfaces/cli/commands/graph_artifacts.py"
+                                               ],
+                       "data_disposition":  "retain exact schema-2 usage, GC, tombstone, cost-report, and alert records; enumerate each managed database, verify migration from schema 1, checksums, watermarks, operation recovery, and alert acknowledgement before Graph-only cutover",
+                       "migration_phase":  4,
+                       "verification_command":  ".\\.venv\\Scripts\\python.exe -m pytest tests/framework/harness/artifacts/test_governance_contracts.py tests/framework/harness/artifacts/test_governance_runtime.py tests/framework/harness/artifacts/test_governance_reporting.py tests/infrastructure/storage/test_graph_artifact_governance_store.py tests/infrastructure/storage/test_graph_artifact_gc_ledger.py",
+                       "deletion_commit":  null,
+                       "replacement_contract":  "Artifact-owned sanitized usage, immutable GC operation, tombstone, deterministic cost report, and durable alert ledger with exact idempotency and checksum semantics",
+                       "inventory_count":  null,
+                       "environment_owner":  null,
+                       "confirmation_status":  "production_sqlite_governance_composition_present_managed_environment_pending"
+                   },
+                   {
+                       "record_kind":  "graph_artifact_physical_lifecycle_state",
+                       "owner":  "framework.harness.artifacts physical lifecycle port with infrastructure.research adapter",
+                       "writer":  "infrastructure/research/graph_artifact_lifecycle.py:FilesystemGraphArtifactLifecycle",
+                       "schema_versions":  [
+                                               "newsroom.graph-artifact-lifecycle/v1",
+                                               "GraphArtifactQuarantineReceipt exact contract",
+                                               "GraphArtifactDeletionReceipt exact contract"
+                                           ],
+                       "local_location":  "${NEWS_RESEARCH_ARTIFACT_ROOT|NEWS_ARTIFACT_ROOT|.newsroom/runs}/_records/graph_artifact_lifecycle/operations/<sha256(operation_id)>/{state.json,payload.quarantine}",
+                       "postgres_location":  null,
+                       "identity_fields":  [
+                                               "operation_id",
+                                               "request_checksum",
+                                               "artifact_ref",
+                                               "physical_checksum",
+                                               "physical_byte_size",
+                                               "state_checksum"
+                                           ],
+                       "disposition":  "keep_and_migrate_manifest_dependency",
+                       "replacement_owner":  "framework.harness.artifacts Graph terminal manifest/hash contract with infrastructure.research filesystem lifecycle adapter",
+                       "production_callers":  [
+                                                   "framework/harness/artifacts/runtime.py",
+                                                   "infrastructure/research/__init__.py",
+                                                   "interfaces/composition/research_graph_artifacts.py"
+                                               ],
+                       "data_disposition":  "retain checksum-valid lifecycle state and quarantine receipts; reconcile or quarantine partial operations, migrate manifest membership/hash updates to the artifact-owned Graph terminal manifest contract, and never resume a legacy Workflow writer",
+                       "migration_phase":  4,
+                       "verification_command":  ".\\.venv\\Scripts\\python.exe -m pytest tests/infrastructure/research/test_graph_artifact_lifecycle.py tests/infrastructure/research/test_graph_artifact_governance_integration.py tests/interfaces/composition/test_research_graph_artifacts.py",
+                       "deletion_commit":  null,
+                       "replacement_contract":  "Restart-safe run-bound quarantine and purge lifecycle with exact physical identity, Graph terminal manifest membership, and idempotent receipts",
+                       "inventory_count":  null,
+                       "environment_owner":  null,
+                       "confirmation_status":  "production_filesystem_lifecycle_composition_present_managed_environment_pending"
+                   },
+                   {
+                       "record_kind":  "harness_graph_result_lineage",
+                       "owner":  "framework.harness.graph result projection with framework.events persistence",
+                       "writer":  "framework/harness/control_plane/durable_events.py through harness_graph_activity_result_committed and projection records",
+                       "schema_versions":  [
+                                               "newsroom.harness-graph-result-lineage@1",
+                                               "newsroom.harness-graph-activity-result/v1",
+                                               "newsroom.harness-graph-projection-record/v2"
+                                           ],
+                       "local_location":  "<configured event database>:durable_events",
+                       "postgres_location":  "<configured PostgreSQL DSN>:durable_events",
+                       "identity_fields":  [
+                                               "result_envelope_id",
+                                               "tenant_id",
+                                               "run_id",
+                                               "graph_id",
+                                               "graph_version",
+                                               "graph_checksum",
+                                               "node_id",
+                                               "node_instance_id",
+                                               "attempt_id",
+                                               "candidate_checksum",
+                                               "materialized_refs",
+                                               "cache_refs"
+                                           ],
+                       "disposition":  "keep_and_verify_graph_compatibility",
+                       "replacement_owner":  "framework.harness.graph result projection with framework.events persistence",
+                       "production_callers":  [
+                                                   "framework/harness/runtime/graph_result_runtime.py",
+                                                   "framework/harness/control_plane/graph_runtime.py",
+                                                   "framework/harness/control_plane/durable_events.py",
+                                                   "business/research/application/graph_result_committer.py",
+                                                   "interfaces/composition/research.py"
+                                               ],
+                       "data_disposition":  "retain exact-version lineage and its cause-before-projection ordering; keep legacy payload-only activity results readable for migration but never synthesize missing lineage",
+                       "migration_phase":  4,
+                       "verification_command":  ".\\.venv\\Scripts\\python.exe -m pytest tests/framework/harness/runtime/test_graph_result_runtime.py tests/framework/harness/control_plane/test_durable_event_boundary.py tests/architecture/test_harness_graph_result_boundary.py",
+                       "deletion_commit":  null,
+                       "replacement_contract":  "Bounded Graph result lineage persisted as an activity-result cause plus adjacent deterministic projection",
+                       "inventory_count":  null,
+                       "environment_owner":  null,
+                       "confirmation_status":  "mode_gated_producer_composition_present_managed_environment_pending"
+                   },
+                   {
+                       "record_kind":  "legacy_run_manifest",
+                       "owner":  "framework.agent.artifacts",
+                       "writer":  "framework/workflow/runtime/manifest.py",
+                       "schema_versions":  [
+                                               "newsroom.workflow_run_manifest.v1"
+                                           ],
+                       "local_location":  "${NEWS_RESEARCH_ARTIFACT_ROOT|NEWS_ARTIFACT_ROOT|.newsroom/runs}/\u003crun_id\u003e/manifest.json",
+                       "postgres_location":  "${NEWS_DATABASE_DSN}:workflow_runs (manifest_path points to the artifact manifest; no manifest_json column)",
+                       "identity_fields":  [
+                                               "run_id",
+                                               "workflow_id",
+                                               "workflow_version"
+                                           ],
+                       "disposition":  "migrate_or_quarantine",
+                       "replacement_owner":  "framework.agent.artifacts",
+                       "production_callers":  [
+                                                  "framework/agent/artifacts/runtime/manager.py",
+                                                  "infrastructure/research/artifact_publication.py",
+                                                  "interfaces/services/run_inspection_service.py"
+                                              ],
+                       "data_disposition":  "migrate_supported manifests to Graph identity; quarantine unknown, incomplete, or checksum-invalid records",
+                       "migration_phase":  4,
+                       "verification_command":  ".\\.venv\\Scripts\\python.exe -m pytest tests/framework/contracts/test_artifact_manifest_contract.py tests/framework/workflow/runtime/test_manifest_integration.py",
+                       "deletion_commit":  null,
+                       "replacement_contract":  "Graph terminal run manifest with graph_ref, graph checksum, gate evidence, and publication evidence",
+                       "inventory_count":  null,
+                       "environment_owner":  null,
+                       "confirmation_status":  "pending_external_confirmation"
+                   },
+                   {
+                       "record_kind":  "research_run_record",
+                       "owner":  "business.research run store",
+                       "writer":  "infrastructure/research/filesystem_run_store.py",
+                       "schema_versions":  [
+                                               "newsroom.research_run_record.v1",
+                                               "newsroom.research_run_record.v2",
+                                               "newsroom.research_run_latest_index.v1",
+                                               "newsroom.research_run_latest_index.v2"
+                                           ],
+                       "local_location":  "${NEWS_RESEARCH_RUN_STORE_ROOT|${NEWS_RESEARCH_ROOT|.newsroom/research}/runs}",
+                       "postgres_location":  null,
+                       "identity_fields":  [
+                                               "run_id",
+                                               "paper_id",
+                                               "commit_generation"
+                                           ],
+                       "disposition":  "migrate",
+                       "replacement_owner":  "business.research run store",
+                       "production_callers":  [
+                                                  "business/research/application/run_disposition.py",
+                                                  "interfaces/services/research_service.py",
+                                                  "interfaces/composition/research.py"
+                                              ],
+                       "data_disposition":  "migrate Research records to Graph run identity and terminal artifact claims",
+                       "migration_phase":  4,
+                       "verification_command":  ".\\.venv\\Scripts\\python.exe -m pytest tests/infrastructure/research/test_filesystem_run_store.py",
+                       "deletion_commit":  null,
+                       "replacement_contract":  "Research record pinned to Graph run identity and terminal artifact claim",
+                       "inventory_count":  null,
+                       "environment_owner":  null,
+                       "confirmation_status":  "pending_external_confirmation"
+                   },
+                   {
+                       "record_kind":  "harness_side_effect_authority",
+                       "owner":  "framework.harness.side_effects",
+                       "writer":  "infrastructure/storage/harness/sqlite.py; composed by interfaces/composition/research.py",
+                       "schema_versions":  [
+                                               "SQLite store schema 2",
+                                               "newsroom.harness-side-effect-intent/v1",
+                                               "HarnessSideEffectDecision decision_version 1",
+                                               "newsroom.harness-side-effect-attempt-lease/v1",
+                                               "newsroom.harness-side-effect-outcome/v1",
+                                               "newsroom.harness-side-effect-outcome/v2"
+                                           ],
+                       "local_location":  "${NEWS_RESEARCH_ROOT|artifact_root.parent/research}/harness-side-effects.sqlite3",
+                       "postgres_location":  null,
+                       "identity_fields":  [
+                                               "run_id",
+                                               "effect_id",
+                                               "decision_ref",
+                                               "attempt_id",
+                                               "fencing_generation",
+                                               "idempotency_key",
+                                               "identity_scope_ref",
+                                               "subject_scope_ref"
+                                           ],
+                       "disposition":  "keep_and_rebind_to_graph_node",
+                       "replacement_owner":  "framework.harness.side_effects",
+                       "production_callers":  [
+                                                  "framework/harness/control_plane/harness.py",
+                                                  "infrastructure/research/artifact_publication.py",
+                                                  "business/research/application/single_paper_runtime.py",
+                                                  "interfaces/composition/research.py"
+                                              ],
+                       "data_disposition":  "adapt identity to graph_ref and node_instance_id, then migrate supported rows or quarantine unverifiable authority records",
+                       "migration_phase":  4,
+                       "verification_command":  ".\\.venv\\Scripts\\python.exe -m pytest tests/infrastructure/storage/harness/test_sqlite_side_effect_store.py tests/framework/harness/control_plane/test_side_effect_durable_recovery.py",
+                       "deletion_commit":  null,
+                       "replacement_contract":  "Harness-owned Graph side-effect decision, attempt, lease, and outcome authority pinned to graph_ref and node_instance_id",
+                       "inventory_count":  null,
+                       "environment_owner":  null,
+                       "confirmation_status":  "pending_external_confirmation"
+                   },
+                   {
+                       "record_kind":  "dynamic_task_plan_state",
+                       "owner":  "framework.harness.task_plan",
+                       "writer":  "framework/harness/task_plan/durable_store.py; composed by interfaces/composition/research.py",
+                       "schema_versions":  [
+                                               "newsroom.harness-task-plan-event/v1",
+                                               "newsroom.harness-task-plan-storage/v1"
+                                           ],
+                       "local_location":  "${NEWS_RESEARCH_ARTIFACT_ROOT|NEWS_ARTIFACT_ROOT|.newsroom/runs}/\u003crun_id\u003e/_task_plan/\u003cstage_hash\u003e/\u003ckind\u003e/\u003cdomain_hash\u003e.json plus _records/events.sqlite3:durable_events",
+                       "postgres_location":  "${NEWS_DATABASE_DSN}:durable_events; immutable TaskPlan documents remain under the configured artifact root",
+                       "identity_fields":  [
+                                               "run_id",
+                                               "stage_id",
+                                               "domain_ref",
+                                               "artifact_id",
+                                               "stream_id",
+                                               "stream_sequence"
+                                           ],
+                       "disposition":  "keep_and_rebind_to_graph_node",
+                       "replacement_owner":  "framework.harness.task_plan",
+                       "production_callers":  [
+                                                  "interfaces/composition/research.py"
+                                              ],
+                       "data_disposition":  "migrate TaskPlan documents and event references to one registered frozen-Graph stage identity",
+                       "migration_phase":  4,
+                       "verification_command":  ".\\.venv\\Scripts\\python.exe -m pytest tests/framework/harness/task_plan/test_durable_task_plan_store.py tests/business/research/integration/test_dynamic_paper_analysis_task_plan.py",
+                       "deletion_commit":  null,
+                       "replacement_contract":  "Opt-in TaskPlan state constrained to one registered stage in the frozen Graph and pinned to graph_ref and node_instance_id",
+                       "inventory_count":  null,
+                       "environment_owner":  null,
+                       "confirmation_status":  "pending_external_confirmation"
+                   },
+                   {
+                       "record_kind":  "subagent_attempt_bundle",
+                       "owner":  "framework.harness.subagents",
+                       "writer":  "infrastructure/storage/harness/subagent_transcript.py; composed by interfaces/composition/research.py",
+                       "schema_versions":  [
+                                               "newsroom.subagent-attempt-bundle/v1",
+                                               "newsroom.subagent-context-evidence/v1",
+                                               "newsroom.subagent-output-document/v1",
+                                               "newsroom.subagent-transcript/v1",
+                                               "newsroom.subagent-transcript-receipt/v1"
+                                           ],
+                       "local_location":  "${NEWS_RESEARCH_ARTIFACT_ROOT|NEWS_ARTIFACT_ROOT|.newsroom/runs}/\u003cparent_run_id\u003e/_harness/subagents/\u003ctranscript_id\u003e.json",
+                       "postgres_location":  null,
+                       "identity_fields":  [
+                                               "invocation_id",
+                                               "parent_run_id",
+                                               "child_run_id",
+                                               "workflow_id",
+                                               "stage_id",
+                                               "task_id",
+                                               "task_instance_id",
+                                               "attempt",
+                                               "subagent_id"
+                                           ],
+                       "disposition":  "migrate_or_quarantine",
+                       "replacement_owner":  "framework.harness.subagents",
+                       "production_callers":  [
+                                                  "interfaces/composition/research.py"
+                                              ],
+                       "data_disposition":  "migrate supported bundles from workflow_id to Graph parent/node identity; quarantine unknown or integrity-invalid bundles",
+                       "migration_phase":  4,
+                       "verification_command":  ".\\.venv\\Scripts\\python.exe -m pytest tests/infrastructure/storage/harness/test_subagent_transcript_store.py tests/framework/harness/subagents/test_subagent_transcript_adversarial.py",
+                       "deletion_commit":  null,
+                       "replacement_contract":  "Versioned subagent attempt evidence pinned to graph_ref, parent_node_instance_id, task identity, and attempt",
+                       "inventory_count":  null,
+                       "environment_owner":  null,
+                       "confirmation_status":  "pending_external_confirmation"
+                   },
+                   {
+                       "record_kind":  "legacy_workflow_event",
+                       "owner":  "framework.events",
+                       "writer":  "framework/workflow/runtime/event_emitter.py",
+                       "schema_versions":  [
+                                               "newsroom.workflow.event.v1",
+                                               "newsroom.attempt-event/v1"
+                                           ],
+                       "local_location":  "${NEWS_ARTIFACT_ROOT|.newsroom/runs}/_records/events.sqlite3:durable_events",
+                       "postgres_location":  "${NEWS_DATABASE_DSN}:durable_events and legacy workflow_events",
+                       "identity_fields":  [
+                                               "tenant_scope",
+                                               "stream_id",
+                                               "stream_sequence",
+                                               "event_id"
+                                           ],
+                       "disposition":  "migrate_or_quarantine",
+                       "replacement_owner":  "framework.events",
+                       "production_callers":  [
+                                                  "interfaces/services/event_migration_service.py",
+                                                  "interfaces/services/event_projection_service.py",
+                                                  "interfaces/services/run_inspection_service.py"
+                                              ],
+                       "data_disposition":  "convert supported legacy events to Graph events or quarantine streams that cannot preserve sequence and identity",
+                       "migration_phase":  4,
+                       "verification_command":  ".\\.venv\\Scripts\\python.exe -m pytest tests/infrastructure/storage/events/test_harness_durable_event_integration.py",
+                       "deletion_commit":  null,
+                       "replacement_contract":  "HARNESS_GRAPH_EVENT_SCHEMAS plus node-instance identity",
+                       "inventory_count":  null,
+                       "environment_owner":  null,
+                       "confirmation_status":  "pending_external_confirmation"
+                   },
+                   {
+                       "record_kind":  "harness_graph_event",
+                       "owner":  "framework.events",
+                       "writer":  "framework/harness/control_plane/durable_events.py",
+                       "schema_versions":  [
+                                               "newsroom.harness-graph-created/v1",
+                                               "newsroom.harness-graph-decision/v1",
+                                               "newsroom.harness-graph-node-activated/v1",
+                                               "newsroom.harness-graph-node-terminal/v1",
+                                               "newsroom.harness-graph-choice-selected/v1",
+                                               "newsroom.harness-graph-fork-opened/v1",
+                                               "newsroom.harness-graph-join-satisfied/v1",
+                                               "newsroom.harness-graph-loop-transition/v1",
+                                               "newsroom.harness-graph-wait-transition/v1",
+                                               "newsroom.harness-graph-winner-selected/v1",
+                                               "newsroom.harness-graph-cancellation-transition/v1",
+                                               "newsroom.harness-graph-compensation-transition/v1",
+                                               "newsroom.harness-graph-budget-transition/v1",
+                                               "newsroom.harness-graph-run-lifecycle-transition/v1",
+                                               "newsroom.harness-graph-activity-result/v1",
+                                               "newsroom.harness-graph-result-lineage@1"
+                                           ],
+                       "local_location":  "${NEWS_ARTIFACT_ROOT|.newsroom/runs}/_records/events.sqlite3:durable_events",
+                       "postgres_location":  "${NEWS_DATABASE_DSN}:durable_events",
+                       "identity_fields":  [
+                                               "tenant_scope",
+                                               "stream_id",
+                                               "stream_sequence",
+                                               "event_id",
+                                               "graph_checksum"
+                                           ],
+                       "disposition":  "keep",
+                       "replacement_owner":  "framework.events",
+                       "production_callers":  [
+                                                  "framework/harness/control_plane/durable_events.py"
+                                              ],
+                       "data_disposition":  "retain supported Graph events, including exact-version result lineage causes, and verify Graph/runtime version pins before cutover",
+                       "migration_phase":  4,
+                       "verification_command":  ".\\.venv\\Scripts\\python.exe -m pytest tests/framework/harness/control_plane/test_durable_event_boundary.py tests/framework/harness/runtime/test_graph_result_runtime.py tests/infrastructure/storage/events/test_harness_durable_event_integration.py",
+                       "deletion_commit":  null,
+                       "replacement_contract":  "framework.harness.graph version registry after namespace cutover",
+                       "inventory_count":  null,
+                       "environment_owner":  null,
+                       "confirmation_status":  "pending_external_confirmation"
+                   },
+                   {
+                       "record_kind":  "legacy_workflow_checkpoint",
+                       "owner":  "framework.harness.graph.checkpoints",
+                       "writer":  "framework/workflow/checkpoint/store.py and infrastructure/storage/checkpoint/local_json.py",
+                       "schema_versions":  [
+                                               "workflow-checkpoint/v0",
+                                               "workflow-checkpoint/v1",
+                                               "workflow-checkpoint/v2"
+                                           ],
+                       "local_location":  ".newsroom/checkpoints/\u003crun_id\u003e/\u003ccheckpoint_id\u003e.json",
+                       "postgres_location":  null,
+                       "identity_fields":  [
+                                               "run_id",
+                                               "checkpoint_id",
+                                               "workflow_id",
+                                               "workflow_version"
+                                           ],
+                       "disposition":  "migrate_or_quarantine",
+                       "replacement_owner":  "framework.harness.graph.checkpoints",
+                       "production_callers":  [
+                                                  "framework/workflow/runtime/checkpoint_coordinator.py",
+                                                  "framework/workflow/operations/service.py"
+                                              ],
+                       "data_disposition":  "migrate supported checkpoints to Graph identity or quarantine records without a complete replay boundary",
+                       "migration_phase":  4,
+                       "verification_command":  ".\\.venv\\Scripts\\python.exe -m pytest tests/framework/workflow/checkpoint/test_checkpoint_manifest_ref.py tests/framework/harness/control_plane/test_graph_checkpoint_replay.py",
+                       "deletion_commit":  null,
+                       "replacement_contract":  "newsroom.harness-graph-checkpoint/v1",
+                       "inventory_count":  null,
+                       "environment_owner":  null,
+                       "confirmation_status":  "pending_external_confirmation"
+                   },
+                   {
+                       "record_kind":  "harness_graph_checkpoint",
+                       "owner":  "framework.harness.graph.checkpoints",
+                       "writer":  "framework/harness/control_plane/graph_checkpoint.py",
+                       "schema_versions":  [
+                                               "newsroom.harness-graph-checkpoint/v1"
+                                           ],
+                       "local_location":  "InMemoryHarnessGraphCheckpointStore only in the current repository composition",
+                       "postgres_location":  null,
+                       "identity_fields":  [
+                                               "run_id",
+                                               "checkpoint_id",
+                                               "graph_checksum",
+                                               "last_event_id"
+                                           ],
+                       "disposition":  "keep",
+                       "replacement_owner":  "framework.harness.graph.checkpoints",
+                       "production_callers":  [
+
+                                              ],
+                       "data_disposition":  "add a production durable adapter before cutover; no deployed records may be assumed from the in-memory implementation",
+                       "migration_phase":  2,
+                       "verification_command":  ".\\.venv\\Scripts\\python.exe -m pytest tests/framework/harness/control_plane/test_graph_checkpoint_replay.py",
+                       "deletion_commit":  null,
+                       "replacement_contract":  "same contract under final Graph namespace",
+                       "inventory_count":  null,
+                       "environment_owner":  null,
+                       "confirmation_status":  "production_durable_binding_missing"
+                   },
+                   {
+                       "record_kind":  "harness_graph_projection_record",
+                       "owner":  "framework.events",
+                       "writer":  "framework/harness/control_plane/durable_events.py",
+                       "schema_versions":  [
+                                               "newsroom.harness-graph-projection-record/v2",
+                                               "newsroom.harness-graph-result-lineage@1"
+                                           ],
+                       "local_location":  "${NEWS_ARTIFACT_ROOT|.newsroom/runs}/_records/events.sqlite3:durable_events",
+                       "postgres_location":  "${NEWS_DATABASE_DSN}:durable_events",
+                       "identity_fields":  [
+                                               "run_id",
+                                               "stream_id",
+                                               "stream_sequence",
+                                               "graph_checksum"
+                                           ],
+                       "disposition":  "keep_and_verify_graph_compatibility",
+                       "replacement_owner":  "framework.events",
+                       "production_callers":  [
+                                                  "framework/harness/control_plane/durable_events.py"
+                                              ],
+                       "data_disposition":  "retain only projections whose pinned Graph, reducer, and result-lineage versions remain replayable",
+                       "migration_phase":  4,
+                       "verification_command":  ".\\.venv\\Scripts\\python.exe -m pytest tests/framework/harness/control_plane/test_durable_event_boundary.py tests/framework/events/test_replay_history.py",
+                       "deletion_commit":  null,
+                       "replacement_contract":  "Graph projection event pinned to exact Graph/runtime versions",
+                       "inventory_count":  null,
+                       "environment_owner":  null,
+                       "confirmation_status":  "pending_external_confirmation"
+                   },
+                   {
+                       "record_kind":  "replay_checkpoint",
+                       "owner":  "framework.events",
+                       "writer":  "infrastructure/storage/events/replay_checkpoints.py",
+                       "schema_versions":  [
+                                               "newsroom.event-replay-runtime/v1",
+                                               "newsroom.default-event-schema-catalog/v1"
+                                           ],
+                       "local_location":  "${NEWS_ARTIFACT_ROOT|.newsroom/runs}/_records/events.sqlite3:event_replay_checkpoints",
+                       "postgres_location":  "${NEWS_DATABASE_DSN}:event_replay_checkpoints",
+                       "identity_fields":  [
+                                               "checkpoint_id",
+                                               "tenant_scope",
+                                               "source_stream_id",
+                                               "mode",
+                                               "runtime_version",
+                                               "schema_catalog_version"
+                                           ],
+                       "disposition":  "keep_and_verify_graph_compatibility",
+                       "replacement_owner":  "framework.events",
+                       "production_callers":  [
+                                                  "framework/events/runtime/replay_engine.py",
+                                                  "interfaces/services/event_replay_service.py",
+                                                  "infrastructure/storage/events/factory.py"
+                                              ],
+                       "data_disposition":  "retain compatible replay checkpoints; reset or quarantine checkpoints that reference unsupported Workflow reducers",
+                       "migration_phase":  4,
+                       "verification_command":  ".\\.venv\\Scripts\\python.exe -m pytest tests/infrastructure/storage/events/test_replay_checkpoint_store.py tests/framework/events/test_replay_history.py",
+                       "deletion_commit":  null,
+                       "replacement_contract":  "Graph-aware deterministic replay checkpoint",
+                       "inventory_count":  null,
+                       "environment_owner":  null,
+                       "confirmation_status":  "pending_external_confirmation"
+                   },
+                   {
+                       "record_kind":  "recorded_replay_activity",
+                       "owner":  "framework.events",
+                       "writer":  "infrastructure/storage/events/activity_store.py",
+                       "schema_versions":  [
+                                               "newsroom.replay-activity-record/v1"
+                                           ],
+                       "local_location":  "${NEWS_ARTIFACT_ROOT|.newsroom/runs}/_records/events.sqlite3:event_activity_records",
+                       "postgres_location":  "${NEWS_DATABASE_DSN}:event_activity_records",
+                       "identity_fields":  [
+                                               "run_id",
+                                               "activity_id",
+                                               "attempt",
+                                               "content_checksum"
+                                           ],
+                       "disposition":  "keep_and_rebind_to_graph_node",
+                       "replacement_owner":  "framework.events",
+                       "production_callers":  [
+                                                  "framework/events/runtime/history.py",
+                                                  "framework/harness/control_plane/durable_events.py",
+                                                  "framework/harness/control_plane/replay_history.py"
+                                              ],
+                       "data_disposition":  "rebind supported activity evidence to graph_ref and node_instance_id; quarantine unverifiable recordings",
+                       "migration_phase":  4,
+                       "verification_command":  ".\\.venv\\Scripts\\python.exe -m pytest tests/infrastructure/storage/events/test_activity_store.py tests/framework/events/test_replay_activities.py",
+                       "deletion_commit":  null,
+                       "replacement_contract":  "Recorded-only Graph activity evidence",
+                       "inventory_count":  null,
+                       "environment_owner":  null,
+                       "confirmation_status":  "pending_external_confirmation"
+                   },
+                   {
+                       "record_kind":  "artifact_index",
+                       "owner":  "framework.agent.artifacts",
+                       "writer":  "infrastructure/storage/artifacts/local_json.py or infrastructure/storage/postgres/artifact_index.py",
+                       "schema_versions":  [
+                                               "ArtifactRef.to_dict current unversioned JSON",
+                                               "PostgreSQL migration 001_initial"
+                                           ],
+                       "local_location":  "${NEWS_ARTIFACT_ROOT|.newsroom/runs}/_records/artifact_index/\u003crun_hash\u003e/\u003cartifact_hash\u003e.json",
+                       "postgres_location":  "${NEWS_DATABASE_DSN}:artifact_index",
+                       "identity_fields":  [
+                                               "run_id",
+                                               "artifact_id",
+                                               "step_id",
+                                               "checksum"
+                                           ],
+                       "disposition":  "migrate",
+                       "replacement_owner":  "framework.agent.artifacts",
+                       "production_callers":  [
+                                                  "infrastructure/research/artifact_port.py",
+                                                  "infrastructure/storage/lifecycle/retention.py"
+                                              ],
+                       "data_disposition":  "migrate step_id references to node_instance_id while preserving checksums and path containment",
+                       "migration_phase":  4,
+                       "verification_command":  ".\\.venv\\Scripts\\python.exe -m pytest tests/infrastructure/storage/test_artifact_store.py tests/framework/artifacts/test_store_manager.py",
+                       "deletion_commit":  null,
+                       "replacement_contract":  "ArtifactRef pinned to graph_ref and node_instance_id",
+                       "inventory_count":  null,
+                       "environment_owner":  null,
+                       "confirmation_status":  "pending_external_confirmation"
+                   },
+                   {
+                       "record_kind":  "conversation_cursor",
+                       "owner":  "infrastructure.storage.conversation",
+                       "writer":  "infrastructure/storage/conversation/local_json.py or infrastructure/storage/postgres/conversation.py",
+                       "schema_versions":  [
+                                               "newsroom.graph-conversation-cursor/v2 live",
+                                               "newsroom.graph-conversation-cursor/v1 migration-history-only",
+                                               "newsroom.conversation-cursor/unversioned-1 legacy source only"
+                                           ],
+                       "local_location":  "\u003cconfigured conversation root\u003e/\u003cconversation_id\u003e/cursor.json",
+                       "postgres_location":  "${NEWS_DATABASE_DSN}:agent_conversation_state.cursor_json",
+                       "identity_fields":  [
+                                               "conversation_id",
+                                               "message_offset",
+                                               "run_id",
+                                               "node_instance_id",
+                                               "graph_checkpoint_ref",
+                                               "schema_version"
+                                           ],
+                       "disposition":  "migrate_or_quarantine",
+                       "replacement_owner":  "framework.agent.loop contracts with infrastructure.storage.conversation adapters",
+                       "production_callers":  [
+                                                  "framework/agent/loop/runner.py"
+                                              ],
+                       "data_disposition":  "live writes use strict Graph v2 identity; legacy unversioned records may only enter the offline migrator, Graph v1 output is history-only and cannot enter the live reader, and unsupported records are quarantined",
+                       "migration_phase":  4,
+                       "verification_command":  ".\\.venv\\Scripts\\python.exe -m pytest tests/infrastructure/storage/test_conversation_store.py tests/infrastructure/storage/postgres/test_postgres_conversation_store.py tests/framework/agent/loop/test_agent_runner_graph_conversation_state.py tests/architecture/test_graph_conversation_state_identity.py tests/scripts/test_graph_only_migration.py",
+                       "deletion_commit":  null,
+                       "replacement_contract":  "Graph run/node/checkpoint cursor with explicit schema version",
+                       "inventory_count":  null,
+                       "environment_owner":  null,
+                       "confirmation_status":  "pending_external_confirmation"
+                   },
+                   {
+                       "record_kind":  "agent_iteration_checkpoint",
+                       "owner":  "infrastructure.storage.conversation",
+                       "writer":  "infrastructure/storage/conversation/local_json.py or infrastructure/storage/postgres/conversation.py",
+                       "schema_versions":  [
+                                               "newsroom.graph-agent-iteration-checkpoint/v2 live",
+                                               "newsroom.graph-agent-iteration-checkpoint/v1 migration-history-only",
+                                               "newsroom.agent-iteration-checkpoint/unversioned-1 legacy source only"
+                                           ],
+                       "local_location":  "\u003cconfigured conversation root\u003e/\u003cconversation_id\u003e/iteration_checkpoint.json",
+                       "postgres_location":  "${NEWS_DATABASE_DSN}:agent_conversation_state.iteration_checkpoint_json",
+                       "identity_fields":  [
+                                               "conversation_id",
+                                               "agent_id",
+                                               "iteration",
+                                               "run_id",
+                                               "node_instance_id",
+                                               "graph_checkpoint_ref",
+                                               "schema_version"
+                                           ],
+                       "disposition":  "migrate_or_quarantine",
+                       "replacement_owner":  "framework.agent.loop contracts with infrastructure.storage.conversation adapters",
+                       "production_callers":  [
+                                                  "framework/agent/loop/runner.py"
+                                              ],
+                       "data_disposition":  "live writes use strict Graph v2 node-instance identity; legacy unversioned records may only enter the offline migrator, Graph v1 output is history-only and cannot enter the live reader, and unsupported records are quarantined",
+                       "migration_phase":  4,
+                       "verification_command":  ".\\.venv\\Scripts\\python.exe -m pytest tests/infrastructure/storage/test_conversation_store.py tests/infrastructure/storage/postgres/test_postgres_conversation_store.py tests/framework/agent/loop/test_agent_runner_graph_conversation_state.py tests/architecture/test_graph_conversation_state_identity.py tests/scripts/test_graph_only_migration.py",
+                       "deletion_commit":  null,
+                       "replacement_contract":  "Graph node-instance activity checkpoint with explicit schema version",
+                       "inventory_count":  null,
+                       "environment_owner":  null,
+                       "confirmation_status":  "pending_external_confirmation"
+                   }
+               ],
+    "row_semantics":  {
+                          "inventory_count":  "null means the authoritative count for every managed environment has not been supplied",
+                          "environment_owner":  "null means no authoritative managed-environment owner attestation exists in the repository or current GitHub configuration",
+                          "deletion_commit":  "null means no deletion has occurred; the exact deleting commit is required before the corresponding legacy record or writer is closed",
+                          "production_callers":  "paths are live production callers or composition owners proven by source scan; an empty list is deliberate and does not imply a deployed durable binding"
+                      },
+    "release_constraints":  [
+                                "No store may enter cutover until every managed environment has a resolved location, count, owner, and backup evidence.",
+                                "Unversioned cursor, iteration-checkpoint, and artifact-index JSON requires an explicit legacy reader only in the offline migrator; it cannot remain an active runtime fallback.",
+                                "A non-empty NEWS_DATABASE_DSN selects PostgreSQL; otherwise event and replay storage resolve below NEWS_ARTIFACT_ROOT or .newsroom/runs.",
+                                "Local defaults do not prove production topology and must not be used to authorize deletion.",
+                                "Harness side-effect authority, dynamic TaskPlan state, subagent attempt bundles, Graph result payloads/lineage, result quota/cache/attempt state, Graph artifact governance ledger, physical lifecycle state, and the Graph artifact catalog are explicit cutover inputs; a generic artifact-index row is not sufficient inventory evidence for their schemas or identities.",
+                                "LocalJsonArtifactCatalog, SQLiteGraphResultStore schema 2, FilesystemGraphArtifactLifecycle, and GraphArtifactGovernanceRuntime now have explicit Research production composition. Write, GC, and rollout authority remains mode-gated; the repository default remains shadow and empty local defaults are not deployment evidence, so managed-environment activation and inventory remain required.",
+                                "research-graph-artifact-cutover and graph-artifact-cost-retention are archived locally after implementing the catalog, SQLite quota/cache/attempt/governance store, ResultMaterializer, Tool/SubAgent producers, Research committer, artifact context loading, physical lifecycle, cost reporting, alerts, production composition, and operator surface. Their repository implementation and passing tests do not establish deployed store locations, counts, owners, backups, maintenance windows, retention-window completion, rollback authority, or legacy-writer removal."
+                            ]
+}

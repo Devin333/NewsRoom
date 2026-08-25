@@ -1,0 +1,91 @@
+{
+  "schema": "newsroom.graph-only-task-plan-candidate-plan-contract-evidence/v1",
+  "captured_at": "2026-08-17",
+  "change": "graph-only-orchestration",
+  "task_refs": [
+    "2.7",
+    "3.4",
+    "5.4"
+  ],
+  "status": "gate_a_candidate_and_validated_plan_contract_complete_durable_chain_open",
+  "implementation": {
+    "commit": "6412fb1107515dd7a2f923aab0ceac1158dfd26c",
+    "tree": "4432245c032fc535276a08e3d38208b7836d0def",
+    "schema_registry": "framework/harness/task_plan/schema.py",
+    "models": "framework/harness/task_plan/models.py",
+    "stage_binding": "framework/harness/task_plan/stage_binding.py",
+    "request_contracts": "framework/harness/task_plan/ports.py",
+    "validator": "framework/harness/task_plan/validation.py",
+    "research_builder": "business/research/graphs/task_plan.py",
+    "research_definition": "business/research/graphs/paper_analysis.py",
+    "store_activation_gate": "framework/harness/task_plan/store.py"
+  },
+  "contract": {
+    "legacy_candidate_schema": "newsroom.harness-task-plan-candidate/v1",
+    "graph_only_candidate_schema": "newsroom.harness-task-plan-candidate/v2",
+    "candidate_writer_schema": "newsroom.harness-task-plan-candidate/v1",
+    "legacy_plan_schema": "newsroom.harness-task-plan/v1",
+    "graph_only_plan_schema": "newsroom.harness-task-plan/v2",
+    "plan_writer_schema": "newsroom.harness-task-plan/v1",
+    "identity_source": "frozen_task_plan_stage_identity",
+    "graph_only_workflow_aliases": false,
+    "graph_only_exact_graph_ref": true,
+    "graph_only_version_pinning": true,
+    "stage_binding_checksum_pinned": true,
+    "stage_identity_checksum_pinned": true,
+    "strict_readers": true,
+    "mixed_schema_rejected": true,
+    "checksum_tamper_rejected": true,
+    "cross_graph_stage_injection_rejected": true,
+    "validated_plan_patch_preserves_identity": true,
+    "legacy_wire_shape_changed": false
+  },
+  "oracles": {
+    "research_dynamic_graph_checksum": "sha256:1ac0a5604271d9e58a90aec14221ee2ce27afd3ea208d1608f11ee6642d4f546",
+    "research_dynamic_binding_checksum": "sha256:ff9756f238c9b9d8ead67a66778c475508b4bc6f5e5835500fb2ff65660097c9",
+    "research_dynamic_identity_checksum": "sha256:68fd4b5ec48f89cc72f528c38d061296f53489175636ba1122eec8bb4b95cf55",
+    "research_candidate_checksum": "sha256:cc9ed4116fffa8bbade633678ca5cc86ebbf9ebcfda5626f57ee522088bd80ff",
+    "research_validated_plan_checksum": "sha256:9b379163cda2ea131afc80fe114d37fba24eeabb26deebf6881a00edf0d76c01"
+  },
+  "activation_boundary": {
+    "graph_only_candidate_schema_added": true,
+    "graph_only_validated_plan_schema_added": true,
+    "graph_only_result_event_checkpoint_schema_added": false,
+    "graph_only_store_write_enabled": false,
+    "legacy_event_store_rejection_code": "graph_task_plan_event_schema_unavailable",
+    "production_task_plan_runtime_changed": false,
+    "production_research_composition_changed": false,
+    "production_run_admission_changed": false,
+    "production_smoke_normalized_schema": "newsroom.harness-normalized-graph/v1",
+    "artifact_subsystem_removed": false,
+    "artifact_owner": "framework/harness/artifacts",
+    "artifact_publication_authority_changed": false
+  },
+  "verification": {
+    "focused_candidate_plan_binding_identity": "34 passed",
+    "task_plan_and_research_graph": "154 passed",
+    "graph_task_plan_and_research_graph": "308 passed",
+    "architecture": "205 passed, 4 warnings",
+    "compile": "passed",
+    "mandatory_smoke": "2732 passed, 23 deselected, 22 warnings",
+    "embedded_graph_smoke": "status=succeeded, llm_calls=3, tool_calls=1, total_tokens=60, network_calls=0",
+    "source_validation": "is_valid=true, error_count=0, warning_count=0",
+    "openspec_change_strict": "valid",
+    "openspec_all_strict": "533 passed, 0 failed"
+  },
+  "remaining_blockers": [
+    "Graph-only TaskResultRecord, TaskPlanEvent, and TaskPlanCheckpoint schemas",
+    "Graph-only queue, projection, durable store, recovery, and replay identity",
+    "Research production composition and run admission cutover",
+    "Gate B durable writer and reader activation",
+    "Gate C legacy Workflow identity deletion"
+  ],
+  "task_status": {
+    "task_2_7_checked": false,
+    "task_3_4_checked": true,
+    "task_5_4_checked": false,
+    "completed_tasks": 29,
+    "open_tasks": 73,
+    "total_tasks": 102
+  }
+}

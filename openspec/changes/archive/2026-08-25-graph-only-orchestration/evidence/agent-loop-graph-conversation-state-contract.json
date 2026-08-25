@@ -1,0 +1,83 @@
+{
+  "schema": "newsroom.agent-loop-graph-conversation-state-evidence/v1",
+  "captured_at": "2026-08-16",
+  "change": "graph-only-orchestration",
+  "task_refs": [
+    "6.1",
+    "6.3",
+    "8.2",
+    "8.5"
+  ],
+  "status": "graph_conversation_state_contract_complete_production_agent_loop_binding_open",
+  "implementation": {
+    "commit": "1307e76e9e3a20c598f222a1a08f5e1d9e9d31fb",
+    "tree": "97c63f8f8712315c340fd614f227a8c6ab69a2fe",
+    "framework_contract": "framework/agent/messages/message.py",
+    "agent_runner": "framework/agent/loop/runner.py",
+    "subagent_adapter": "framework/agent/subagents/executor.py",
+    "local_store": "infrastructure/storage/conversation/local_json.py",
+    "postgres_store": "infrastructure/storage/postgres/conversation.py",
+    "offline_migration": "scripts/graph_only_migration/transformer.py"
+  },
+  "schemas": {
+    "live_cursor": "newsroom.graph-conversation-cursor/v2",
+    "live_iteration_checkpoint": "newsroom.graph-agent-iteration-checkpoint/v2",
+    "migration_history_cursor": "newsroom.graph-conversation-cursor/v1",
+    "migration_history_iteration_checkpoint": "newsroom.graph-agent-iteration-checkpoint/v1",
+    "legacy_unversioned_live_readable": false,
+    "history_only_v1_live_readable": false
+  },
+  "identity_contract": {
+    "fields": [
+      "run_id",
+      "node_instance_id",
+      "graph_checkpoint_ref"
+    ],
+    "all_or_none": true,
+    "binding_to_resume_context": true,
+    "cross_identity_resume_rejected": true,
+    "metadata_identity_aliases_rejected": true,
+    "standalone_run_id_masquerades_as_graph_identity": false,
+    "workflow_checkpoint_live_reader": false
+  },
+  "storage": {
+    "local_json_v2_roundtrip": true,
+    "postgres_json_v2_roundtrip": true,
+    "redaction_preserved": true,
+    "offline_legacy_transformer_retained": true,
+    "managed_environment_migration_confirmed": false,
+    "postgres_parent_table_graph_cutover_complete": false
+  },
+  "architecture": {
+    "graph_agent_loop_activity_binding_installed": false,
+    "legacy_agent_loop_step_runner_removed": false,
+    "artifact_subsystem_removed": false,
+    "artifact_publication_authority_added": false
+  },
+  "verification": {
+    "focused_contracts": "50 passed",
+    "expanded_agent_conversation_migration_architecture": "310 passed, 4 warnings",
+    "compile": "passed",
+    "mandatory_smoke": "2677 passed, 23 deselected, 22 warnings",
+    "source_validation": "is_valid=true, error_count=0, warning_count=0",
+    "openspec_change_strict": "valid",
+    "openspec_all_strict": "533 passed, 0 failed"
+  },
+  "remaining_blockers": [
+    "production Graph AgentLoop activity binding",
+    "durable Graph Wait registration and resume",
+    "worker artifact refs accepted through node outcome and terminal manifest policy",
+    "production execution-input resolver and live physical-executor composition",
+    "PostgreSQL agent_conversations parent-table Graph run identity cutover",
+    "Gate C removal of AgentLoopStepRunner and remaining Workflow fixtures"
+  ],
+  "task_status": {
+    "task_6_1_checked": false,
+    "task_6_2_checked": false,
+    "task_6_3_checked": true,
+    "task_6_4_checked": false,
+    "completed_tasks": 26,
+    "open_tasks": 76,
+    "total_tasks": 102
+  }
+}

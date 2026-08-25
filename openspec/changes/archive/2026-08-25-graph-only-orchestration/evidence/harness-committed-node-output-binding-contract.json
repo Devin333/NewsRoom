@@ -1,0 +1,126 @@
+{
+  "schema": "newsroom.harness-committed-node-output-binding-contract-evidence/v1",
+  "captured_at": "2026-08-16",
+  "change": "graph-only-orchestration",
+  "task_refs": [
+    "2.4",
+    "2.10",
+    "3.6",
+    "4.13",
+    "5.5",
+    "5.7"
+  ],
+  "status": "gate_a_contract_and_reader_repair_graph_v2_complete_production_activation_open",
+  "implementation_commit": "2462b2e5f316755d989ba4f943990589bcdae7c2",
+  "implementation_tree": "4d5b22ad35244a0f16345092254b6e09c0e29fd7",
+  "definition_contract": {
+    "schema": "newsroom.harness-graph-definition/v5",
+    "binding_model": "HarnessGraphCommittedNodeOutputBinding",
+    "canonical_checksum_includes_bindings": true,
+    "strict_v4_payload_rejected": true,
+    "exact_fields": [
+      "binding_id",
+      "producer_activity_id",
+      "producer_node_id",
+      "producer_output_key",
+      "consumer_activity_id",
+      "consumer_node_id",
+      "receipt_input_key"
+    ],
+    "validation": {
+      "producer_and_consumer_are_exact_typed_leaf_activities": true,
+      "producer_output_matches_consumer_business_input": true,
+      "receipt_key_is_separate_from_business_dataflow": true,
+      "producer_and_consumer_each_occur_once": true,
+      "root_node_identity_is_exact": true,
+      "producer_deterministically_dominates_consumer": true,
+      "parallel_or_optional_ambiguity_fails_closed": true,
+      "loop_local_iteration_ambiguity_fails_closed": true
+    }
+  },
+  "receipt_contract": {
+    "schema": "newsroom.harness-committed-node-output-receipt/v1",
+    "model": "HarnessCommittedNodeOutputReceipt",
+    "binds": [
+      "graph_definition_checksum",
+      "binding_id",
+      "receipt_input_key",
+      "producer_activity_id",
+      "producer_activity_ref",
+      "graph_node_resource_identity",
+      "full_node_output_commit",
+      "full_node_output_candidate",
+      "output_key",
+      "output_ref",
+      "payload_checksum"
+    ],
+    "strict_round_trip": true,
+    "payload_is_rehashed": true
+  },
+  "resolver_contract": {
+    "model": "HarnessCommittedNodeOutputInputResolver",
+    "resource_port": "HarnessNodeOutputResourcePort",
+    "requires_exact_definition_binding": true,
+    "requires_exact_producer_activity_and_node": true,
+    "requires_current_immutable_commit": true,
+    "missing_or_mismatched_commit_fails_closed": true,
+    "production_installed": false
+  },
+  "research_definitions": {
+    "paper_analysis_static_checksum": "sha256:bd9cd552b67d46470cc6adedffc80cb03c48d9725e7e04f5c4dfcf4794ad08e3",
+    "paper_analysis_dynamic_checksum": "sha256:772455c313a9eba14dbb94f1ee0bc93440ad9a2261bd5ac5996170e6372f448a",
+    "historical_reader_repair_v1_checksum": "sha256:211b2b16f860bba5ca192eba89eccf1d7934b0fba9fbc422a1d4458b326da150",
+    "reader_repair_v2_implementation_commit": "107fa2e8eee999da3cd9428967c90fcadbb4d246",
+    "reader_repair_v2_implementation_tree": "561edd064f5dd2c7eb971ba8a0c09ac396f2d3e1",
+    "reader_repair_v2_checksum": "sha256:7522777c2a8e80e249a4fa2f2a5dad33a9f6a1164d7d34cd82464f9c5350b7a0",
+    "reader_repair_v2_binding_count": 1,
+    "reader_repair_v2_result_consumes_receipt_contract": true,
+    "reader_repair_v2_repair_binding_count": 4,
+    "reader_repair_v2_production_registered": false
+  },
+  "remaining_blockers": {
+    "graph_only_compiler_lineage_bound": false,
+    "reader_repair_graph_v2_declared": true,
+    "reader_repair_result_consumes_receipt": true,
+    "live_resource_backed_executor_installed": false,
+    "bounded_reader_repair_failure_topology_declared": true,
+    "artifact_owner_removed": false
+  },
+  "validation": {
+    "focused_contract_tests_passed": 98,
+    "compile_passed": true,
+    "mandatory_smoke_passed": 2613,
+    "mandatory_smoke_deselected": 23,
+    "mandatory_smoke_warnings": 22,
+    "source_validation": {
+      "is_valid": true,
+      "error_count": 0,
+      "warning_count": 0
+    },
+    "openspec_change_strict_passed": true,
+    "openspec_strict_all_passed": 533,
+    "openspec_strict_all_failed": 0
+  },
+  "reader_repair_v2_validation": {
+    "focused_reader_repair_contracts_passed": 29,
+    "reader_repair_graph_boundary_passed": 97,
+    "architecture_passed": 194,
+    "mandatory_smoke_passed": 2618,
+    "mandatory_smoke_deselected": 23,
+    "mandatory_smoke_warnings": 22,
+    "source_validation_passed": true,
+    "openspec_strict_all_passed": 533,
+    "openspec_strict_all_failed": 0
+  },
+  "task_status": {
+    "task_2_4_checked": false,
+    "task_2_10_checked": false,
+    "task_3_6_checked": false,
+    "task_4_13_checked": false,
+    "task_5_5_checked": false,
+    "task_5_7_checked": false,
+    "completed_tasks": 25,
+    "open_tasks": 77,
+    "total_tasks": 102
+  }
+}

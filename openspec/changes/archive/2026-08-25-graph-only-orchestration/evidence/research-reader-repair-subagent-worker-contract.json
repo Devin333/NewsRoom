@@ -1,0 +1,131 @@
+{
+  "schema": "newsroom.research-reader-repair-subagent-worker-contract-evidence/v1",
+  "captured_at": "2026-08-16",
+  "change": "graph-only-orchestration",
+  "task_refs": [
+    "3.6",
+    "5.5",
+    "5.7"
+  ],
+  "status": "gate_a_subagent_implementations_complete_production_activation_open",
+  "implementation": {
+    "commit": "c9f4b3f6f7e9fc3b36cac28f9b24412fa073e53b",
+    "tree": "fb44a8192161a250fa8363367c1ff771d5460630",
+    "module": "business/research/graphs/reader_repair_subagent_workers.py",
+    "subagent_worker_factory": "build_reader_repair_subagent_worker_implementations",
+    "subagent_worker_count": 2
+  },
+  "graph_identity": {
+    "graph_id": "research.reader_repair.graph",
+    "graph_version": "2",
+    "definition_checksum": "sha256:d14a1951a8493de4366e83e28c417cf9a5c68d6bdbbe60d67fc4d411f8544560",
+    "worker_type": "subagent",
+    "legacy_workflow_identity_consumed": false
+  },
+  "subagent_workers": {
+    "propose_repair_candidate": {
+      "worker_ref": "research.reader_repair.reader_repair_proposer@1",
+      "candidate_task": "reader_repair_patch_candidate",
+      "subagent_id": "reader_repair_proposer"
+    },
+    "collect_repair_application_observation": {
+      "worker_ref": "research.reader_repair.reader_repair_verifier@1",
+      "candidate_task": "reader_repair_application_observation",
+      "subagent_id": "reader_repair_verifier"
+    }
+  },
+  "candidate_boundary": {
+    "candidate_port": "ResearchCandidateWorkerPort",
+    "candidate_id_llm_owned": false,
+    "operation_id_llm_owned": false,
+    "expected_before_checksum_llm_owned": false,
+    "input_bindings_llm_owned": false,
+    "application_identity_llm_owned": false,
+    "source_scope_projection_llm_owned": false,
+    "quality_or_verdict_llm_owned": false,
+    "candidate_only": true,
+    "deterministic_gate_remains_authoritative": true
+  },
+  "deterministic_enrichment": {
+    "candidate_id_source": "canonical proposal and exact input-binding checksum",
+    "operation_id_source": "candidate id, operation index and operation kind",
+    "before_checksum_source": "current typed reader payload component",
+    "patch_input_bindings": [
+      "reader_payload",
+      "reader_repair_context_pack"
+    ],
+    "observation_input_bindings": [
+      "reader_repair_patch_candidate",
+      "reader_repair_application_candidate"
+    ]
+  },
+  "fail_closed_matrix": {
+    "wrong_step_or_worker_type_rejected_before_llm_call": true,
+    "inexact_task_input_keys_rejected": true,
+    "cross_run_context_rejected_before_llm_call": true,
+    "controller_owned_candidate_fields_rejected": true,
+    "controller_owned_operation_fields_rejected": true,
+    "application_candidate_substitution_rejected": true,
+    "application_source_scope_substitution_rejected": true,
+    "llm_self_verdict_rejected": true
+  },
+  "full_chain": {
+    "real_function_workers": 8,
+    "real_subagent_workers": 2,
+    "all_declared_gates_passed": true,
+    "durable_committed_output_receipt_used": true,
+    "memory_worker_produces_intent_only": true
+  },
+  "artifact_boundary": {
+    "artifact_handler_registered": false,
+    "artifact_terminal_policy_registered": false,
+    "artifact_or_public_ref_generated": false,
+    "artifact_owner_runtime_storage_publication_preserved": true
+  },
+  "production_activation": {
+    "graphs_package_facade_imports_factory": false,
+    "single_paper_runtime_imports_or_calls_factory": false,
+    "research_composition_imports_or_calls_factory": false,
+    "structured_candidate_adapter_supports_reader_repair_tasks": false,
+    "real_activity_implementations_complete": false,
+    "production_runtime_authority_installed": false,
+    "graph_only_run_admission_enabled": false
+  },
+  "remaining_blockers": {
+    "provider_backed_structured_candidate_adapter_complete": false,
+    "real_activity_implementations_complete": false,
+    "graph_definition_to_normalized_graph_lineage_bound": false,
+    "live_resource_backed_executor_installed": false,
+    "live_receipt_resolver_injection_installed": false,
+    "production_authority_installation_complete": false,
+    "legacy_synthetic_after_ref_removed": false,
+    "legacy_direct_memory_writes_removed": false,
+    "separate_failure_terminal_diagnostic_policy_declared": false
+  },
+  "validation": {
+    "focused_subagent_function_runtime_passed": 20,
+    "reader_repair_research_graph_surface_passed": 131,
+    "architecture_passed": 196,
+    "architecture_warnings": 4,
+    "compile_passed": true,
+    "mandatory_smoke_passed": 2640,
+    "mandatory_smoke_deselected": 23,
+    "mandatory_smoke_warnings": 22,
+    "source_validation": {
+      "is_valid": true,
+      "error_count": 0,
+      "warning_count": 0
+    },
+    "openspec_change_strict_passed": true,
+    "openspec_strict_all_passed": 533,
+    "openspec_strict_all_failed": 0
+  },
+  "task_status": {
+    "task_3_6_checked": false,
+    "task_5_5_checked": false,
+    "task_5_7_checked": false,
+    "completed_tasks": 25,
+    "open_tasks": 77,
+    "total_tasks": 102
+  }
+}

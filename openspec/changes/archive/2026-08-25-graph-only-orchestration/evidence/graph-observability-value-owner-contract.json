@@ -1,0 +1,52 @@
+{
+  "schema": "newsroom.graph-observability-value-owner-contract/v1",
+  "captured_at": "2026-08-18",
+  "change": "graph-only-orchestration",
+  "task_refs": ["2.1", "3.1"],
+  "status": "gate_a_graph_observability_value_owner_relocated",
+  "implementation": {
+    "commit": "16e0542ebecff5e437ee16843bad8ac891c2a409",
+    "tree": "49de2a30c5af64129fffb858232e6b322a65dfbe"
+  },
+  "owner_relocation": {
+    "previous_value_owner": "framework.harness.control_plane.graph_observability",
+    "current_value_owner": "framework.harness.graph.observability",
+    "projection_adapter": "framework.harness.control_plane.graph_observability",
+    "legacy_value_definitions_removed": true,
+    "compatibility_shim_added": false,
+    "control_plane_value_reexports_removed": true,
+    "graph_public_owner_exported": true,
+    "root_public_api_preserved_from_graph_owner": true,
+    "production_old_value_imports_after": 0,
+    "state_projection_functions_retained": true,
+    "graph_value_module_imports_graph_state": false,
+    "metric_label_policy_changed": false,
+    "diagnostic_evidence_policy_changed": false
+  },
+  "non_activation": {
+    "harness_run_spec_changed": false,
+    "legacy_compiler_changed": false,
+    "scheduler_evaluator_state_checkpoint_relocated": false,
+    "production_execution_or_persistence_changed": false,
+    "artifact_authority_changed": false,
+    "gate_b_cutover_authorized": false,
+    "task_2_1_completed": false,
+    "task_3_1_completed": false
+  },
+  "verification": {
+    "focused_observability_and_callers": "35 passed",
+    "full_architecture": "215 passed, 4 warnings",
+    "compile": "passed",
+    "mandatory_smoke": "2806 passed, 23 deselected, 22 warnings",
+    "agent_loop_smoke": "passed",
+    "source_validation": "is_valid=true / error_count=0 / warning_count=0",
+    "openspec_change_strict": "passed",
+    "openspec_all_strict": "533 passed, 0 failed"
+  },
+  "artifact_boundary": {
+    "framework_harness_artifacts_owner_retained": true,
+    "manifest_integrity_catalog_governance_gc_inspection_storage_publication_retained": true,
+    "legacy_workflow_artifact_bridge_removed": false,
+    "artifact_leaf_classification_removed": false
+  }
+}

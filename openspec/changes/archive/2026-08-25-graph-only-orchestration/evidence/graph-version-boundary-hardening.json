@@ -1,0 +1,83 @@
+{
+  "schema": "newsroom.graph-only-version-boundary-hardening/v1",
+  "captured_at": "2026-08-15",
+  "change": "graph-only-orchestration",
+  "task_refs": [
+    "2.7"
+  ],
+  "status": "gate_a_version_boundary_hardening_complete_task_open",
+  "implementation_commit": "ea4690321cea75d6f2e6b3226d39d0e2852b365f",
+  "implementation_tree": "5092b92508b4e57b44e99a9bbb878f34de66d6b2",
+  "pre_fix_reproduction": {
+    "legacy_condition_accepted": "ConditionPredicate",
+    "unknown_compiler_accepted": "newsroom.harness-graph-compiler/v999"
+  },
+  "changes": [
+    {
+      "owner": "framework.harness.graph.conditions.condition_from_dict",
+      "behavior": "Graph condition payloads with a missing or unknown kind no longer fall through to the explicit legacy parser",
+      "diagnostic": "unsupported_condition_kind"
+    },
+    {
+      "owner": "framework.harness.workflow.compiler.HarnessGraphCompileResult",
+      "behavior": "compile results require the supported compiler version and require that version to equal NormalizedHarnessGraph.compiler_version",
+      "diagnostics": [
+        "unsupported_graph_compiler",
+        "graph_compiler_version_mismatch"
+      ]
+    }
+  ],
+  "existing_owner_boundaries_verified": [
+    "Graph definition and DSL schema",
+    "normalized Graph schema, compiler, and condition policy",
+    "exact runtime activity bindings",
+    "exact deterministic gate registry bindings",
+    "Graph checkpoint schema and reducer",
+    "durable Graph event schemas",
+    "Graph event projection identity",
+    "Graph terminal manifest schema and exact version references"
+  ],
+  "remaining_blockers": [
+    "HarnessWorkflowGraphCompiler still infers default step and worker versions",
+    "HarnessWorkflowGraphCompiler still infers version 1 for unversioned gate declarations",
+    "HarnessWorkflowGraphCompiler still derives an activity binding version from the legacy activity schema default",
+    "HarnessGraphDefinition and the Graph-only compiler are not active in production composition",
+    "legacy runtime resolution remains under framework.harness.workflow until the authorized compiler and reader cutover"
+  ],
+  "gate_classification": {
+    "gate_a_repository_preparation": "complete_for_strict_condition_reader_and_compile_result_integrity",
+    "gate_b_production_cutover": "not_authorized",
+    "gate_c_legacy_deletion": "not_authorized",
+    "task_2_7_complete": false,
+    "production_schema_changed": false,
+    "production_composition_changed": false,
+    "reason": "Exact production version pinning cannot be claimed while the active legacy compiler infers leaf contract versions. Task 2.7 remains open until the Graph-only compiler activation and legacy inference retirement are authorized by tasks 2.4 and 2.5."
+  },
+  "verification": {
+    "focused_modified_contracts": {
+      "command": ".\\.venv\\Scripts\\python.exe -m pytest tests\\framework\\harness\\workflow\\test_graph_dsl_contracts.py tests\\framework\\harness\\workflow\\test_graph_compiler.py -q",
+      "result": "19 passed"
+    },
+    "expanded_version_boundary_regression": {
+      "result": "242 passed"
+    },
+    "mandatory_smoke": {
+      "command": ".\\.venv\\Scripts\\python.exe -m scripts.dev smoke",
+      "result": "2448 passed, 23 deselected, 22 warnings; source validation is_valid=true; exit 0"
+    },
+    "change_validation": {
+      "command": "openspec validate graph-only-orchestration --strict",
+      "result": "passed"
+    },
+    "full_validation": {
+      "command": "openspec validate --all --strict",
+      "result": "533 passed, 0 failed"
+    }
+  },
+  "task_status": {
+    "task_2_7_checked": false,
+    "completed_tasks": 23,
+    "open_tasks": 79,
+    "total_tasks": 102
+  }
+}

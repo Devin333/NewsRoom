@@ -1,0 +1,107 @@
+{
+  "schema": "newsroom.graph-only-task-plan-lifecycle-result-store-contract-evidence/v1",
+  "captured_at": "2026-08-17",
+  "change": "graph-only-orchestration",
+  "task_refs": [
+    "2.7",
+    "5.4"
+  ],
+  "status": "gate_a_lifecycle_and_result_store_contract_complete_queue_checkpoint_replay_and_production_activation_open",
+  "implementation": {
+    "commit": "c933d67f5e50082cdd184fdd8b284a09b249be9f",
+    "tree": "6d7847981d4c6902666e2c138254b29b182fb8f3",
+    "schema_registry": "framework/harness/task_plan/schema.py",
+    "instance_and_projection_contracts": "framework/harness/task_plan/models.py",
+    "event_and_projection_contracts": "framework/harness/task_plan/store.py",
+    "in_memory_store": "framework/harness/task_plan/store.py",
+    "durable_store": "framework/harness/task_plan/durable_store.py",
+    "stage_runtime": "framework/harness/task_plan/stage.py",
+    "scheduler_boundary": "framework/harness/task_plan/scheduler.py",
+    "checkpoint_boundary": "framework/harness/task_plan/checkpoint.py",
+    "replay_boundary": "framework/harness/task_plan/replay.py"
+  },
+  "schema_contract": {
+    "legacy_task_instance_schema": "newsroom.harness-task-instance/v1",
+    "graph_only_task_instance_schema": "newsroom.harness-task-instance/v2",
+    "legacy_task_projection_schema": "newsroom.harness-task-projection/v1",
+    "graph_only_task_projection_schema": "newsroom.harness-task-projection/v2",
+    "legacy_task_plan_projection_schema": "newsroom.harness-task-plan-projection/v1",
+    "graph_only_task_plan_projection_schema": "newsroom.harness-task-plan-projection/v2",
+    "graph_only_event_schema": "newsroom.harness-task-plan-event/v2",
+    "graph_only_result_schema": "newsroom.harness-task-plan-result/v3",
+    "legacy_writer_changed": false,
+    "graph_only_workflow_aliases": false,
+    "nested_projection_major_must_match": true,
+    "unknown_mixed_schema_rejected": true,
+    "cross_graph_substitution_rejected": true,
+    "legacy_task_instance_checksum_oracle": "sha256:d1980b09e86a86fffe0bb6d55991832a80ee3586b554ffdd8193509113e2e273",
+    "legacy_task_plan_projection_checksum_oracle": "sha256:cf09ae4d8e830c2cc8a630fc1f4c9653826ebcfd4eb04c79b68532a620d20035",
+    "graph_only_task_instance_checksum_oracle": "sha256:a7e59839179dec5e37323ed8f82a93104a0f3a8c2c401113c76c807de187cdb3"
+  },
+  "lifecycle_contract": {
+    "event_identity_from_accepted_plan": true,
+    "pre_plan_halt_identity_from_stage_binding": true,
+    "ready_dispatched_started_reservation_required": true,
+    "graph_only_result_store_enabled": true,
+    "success_result_event": "TASK_RESULT_ACCEPTED",
+    "success_terminal_event": "TASK_COMPLETED",
+    "in_memory_result_persistence_verified": true,
+    "durable_result_persistence_verified": true,
+    "durable_reopen_verified": true,
+    "event_projection_plan_result_identity_closed": true,
+    "mixed_legacy_event_rejected_before_mutation": true,
+    "previous_result_store_error_code_removed": "graph_task_plan_result_runtime_unavailable"
+  },
+  "activation_boundary": {
+    "graph_only_task_lifecycle_event_enabled": true,
+    "graph_only_result_store_enabled": true,
+    "graph_only_queue_enabled": false,
+    "graph_only_queue_error_code": "graph_task_plan_queue_contract_unavailable",
+    "graph_only_checkpoint_enabled": false,
+    "graph_only_checkpoint_error_code": "graph_task_plan_checkpoint_contract_unavailable",
+    "graph_only_replay_enabled": false,
+    "graph_only_replay_error_code": "graph_task_plan_replay_contract_unavailable",
+    "graph_only_recovery_complete": false,
+    "graph_only_context_major_schema_complete": false,
+    "production_research_graph_only_activated": false,
+    "production_run_admission_changed": false,
+    "production_smoke_normalized_schema": "newsroom.harness-normalized-graph/v1",
+    "production_smoke_compiler_version": "newsroom.harness-graph-compiler/v1"
+  },
+  "artifact_boundary": {
+    "artifact_subsystem_removed": false,
+    "artifact_owner": "framework/harness/artifacts",
+    "task_plan_artifact_port_retained": true,
+    "candidate_plan_projection_result_documents_persisted": true,
+    "task_plan_decides_terminal_publication": false,
+    "artifact_publication_authority_changed": false,
+    "retired_scope": "legacy Workflow Artifact bridge/writer/reader and ARTIFACT leaf classification only"
+  },
+  "verification": {
+    "task_plan": "90 passed",
+    "focused_research_task_plan_subagent": "164 passed",
+    "architecture": "205 passed, 4 warnings",
+    "compile": "passed",
+    "mandatory_smoke": "2748 passed, 23 deselected, 22 warnings",
+    "embedded_graph_smoke": "status=succeeded, llm_calls=3, tool_calls=1, total_tokens=60, network_calls=0",
+    "source_validation": "is_valid=true, error_count=0, warning_count=0",
+    "openspec_change_strict": "valid",
+    "openspec_all_strict": "533 passed, 0 failed"
+  },
+  "remaining_blockers": [
+    "Graph-only queue identity and durable request contract",
+    "Graph-only checkpoint identity and restore contract",
+    "Graph-only recovery and offline replay contract",
+    "Graph-only ContextEnvelope major schema without nullable Workflow fields",
+    "Research production Graph-only composition and run admission cutover",
+    "Gate B durable runtime activation",
+    "Gate C legacy Workflow identity deletion"
+  ],
+  "task_status": {
+    "task_2_7_checked": false,
+    "task_5_4_checked": false,
+    "completed_tasks": 29,
+    "open_tasks": 73,
+    "total_tasks": 102
+  }
+}

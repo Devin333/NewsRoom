@@ -1,0 +1,66 @@
+{
+  "schema": "newsroom.graph-only-terminal-execution-version-contract-evidence/v1",
+  "captured_at": "2026-08-17",
+  "change": "graph-only-orchestration",
+  "implementation": {
+    "commit": "10d4552090c38e456b134112a3846e0f2aa5d3d0",
+    "tree": "8905ebab4e0c52a47e673a1bd6771f53984eec8a",
+    "execution_manifest": "framework/harness/graph/execution_versions.py",
+    "terminal_manifest": "framework/harness/artifacts/terminal_manifest.py",
+    "architecture_boundary": "tests/architecture/test_graph_artifact_owner_boundary.py",
+    "contract_schema": "newsroom.graph-execution-version-manifest/v1",
+    "terminal_manifest_schema": "newsroom.graph-terminal-manifest/v2"
+  },
+  "pinned_lineage": {
+    "definition_schema_and_checksum": true,
+    "normalized_graph_schema_and_checksum": true,
+    "compiler_version": true,
+    "condition_policy_version": true,
+    "state_decision_checkpoint_schema_versions": true,
+    "event_schema_registry": true,
+    "node_step_worker_activity_gate_side_effect_refs": true,
+    "task_plan_policy_schema_and_support_refs": true,
+    "success_and_failure_terminal_policy": true,
+    "failure_record_schema": true,
+    "nested_execution_manifest_checksum": true,
+    "outer_terminal_manifest_checksum": true
+  },
+  "strict_reader": {
+    "requires_external_normalized_graph_witness": true,
+    "workflow_aliases_forbidden": true,
+    "moving_versions_forbidden": true,
+    "unknown_schema_and_event_rejected": true,
+    "cross_graph_substitution_rejected": true,
+    "legacy_graph_witness_rejected": true,
+    "null_or_tampered_checksums_rejected": true,
+    "bounded_input_validation": true,
+    "task_plan_support_refs_immutable": true
+  },
+  "production_boundary": {
+    "v1_terminal_manifest_reader_unchanged": true,
+    "v1_terminal_manifest_port_unchanged": true,
+    "v2_writer_or_reader_production_caller": false,
+    "artifact_subsystem_removed": false,
+    "artifact_owner": "framework/harness/artifacts",
+    "artifact_publication_authority_changed": false,
+    "retired_scope": "legacy Workflow Artifact bridge/writer/reader and ARTIFACT leaf classification only"
+  },
+  "verification": {
+    "terminal_manifest_focused": "57 passed",
+    "graph_and_artifact_focused": "245 passed",
+    "artifact_architecture_boundary": "61 passed",
+    "framework_harness": "1621 passed",
+    "architecture": "206 passed, 4 warnings",
+    "compile": "passed",
+    "mandatory_smoke": "passed (exit 0)",
+    "openspec_change_strict": "valid",
+    "openspec_all_strict": "533 passed, 0 failed"
+  },
+  "task_status": {
+    "task_2_7_checked": false,
+    "task_5_4_checked": false,
+    "completed_tasks": 29,
+    "open_tasks": 73,
+    "total_tasks": 102
+  }
+}

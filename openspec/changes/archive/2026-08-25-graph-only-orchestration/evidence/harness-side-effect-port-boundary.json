@@ -1,0 +1,82 @@
+{
+  "schema": "newsroom.harness-side-effect-port-boundary/v1",
+  "captured_at": "2026-08-16",
+  "change": "graph-only-orchestration",
+  "task_refs": [
+    "3.7"
+  ],
+  "status": "gate_a_legacy_bypass_closed_task_open",
+  "implementation_commit": "a07a35d0ed9e5a673251e3a427da32f6a3cf69fa",
+  "implementation_tree": "93127f12321ed18a53ef6bc1e45010b5dd038db7",
+  "canonical_authority": {
+    "owning_change": "harness-side-effect-authority-closure",
+    "owning_change_status": "complete",
+    "runtime_owner": "framework/harness/side_effects",
+    "commit_protocol": [
+      "HarnessSideEffectIntent",
+      "HarnessSideEffectHandlerBinding",
+      "HarnessSideEffectDecision",
+      "HarnessSideEffectOutcome"
+    ],
+    "artifact_publication_bound": true,
+    "artifact_owner_removed": false,
+    "artifact_runtime_storage_retained": true,
+    "duplicate_authority_added": false
+  },
+  "generic_memory_boundary": {
+    "production_writer_found": false,
+    "research_rag_adapter": "candidate_and_recall_only",
+    "direct_commit_surface_removed": true,
+    "candidate_status_values": [
+      "proposed"
+    ],
+    "production_memory_handler_added": false,
+    "reason": "A future production memory writer requires an exact Harness side-effect handler; this change does not invent one."
+  },
+  "legacy_mcp_boundary": {
+    "production_composition_found": false,
+    "caller_approved_field_removed": true,
+    "caller_approved_metadata_authoritative": false,
+    "all_side_effect_tools_fail_closed": true,
+    "unknown_tools_fail_closed": true,
+    "read_only_tools_remain_candidate_workers": true,
+    "human_approval_status_is_harness_authorization": false
+  },
+  "replacement_tests": {
+    "memory_candidate_only": "tests/framework/harness/ports/test_memory_port.py::test_memory_port_exposes_candidate_only_write_surface",
+    "research_memory_candidate_only": "tests/business/research/rag/test_memory_port_adapter.py::test_research_rag_memory_port_exposes_candidate_only_write_surface",
+    "mcp_metadata_cannot_authorize": "tests/framework/harness/ports/test_mcp_policy.py::test_mcp_side_effect_request_cannot_self_authorize_through_metadata",
+    "mcp_no_human_approval_still_requires_harness": "tests/framework/harness/ports/test_mcp_policy.py::test_mcp_side_effect_without_human_approval_still_requires_harness_authority",
+    "mcp_unknown_tool": "tests/framework/harness/ports/test_mcp_policy.py::test_mcp_unknown_tool_fails_closed",
+    "architecture": "tests/architecture/test_harness_side_effect_port_boundary.py"
+  },
+  "remaining_task_3_7_blockers": [
+    "final Tool leaf binding activation",
+    "Graph-only compiler and durable dispatch receipt activation",
+    "production Tool and future memory/external-effect handler composition",
+    "final Graph-only recovery and replay verification"
+  ],
+  "verification": {
+    "focused_boundary_tests": "9 passed",
+    "harness_ports": "12 passed",
+    "harness_rag": "90 passed",
+    "research_rag": "419 passed",
+    "architecture": "187 passed, 4 existing FastAPI deprecation warnings",
+    "compile": "passed",
+    "framework_harness": "1464 passed",
+    "mandatory_smoke": "2543 passed, 23 deselected, 22 warnings",
+    "source_validation": {
+      "is_valid": true,
+      "error_count": 0,
+      "warning_count": 0
+    },
+    "openspec_change_strict": "passed",
+    "openspec_all_strict": "533 passed, 0 failed"
+  },
+  "task_status": {
+    "task_3_7_checked": false,
+    "completed_tasks": 25,
+    "open_tasks": 77,
+    "total_tasks": 102
+  }
+}

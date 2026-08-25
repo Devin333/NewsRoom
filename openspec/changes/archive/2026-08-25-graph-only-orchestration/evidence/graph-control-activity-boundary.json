@@ -1,0 +1,82 @@
+{
+  "schema": "newsroom.graph-control-activity-boundary/v1",
+  "captured_at": "2026-08-15",
+  "change": "graph-only-orchestration",
+  "task_refs": [
+    "3.5"
+  ],
+  "status": "deterministic_graph_control_activity_boundary_complete",
+  "implementation_commit": "6a21511dfcf0786f1eb595277496bf89e475a054",
+  "implementation_tree": "4755459c82a15a1b11ad5f588ae2ed5097a22285",
+  "boundary_matrix": [
+    {
+      "constructs": "Sequence",
+      "boundary": "lowers to dependency edges and does not create a fake worker or control runner",
+      "test": "tests/framework/harness/workflow/test_graph_compiler.py::test_legacy_linear_workflow_lowers_to_dependency_edges_without_fake_control_workers"
+    },
+    {
+      "constructs": "Choice, Parallel-All, Parallel-Any, Join, Bounded-Loop, Wait",
+      "boundary": "normalized structural nodes are HarnessControlNode values without executable binding fields",
+      "test": "tests/framework/harness/workflow/test_graph_compiler.py::test_explicit_dsl_lowers_all_control_constructs_and_compensation"
+    },
+    {
+      "constructs": "signal, timer, approval",
+      "boundary": "every supported Wait kind compiles to HarnessGraphNodeKind.WAIT with no worker, activity, gate, or side-effect binding surface",
+      "test": "tests/framework/harness/workflow/test_graph_compiler.py::test_wait_kinds_compile_only_as_control_nodes"
+    },
+    {
+      "constructs": "all HarnessControlNode kinds",
+      "boundary": "the control node dataclass cannot carry executable binding fields",
+      "test": "tests/architecture/test_harness_graph_authority.py::test_control_node_contract_cannot_carry_executable_bindings"
+    },
+    {
+      "constructs": "runtime binding resolution",
+      "boundary": "worker, activity, and gate maps contain only HarnessExecutableNode identities and skip every control node",
+      "test": "tests/framework/harness/workflow/test_runtime_resolution.py::test_resolver_never_registers_control_nodes_as_worker_activities"
+    },
+    {
+      "constructs": "compensation",
+      "boundary": "evaluator and control plane own reverse-order selection, scheduling, budgets, durability, and recovery; the exact-version handler invocation remains an executable leaf",
+      "tests": [
+        "tests/framework/harness/control_plane/test_graph_evaluator.py::test_compensation_progress_selects_reverse_durable_effect_order",
+        "tests/framework/harness/control_plane/test_compensation_entry_durability.py"
+      ]
+    }
+  ],
+  "gate_classification": {
+    "gate_a_repository_preparation": "complete_for_task_3_5",
+    "gate_b_production_cutover": "not_authorized",
+    "gate_c_legacy_deletion": "not_authorized",
+    "task_3_5_complete": true,
+    "task_3_6_complete": false,
+    "production_schema_changed": false,
+    "production_composition_changed": false
+  },
+  "verification": {
+    "focused_modified_contracts": {
+      "command": ".\\.venv\\Scripts\\python.exe -m pytest tests\\framework\\harness\\workflow\\test_graph_compiler.py tests\\framework\\harness\\workflow\\test_runtime_resolution.py tests\\architecture\\test_harness_graph_authority.py -q",
+      "result": "19 passed"
+    },
+    "expanded_control_plane_regression": {
+      "result": "175 passed"
+    },
+    "mandatory_smoke": {
+      "command": ".\\.venv\\Scripts\\python.exe -m scripts.dev smoke",
+      "result": "2453 passed, 23 deselected, 22 warnings; source validation is_valid=true, error_count=0, warning_count=0"
+    },
+    "change_validation": {
+      "command": "openspec validate graph-only-orchestration --strict",
+      "result": "passed"
+    },
+    "full_validation": {
+      "command": "openspec validate --all --strict",
+      "result": "533 passed, 0 failed"
+    }
+  },
+  "task_status": {
+    "task_3_5_checked": true,
+    "completed_tasks": 24,
+    "open_tasks": 78,
+    "total_tasks": 102
+  }
+}

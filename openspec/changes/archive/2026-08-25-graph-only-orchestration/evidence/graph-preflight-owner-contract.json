@@ -1,0 +1,105 @@
+{
+  "schema": "newsroom.graph-preflight-owner-contract/v1",
+  "captured_at": "2026-08-16",
+  "change": "graph-only-orchestration",
+  "task_refs": [
+    "2.1",
+    "2.4",
+    "2.6",
+    "3.1"
+  ],
+  "status": "gate_a_preflight_owner_migrated_tasks_open",
+  "implementation_commit": "d31fef488f72bdf7aeeba6918fa8fc0bbeda78cc",
+  "implementation_tree": "f0edf1b14ea559abbd56122ce578ec1aeb74ca20",
+  "owner_migration": {
+    "owner": "framework.harness.graph.validation.preflight.HarnessGraphPreflight",
+    "old_module": "framework/harness/workflow/validation/preflight.py",
+    "old_module_exists": false,
+    "old_package_init_exists": false,
+    "workflow_import_shim_exists": false,
+    "workflow_package_reexports_preflight": false,
+    "root_package_reexports_graph_owner": true,
+    "graph_package_exports_preflight": true,
+    "harness_prepared_graph_removed": true
+  },
+  "graph_preflight_contract": {
+    "input": "exact-schema NormalizedHarnessGraph",
+    "imports_harness_workflow_namespace": false,
+    "accepts_harness_workflow_spec": false,
+    "owns_compiler": false,
+    "exposes_prepare_workflow": false,
+    "validates_structure": true,
+    "validates_semantics": true,
+    "validates_dataflow": true,
+    "validates_registry": true,
+    "validates_policy": true,
+    "unknown_normalized_schema_error": "unsupported_graph_schema"
+  },
+  "transition_compiler_boundary": {
+    "owner": "framework.harness.control_plane.harness.HarnessControlPlane",
+    "dependency_name": "legacy_workflow_compiler",
+    "supports_explicit_injection": true,
+    "live_admission_compiles_before_graph_preflight": true,
+    "live_and_replay_reuse_same_instance": true,
+    "compiler_output_must_match_recorded_graph_on_replay": true,
+    "legacy_workflow_compiler_still_active": true,
+    "final_graph_only_run_admission_active": false
+  },
+  "freeze_and_inventory": {
+    "subtract_only_freeze_generation": 8,
+    "retired_entries_added": 24,
+    "new_legacy_dependency_entries": 0,
+    "deleted_caller_inventory_path": "framework/harness/workflow/validation/preflight.py",
+    "graph_owner_requires_legacy_caller_inventory_classification": false,
+    "reason": "The Graph owner contains none of the inventory's legacy search symbols."
+  },
+  "artifact_boundary": {
+    "artifact_owner_removed": false,
+    "artifact_owner_runtime_and_storage_retained": true,
+    "artifact_publication_authority_changed": false,
+    "artifact_is_worker_leaf": false,
+    "reason": "This owner migration changes preflight placement only and does not bypass or replace the canonical Artifact side-effect path."
+  },
+  "gate_a_non_activation": {
+    "harness_run_spec_uses_graph_definition": false,
+    "legacy_compiler_replaced": false,
+    "legacy_reader_replaced": false,
+    "normalized_graph_schema_changed": false,
+    "production_composition_changed": false,
+    "production_writer_or_persisted_pointer_changed": false,
+    "gate_b_production_cutover_authorized": false,
+    "gate_c_legacy_deletion_authorized": false
+  },
+  "replacement_tests": {
+    "exact_schema_rejection": "tests/framework/harness/workflow/test_graph_preflight.py::test_preflight_rejects_unknown_normalized_graph_schema",
+    "shared_live_replay_compiler": "tests/framework/harness/control_plane/test_graph_preflight_boundary.py::test_live_admission_and_replay_share_the_injected_transition_compiler",
+    "no_old_namespace": "tests/architecture/test_harness_graph_namespace_boundary.py",
+    "subtract_only_freeze": "tests/architecture/test_graph_only_freeze.py",
+    "caller_inventory": "tests/architecture/test_harness_graph_caller_inventory.py"
+  },
+  "verification": {
+    "graph_owner_tests": "122 passed",
+    "preflight_boundary_tests": "9 passed",
+    "workflow_tests": "60 passed",
+    "architecture_tests": "187 passed, 4 existing FastAPI deprecation warnings",
+    "compile": "passed",
+    "framework_harness": "1466 passed",
+    "mandatory_smoke": "2545 passed, 23 deselected, 22 warnings; exit 0",
+    "source_validation": {
+      "is_valid": true,
+      "error_count": 0,
+      "warning_count": 0
+    },
+    "openspec_change_strict": "passed",
+    "openspec_all_strict": "533 passed, 0 failed"
+  },
+  "task_status": {
+    "task_2_1_checked": false,
+    "task_2_4_checked": false,
+    "task_2_6_checked": false,
+    "task_3_1_checked": false,
+    "completed_tasks": 25,
+    "open_tasks": 77,
+    "total_tasks": 102
+  }
+}

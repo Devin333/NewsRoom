@@ -1,0 +1,105 @@
+{
+  "schema": "newsroom.agent-loop-graph-smoke-evidence/v1",
+  "captured_at": "2026-08-16",
+  "change": "graph-only-orchestration",
+  "task_refs": [
+    "6.5",
+    "6.6"
+  ],
+  "status": "complete",
+  "implementation": {
+    "commit": "b857688633e30e259fd4950ae77a20087906a378",
+    "tree": "54764bee9c5ab94c520c7412fd62c935a24d9a94",
+    "agent_loop_activity": "framework/harness/agent_loop/activity.py",
+    "agent_loop_artifacts": "framework/harness/agent_loop/artifacts.py",
+    "application_service": "interfaces/services/agent_loop_smoke_service.py",
+    "composition": "interfaces/composition/agent_loop_smoke.py",
+    "cli": "interfaces/cli/commands/dev.py",
+    "dev_runner": "scripts/dev.py"
+  },
+  "graph_smoke": {
+    "graph_id": "test-agent-loop.graph",
+    "graph_version": "1",
+    "normalized_graph_checksum": "sha256:822922ae47671ccb43d3aa4cf9973e7466e88997ecf9f848f8304e91c95bbd41",
+    "single_node": true,
+    "worker_type": "agent_loop",
+    "leaf_activity_kind": "agent_loop",
+    "preflight_present": true,
+    "activity_receipt_present": true,
+    "node_output_commit_present": true,
+    "graph_activity_result_present": true,
+    "deterministic_verify_present": true,
+    "terminal_manifest_present": true,
+    "legacy_workflow_runner_used": false,
+    "real_network_calls": 0
+  },
+  "deterministic_fixture": {
+    "fake_llm_calls": 3,
+    "local_tool_calls": 1,
+    "judge_retries": 1,
+    "simulated_total_tokens": 60,
+    "event_count": 16,
+    "tool_name": "memory.recall",
+    "final_confidence": "high"
+  },
+  "control_authority": {
+    "requested_tools_projected_from_actions": true,
+    "requested_tools_projected_from_tool_records": true,
+    "requested_tools_projected_from_diagnostic_issues": true,
+    "tool_allowlist_verdict_owned_by_harness": true,
+    "worker_budget_decision_authoritative": false,
+    "durable_budget_fact_required": true,
+    "managed_structured_output_tested_separately": true,
+    "worker_routes_outer_graph": false,
+    "worker_publishes_manifest": false
+  },
+  "artifact_boundary": {
+    "artifact_subsystem_removed": false,
+    "artifact_owner": "framework/harness/artifacts",
+    "filesystem_adapter": "infrastructure/research/artifact_port.py",
+    "llm_call_artifact_role": "agent_loop_llm_call",
+    "artifact_type_pattern": "graph-result-<64 lowercase hex>",
+    "graph_result_ref_only": true,
+    "identity_checksum_matches_type": true,
+    "real_owner_round_trip_tested": true,
+    "llm_call_artifacts_in_manifest": 3,
+    "smoke_outcome_artifacts_in_manifest": 1,
+    "publication": null,
+    "terminal_manifest_writer": "AgentLoopGraphSmokeApplicationService"
+  },
+  "architecture": {
+    "dev_only_executor_activation": "interfaces/services/agent_loop_smoke_service.py",
+    "production_wildcard_exemption": false,
+    "cli_constructs_executor_or_store": false,
+    "legacy_agent_loop_step_runner_removed": false
+  },
+  "verification": {
+    "focused_changed_surface": "55 passed",
+    "focused_agent_loop_gate_budget_structured_output": "151 passed",
+    "architecture_classification_repair": "10 passed",
+    "mandatory_smoke": "2695 passed, 23 deselected, 22 warnings",
+    "embedded_graph_smoke": "status=succeeded, llm_calls=3, tool_calls=1, total_tokens=60, network_calls=0",
+    "source_validation": "is_valid=true, error_count=0, warning_count=0",
+    "openspec_change_strict": "valid",
+    "openspec_all_strict": "533 passed, 0 failed"
+  },
+  "remaining_blockers": [
+    "production installation of the AgentLoop activity binding",
+    "durable cross-store conversation and Artifact recovery",
+    "production approval Wait composition",
+    "PostgreSQL conversation parent identity cutover",
+    "Gate C removal of AgentLoopStepRunner and the legacy runner registry"
+  ],
+  "task_status": {
+    "task_6_1_checked": false,
+    "task_6_2_checked": false,
+    "task_6_3_checked": true,
+    "task_6_4_checked": false,
+    "task_6_5_checked": true,
+    "task_6_6_checked": true,
+    "task_6_7_checked": false,
+    "completed_tasks": 28,
+    "open_tasks": 74,
+    "total_tasks": 102
+  }
+}

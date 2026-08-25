@@ -1,0 +1,71 @@
+{
+  "schema": "newsroom.graph-only-task-plan-stage-binding-contract-evidence/v1",
+  "captured_at": "2026-08-17",
+  "change": "graph-only-orchestration",
+  "task_refs": [
+    "2.7",
+    "3.4",
+    "5.4"
+  ],
+  "status": "gate_a_contract_complete_task_status_unchanged",
+  "implementation": {
+    "commit": "335723910dc96e8c50a53945d6b86499474305cf",
+    "tree": "64706cefa20b623d5dcde401f22e743bc07444bc",
+    "schema_registry": "framework/harness/task_plan/schema.py",
+    "stage_binding": "framework/harness/task_plan/stage_binding.py",
+    "public_api": "framework/harness/task_plan/__init__.py",
+    "tests": "tests/framework/harness/task_plan/test_task_plan_stage_binding.py"
+  },
+  "contract": {
+    "legacy_schema": "newsroom.harness-task-plan-stage-binding/v1",
+    "graph_only_schema": "newsroom.harness-task-plan-stage-binding/v2",
+    "discriminator": "normalized_graph.schema_version",
+    "graph_only_identity_field": "graph_ref",
+    "graph_only_workflow_aliases": false,
+    "graph_only_binding_source": "graph_definition",
+    "strict_reader": true,
+    "mixed_schema_rejected": true,
+    "cross_graph_restore_rejected": true,
+    "legacy_identity_access_rejected": true
+  },
+  "oracles": {
+    "legacy_binding_checksum": "sha256:ef6e4bc73aba05b91dc49e0075d784af664368788aa3075c4a4028a10a8a6a81",
+    "research_dynamic_graph_checksum": "sha256:85eb5983e6718df1db7c10f533cc9e04c936e6935f4ee3a763055557c3215db0",
+    "research_dynamic_binding_checksum": "sha256:0e266dacb96cdaba7b4ea7e34d65fbe8a1ec8540c2a02224b4661655081d10c9"
+  },
+  "activation_boundary": {
+    "production_run_admission_changed": false,
+    "production_research_composition_changed": false,
+    "durable_task_plan_identity_changed": false,
+    "legacy_v1_wire_shape_changed": false,
+    "artifact_subsystem_removed": false,
+    "artifact_owner": "framework/harness/artifacts",
+    "artifact_publication_authority_changed": false
+  },
+  "verification": {
+    "focused_graph_binding": "31 passed",
+    "affected_task_plan_research": "82 passed",
+    "architecture": "15 passed",
+    "compile": "passed",
+    "mandatory_smoke": "2719 passed, 23 deselected, 22 warnings",
+    "embedded_graph_smoke": "status=succeeded, llm_calls=3, tool_calls=1, total_tokens=60, network_calls=0",
+    "source_validation": "is_valid=true, error_count=0, warning_count=0",
+    "openspec_change_strict": "valid",
+    "openspec_all_strict": "533 passed, 0 failed"
+  },
+  "remaining_blockers": [
+    "HarnessRunSpec.graph and production Graph-only admission",
+    "Research production composition cutover",
+    "TaskPlan candidate, validated plan, event, checkpoint, store, and replay Graph identity schemas",
+    "Gate B durable writer and reader activation",
+    "Gate C legacy Workflow compiler and reader deletion"
+  ],
+  "task_status": {
+    "task_2_7_checked": false,
+    "task_3_4_checked": true,
+    "task_5_4_checked": false,
+    "completed_tasks": 29,
+    "open_tasks": 73,
+    "total_tasks": 102
+  }
+}

@@ -1,0 +1,112 @@
+{
+  "schema": "newsroom.graph-definition-leaf-binding-contract/v1",
+  "captured_at": "2026-08-15",
+  "change": "graph-only-orchestration",
+  "task_ref": "3.6",
+  "status": "gate_a_definition_slice_complete_task_open",
+  "implementation_commit": "93de91280538b660df861d04f6b1ec5d49151123",
+  "implementation_tree": "d63967ad650f0233088c76592a07ce0b6ce80e26",
+  "owners": {
+    "definition": "framework.harness.graph.definition.HarnessGraphDefinition",
+    "frozen_selection": "framework.harness.graph.definition.HarnessGraphLeafBinding",
+    "composition_registration": "framework.harness.graph.bindings.HarnessLeafActivityBinding",
+    "runtime_authority": "framework.harness.graph.bindings.HarnessRuntimeBindingAuthority"
+  },
+  "definition_contract": {
+    "schema": "newsroom.harness-graph-definition/v2",
+    "checksum_bound_fields": [
+      "activity_id",
+      "leaf_activity_kind",
+      "worker_ref",
+      "activity_ref"
+    ],
+    "canonical_leaf_worker_types": [
+      "function",
+      "tool",
+      "skill",
+      "subagent",
+      "agent_loop"
+    ],
+    "internal_worker_types_without_leaf_alias": [
+      "task_plan"
+    ],
+    "rejected_final_leaf_worker_types": [
+      "script",
+      "mcp",
+      "artifact",
+      "quality_gate"
+    ],
+    "fail_closed_checks": [
+      "duplicate activity identity",
+      "duplicate leaf selection identity",
+      "missing canonical leaf selection",
+      "unknown or unexpected activity selection",
+      "leaf kind and worker type mismatch",
+      "worker or activity contract kind mismatch",
+      "moving contract version",
+      "checksum tampering"
+    ],
+    "canonical_order": "activity and leaf selection input order does not change the definition checksum"
+  },
+  "authority_boundary": {
+    "graph_selection_creates_runtime_trust": false,
+    "composition_registration_is_independent": true,
+    "definition_depends_on_runtime_binding_authority": false,
+    "artifact_owner_removed": false,
+    "artifact_is_worker_leaf": false,
+    "artifact_publication_authority": "HarnessTerminalSideEffectPolicy plus artifact-owned authorized port",
+    "llm_or_worker_can_publish": false
+  },
+  "gate_a_non_activation": {
+    "harness_run_spec_uses_graph_definition": false,
+    "legacy_compiler_replaced": false,
+    "normalized_graph_contains_leaf_selection": false,
+    "durable_graph_activity_contains_leaf_kind": false,
+    "live_dispatch_resolves_definition_selection": false,
+    "research_composition_returns_graph_definition": false,
+    "gate_b_production_cutover_authorized": false,
+    "gate_c_legacy_deletion_authorized": false
+  },
+  "verification": {
+    "focused_contract_tests": {
+      "command": ".\\.venv\\Scripts\\python.exe -m pytest tests/framework/harness/graph/test_definition.py tests/framework/harness/graph/test_bindings.py tests/architecture/test_harness_graph_namespace_boundary.py -q",
+      "result": "68 passed"
+    },
+    "graph_tests": {
+      "command": ".\\.venv\\Scripts\\python.exe -m pytest tests/framework/harness/graph tests/architecture/test_harness_graph_namespace_boundary.py -q",
+      "result": "83 passed"
+    },
+    "all_harness_tests": {
+      "command": ".\\.venv\\Scripts\\python.exe -m pytest tests/framework/harness -q",
+      "result": "1420 passed"
+    },
+    "architecture_tests": {
+      "command": ".\\.venv\\Scripts\\python.exe -m pytest tests/architecture -q",
+      "result": "184 passed, 4 warnings"
+    },
+    "mandatory_smoke": {
+      "command": ".\\.venv\\Scripts\\python.exe -m scripts.dev smoke",
+      "result": "2496 passed, 23 deselected, 22 warnings; source validation is_valid=true; exit 0"
+    },
+    "change_validation": {
+      "command": "openspec validate graph-only-orchestration --strict",
+      "result": "passed"
+    },
+    "full_validation": {
+      "command": "openspec validate --all --strict",
+      "result": "533 passed, 0 failed"
+    }
+  },
+  "implementation_notes": [
+    "HarnessGraphLeafBinding is a frozen Graph schema record; HarnessLeafActivityBinding remains the separate composition-owned registration record.",
+    "Keeping the definition record independent prevents a definition to runtime binding authority to control-plane import cycle.",
+    "The contract fixture models AgentLoop candidate report generation as a leaf and keeps Artifact publication exclusively in the terminal side-effect policy."
+  ],
+  "task_status": {
+    "task_3_6_checked": false,
+    "reason": "Normalized Graph wiring, durable dispatch receipt, live composition resolution, all five production leaf implementations, and AgentLoop replacement remain open.",
+    "completed_tasks": 25,
+    "open_tasks": 77,
+    "total_tasks": 102
+  }
+}

@@ -1,0 +1,71 @@
+{
+  "schema": "newsroom.graph-only-authority-adversarial-matrix/v1",
+  "captured_at": "2026-08-15",
+  "change": "graph-only-orchestration",
+  "task_refs": [
+    "3.8"
+  ],
+  "status": "gate_a_graph_authority_adversarial_matrix_complete",
+  "implementation_commit": "5cbf0e2768ec110373dbf08aaac65831a0518783",
+  "implementation_tree": "db21d7fbe1bca540e1bf93d01819af07c9c7c04f",
+  "authority_matrix": [
+    {
+      "attack_surface": "worker route suggestion",
+      "attack": "a malicious worker result injects next_step after bypassing the typed result constructor",
+      "deterministic_boundary": "Harness worker ingress revalidates the result, rejects next_step, records no worker result, and invokes no downstream worker",
+      "test": "tests/framework/harness/control_plane/test_llm_cannot_route.py::test_fake_llm_control_output_is_rejected_at_worker_ingress[next_step-publish]"
+    },
+    {
+      "attack_surface": "LLM self-score",
+      "attack": "a malicious worker result injects quality_score after bypassing the typed result constructor",
+      "deterministic_boundary": "Harness worker ingress revalidates the result, rejects quality_score, records no worker result, and invokes no downstream worker",
+      "test": "tests/framework/harness/control_plane/test_llm_cannot_route.py::test_fake_llm_control_output_is_rejected_at_worker_ingress[quality_score-0.99]"
+    },
+    {
+      "attack_surface": "queue readiness",
+      "attack": "worker execution observes TaskPlan scheduling state at the invocation boundary",
+      "deterministic_boundary": "TASK_READY, TASK_DISPATCHED, and TASK_STARTED are durably committed by Harness before worker invocation",
+      "test": "tests/framework/harness/task_plan/test_task_plan_runtime.py::test_ready_task_is_durably_committed_before_worker_invocation"
+    },
+    {
+      "attack_surface": "business service Graph decision authority",
+      "attack": "business/research imports Graph decision, evaluator, or scheduler authority from Harness",
+      "deterministic_boundary": "a full-tree AST architecture test rejects authority module and authority symbol imports",
+      "test": "tests/architecture/test_harness_graph_authority.py::test_research_business_does_not_import_graph_decision_authority"
+    }
+  ],
+  "gate_classification": {
+    "gate_a_repository_preparation": "complete_for_task_3_8",
+    "gate_b_production_cutover": "not_authorized",
+    "gate_c_legacy_deletion": "not_authorized",
+    "task_3_8_complete": true,
+    "production_schema_changed": false,
+    "production_composition_changed": false
+  },
+  "verification": {
+    "focused_matrix": {
+      "result": "41 passed"
+    },
+    "expanded_harness_authority_regression": {
+      "result": "98 passed"
+    },
+    "mandatory_smoke": {
+      "command": ".\\.venv\\Scripts\\python.exe -m scripts.dev smoke",
+      "result": "2444 passed, 23 deselected, 22 warnings; source validation is_valid=true; exit 0"
+    },
+    "change_validation": {
+      "command": "openspec validate graph-only-orchestration --strict",
+      "result": "passed"
+    },
+    "full_validation": {
+      "command": "openspec validate --all --strict",
+      "result": "533 passed, 0 failed"
+    }
+  },
+  "task_status": {
+    "task_3_8_checked": true,
+    "completed_tasks": 23,
+    "open_tasks": 79,
+    "total_tasks": 102
+  }
+}

@@ -1,0 +1,90 @@
+{
+  "schema": "newsroom.graph-only-activity-leaf-authority-guard/v1",
+  "captured_at": "2026-08-15",
+  "change": "graph-only-orchestration",
+  "task_refs": [
+    "2.8",
+    "3.8"
+  ],
+  "status": "gate_a_activity_metadata_authority_guard_installed",
+  "implementation_commit": "9d7c9e79bca9688f477af98d7c74f649b4f1006e",
+  "implementation_tree": "785ed8b6715736638fdc80f0369595968213d62f",
+  "owner": "framework.harness.graph.activity.HarnessStepSpec",
+  "guard": {
+    "scope": "activity metadata at any mapping or sequence depth",
+    "forbidden_authority_classes": [
+      "outer routing",
+      "node readiness and activation",
+      "publication decision and policy"
+    ],
+    "case_insensitive_keys": true,
+    "diagnostic_code": "activity_outer_authority_forbidden",
+    "diagnostic_paths_are_stable_and_sorted": true,
+    "allowed_leaf_configuration": [
+      "worker and activity version",
+      "input and output contract",
+      "retry budget",
+      "quality gate reference",
+      "side-effect handler reference",
+      "control fact declaration",
+      "approval-required policy"
+    ]
+  },
+  "caller_inventory": {
+    "inventory": "tests/architecture/fixtures/harness_graph_caller_inventory.json",
+    "classification": "A_contract_foundation",
+    "classified_paths": [
+      "framework/harness/graph/activity.py",
+      "tests/framework/harness/graph/test_activity.py"
+    ],
+    "search_symbols_changed": false,
+    "completeness_assertion_changed": false,
+    "freeze_baseline_increased": false
+  },
+  "gate_classification": {
+    "gate_a_repository_preparation": "complete_for_activity_metadata_guard_slice",
+    "gate_b_production_cutover": "not_authorized",
+    "gate_c_legacy_deletion": "not_authorized",
+    "task_2_8_complete": false,
+    "production_schema_changed": false,
+    "production_composition_changed": false,
+    "reason": "HarnessRetryPolicy.repair_step_id still generates a cross-node REPAIR edge and remains consumed by compiler, scheduler, validation, and replay. Task 2.8 cannot complete until repair topology moves into an explicit Graph declaration during the authorized contract cutover."
+  },
+  "verification": {
+    "owner_contract": {
+      "command": ".\\.venv\\Scripts\\python.exe -m pytest tests/framework/harness/graph/test_activity.py tests/framework/harness/graph/test_definition.py -q",
+      "result": "20 passed"
+    },
+    "focused_regression": {
+      "command": ".\\.venv\\Scripts\\python.exe -m pytest tests/framework/harness tests/business/research tests/architecture/test_harness_graph_authority.py tests/architecture/test_harness_graph_namespace_boundary.py -q",
+      "result": "2227 passed, 23 deselected"
+    },
+    "inventory_root_cause_reproduction": {
+      "command": ".\\.venv\\Scripts\\python.exe -m scripts.dev smoke",
+      "result": "1 failed, 2440 passed, 23 deselected; caller inventory reported the two new unclassified monitored paths"
+    },
+    "inventory_root_cause_fix": {
+      "command": ".\\.venv\\Scripts\\python.exe -m pytest tests/architecture/test_harness_graph_caller_inventory.py tests/architecture/test_graph_only_freeze.py tests/architecture/test_harness_graph_authority.py tests/framework/harness/graph/test_activity.py -q",
+      "result": "29 passed"
+    },
+    "mandatory_smoke_after_fix": {
+      "command": ".\\.venv\\Scripts\\python.exe -m scripts.dev smoke",
+      "result": "2441 passed, 23 deselected, 22 warnings; source validation is_valid=true; exit 0"
+    },
+    "change_validation": {
+      "command": "openspec validate graph-only-orchestration --strict",
+      "result": "passed"
+    },
+    "full_validation": {
+      "command": "openspec validate --all --strict",
+      "result": "533 passed, 0 failed"
+    }
+  },
+  "task_status": {
+    "task_2_8_checked": false,
+    "task_3_8_checked": false,
+    "completed_tasks": 22,
+    "open_tasks": 80,
+    "total_tasks": 102
+  }
+}

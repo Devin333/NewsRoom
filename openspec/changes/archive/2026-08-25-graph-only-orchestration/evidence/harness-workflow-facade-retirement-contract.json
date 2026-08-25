@@ -1,0 +1,52 @@
+{
+  "schema": "newsroom.harness-workflow-facade-retirement-contract/v1",
+  "captured_at": "2026-08-18",
+  "change": "graph-only-orchestration",
+  "task_refs": ["2.9"],
+  "status": "gate_a_workflow_facade_retired",
+  "implementation": {
+    "commit": "4f557f74402042c89cf45c7338c02ed3a9f4373d",
+    "tree": "2adb2f79198d047a75d720f482a0b4fcd2064db8"
+  },
+  "facade_retirement": {
+    "root_old_evaluator_reexport_removed": true,
+    "control_plane_old_evaluator_reexport_removed": true,
+    "renamed_evaluator": "HarnessGraphEvaluator",
+    "compatibility_alias_added": false,
+    "legacy_package_public_all": [],
+    "legacy_package_deleted": false,
+    "concrete_owners": {
+      "HarnessWorkflowSpec": "framework.harness.workflow.spec",
+      "HarnessWorkflowGraphCompiler": "framework.harness.workflow.compiler"
+    },
+    "production_facade_imports_after": 0
+  },
+  "freeze_guard": {
+    "generation": 11,
+    "baseline_source_commit": "10d4552090c38e456b134112a3846e0f2aa5d3d0",
+    "baseline_source_tree": "8905ebab4e0c52a47e673a1bd6771f53984eec8a",
+    "approved_owner_refinements": {
+      "HarnessWorkflowSpec": "framework.harness.workflow.spec",
+      "HarnessWorkflowGraphCompiler": "framework.harness.workflow.compiler"
+    },
+    "wrong_owner_rejected": true
+  },
+  "non_activation": {
+    "harness_run_spec_changed": false,
+    "legacy_compiler_changed": false,
+    "production_execution_or_persistence_changed": false,
+    "artifact_authority_changed": false,
+    "gate_b_cutover_authorized": false,
+    "gate_c_legacy_package_deletion_authorized": false
+  },
+  "verification": {
+    "focused_facade_and_caller_tests": "127 passed",
+    "framework_harness": "1621 passed",
+    "business_research": "926 passed, 23 deselected",
+    "research_composition": "102 passed, 1 deselected, 18 warnings",
+    "architecture": "211 passed, 4 warnings",
+    "mandatory_smoke": "2799 passed, 23 deselected, 22 warnings",
+    "openspec_change_strict": "passed",
+    "openspec_all_strict": "533 passed, 0 failed"
+  }
+}

@@ -1,0 +1,110 @@
+{
+  "schema": "newsroom.agent-loop-graph-activity-binding-evidence/v1",
+  "captured_at": "2026-08-16",
+  "change": "graph-only-orchestration",
+  "task_refs": [
+    "6.1",
+    "6.2",
+    "6.4",
+    "6.5",
+    "6.6"
+  ],
+  "status": "exact_inactive_binding_complete_production_installation_open",
+  "implementation": {
+    "commit": "afc25cc2b8d737b375e9c95b98c9ab6a1c0768b8",
+    "tree": "0e99da95a9ddfc9569cbb3057d6fe2b47cc165cb",
+    "activity_adapter": "framework/harness/agent_loop/activity.py",
+    "artifact_owner_adapter": "framework/harness/agent_loop/artifacts.py",
+    "agent_runner": "framework/agent/loop/runner.py",
+    "physical_executor": "framework/harness/runtime/activity_executor.py"
+  },
+  "schemas": {
+    "task": "newsroom.agent-loop-graph-activity-task/v1",
+    "output": "newsroom.agent-loop-graph-activity-output/v1",
+    "approval_request": "newsroom.agent-loop-graph-approval-request/v1",
+    "wait_candidate": "newsroom.agent-loop-graph-wait-candidate/v1",
+    "binding_manifest": "newsroom.agent-loop-graph-activity-binding/v1"
+  },
+  "binding_contract": {
+    "leaf_activity_kind": "agent_loop",
+    "worker_type": "agent_loop",
+    "pins_exact_worker_ref": true,
+    "pins_exact_activity_ref": true,
+    "pins_single_agent_spec": true,
+    "graph_identity_from_harness_task_context_only": true,
+    "caller_identity_aliases_rejected": true,
+    "installs_runtime_authority": false,
+    "required_usage": "serial",
+    "parallel_safe": false,
+    "stable_idempotency_proven": false,
+    "termination_confirmation_proven": false,
+    "fencing_proven": false,
+    "reconciliation_proven": false
+  },
+  "agent_runner_contract": {
+    "passes_run_id": true,
+    "passes_node_instance_id": true,
+    "passes_graph_checkpoint_ref": true,
+    "passes_workflow_checkpoint_id": false,
+    "passes_step_id": false,
+    "real_offline_agent_runner_path_tested": true,
+    "legacy_agent_loop_step_runner_used": false
+  },
+  "candidate_contract": {
+    "artifact_owner_persists_llm_calls": true,
+    "artifact_receipt_in_worker_evidence": true,
+    "artifact_refs_in_candidate_output": true,
+    "raw_llm_events_in_candidate_output": false,
+    "raw_trace_in_candidate_output": false,
+    "raw_trajectory_in_candidate_output": false,
+    "raw_tool_calls_in_candidate_output": false,
+    "candidate_redaction_applied": true,
+    "publication_shaped_output_rejected_before_artifact_write": true,
+    "publishes_terminal_manifest": false
+  },
+  "wait_contract": {
+    "typed_wait_candidate": true,
+    "binds_full_task_context_checksum": true,
+    "requires_durable_approval_id": true,
+    "registers_graph_wait": false,
+    "resumes_graph": false,
+    "decides_route": false
+  },
+  "architecture": {
+    "framework_agent_imports_harness": false,
+    "production_layers_activate_binding": false,
+    "artifact_subsystem_removed": false,
+    "artifact_publication_authority_added": false,
+    "legacy_agent_loop_step_runner_removed": false
+  },
+  "verification": {
+    "focused": "22 passed",
+    "expanded_agent_loop_graph_conversation_architecture": "318 passed, 4 warnings",
+    "compile": "passed",
+    "mandatory_smoke": "2688 passed, 23 deselected, 22 warnings",
+    "source_validation": "is_valid=true, error_count=0, warning_count=0",
+    "openspec_change_strict": "valid",
+    "openspec_all_strict": "533 passed, 0 failed"
+  },
+  "remaining_blockers": [
+    "production execution-input resolver and physical-executor composition",
+    "durable worker result and node-outcome artifact acceptance",
+    "deterministic terminal manifest acceptance after VERIFY",
+    "durable Graph Wait candidate resolution and registration",
+    "conversation-state and Artifact commit idempotency or recovery boundary",
+    "PostgreSQL agent_conversations parent-table Graph identity cutover",
+    "Gate C removal of AgentLoopStepRunner and Workflow smoke fixtures"
+  ],
+  "task_status": {
+    "task_6_1_checked": false,
+    "task_6_2_checked": false,
+    "task_6_3_checked": true,
+    "task_6_4_checked": false,
+    "task_6_5_checked": false,
+    "task_6_6_checked": false,
+    "task_6_7_checked": false,
+    "completed_tasks": 26,
+    "open_tasks": 76,
+    "total_tasks": 102
+  }
+}

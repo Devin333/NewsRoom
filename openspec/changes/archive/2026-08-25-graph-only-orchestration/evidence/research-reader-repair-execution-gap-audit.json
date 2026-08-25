@@ -1,0 +1,205 @@
+{
+  "schema": "newsroom.research-reader-repair-execution-gap-audit/v1",
+  "captured_at": "2026-08-16",
+  "change": "graph-only-orchestration",
+  "task_refs": [
+    "3.6",
+    "3.7",
+    "5.5",
+    "5.7"
+  ],
+  "status": "gate_a_execution_binding_and_graph_v2_contract_complete_production_activation_open",
+  "historical_graph_v1_at_gap_audit": {
+    "graph_id": "research.reader_repair.graph",
+    "graph_version": "1",
+    "definition_schema": "newsroom.harness-graph-definition/v5",
+    "definition_checksum": "sha256:211b2b16f860bba5ca192eba89eccf1d7934b0fba9fbc422a1d4458b326da150",
+    "activity_count": 8,
+    "has_apply_repair_activity": false,
+    "has_application_candidate": false,
+    "has_deterministic_application_verification_record": false,
+    "committed_output_binding_count": 0,
+    "has_harness_node_output_binding": false,
+    "production_registration_allowed": false
+  },
+  "live_inactive_graph_v2": {
+    "implementation_commit": "107fa2e8eee999da3cd9428967c90fcadbb4d246",
+    "implementation_tree": "561edd064f5dd2c7eb971ba8a0c09ac396f2d3e1",
+    "graph_id": "research.reader_repair.graph",
+    "graph_version": "2",
+    "definition_schema": "newsroom.harness-graph-definition/v5",
+    "definition_checksum": "sha256:7522777c2a8e80e249a4fa2f2a5dad33a9f6a1164d7d34cd82464f9c5350b7a0",
+    "activity_count": 10,
+    "has_apply_repair_activity": true,
+    "has_application_candidate": true,
+    "has_deterministic_application_verification_record": true,
+    "committed_output_binding_count": 1,
+    "has_harness_node_output_binding": true,
+    "bounded_repair_binding_count": 4,
+    "result_contract_uses_committed_output_proof": true,
+    "production_registration_allowed": false
+  },
+  "legacy_v1_gap": {
+    "patch_operation_type": "list[dict[str, Any]]",
+    "closed_patch_schema": false,
+    "real_repair_applier_found": false,
+    "durable_repaired_payload_writer_found": false,
+    "verifier_receives_applied_payload": false,
+    "result_receives_deterministic_verification_input": false,
+    "legacy_synthetic_after_ref": "repaired_payload_ref or f\"{payload.payload_id}:repaired\""
+  },
+  "gate_a_execution_contract": {
+    "implementation_commit": "196a61be3d89511da133324c6df282856562b31c",
+    "implementation_tree": "a9f8eec50adf80112af6105120cd3fcfe6bb64ab",
+    "patch_candidate": {
+      "model": "ReaderRepairPatchCandidate",
+      "max_operations": 8,
+      "closed_discriminated_union": true,
+      "unique_operation_ids": true,
+      "unique_targets": true,
+      "expected_component_checksum_required": true,
+      "exact_source_refs_required": true
+    },
+    "application_candidate": {
+      "model": "ReaderRepairApplicationCandidate",
+      "pure_in_memory_applier": "apply_reader_repair_candidate",
+      "before_after_checksum_bound": true,
+      "status_remains_pending_until_verify": true,
+      "public_ref_exposed": false,
+      "store_write_performed": false,
+      "memory_write_performed": false,
+      "artifact_lineage_mutation_allowed": false,
+      "undeclared_nested_source_refs_allowed": false
+    },
+    "observation_candidate": {
+      "model": "ReaderRepairApplicationObservationCandidate",
+      "binds_patch_candidate_checksum": true,
+      "binds_application_candidate_checksum": true,
+      "decision_fields_allowed": false
+    },
+    "deterministic_verification": {
+      "model": "ReaderRepairApplicationVerificationRecord",
+      "canonical_check_count": 11,
+      "gate_recomputes_applier_and_record": true,
+      "natural_language_decides_verdict": false,
+      "exact_gate_refs": [
+        "ReaderRepairPatchCandidateGate@1",
+        "ReaderRepairApplicationCandidateGate@1",
+        "ReaderRepairApplicationObservationGate@1",
+        "ReaderRepairApplicationVerificationGate@1"
+      ]
+    },
+    "function_workers": {
+      "apply_repair_candidate_candidate_only": true,
+      "verify_repair_application_candidate_only": true,
+      "effect_intent_present": false,
+      "production_registered": false
+    }
+  },
+  "harness_committed_output_binding_contract": {
+    "implementation_commit": "2462b2e5f316755d989ba4f943990589bcdae7c2",
+    "implementation_tree": "4d5b22ad35244a0f16345092254b6e09c0e29fd7",
+    "definition_schema": "newsroom.harness-graph-definition/v5",
+    "binding_model": "HarnessGraphCommittedNodeOutputBinding",
+    "binding_pins": [
+      "producer_activity_id",
+      "producer_node_id",
+      "producer_output_key",
+      "consumer_activity_id",
+      "consumer_node_id",
+      "receipt_input_key"
+    ],
+    "producer_must_deterministically_dominate_consumer": true,
+    "receipt_model": "HarnessCommittedNodeOutputReceipt",
+    "receipt_binds_definition_checksum": true,
+    "receipt_binds_exact_producer_contract": true,
+    "receipt_binds_graph_node_resource_identity": true,
+    "receipt_binds_full_commit_and_candidate": true,
+    "receipt_binds_output_ref_and_payload_checksum": true,
+    "resolver": "HarnessCommittedNodeOutputInputResolver",
+    "resolver_reads_resource_port": "HarnessNodeOutputResourcePort",
+    "resolver_rehashes_payload": true,
+    "resolver_requires_current_resource_commit": true,
+    "reader_repair_v2_binding_declared": true,
+    "graph_definition_to_normalized_lineage_bound": false,
+    "production_installed": false,
+    "focused_contract_tests_passed": 98,
+    "mandatory_smoke_passed": 2613,
+    "mandatory_smoke_deselected": 23,
+    "mandatory_smoke_warnings": 22,
+    "openspec_strict_all_passed": 533,
+    "openspec_strict_all_failed": 0
+  },
+  "required_v2_contract": {
+    "bounded_typed_patch_operations": true,
+    "pure_apply_repair_candidate_function": true,
+    "checksum_bound_before_and_after_payload": true,
+    "verifier_binds_application_candidate": true,
+    "verifier_remains_observation_only": true,
+    "deterministic_checks_recomputed_by_gate": [
+      "schema",
+      "navigation",
+      "target_scope",
+      "before_after_checksum",
+      "source_lineage"
+    ],
+    "result_requires_harness_node_output_identity": true,
+    "synthetic_repaired_ref_forbidden": true,
+    "candidate_ref_as_public_ref_forbidden": true,
+    "bounded_quality_failure_transition_required": true,
+    "failed_memory_requires_separate_terminal_failure_policy": true
+  },
+  "authority_boundaries": {
+    "llm_or_subagent_may_apply_patch": false,
+    "llm_or_subagent_may_decide_verdict": false,
+    "function_worker_may_publish_output": false,
+    "reader_repair_graph_binds_artifact_handler": false,
+    "artifact_owner_removed": false,
+    "memory_handler_accepts_failed_gate_bypass": false
+  },
+  "remaining_blockers": {
+    "graph_v2_declared": true,
+    "generic_harness_committed_output_binding_contract_declared": true,
+    "reader_repair_binding_declared": true,
+    "graph_definition_to_normalized_graph_lineage_bound": false,
+    "harness_node_output_commit_injected": false,
+    "result_contract_uses_durable_node_output_identity": true,
+    "bounded_failure_topology_declared": true,
+    "legacy_synthetic_after_ref_removed": false,
+    "legacy_direct_memory_writes_removed": false,
+    "production_worker_registration_complete": false,
+    "production_gate_registration_complete": false,
+    "production_graph_admission_complete": false
+  },
+  "validation": {
+    "focused_execution_contracts_passed": 29,
+    "reader_repair_suite_passed": 97,
+    "architecture_passed": 194,
+    "architecture_warnings": 4,
+    "mandatory_smoke_passed": 2618,
+    "mandatory_smoke_deselected": 23,
+    "mandatory_smoke_warnings": 22,
+    "source_validation": {
+      "is_valid": true,
+      "error_count": 0,
+      "warning_count": 0
+    },
+    "openspec_strict_all_passed": 533,
+    "openspec_strict_all_failed": 0
+  },
+  "next_steps": [
+    "Bind GraphDefinition-to-normalized Graph compiler lineage before production run admission.",
+    "Inject the receipt from the live durable node-output resource before memory terminal commit.",
+    "Register the exact Reader Repair v2 workers and gates only through Graph-only production composition.",
+    "Design a separate failure-terminal diagnostic policy only if failed-repair memory remains required."
+  ],
+  "task_status": {
+    "task_3_6_checked": false,
+    "task_3_7_checked": false,
+    "task_5_5_checked": false,
+    "task_5_7_checked": false,
+    "completed_tasks": 25,
+    "open_tasks": 77,
+    "total_tasks": 102
+  }
+}

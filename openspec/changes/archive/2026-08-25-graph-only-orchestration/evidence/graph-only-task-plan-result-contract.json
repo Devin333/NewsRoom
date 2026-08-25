@@ -1,0 +1,92 @@
+{
+  "schema": "newsroom.graph-only-task-plan-result-contract-evidence/v1",
+  "captured_at": "2026-08-17",
+  "change": "graph-only-orchestration",
+  "task_refs": [
+    "2.7",
+    "5.4"
+  ],
+  "status": "gate_a_result_contract_complete_verifier_transcript_and_runtime_open",
+  "implementation": {
+    "commit": "e7ec9d9c00ec63cd76883d31719a64415d39d215",
+    "tree": "85c581dc66edaf2ca67af15fdd9a859cef3d6e4a",
+    "result_model": "framework/harness/task_plan/store.py",
+    "in_memory_store": "framework/harness/task_plan/store.py",
+    "durable_store": "framework/harness/task_plan/durable_store.py",
+    "package_facade": "framework/harness/task_plan/__init__.py",
+    "research_contract_test": "tests/business/research/graphs/test_task_plan.py",
+    "durable_contract_test": "tests/framework/harness/task_plan/test_durable_task_plan_store.py"
+  },
+  "contract": {
+    "legacy_result_schema_v1": "newsroom.harness-task-plan-result/v1",
+    "legacy_result_schema_v2": "newsroom.harness-task-plan-result/v2",
+    "graph_only_result_schema": "newsroom.harness-task-plan-result/v3",
+    "graph_only_result_derived_from_accepted_plan": true,
+    "graph_only_result_derived_from_exact_task": true,
+    "graph_only_workflow_aliases": false,
+    "graph_only_exact_graph_ref": true,
+    "graph_only_version_pinning": true,
+    "stage_binding_checksum_pinned": true,
+    "stage_identity_checksum_pinned": true,
+    "plan_and_task_binding_pinned": true,
+    "strict_result_reader": true,
+    "checksum_tamper_rejected": true,
+    "cross_graph_substitution_rejected": true,
+    "legacy_wire_shape_changed": false,
+    "legacy_v1_checksum_oracle": "sha256:22f425ce8940654b1851d244802444427e884b698321d5341c8e328855fc89bc",
+    "legacy_v2_checksum_oracle": "sha256:14cd4a750e5f9cc97a40fc4116c1611630721c4632b0e028fb192668aaa3978f"
+  },
+  "activation_boundary": {
+    "graph_only_result_contract_available": true,
+    "graph_only_result_verifier_enabled": false,
+    "graph_only_subagent_transcript_identity_enabled": false,
+    "graph_only_result_store_enabled": false,
+    "graph_only_task_lifecycle_event_enabled": false,
+    "graph_only_checkpoint_queue_replay_enabled": false,
+    "in_memory_store_fail_closed_before_mutation": true,
+    "durable_store_fail_closed_before_mutation": true,
+    "runtime_error_code": "graph_task_plan_result_runtime_unavailable",
+    "production_task_plan_runtime_changed": false,
+    "production_research_composition_changed": false,
+    "production_run_admission_changed": false,
+    "production_smoke_normalized_schema": "newsroom.harness-normalized-graph/v1"
+  },
+  "artifact_boundary": {
+    "artifact_subsystem_removed": false,
+    "artifact_owner": "framework/harness/artifacts",
+    "task_plan_document_port": "TaskPlanArtifactStorePort",
+    "result_contract_contains_refs_only": true,
+    "result_contract_writes_artifacts": false,
+    "store_rejection_changes_artifact_documents": false,
+    "artifact_publication_authority_changed": false
+  },
+  "verification": {
+    "focused_result_event_store": "18 passed",
+    "task_plan": "89 passed",
+    "task_plan_graph_research": "323 passed",
+    "events_and_task_plan": "674 passed",
+    "architecture": "205 passed, 4 warnings",
+    "compile": "passed",
+    "mandatory_smoke": "2738 passed, 23 deselected, 22 warnings",
+    "embedded_graph_smoke": "status=succeeded, llm_calls=3, tool_calls=1, total_tokens=60, network_calls=0",
+    "source_validation": "is_valid=true, error_count=0, warning_count=0",
+    "openspec_change_strict": "valid",
+    "openspec_all_strict": "533 passed, 0 failed"
+  },
+  "remaining_blockers": [
+    "Graph-only TaskPlanResultVerifier request and deterministic verification identity",
+    "Graph-only SubAgent durable transcript identity",
+    "Graph-only task lifecycle event and result store activation",
+    "Graph-only checkpoint, queue, projection, recovery, and replay identity",
+    "Research production composition and run admission cutover",
+    "Gate B durable runtime activation",
+    "Gate C legacy Workflow identity deletion"
+  ],
+  "task_status": {
+    "task_2_7_checked": false,
+    "task_5_4_checked": false,
+    "completed_tasks": 29,
+    "open_tasks": 73,
+    "total_tasks": 102
+  }
+}

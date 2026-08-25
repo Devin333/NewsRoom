@@ -1,0 +1,46 @@
+{
+  "schema": "newsroom.agent-loop-production-runtime-evidence/v1",
+  "change": "graph-only-orchestration",
+  "tasks": ["6.1", "6.2", "6.4", "6.7"],
+  "production_composition": {
+    "factory": "interfaces.composition.agent_loop_graph.build_agent_loop_graph_runtime_composition",
+    "control_plane": "framework.harness.control_plane.HarnessControlPlane",
+    "physical_dispatcher": "framework.harness.runtime.HarnessGraphPhysicalActivityDispatcher",
+    "binding_authority": "framework.harness.agent_loop.build_agent_loop_graph_activity_binding_bundle",
+    "agent_runner_role": "single AgentLoop execution only",
+    "agent_loop_control_authority": false,
+    "terminal_manifest_authority": false
+  },
+  "durable_receipts": {
+    "node_output": "HarnessNodeOutputResourcePort",
+    "activity_result_store": "SQLiteAgentLoopActivityResultStore",
+    "result_partition": [
+      "run_id",
+      "graph_id",
+      "graph_version",
+      "graph_checksum",
+      "node_id",
+      "node_instance_id",
+      "activity_id",
+      "attempt"
+    ],
+    "legacy_activity_id_only_rows": "quarantined as agent_loop_activity_results_legacy_untrusted"
+  },
+  "approval_wait": {
+    "gate_ref": "agent_loop_wait_candidate@1",
+    "registration_owner": "HarnessGraphEvaluator",
+    "durable_decision": "REGISTER_WAIT",
+    "worker_registers_wait": false,
+    "worker_resumes_wait": false
+  },
+  "legacy_runner_scan": {
+    "command": ".\\.venv\\Scripts\\python.exe scripts/graph_only_migration/zero_reference_scan.py",
+    "result": "valid",
+    "forbidden_production_references": 0
+  },
+  "verification": {
+    "targeted_pytest": "60 passed",
+    "openspec_strict": "valid",
+    "compile": "passed"
+  }
+}

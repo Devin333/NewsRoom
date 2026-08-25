@@ -1,0 +1,73 @@
+{
+  "schema": "newsroom.graph-reference-owner-contract-evidence/v1",
+  "captured_at": "2026-08-17",
+  "change": "graph-only-orchestration",
+  "task_refs": [
+    "2.1",
+    "2.7",
+    "3.1"
+  ],
+  "status": "owner_migration_complete_tasks_remain_open",
+  "implementation": {
+    "commit": "0b3c873945c32e12c199d77846ec692f1ae2b2a2",
+    "tree": "09869149f74e96fbf475d88d8daf2c1725590aab",
+    "owner": "framework/harness/graph/reference.py",
+    "old_owner": "framework/harness/control_plane/graph_state.py",
+    "owner_tests": "tests/framework/harness/graph/test_reference.py",
+    "namespace_tests": "tests/architecture/test_harness_graph_namespace_boundary.py"
+  },
+  "ownership": {
+    "graph_package_export": true,
+    "harness_root_facade_same_class": true,
+    "control_plane_package_export": false,
+    "graph_state_module_export": false,
+    "legacy_concrete_import_count": 0,
+    "compatibility_shim_present": false
+  },
+  "contract": {
+    "legacy_v1_wire_shape_changed": false,
+    "legacy_v1_exact_round_trip": true,
+    "graph_v2_workflow_alias_present": false,
+    "graph_v2_exact_round_trip": true,
+    "mixed_identity_rejected": true,
+    "unknown_versions_fail_closed": true,
+    "canonical_checksum_required": true,
+    "diagnostic_codes_changed": false
+  },
+  "activation_boundary": {
+    "production_run_admission_changed": false,
+    "production_graph_compiler_activated": false,
+    "production_writer_reader_changed": false,
+    "production_smoke_normalized_schema": "newsroom.harness-normalized-graph/v1",
+    "artifact_subsystem_removed": false,
+    "artifact_owner": "framework/harness/artifacts",
+    "artifact_publication_authority_changed": false
+  },
+  "verification": {
+    "focused_owner": "16 passed",
+    "graph_and_control_plane": "751 passed",
+    "affected_consumers": "60 passed",
+    "architecture": "16 passed",
+    "compile": "passed",
+    "mandatory_smoke": "2722 passed, 23 deselected, 22 warnings",
+    "embedded_graph_smoke": "status=succeeded, llm_calls=3, tool_calls=1, total_tokens=60, network_calls=0",
+    "source_validation": "is_valid=true, error_count=0, warning_count=0",
+    "openspec_change_strict": "valid",
+    "openspec_all_strict": "533 passed, 0 failed"
+  },
+  "remaining_blockers": [
+    "Full scheduler, evaluator, state, checkpoint, durable event, compensation, and TaskPlan module ownership migration",
+    "HarnessRunSpec.graph and production Graph-only admission",
+    "TaskPlan candidate, validated plan, event, checkpoint, store, and replay Graph identity schemas",
+    "Gate B durable writer and reader activation",
+    "Gate C legacy Workflow compiler and reader deletion"
+  ],
+  "task_status": {
+    "task_2_1_checked": false,
+    "task_2_7_checked": false,
+    "task_3_1_checked": false,
+    "completed_tasks": 29,
+    "open_tasks": 73,
+    "total_tasks": 102
+  }
+}

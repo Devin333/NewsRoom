@@ -1,0 +1,125 @@
+{
+  "schema": "newsroom.task-plan-stage-binding-contract/v1",
+  "captured_at": "2026-08-15",
+  "change": "graph-only-orchestration",
+  "task_refs": [
+    "3.4"
+  ],
+  "status": "frozen_graph_task_plan_stage_authority_complete",
+  "implementation_commit": "6e9e9e73f021c5d55c7c70007058057f155909ce",
+  "implementation_tree": "6bdf907d80236d826d05a5334cb8ec4cafc16c13",
+  "pre_fix_reproduction": {
+    "candidate_accepted_without_graph_binding": true,
+    "context_self_attests_dynamic_stage": true,
+    "graph_patch_metadata_accepted": "unregistered",
+    "context_graph_type": "NoneType"
+  },
+  "binding_contract": {
+    "source": "immutable checksum-valid NormalizedHarnessGraph",
+    "stage_selection": "exactly one HarnessExecutableNode with the requested step id",
+    "required_declaration": [
+      "HarnessWorkerType.TASK_PLAN",
+      "dynamic_stage=true",
+      "exact task_plan_policy_ref",
+      "supported executable task_plan_schema",
+      "non-empty unique required_output_roles",
+      "exact candidate builder, capability registry, gate registry, aggregator, checkpoint and result store refs",
+      "exact event schema",
+      "no side-effect binding"
+    ],
+    "derived_identity": [
+      "graph id/version/checksum",
+      "workflow id/ref",
+      "node id and stage id",
+      "step, worker and activity exact refs",
+      "policy ref and required output roles",
+      "support refs",
+      "binding checksum"
+    ]
+  },
+  "authority_matrix": [
+    {
+      "surface": "caller stage attestation",
+      "boundary": "TaskPlanValidationContext no longer exposes dynamic_stage_declared and requires TaskPlanStageBinding",
+      "test": "tests/framework/harness/task_plan/test_task_plan_stage_binding.py::test_validation_context_has_no_caller_dynamic_stage_attestation"
+    },
+    {
+      "surface": "plan build, validation and execution identity",
+      "boundary": "PlanBuildRequest, TaskPlanValidationContext and TaskPlanStageRequest derive workflow, stage and graph checksum from the same binding",
+      "test": "tests/framework/harness/task_plan/test_task_plan_stage_binding.py::test_stage_binding_derives_all_authority_from_the_frozen_graph"
+    },
+    {
+      "surface": "existing plan and patch reuse",
+      "boundary": "TaskPlanStageRunner rejects plans whose workflow, stage, graph checksum or policy differs from the frozen binding before recording a patch",
+      "test": "tests/framework/harness/task_plan/test_task_plan_runtime.py::test_stage_runner_rejects_existing_plan_from_another_frozen_graph"
+    },
+    {
+      "surface": "policy contract drift",
+      "boundary": "policy exact ref, stage and Graph-declared required output roles must match the binding",
+      "test": "tests/framework/harness/task_plan/test_task_plan_runtime.py::test_stage_request_rejects_required_role_drift_from_frozen_graph"
+    },
+    {
+      "surface": "outer Graph mutation proposal",
+      "boundary": "candidate fields recursively reject Graph/node/routing authority and PlanPatch accepts only stage-local typed operations",
+      "tests": [
+        "tests/framework/harness/task_plan/test_task_plan_contract_matrix.py::test_candidate_forbidden_control_fields_are_rejected_recursively",
+        "tests/framework/harness/task_plan/test_task_plan_contract_matrix.py::test_plan_patch_payload_cannot_express_outer_graph_changes"
+      ]
+    },
+    {
+      "surface": "unregistered worker selection",
+      "boundary": "candidate tasks declare capabilities only; missing pinned capability bindings fail closed",
+      "test": "tests/framework/harness/task_plan/test_task_plan_contract_matrix.py::test_validator_does_not_resolve_an_unregistered_worker_capability"
+    },
+    {
+      "surface": "Research production composition",
+      "boundary": "composition compiles the frozen dynamic Graph once and passes its TaskPlanStageBinding to the Research stage worker"
+    }
+  ],
+  "gate_classification": {
+    "gate_a_repository_preparation": "complete_for_task_3_4",
+    "gate_b_production_cutover": "not_authorized",
+    "gate_c_legacy_deletion": "not_authorized",
+    "task_3_4_complete": true,
+    "internal_task_plan_contract_changed": true,
+    "external_production_schema_changed": false,
+    "research_composition_binding_changed": true,
+    "graph_only_production_authority_activated": false,
+    "reason": "Research still compiles the transitional HarnessWorkflowSpec and the Graph-only compiler, HarnessGraphDefinition production activation, managed writers/readers and legacy deletion remain open tasks."
+  },
+  "verification": {
+    "focused_stage_binding_and_runtime": {
+      "result": "30 passed"
+    },
+    "expanded_harness_graph_task_plan": {
+      "result": "89 passed"
+    },
+    "expanded_research_dynamic_paths": {
+      "result": "59 passed"
+    },
+    "architecture_inventory_repair": {
+      "initial_result": "2467 passed, 1 failed, 23 deselected, 22 warnings",
+      "root_cause": "new TaskPlan authority owner and Graph-building test fixture were not classified in the subtract-only Harness Graph caller inventory",
+      "repair": "classified framework/harness/task_plan/forbidden.py in phase B and tests/fixtures/task_plan.py in phase A without changing search symbols or exclusions",
+      "focused_result": "24 passed"
+    },
+    "mandatory_smoke": {
+      "command": ".\\.venv\\Scripts\\python.exe -m scripts.dev smoke",
+      "result": "2468 passed, 23 deselected, 22 warnings; source validation is_valid=true, error_count=0, warning_count=0; exit 0"
+    },
+    "change_validation": {
+      "command": "openspec validate graph-only-orchestration --strict",
+      "result": "passed"
+    },
+    "full_validation": {
+      "command": "openspec validate --all --strict",
+      "result": "533 passed, 0 failed"
+    }
+  },
+  "task_status": {
+    "task_3_4_checked": true,
+    "completed_tasks": 25,
+    "open_tasks": 77,
+    "total_tasks": 102
+  }
+}

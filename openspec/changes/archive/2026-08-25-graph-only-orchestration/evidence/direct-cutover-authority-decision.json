@@ -1,0 +1,28 @@
+{
+  "schema": "newsroom.graph-only-direct-cutover-authority/v1",
+  "change": "graph-only-orchestration",
+  "effective_date": "2026-08-18",
+  "authority_source": "explicit_project_owner_instruction",
+  "decision": "one_way_direct_cutover",
+  "repository_implementation_authorized": true,
+  "rollback_required": false,
+  "managed_environment_qualification_required": false,
+  "prerequisite_change_archive_required": false,
+  "legacy_runtime_fallback_allowed": false,
+  "dual_writer_reader_allowed": false,
+  "legacy_history_disposition": "typed_quarantine_only",
+  "legacy_history_live_execution_allowed": false,
+  "artifact_subsystem_retained": true,
+  "artifact_deletion_scope": [
+    "legacy_workflow_artifact_bridge",
+    "legacy_workflow_artifact_writer_reader",
+    "artifact_leaf_classification"
+  ],
+  "supersedes": [
+    "prd.section.43.external_gate_b_blocker",
+    "prd.section.43.1.gate_b_release_qualification",
+    "design.gate_a_b_c_implementation_boundary",
+    "design.rollback_strategy",
+    "tasks.managed_environment_and_rollback_prerequisites"
+  ]
+}

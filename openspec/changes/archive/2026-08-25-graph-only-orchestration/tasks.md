@@ -242,7 +242,7 @@ AgentLoop Graph smoke 与 control-evidence slice 已完成 task 6.5/6.6。worker
 - [x] 11.6 检查 replay 的 live call count、publication count、memory-write count 和 tool authorization count 均符合 zero-side-effect 规则
 - [x] 11.7 检查 legacy rejection/quarantine、checksum、无 fallback、无 worker/side-effect 调用和 history-only import isolation
 - [x] 11.8 执行 release review，确认没有 compatibility facade、fallback executor、legacy writer、hidden feature flag 或未登记历史 store
-- [ ] 11.9 每个职责 slice 在范围匹配的检查通过后独立提交；最终 cutover 只有在 Graph production path、zero legacy production reference、Artifact 保留约束和 mandatory smoke 全部通过后才可声明完成
+- [x] 11.9 每个职责 slice 在范围匹配的检查通过后独立提交；最终 cutover 只有在 Graph production path、zero legacy production reference、Artifact 保留约束和 mandatory smoke 全部通过后才可声明完成（release slice `f27f71d3`；archive 为独立最后提交）
 
 ### 07a-07d release evidence
 

@@ -1,0 +1,114 @@
+{
+  "schema": "newsroom.research-reader-repair-function-worker-contract-evidence/v1",
+  "captured_at": "2026-08-16",
+  "change": "graph-only-orchestration",
+  "task_refs": [
+    "3.6",
+    "3.7",
+    "5.5",
+    "5.7"
+  ],
+  "status": "gate_a_function_implementations_complete_production_activation_open",
+  "implementation": {
+    "commit": "ce95db5ce9127aac9ad4eb151acc4d204823debd",
+    "tree": "7268a0ca7fe3b5b283a01635701aa81daea7ed97",
+    "module": "business/research/graphs/reader_repair_function_workers.py",
+    "function_worker_factory": "build_reader_repair_function_worker_implementations",
+    "function_worker_count": 8
+  },
+  "graph_identity": {
+    "graph_id": "research.reader_repair.graph",
+    "graph_version": "2",
+    "definition_checksum": "sha256:d14a1951a8493de4366e83e28c417cf9a5c68d6bdbbe60d67fc4d411f8544560",
+    "build_repair_result_consumes_reader_payload": true,
+    "receipt_is_separate_from_business_input_keys": true
+  },
+  "function_workers": {
+    "detect_reader_issue": "deterministic_issue_detection_with_run_timestamp",
+    "assemble_repair_context": "read_only_memory_recall_and_context_assembly",
+    "apply_repair_candidate": "typed_pure_payload_application",
+    "verify_repair_application": "deterministic_application_verification",
+    "build_repair_result": "durable_receipt_bound_committed_result",
+    "build_repair_case": "checksum_bound_episodic_case",
+    "prepare_skill_candidate_bundle": "candidate_only_strategy_and_skill_seed_bundle",
+    "prepare_memory_write": "candidate_only_memory_intent"
+  },
+  "injected_authority_contract": {
+    "read_only_memory_port": "ReaderRepairMemoryRecallPort",
+    "run_authority_resolver": "ReaderRepairRunAuthorityResolver",
+    "committed_output_resolver": "ReaderRepairCommittedOutputResolver",
+    "worker_accepts_caller_receipt": false,
+    "worker_derives_scope_without_composition": false,
+    "worker_commits_memory": false,
+    "worker_routes_or_decides_quality": false
+  },
+  "fail_closed_matrix": {
+    "inexact_task_input_keys_rejected": true,
+    "wrong_worker_type_or_step_rejected": true,
+    "cross_run_issue_rejected": true,
+    "cross_run_receipt_rejected": true,
+    "malformed_identity_scope_rejected": true,
+    "subject_scope_paper_mismatch_rejected": true,
+    "missing_harness_activity_attempt_rejected": true,
+    "conflicting_recalled_case_identity_rejected": true,
+    "nested_immutable_memory_projection_remains_serializable": true
+  },
+  "determinism": {
+    "issue_timestamp_source": "composition_owned_run_authority",
+    "case_timestamp_source": "verified_issue_timestamp",
+    "strategy_timestamp_source": "verified_repair_case_timestamp",
+    "repeated_function_tasks_are_canonical": true
+  },
+  "artifact_boundary": {
+    "artifact_handler_registered": false,
+    "artifact_terminal_policy_registered": false,
+    "artifact_or_public_ref_generated": false,
+    "artifact_owner_runtime_storage_publication_preserved": true
+  },
+  "production_activation": {
+    "graphs_package_facade_imports_factory": false,
+    "single_paper_runtime_imports_or_calls_factory": false,
+    "research_composition_imports_or_calls_factory": false,
+    "production_runtime_authority_installed": false,
+    "live_committed_output_resolver_installed": false,
+    "graph_only_run_admission_enabled": false
+  },
+  "remaining_blockers": {
+    "real_subagent_implementations_complete": false,
+    "real_activity_implementations_complete": false,
+    "graph_definition_to_normalized_graph_lineage_bound": false,
+    "live_resource_backed_executor_installed": false,
+    "live_receipt_resolver_injection_installed": false,
+    "production_authority_installation_complete": false,
+    "legacy_synthetic_after_ref_removed": false,
+    "legacy_direct_memory_writes_removed": false,
+    "separate_failure_terminal_diagnostic_policy_declared": false
+  },
+  "validation": {
+    "focused_function_graph_runtime_passed": 19,
+    "reader_repair_full_surface_passed": 125,
+    "architecture_passed": 196,
+    "architecture_warnings": 4,
+    "compile_passed": true,
+    "mandatory_smoke_passed": 2632,
+    "mandatory_smoke_deselected": 23,
+    "mandatory_smoke_warnings": 22,
+    "source_validation": {
+      "is_valid": true,
+      "error_count": 0,
+      "warning_count": 0
+    },
+    "openspec_change_strict_passed": true,
+    "openspec_strict_all_passed": 533,
+    "openspec_strict_all_failed": 0
+  },
+  "task_status": {
+    "task_3_6_checked": false,
+    "task_3_7_checked": false,
+    "task_5_5_checked": false,
+    "task_5_7_checked": false,
+    "completed_tasks": 25,
+    "open_tasks": 77,
+    "total_tasks": 102
+  }
+}

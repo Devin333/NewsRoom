@@ -1,0 +1,125 @@
+{
+  "schema": "newsroom.graph-only-task-plan-invocation-runtime-contract-evidence/v1",
+  "captured_at": "2026-08-17",
+  "change": "graph-only-orchestration",
+  "task_refs": [
+    "2.7",
+    "5.4"
+  ],
+  "status": "gate_a_invocation_and_runtime_adapter_contract_complete_lifecycle_store_and_production_activation_open",
+  "implementation": {
+    "commit": "b0bff64ac38601304865aee05b0e48b8518acbe7",
+    "tree": "9093198c0eda21da4457aeef587b99e81189d6a6",
+    "invocation_contract": "framework/harness/subagents/models.py",
+    "invocation_adapter": "framework/harness/task_plan/capability.py",
+    "subagent_runtime": "framework/harness/subagents/runtime.py",
+    "transcript_schema_owner": "framework/harness/subagents/transcript.py",
+    "result_adapter": "framework/harness/runtime/subagent_result_adapter.py",
+    "research_materializer": "business/research/application/graph_result_committer.py",
+    "production_research_composition": "interfaces/composition/research.py"
+  },
+  "invocation_contract": {
+    "legacy_schema": "schema-less-v1",
+    "graph_only_schema": "newsroom.subagent-invocation/v2",
+    "graph_only_identity_from_accepted_plan": true,
+    "exact_resolved_task_required": true,
+    "pinned_binding_required": true,
+    "deterministic_task_instance_required": true,
+    "caller_run_stage_attempt_timestamp_removed": true,
+    "graph_only_top_level_workflow_aliases": false,
+    "graph_only_attempt_identity_workflow_aliases": false,
+    "graph_only_non_null_context_workflow_id_rejected": true,
+    "generic_context_nullable_workflow_key_removed": false,
+    "legacy_wire_shape_changed": false,
+    "legacy_invocation_checksum_oracle": "sha256:e1ab8dff2fd0f5b4d3362ed246100af164d4e8233d2a5a28d08dcb7933008082",
+    "graph_only_invocation_checksum_oracle": "sha256:80341d9b1fde169f709c24fe14081cbdd269fca664fc5571e6dbf2f927e71940"
+  },
+  "runtime_contract": {
+    "identity_selects_evidence_schema": true,
+    "legacy_context_schema": "newsroom.subagent-context-evidence/v1",
+    "graph_only_context_schema": "newsroom.subagent-context-evidence/v2",
+    "legacy_output_schema": "newsroom.subagent-output-document/v1",
+    "graph_only_output_schema": "newsroom.subagent-output-document/v2",
+    "legacy_transcript_schema": "newsroom.subagent-transcript/v1",
+    "graph_only_transcript_schema": "newsroom.subagent-transcript/v2",
+    "legacy_receipt_schema": "newsroom.subagent-transcript-receipt/v1",
+    "graph_only_receipt_schema": "newsroom.subagent-transcript-receipt/v2",
+    "legacy_attempt_bundle_schema": "newsroom.subagent-attempt-bundle/v1",
+    "graph_only_attempt_bundle_schema": "newsroom.subagent-attempt-bundle/v2",
+    "graph_only_context_ref_version": "v2",
+    "recovery_reuses_durable_transcript": true,
+    "recovery_worker_call_count": 1
+  },
+  "result_adapter_contract": {
+    "legacy_node_result_schema": "newsroom.subagent-node-result@1",
+    "graph_only_node_result_schema": "newsroom.subagent-node-result@2",
+    "legacy_materialized_bundle_schema": "newsroom.subagent-materialized-bundle@1",
+    "graph_only_materialized_bundle_schema": "newsroom.subagent-materialized-bundle@2",
+    "legacy_adapter_revision": "harness-subagent-result-adapter@1",
+    "graph_only_adapter_revision": "harness-subagent-result-adapter@2",
+    "graph_only_output_schema_digest_oracle": "sha256:4ceda242a6b595d794baba8433db600701b296f579d1f69721357769e8a890b3",
+    "outer_bundle_matches_identity_version": true,
+    "embedded_evidence_schemas_verified": true,
+    "receipt_identity_checksum_verified": true,
+    "mixed_bundle_schema_rejected": true,
+    "mixed_bundle_error_code": "subagent_result_schema_unsupported"
+  },
+  "research_materialization_boundary": {
+    "graph_only_identity_from_request_plan": true,
+    "graph_only_legacy_graph_parameters_forbidden": true,
+    "legacy_complete_graph_identity_pair_required": true,
+    "invocation_identity_rederived_from_plan": true,
+    "graph_only_result_schema": "newsroom.harness-task-plan-result/v3",
+    "graph_only_materialization_uses_artifact_port": true,
+    "materialized_bundle_strict_read_back": true
+  },
+  "activation_boundary": {
+    "graph_only_invocation_contract_available": true,
+    "graph_only_runtime_result_adapter_available": true,
+    "production_research_call_sites_use_accepted_plan_api": true,
+    "graph_only_task_lifecycle_event_enabled": false,
+    "graph_only_result_store_enabled": false,
+    "graph_only_checkpoint_queue_projection_replay_enabled": false,
+    "production_research_graph_only_activated": false,
+    "production_run_admission_changed": false,
+    "runtime_error_code": "graph_task_plan_result_runtime_unavailable",
+    "production_smoke_normalized_schema": "newsroom.harness-normalized-graph/v1",
+    "production_smoke_compiler_version": "newsroom.harness-graph-compiler/v1"
+  },
+  "artifact_boundary": {
+    "artifact_subsystem_removed": false,
+    "artifact_owner": "framework/harness/artifacts",
+    "graph_only_materialization_writes_artifact_candidate": true,
+    "graph_only_materialization_read_back_verified": true,
+    "subagent_decides_terminal_publication": false,
+    "artifact_publication_authority_changed": false,
+    "retired_scope": "legacy Workflow Artifact bridge/writer/reader and ARTIFACT leaf classification only"
+  },
+  "verification": {
+    "new_contract_tests": "3 passed",
+    "focused_lineage_result_adapter_research_dynamic": "33 passed",
+    "subagent_task_plan_research_runtime": "143 passed",
+    "architecture": "205 passed, 4 warnings",
+    "compile": "passed",
+    "mandatory_smoke": "2745 passed, 23 deselected, 22 warnings",
+    "embedded_graph_smoke": "status=succeeded, llm_calls=3, tool_calls=1, total_tokens=60, network_calls=0",
+    "source_validation": "is_valid=true, error_count=0, warning_count=0",
+    "openspec_change_strict": "valid",
+    "openspec_all_strict": "533 passed, 0 failed"
+  },
+  "remaining_blockers": [
+    "Graph-only task lifecycle event and result store activation",
+    "Graph-only checkpoint, queue, projection, recovery, and replay identity",
+    "Graph-only ContextEnvelope major schema without nullable Workflow fields",
+    "Research production Graph-only composition and run admission cutover",
+    "Gate B durable runtime activation",
+    "Gate C legacy Workflow identity deletion"
+  ],
+  "task_status": {
+    "task_2_7_checked": false,
+    "task_5_4_checked": false,
+    "completed_tasks": 29,
+    "open_tasks": 73,
+    "total_tasks": 102
+  }
+}

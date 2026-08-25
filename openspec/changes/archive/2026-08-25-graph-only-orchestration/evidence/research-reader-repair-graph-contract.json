@@ -1,0 +1,147 @@
+{
+  "schema": "newsroom.research-reader-repair-graph-contract/v1",
+  "captured_at": "2026-08-16",
+  "change": "graph-only-orchestration",
+  "task_refs": [
+    "3.6",
+    "3.7",
+    "5.5",
+    "5.7"
+  ],
+  "status": "gate_a_inactive_declaration_complete_tasks_open",
+  "implementation_commit": "15b062b6bc6bd0457a3e7ed1e57069807b6f7425",
+  "implementation_tree": "4e7bd891e389c0ef4b1804520a4d19fac7227040",
+  "graph_definition": {
+    "graph_id": "research.reader_repair.graph",
+    "graph_version": "1",
+    "definition_checksum": "sha256:0cc430145c6bb59ed0436a1b71ecbdfc6c2f4d6a18d1dec880ed1617052d3cc7",
+    "activity_count": 8,
+    "leaf_binding_count": 8,
+    "function_activity_count": 6,
+    "subagent_activity_count": 2,
+    "task_plan_stage_count": 0,
+    "repair_binding_count": 0,
+    "terminal_outputs": [
+      "reader_repair_result",
+      "reader_repair_case",
+      "strategy_candidate_bundle",
+      "memory_write_candidate"
+    ],
+    "strict_round_trip": true,
+    "canonical_checksum_stable": true
+  },
+  "candidate_authority": {
+    "proposer_activity": "propose_repair_candidate",
+    "proposer_output": "reader_repair_candidate",
+    "proposer_candidate_only": true,
+    "verifier_activity": "collect_repair_verification",
+    "verifier_output": "repair_verification_candidate",
+    "verifier_observational_only": true,
+    "verifier_may_emit_passed_or_verdict": false,
+    "subagent_memory_write_budget": 0,
+    "subagent_private_note_handoff": false,
+    "candidate_context_checksum_required": true,
+    "observation_issue_and_candidate_checksums_required": true
+  },
+  "deterministic_gate_chain": {
+    "gate_count": 8,
+    "fail_closed_without_worker_result": true,
+    "issue_requires_source_and_payload_refs": true,
+    "context_preserves_verified_issue": true,
+    "candidate_binds_verified_context_checksum": true,
+    "observations_bind_verified_issue_and_candidate_checksums": true,
+    "result_binds_verified_issue_candidate_and_observation_checksums": true,
+    "result_identity_is_deterministic": true,
+    "result_success_equals_gate_conjunction": true,
+    "case_binds_verified_context_and_result_checksums": true,
+    "strategy_bundle_binds_verified_context_and_case_checksums": true,
+    "strategy_source_case_refs_are_bounded": true,
+    "skill_seed_experience_refs_match_strategy_cases": true,
+    "memory_candidate_embeds_exact_verified_case_and_strategy_bundle": true,
+    "cross_input_checksum_substitution_rejected": true
+  },
+  "memory_authority": {
+    "output_type": "MemoryWriteCandidate",
+    "required_status": "proposed",
+    "namespace": "research.reader_repair",
+    "handler_ref": "research.reader_repair.memory.commit@1",
+    "effect_kind": "memory_write",
+    "terminal_policy": "research.reader_repair.memory@1",
+    "inherited_gate": "ReaderRepairMemoryPolicyGate@1",
+    "worker_may_commit_memory": false,
+    "controller_terminal_authority_required": true,
+    "production_handler_registered": false,
+    "production_worker_binding_active": false,
+    "legacy_service_direct_commit_still_present": true,
+    "legacy_service_direct_strategy_write_still_present": true
+  },
+  "skill_authority": {
+    "skill_seed_publishes_skill": false,
+    "requires_harness_skill_evolution": true,
+    "active_skill_mutation_allowed": false,
+    "active_skill_promotion_handler_bound": false
+  },
+  "artifact_boundary": {
+    "artifact_owner_removed": false,
+    "artifact_runtime_or_storage_removed": false,
+    "artifact_files_changed_by_commit": false,
+    "artifact_handler_bound_to_reader_repair_graph": false,
+    "artifact_publication_policy_bound_to_reader_repair_graph": false,
+    "serialized_reader_repair_graph_contains_artifact_contract": false
+  },
+  "owner_migration": {
+    "old_subagent_declaration_module": "business.research.reader_repair.workflow",
+    "new_subagent_declaration_module": "business.research.graphs.reader_repair",
+    "old_module_exists": false,
+    "compatibility_facade_added": false,
+    "service_imports_graph_owner_directly": true,
+    "package_imports_graph_owner_directly": true
+  },
+  "gate_a_non_activation": {
+    "normalized_graph_schema_changed": false,
+    "graph_only_compiler_activated": false,
+    "production_research_composition_changed": false,
+    "production_reader_repair_execution_changed": false,
+    "production_memory_handler_activated": false,
+    "production_artifact_publication_changed": false,
+    "gate_b_cutover_authorized": false,
+    "gate_c_legacy_deletion_authorized": false
+  },
+  "remaining_blockers": [
+    "NormalizedHarnessGraph and live run admission still require legacy Workflow identity and HarnessWorkflowGraphCompiler.",
+    "ReaderRepairService still calls commit_case and write_strategy directly instead of returning only a MemoryWriteCandidate and worker-origin intent.",
+    "No production reader-repair Function worker bindings, memory handler registration, or Graph composition activation exist yet."
+  ],
+  "replacement_tests": {
+    "graph_contract": "tests/business/research/graphs/test_reader_repair_graph.py",
+    "gate_and_adversarial_contract": "tests/business/research/graphs/test_reader_repair_gates.py",
+    "legacy_module_absence": "tests/architecture/test_research_boundaries.py::test_reader_repair_subagent_contract_is_owned_by_graphs",
+    "artifact_absence": "tests/business/research/graphs/test_reader_repair_graph.py::test_reader_repair_memory_and_skill_authority_stays_with_harness"
+  },
+  "verification": {
+    "compile": "passed",
+    "focused_graph_and_gate_contracts": "17 passed",
+    "research_graphs_reader_repair_and_integration": "68 passed",
+    "research_boundary": "5 passed",
+    "framework_harness": "1471 passed",
+    "architecture": "192 passed, 4 existing FastAPI deprecation warnings",
+    "mandatory_smoke": "2577 passed, 23 deselected, 22 warnings; exit 0",
+    "source_validation": {
+      "is_valid": true,
+      "error_count": 0,
+      "warning_count": 0
+    },
+    "openspec_change_strict": "passed",
+    "openspec_all_strict": "533 passed, 0 failed"
+  },
+  "task_status": {
+    "task_3_6_checked": false,
+    "task_3_7_checked": false,
+    "task_5_5_checked": false,
+    "task_5_7_checked": false,
+    "reason": "The inactive Graph declaration and exact candidate/gate boundaries exist, but production workers, memory side-effect handler, Graph composition, run admission, and direct service-write removal are still outstanding.",
+    "completed_tasks": 25,
+    "open_tasks": 77,
+    "total_tasks": 102
+  }
+}

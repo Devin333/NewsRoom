@@ -1,0 +1,105 @@
+{
+  "schema": "newsroom.graph-only-task-plan-queue-recovery-contract-evidence/v1",
+  "captured_at": "2026-08-17",
+  "change": "graph-only-orchestration",
+  "task_refs": [
+    "2.7",
+    "5.4"
+  ],
+  "status": "gate_a_graph_only_queue_and_recovery_contract_complete_production_activation_open",
+  "implementation": {
+    "commit": "0ae73855bf647c4f37c36cec958b85e06931ad03",
+    "tree": "1ea90ef6ddcaa5b883fd1202fe136b5530a3d4ce",
+    "queue_contract": "framework/harness/task_plan/queue.py",
+    "scheduler_boundary": "framework/harness/task_plan/scheduler.py",
+    "recovery_boundary": "framework/harness/task_plan/recovery.py",
+    "redis_read_adapter": "infrastructure/storage/workers/task_plan_queue.py",
+    "generic_queue_runtime": "infrastructure/storage/workers/redis_queue.py"
+  },
+  "schema_contract": {
+    "queue_projection_schema": "newsroom.harness-task-plan-queue-projection/v2",
+    "queue_readback_schema": "newsroom.harness-task-plan-queue-readback/v2",
+    "queue_reclaim_schema": "newsroom.harness-task-plan-queue-reclaim/v2",
+    "queue_task_type": "harness_task_plan",
+    "queue_payload_identity_only": true,
+    "queue_max_attempts": 1,
+    "workflow_aliases_forbidden": true,
+    "legacy_queue_wire_changed": false,
+    "transport_fencing_field": "attempt_fence_ref",
+    "transport_output_budget_field": "max_output_units",
+    "projection_checksum_oracle": "sha256:fac88d0038131719e3687dab3bc9ad3e07765f426c79a204c97fd50fd24100ee",
+    "readback_checksum_oracle": "sha256:bc80d36bce72adb0f93d8c0bfd646841b4eda70beea734a2986ad8e1fd5897d0",
+    "reclaim_continuation_checksum_oracle": "sha256:a27bb8619216b5588596632fa1d4f24f4e0f2036adaaa88312d2f2fb5580f082"
+  },
+  "recovery_contract": {
+    "graph_only_queue_reader_required": true,
+    "missing_reader_error_code": "graph_task_plan_queue_read_port_unavailable",
+    "caller_supplied_readback_accepted": false,
+    "bare_queue_ids_rejected": true,
+    "bare_queue_ids_error_code": "graph_task_plan_queue_readback_required",
+    "ready_attempts_query_exact_instance_ids": true,
+    "missing_durable_record_returns_projection": true,
+    "confirmed_readback_suppresses_only_matching_ready_attempt": true,
+    "dispatched_running_returns_reclaim_continuation": true,
+    "reclaim_continuation_type": "await_stale_reclaim",
+    "reclaim_continuation_is_executable_command": false,
+    "recovery_enqueues": false,
+    "recovery_leases": false,
+    "recovery_reclaims": false,
+    "recovery_publishes": false
+  },
+  "redis_snapshot_contract": {
+    "atomic_read_only_eval": true,
+    "commands": [
+      "XINFO GROUPS",
+      "XPENDING",
+      "XRANGE"
+    ],
+    "undelivered_readback_only": true,
+    "pending_expected_attempt_rejected": true,
+    "acknowledged_expected_attempt_rejected": true,
+    "delivery_state_error_code": "task_plan_queue_delivery_state_mismatch",
+    "bounded_scan_required": true,
+    "scan_incomplete_error_code": "task_plan_queue_readback_scan_incomplete",
+    "adapter_enqueues": false,
+    "adapter_leases": false,
+    "adapter_reclaims": false,
+    "adapter_registers_worker": false,
+    "production_composition_callers": 0
+  },
+  "artifact_boundary": {
+    "artifact_subsystem_removed": false,
+    "artifact_owner": "framework/harness/artifacts",
+    "task_plan_artifact_port_retained": true,
+    "terminal_manifest_authority_changed": false,
+    "artifact_publication_authority_changed": false,
+    "retired_scope": "legacy Workflow Artifact bridge/writer/reader and ARTIFACT leaf classification only"
+  },
+  "verification": {
+    "focused_queue_recovery": "7 passed",
+    "task_plan": "101 passed",
+    "task_plan_and_redis_worker_changed_surface": "109 passed, 2 skipped",
+    "research_dynamic_task_plan": "19 passed",
+    "architecture": "205 passed, 4 warnings",
+    "compile": "passed",
+    "mandatory_smoke": "2759 passed, 23 deselected, 22 warnings",
+    "embedded_graph_smoke": "status=succeeded, llm_calls=3, tool_calls=1, total_tokens=60, network_calls=0",
+    "source_validation": "is_valid=true, error_count=0, warning_count=0",
+    "openspec_change_strict": "valid",
+    "openspec_all_strict": "533 passed, 0 failed",
+    "real_redis_integration": "added; skipped because NEWS_TEST_REDIS_URL is not configured"
+  },
+  "remaining_blockers": [
+    "Graph-only ContextEnvelope major schema without nullable Workflow fields",
+    "Research production Graph-only composition and HarnessRunSpec.graph run admission cutover",
+    "Gate B queue reader, worker, enqueue, lease and reclaim installation with independent PEL idle and fencing verification",
+    "Gate C legacy Workflow identity and runtime deletion"
+  ],
+  "task_status": {
+    "task_2_7_checked": false,
+    "task_5_4_checked": false,
+    "completed_tasks": 29,
+    "open_tasks": 73,
+    "total_tasks": 102
+  }
+}

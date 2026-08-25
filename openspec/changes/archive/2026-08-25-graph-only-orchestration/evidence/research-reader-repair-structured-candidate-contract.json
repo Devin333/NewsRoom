@@ -1,0 +1,113 @@
+{
+  "schema": "newsroom.research-reader-repair-structured-candidate-contract-evidence/v1",
+  "captured_at": "2026-08-16",
+  "change": "graph-only-orchestration",
+  "task_refs": [
+    "3.6",
+    "5.5",
+    "5.7"
+  ],
+  "status": "gate_a_structured_candidate_adapter_complete_production_activation_open",
+  "implementation": {
+    "commit": "9e41c7e714254bf3119e9a918ffc748763088eb3",
+    "tree": "7216849e974b3cc88d1fb9d735f21c34eae2f4ea",
+    "business_contract_module": "business/research/ports/reader_repair_candidate.py",
+    "adapter_module": "infrastructure/research/candidate_worker.py",
+    "subagent_worker_module": "business/research/graphs/reader_repair_subagent_workers.py",
+    "candidate_task_count": 2
+  },
+  "provider_contract": {
+    "reader_repair_patch_candidate_schema": "sha256:7165448cdfad311741c75eb16f2767f01d88951346ca016f38556d9cec6480d9",
+    "reader_repair_application_observation_schema": "sha256:8f0d29ee5ed937145cefda99575eb32154685d133b405f84abee3ba98d347489",
+    "additional_properties_disabled_at_every_object_boundary": true,
+    "metadata_recursively_excluded": true,
+    "candidate_identity_llm_owned": false,
+    "operation_identity_llm_owned": false,
+    "expected_before_checksum_llm_owned": false,
+    "application_identity_llm_owned": false,
+    "input_bindings_llm_owned": false,
+    "patch_operation_budget": 8,
+    "application_observation_budget": 16
+  },
+  "strict_dynamic_map_projection": {
+    "research_table_rows_use_entries": true,
+    "research_analysis_quality_uses_entries": true,
+    "research_evidence_coverage_uses_numeric_entries": true,
+    "research_evidence_coverage_range": [
+      0,
+      1
+    ],
+    "entries_restored_by_deterministic_worker": true,
+    "duplicate_entry_keys_rejected": true,
+    "unusable_open_object_maps_remaining": 0
+  },
+  "prompt_and_scope_boundary": {
+    "prompt_projection_bounded": true,
+    "prompt_projection_redacted": true,
+    "artifact_refs_omitted_from_prompt": true,
+    "metadata_omitted_from_prompt": true,
+    "workflow_routing_quality_memory_promotion_publication_fields_omitted": true,
+    "credential_bearing_url_query_or_userinfo_omitted": true,
+    "allowed_source_scope_derived_from_projected_prompt": true,
+    "source_refs_outside_projected_scope_rejected": true,
+    "source_refs_truncated_from_prompt_rejected": true
+  },
+  "layer_boundary": {
+    "schema_owner": "business.research.ports.reader_repair_candidate",
+    "infrastructure_imports_business_domain_directly": false,
+    "infrastructure_imports_exact_business_port_contract": true,
+    "architecture_exception_is_exact": true,
+    "candidate_adapter_is_harness_graph_caller": false
+  },
+  "artifact_boundary": {
+    "artifact_subsystem_removed": false,
+    "artifact_owner_runtime_storage_publication_preserved": true,
+    "reader_repair_artifact_handler_registered": false,
+    "reader_repair_artifact_terminal_policy_registered": false,
+    "reader_repair_public_artifact_ref_generated": false
+  },
+  "production_activation": {
+    "structured_candidate_adapter_supports_reader_repair_tasks": true,
+    "reader_repair_worker_factory_registered_in_single_paper_runtime": false,
+    "reader_repair_worker_factory_registered_in_research_composition": false,
+    "reader_repair_runtime_authority_installed": false,
+    "graph_only_run_admission_enabled": false
+  },
+  "remaining_blockers": {
+    "real_activity_implementations_complete": false,
+    "graph_definition_to_normalized_graph_lineage_bound": false,
+    "live_resource_backed_executor_installed": false,
+    "live_receipt_resolver_injection_installed": false,
+    "production_authority_installation_complete": false,
+    "legacy_synthetic_after_ref_removed": false,
+    "legacy_direct_memory_writes_removed": false,
+    "separate_failure_terminal_diagnostic_policy_declared": false
+  },
+  "validation": {
+    "focused_contract_passed": 50,
+    "reader_repair_research_surface_passed": 380,
+    "reader_repair_research_surface_skipped": 3,
+    "architecture_passed": 196,
+    "architecture_warnings": 4,
+    "compile_passed": true,
+    "mandatory_smoke_passed": 2643,
+    "mandatory_smoke_deselected": 23,
+    "mandatory_smoke_warnings": 22,
+    "source_validation": {
+      "is_valid": true,
+      "error_count": 0,
+      "warning_count": 0
+    },
+    "openspec_change_strict_passed": true,
+    "openspec_strict_all_passed": 533,
+    "openspec_strict_all_failed": 0
+  },
+  "task_status": {
+    "task_3_6_checked": false,
+    "task_5_5_checked": false,
+    "task_5_7_checked": false,
+    "completed_tasks": 25,
+    "open_tasks": 77,
+    "total_tasks": 102
+  }
+}

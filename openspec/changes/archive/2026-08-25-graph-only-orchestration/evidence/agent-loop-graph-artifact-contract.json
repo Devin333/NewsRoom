@@ -1,0 +1,92 @@
+{
+  "schema": "newsroom.agent-loop-graph-artifact-contract-evidence/v1",
+  "captured_at": "2026-08-16",
+  "change": "graph-only-orchestration",
+  "task_refs": [
+    "6.1",
+    "6.2",
+    "6.3",
+    "6.4"
+  ],
+  "status": "gate_a_artifact_owner_receipt_complete_production_activation_open",
+  "implementation": {
+    "commit": "4a5a4ce57d0e601dbff6879af106215f1dc93de1",
+    "tree": "730ade6770458a2ef14466abab1e20c954c316f6",
+    "integration_package": "framework/harness/agent_loop",
+    "artifact_contract_module": "framework/harness/agent_loop/artifacts.py",
+    "focused_test": "tests/framework/harness/agent_loop/test_graph_artifacts.py",
+    "architecture_test": "tests/architecture/test_agent_loop_graph_artifact_boundary.py"
+  },
+  "graph_context_contract": {
+    "schema": "newsroom.agent-loop-graph-artifact-context/v1",
+    "run_id_bound": true,
+    "graph_id_and_version_bound": true,
+    "graph_schema_and_compiler_bound": true,
+    "normalized_graph_checksum_bound": true,
+    "node_and_node_instance_bound": true,
+    "activity_and_attempt_bound": true,
+    "graph_checkpoint_ref_required": true,
+    "agent_and_conversation_bound": true,
+    "scope_refs_bound": true,
+    "strict_reader_and_checksum": true,
+    "workflow_identity_exposed": false
+  },
+  "artifact_persistence": {
+    "owner_port": "RunBoundArtifactPort",
+    "stable_per_call_artifact_key": true,
+    "idempotent_identical_retry_supported": true,
+    "request_response_metadata_redacted_again": true,
+    "artifact_ref_identity_metadata_checksum_verified": true,
+    "exact_read_back_required": true,
+    "required_for_replay": true,
+    "required_for_publication": false,
+    "terminal_manifest_called": false,
+    "publication_api_called": false
+  },
+  "candidate_contract": {
+    "record_schema": "newsroom.agent-loop-graph-artifact-record/v1",
+    "receipt_schema": "newsroom.agent-loop-graph-artifact-receipt/v1",
+    "worker_evidence_type": "agent_loop_llm_call_artifacts",
+    "candidate_artifact_refs_preserved": true,
+    "record_and_receipt_checksum_bound": true,
+    "duplicate_artifact_ids_rejected": true,
+    "duplicate_iterations_rejected": true,
+    "cross_agent_substitution_rejected": true,
+    "read_back_tamper_rejected": true
+  },
+  "ownership_boundary": {
+    "framework_agent_imports_harness": false,
+    "adapter_imports_legacy_workflow": false,
+    "business_activates_adapter": false,
+    "interfaces_activate_adapter": false,
+    "infrastructure_activates_adapter": false,
+    "artifact_subsystem_removed": false,
+    "artifact_owner_runtime_storage_publication_preserved": true
+  },
+  "verification": {
+    "focused_contract_and_architecture": "10 passed",
+    "agent_loop_artifact_physical_executor_expanded": "105 passed",
+    "compile": "passed",
+    "mandatory_smoke": "2672 passed, 23 deselected, 22 warnings",
+    "source_validation": "is_valid=true, error_count=0, warning_count=0",
+    "openspec_change_strict": "valid",
+    "openspec_all_strict": "533 passed, 0 failed"
+  },
+  "remaining_blockers": [
+    "Create the exact Graph AgentLoop activity worker binding and AgentRunner target path.",
+    "Inject the authoritative Graph checkpoint context through the durable physical activity input.",
+    "Replace conversation cursor and iteration checkpoint outer identity with Graph run, node-instance, and checkpoint refs.",
+    "Map waiting candidates to durable Harness Graph Wait registration without worker resume authority.",
+    "Attach verified candidate refs to the Graph node outcome and accept them into the terminal manifest only after deterministic gates.",
+    "Install the target path in production composition before deleting AgentLoopStepRunner and legacy smoke fixtures."
+  ],
+  "task_status": {
+    "task_6_1_checked": false,
+    "task_6_2_checked": false,
+    "task_6_3_checked": false,
+    "task_6_4_checked": false,
+    "completed_tasks": 25,
+    "open_tasks": 77,
+    "total_tasks": 102
+  }
+}

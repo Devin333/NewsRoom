@@ -1,0 +1,85 @@
+{
+  "schema": "newsroom.harness-graph-activity-task-context-evidence/v1",
+  "captured_at": "2026-08-16",
+  "change": "graph-only-orchestration",
+  "task_refs": [
+    "4.13",
+    "6.1",
+    "6.2",
+    "6.3",
+    "6.4"
+  ],
+  "status": "gate_a_checkpoint_task_context_complete_production_activation_open",
+  "implementation": {
+    "commit": "273e9fe87886651abd7c130785d63cf7aca47a38",
+    "tree": "52d3e79911c5941e152211074c1e39731262be0f",
+    "graph_activity_contract": "framework/harness/control_plane/graph_runtime.py",
+    "durable_event_reader": "framework/harness/control_plane/durable_events.py",
+    "physical_executor": "framework/harness/runtime/activity_executor.py",
+    "reader_repair_consumer": "business/research/graphs/reader_repair_function_workers.py",
+    "agent_loop_artifact_adapter": "framework/harness/agent_loop/artifacts.py"
+  },
+  "execution_input_contract": {
+    "schema": "newsroom.harness-graph-activity-execution-input/v2",
+    "graph_checkpoint_ref_required": true,
+    "graph_checkpoint_ref_binding_checksum_bound": true,
+    "resolver_is_checkpoint_authority": true,
+    "caller_supplied_harness_context_rejected": true,
+    "production_resolver_installed": false
+  },
+  "task_context_contract": {
+    "schema": "newsroom.harness-graph-activity-task-context/v1",
+    "strict_exact_fields": true,
+    "full_graph_activity_embedded": true,
+    "graph_activity_strict_hydration": true,
+    "graph_checkpoint_ref_bound": true,
+    "context_checksum_bound": true,
+    "flat_legacy_context_accepted": false,
+    "worker_can_supply_context": false
+  },
+  "consumer_alignment": {
+    "reader_repair_run_id_verified": true,
+    "reader_repair_graph_id_verified": true,
+    "reader_repair_node_id_verified": true,
+    "agent_loop_artifact_derives_from_task_context": true,
+    "artifact_subsystem_removed": false,
+    "artifact_publication_authority_added": false
+  },
+  "durability_and_architecture": {
+    "durable_event_reader_reuses_graph_activity_owner": true,
+    "event_store_corruption_projection_preserved": true,
+    "freeze_baseline_update_mode": "subtract_only",
+    "retired_legacy_schema_writer_records": 1,
+    "production_physical_executor_activated": false,
+    "production_agent_loop_artifact_adapter_activated": false
+  },
+  "verification": {
+    "focused_contracts": "24 passed",
+    "durable_replay": "65 passed",
+    "harness_runtime_and_agent_loop": "137 passed",
+    "architecture": "200 passed, 4 warnings",
+    "compile": "passed",
+    "mandatory_smoke": "2674 passed, 23 deselected, 22 warnings",
+    "source_validation": "is_valid=true, error_count=0, warning_count=0",
+    "openspec_change_strict": "valid",
+    "openspec_all_strict": "533 passed, 0 failed"
+  },
+  "remaining_blockers": [
+    "Implement and install the production Graph activity execution input resolver with durable checkpoint authority.",
+    "Install HarnessGraphPhysicalActivityExecutor as the live dispatcher with managed result and node-output resources.",
+    "Create the exact AgentLoop Graph activity binding and AgentRunner target path.",
+    "Replace conversation cursor and iteration checkpoint outer identity with Graph run, node-instance, and checkpoint refs.",
+    "Bind waiting candidates to durable Harness Graph Wait registration.",
+    "Attach verified artifact candidate refs to Graph node outcomes and terminal manifest acceptance after deterministic gates."
+  ],
+  "task_status": {
+    "task_4_13_checked": false,
+    "task_6_1_checked": false,
+    "task_6_2_checked": false,
+    "task_6_3_checked": false,
+    "task_6_4_checked": false,
+    "completed_tasks": 25,
+    "open_tasks": 77,
+    "total_tasks": 102
+  }
+}

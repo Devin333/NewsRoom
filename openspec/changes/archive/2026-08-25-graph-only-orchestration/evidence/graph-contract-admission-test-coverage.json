@@ -1,0 +1,95 @@
+{
+  "schema": "newsroom.graph-contract-admission-test-coverage/v1",
+  "captured_at": "2026-08-16",
+  "change": "graph-only-orchestration",
+  "task_refs": [
+    "2.10"
+  ],
+  "status": "gate_a_definition_admission_tests_complete_task_open",
+  "implementation_commit": "153de505796057a225c7f7d774d5e914772d5033",
+  "implementation_tree": "0c492fddbcb7f321d78c6e01ace270fd5de8e167",
+  "definition_contract_coverage": {
+    "round_trip": "tests/framework/harness/graph/test_definition.py::test_graph_definition_round_trips_with_canonical_checksum",
+    "canonical_checksum_and_order": [
+      "tests/framework/harness/graph/test_definition.py::test_graph_definition_activity_order_does_not_change_checksum",
+      "tests/framework/harness/graph/test_definition.py::test_graph_definition_repair_binding_order_does_not_change_checksum"
+    ],
+    "missing_root": "tests/framework/harness/graph/test_definition.py::test_graph_reader_rejects_missing_root_without_partial_definition",
+    "unknown_construct": "tests/framework/harness/graph/test_definition.py::test_graph_reader_rejects_unknown_construct_without_fallback",
+    "dual_declaration_fields": {
+      "test": "tests/framework/harness/graph/test_definition.py::test_graph_reader_rejects_explicit_graph_with_legacy_declaration_field",
+      "fields": [
+        "workflow",
+        "workflow_id",
+        "workflow_version",
+        "steps",
+        "entry_step_id",
+        "routing_rules",
+        "declaration_mode"
+      ]
+    },
+    "preflight_before_worker": "tests/framework/harness/control_plane/test_deterministic_gate_enforcement.py::test_unknown_declared_gate_fails_before_any_event_or_worker_call"
+  },
+  "fail_closed_results": {
+    "missing_root": "invalid_graph_definition with exact missing field evidence",
+    "legacy_field_with_graph": "invalid_graph_definition with exact unexpected field evidence",
+    "unknown_construct": "unsupported_graph_node_kind without fallback",
+    "unknown_gate": "unknown_gate_reference with zero compatibility events, zero Graph run, and zero worker calls"
+  },
+  "artifact_boundary": {
+    "artifact_owner_removed": false,
+    "artifact_runtime_and_storage_retained": true,
+    "artifact_publication_authority_changed": false,
+    "artifact_contract_changed": false
+  },
+  "gate_classification": {
+    "gate_a_repository_preparation": "complete_for_definition_reader_admission_matrix",
+    "gate_b_production_cutover": "not_authorized",
+    "gate_c_legacy_deletion": "not_authorized",
+    "task_2_10_complete": false,
+    "production_run_spec_changed": false,
+    "legacy_compiler_changed": false,
+    "production_preflight_route_changed": false,
+    "reason": "The live HarnessRunSpec still exposes workflow rather than graph. Final graph_required and legacy_orchestration_not_supported run-admission assertions can only be implemented after tasks 2.3 through 2.6 activate the Graph-only run contract and compiler."
+  },
+  "verification": {
+    "definition_tests": {
+      "command": ".\\.venv\\Scripts\\python.exe -m pytest tests/framework/harness/graph/test_definition.py -q",
+      "result": "65 passed"
+    },
+    "preflight_before_worker_test": {
+      "command": ".\\.venv\\Scripts\\python.exe -m pytest tests/framework/harness/control_plane/test_deterministic_gate_enforcement.py::test_unknown_declared_gate_fails_before_any_event_or_worker_call -q",
+      "result": "1 passed"
+    },
+    "graph_owner_tests": {
+      "command": ".\\.venv\\Scripts\\python.exe -m pytest tests/framework/harness/graph -q",
+      "result": "122 passed"
+    },
+    "compiler_and_preflight_tests": {
+      "command": ".\\.venv\\Scripts\\python.exe -m pytest tests/framework/harness/workflow/test_graph_dsl_contracts.py tests/framework/harness/workflow/test_graph_compiler.py tests/framework/harness/workflow/test_graph_preflight.py tests/framework/harness/workflow/test_graph_preflight_regressions.py tests/framework/harness/control_plane/test_deterministic_gate_enforcement.py -q",
+      "result": "76 passed"
+    },
+    "architecture_tests": {
+      "command": ".\\.venv\\Scripts\\python.exe -m pytest tests/architecture -q",
+      "result": "185 passed, 4 warnings"
+    },
+    "mandatory_smoke": {
+      "command": ".\\.venv\\Scripts\\python.exe -m scripts.dev smoke",
+      "result": "2539 passed, 23 deselected, 22 warnings; source validation is_valid=true, error_count=0, warning_count=0; exit 0"
+    },
+    "change_validation": {
+      "command": "openspec validate graph-only-orchestration --strict",
+      "result": "passed"
+    },
+    "full_validation": {
+      "command": "openspec validate --all --strict",
+      "result": "533 passed, 0 failed"
+    }
+  },
+  "task_status": {
+    "task_2_10_checked": false,
+    "completed_tasks": 25,
+    "open_tasks": 77,
+    "total_tasks": 102
+  }
+}

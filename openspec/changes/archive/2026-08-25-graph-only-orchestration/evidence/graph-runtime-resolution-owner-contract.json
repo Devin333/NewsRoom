@@ -1,0 +1,102 @@
+{
+  "schema": "newsroom.graph-runtime-resolution-owner-contract/v1",
+  "captured_at": "2026-08-15",
+  "change": "graph-only-orchestration",
+  "task_refs": [
+    "2.1",
+    "3.1"
+  ],
+  "status": "gate_a_runtime_resolution_owner_slice_complete_tasks_open",
+  "implementation_commit": "44e223dbfb49b66e106b85fbef9c1cdbf62b4dd4",
+  "implementation_tree": "af4b755214011d3cda84a5a92bd26397348730f2",
+  "owners": {
+    "runtime_resolver": "framework.harness.graph.runtime_resolution.HarnessGraphRuntimeResolver",
+    "resolved_bindings": "framework.harness.graph.runtime_resolution.HarnessResolvedRuntimeBindings",
+    "runtime_binding_authority": "framework.harness.graph.bindings.HarnessRuntimeBindingAuthority",
+    "control_plane_caller": "framework.harness.control_plane.harness.HarnessControlPlane",
+    "artifact_terminal_owner": "framework.harness.artifacts"
+  },
+  "graph_owned_resolution_contract": {
+    "input": "checksum-bound NormalizedHarnessGraph",
+    "accepts_harness_workflow_spec": false,
+    "imports_harness_workflow_namespace": false,
+    "worker_type_source": "HarnessExecutableNode.metadata.worker_type",
+    "worker_activity_gate_and_side_effect_refs_source": "frozen executable node",
+    "terminal_policy_source": "frozen Graph terminal policy snapshot",
+    "workflow_and_step_identity_rederived_from_legacy_declaration": false,
+    "control_nodes_resolve_worker_or_activity_bindings": false,
+    "missing_live_binding_fails_closed": true,
+    "missing_terminal_policy_snapshot_fails_closed": true,
+    "terminal_gate_coverage_is_deterministic": true
+  },
+  "namespace_migration": {
+    "old_module": "framework/harness/workflow/runtime_resolution.py",
+    "old_module_exists": false,
+    "workflow_import_shim_exists": false,
+    "control_plane_imports_graph_owner": true,
+    "subtract_only_freeze_generation": 7,
+    "legacy_runtime_resolution_active_baseline_entries": 0
+  },
+  "artifact_boundary": {
+    "artifact_owner_removed": false,
+    "artifact_owner_runtime_and_storage_retained": true,
+    "artifact_is_worker_leaf": false,
+    "terminal_publication_policy_resolves_from_frozen_graph": true,
+    "llm_or_worker_can_decide_publication": false
+  },
+  "gate_a_non_activation": {
+    "harness_run_spec_uses_graph_definition_v3": false,
+    "legacy_compiler_replaced": false,
+    "legacy_reader_replaced": false,
+    "legacy_preflight_replaced": false,
+    "legacy_live_binding_construction_replaced": false,
+    "normalized_graph_schema_changed": false,
+    "durable_dispatch_receipt_changed": false,
+    "research_composition_returns_graph_definition": false,
+    "production_writer_or_persisted_pointer_changed": false,
+    "gate_b_production_cutover_authorized": false,
+    "gate_c_legacy_deletion_authorized": false
+  },
+  "verification": {
+    "focused_owner_tests": {
+      "command": ".\\.venv\\Scripts\\python.exe -m pytest tests/framework/harness/graph/test_runtime_resolution.py tests/architecture/test_harness_graph_namespace_boundary.py tests/architecture/test_harness_graph_caller_inventory.py -q",
+      "result": "14 passed"
+    },
+    "freeze_and_namespace_tests": {
+      "command": ".\\.venv\\Scripts\\python.exe -m pytest tests/architecture/test_graph_only_freeze.py tests/architecture/test_harness_graph_namespace_boundary.py tests/architecture/test_harness_graph_caller_inventory.py -q",
+      "result": "26 passed"
+    },
+    "graph_and_preflight_tests": {
+      "command": ".\\.venv\\Scripts\\python.exe -m pytest tests/framework/harness/graph tests/framework/harness/workflow/test_graph_preflight.py tests/framework/harness/workflow/test_graph_preflight_regressions.py -q",
+      "result": "127 passed"
+    },
+    "all_harness_tests": {
+      "command": ".\\.venv\\Scripts\\python.exe -m pytest tests/framework/harness -q",
+      "result": "1435 passed"
+    },
+    "architecture_tests": {
+      "command": ".\\.venv\\Scripts\\python.exe -m pytest tests/architecture -q",
+      "result": "184 passed, 4 warnings"
+    },
+    "mandatory_smoke": {
+      "command": ".\\.venv\\Scripts\\python.exe -m scripts.dev smoke",
+      "result": "2511 passed, 23 deselected, 22 warnings; source validation is_valid=true; exit 0"
+    },
+    "change_validation": {
+      "command": "openspec validate graph-only-orchestration --strict",
+      "result": "passed"
+    },
+    "full_validation": {
+      "command": "openspec validate --all --strict",
+      "result": "533 passed, 0 failed"
+    }
+  },
+  "task_status": {
+    "task_2_1_checked": false,
+    "task_3_1_checked": false,
+    "reason": "Graph compiler, reader, preflight, legacy live-binding construction, remaining control-plane callers, normalized identity, typed-leaf dispatch, and Research composition remain open.",
+    "completed_tasks": 25,
+    "open_tasks": 77,
+    "total_tasks": 102
+  }
+}

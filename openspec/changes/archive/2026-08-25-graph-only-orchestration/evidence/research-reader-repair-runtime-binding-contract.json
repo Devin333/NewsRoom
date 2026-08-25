@@ -1,0 +1,94 @@
+{
+  "schema": "newsroom.research-reader-repair-runtime-binding-contract-evidence/v1",
+  "captured_at": "2026-08-16",
+  "change": "graph-only-orchestration",
+  "task_refs": [
+    "3.6",
+    "3.7",
+    "5.5",
+    "5.7"
+  ],
+  "status": "gate_a_exact_binding_bundle_complete_production_installation_open",
+  "implementation": {
+    "commit": "f61fcf8f3655d17813a82b15a8abe40139befb31",
+    "tree": "e03b48c78578fb1775661224703b1ed4499192b7",
+    "module": "business/research/graphs/reader_repair_runtime.py",
+    "binding_schema": "newsroom.research-reader-repair-runtime-bindings/v1"
+  },
+  "graph_identity": {
+    "graph_id": "research.reader_repair.graph",
+    "graph_version": "2",
+    "definition_checksum": "sha256:7522777c2a8e80e249a4fa2f2a5dad33a9f6a1164d7d34cd82464f9c5350b7a0"
+  },
+  "exact_registration_contract": {
+    "activity_count": 10,
+    "worker_binding_count": 10,
+    "activity_binding_count": 10,
+    "leaf_binding_count": 10,
+    "function_worker_count": 8,
+    "subagent_worker_count": 2,
+    "missing_implementations_allowed": false,
+    "unexpected_implementations_allowed": false,
+    "moving_or_substituted_worker_version_allowed": false,
+    "legacy_worker_type_alias_allowed": false,
+    "gate_registry_contains_only_definition_declared_gates": true,
+    "uses_harness_runtime_binding_authority": true,
+    "builder_installs_runtime_authority": false
+  },
+  "side_effect_contract": {
+    "handler_ref": "research.reader_repair.memory.commit@1",
+    "kind": "memory_write",
+    "supports_worker_prepare": true,
+    "supports_controller_terminal_commit": true,
+    "prepare_and_commit_protocol_required": true,
+    "artifact_handler_registered": false,
+    "artifact_terminal_policy_registered": false
+  },
+  "production_activation": {
+    "single_paper_runtime_imports_or_calls_bundle": false,
+    "research_composition_imports_or_calls_bundle": false,
+    "production_worker_implementations_registered": false,
+    "production_activity_implementations_registered": false,
+    "production_runtime_authority_installed": false,
+    "graph_only_run_admission_enabled": false,
+    "live_committed_output_receipt_injection_enabled": false
+  },
+  "remaining_blockers": {
+    "graph_definition_to_normalized_graph_lineage_bound": false,
+    "live_resource_backed_executor_installed": false,
+    "live_receipt_resolver_injection_installed": false,
+    "real_function_subagent_activity_implementations_complete": false,
+    "production_authority_installation_complete": false,
+    "legacy_synthetic_after_ref_removed": false,
+    "legacy_direct_memory_writes_removed": false,
+    "separate_failure_terminal_diagnostic_policy_declared": false
+  },
+  "validation": {
+    "focused_runtime_binding_passed": 9,
+    "reader_repair_research_boundary_passed": 109,
+    "harness_graph_node_output_passed": 143,
+    "architecture_passed": 196,
+    "architecture_warnings": 4,
+    "compile_passed": true,
+    "mandatory_smoke_passed": 2627,
+    "mandatory_smoke_deselected": 23,
+    "mandatory_smoke_warnings": 22,
+    "source_validation": {
+      "is_valid": true,
+      "error_count": 0,
+      "warning_count": 0
+    },
+    "openspec_change_strict_passed": true,
+    "openspec_strict_all_passed": 533,
+    "openspec_strict_all_failed": 0
+  },
+  "task_status": {
+    "task_3_6_checked": false,
+    "task_3_7_checked": false,
+    "task_5_5_checked": false,
+    "task_5_7_checked": false,
+    "completed_tasks": 25,
+    "open_tasks": 77,
+    "total_tasks": 102
+  }
+}

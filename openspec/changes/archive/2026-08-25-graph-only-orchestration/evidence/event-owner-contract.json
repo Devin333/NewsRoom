@@ -1,0 +1,116 @@
+{
+  "schema": "newsroom.graph-only-event-owner-contract/v1",
+  "captured_at": "2026-08-15",
+  "change": "graph-only-orchestration",
+  "task_refs": [
+    "4.3"
+  ],
+  "status": "gate_a_event_owner_contract_installed",
+  "implementation_commit": "9148ba4e163de42b6ff23aa365a77ec8d2f68d34",
+  "implementation_tree": "c67fea44488ec2627570aa7dcfa8ce17061537b2",
+  "owner": {
+    "contract_namespace": "framework.events",
+    "implementation_path": "framework/events/projection.py",
+    "public_export_path": "framework/events/__init__.py",
+    "legacy_mapper_path": "framework/workflow/runtime/event_projection.py",
+    "offline_migration_caller": "interfaces/services/event_migration_service.py"
+  },
+  "installed_contract": {
+    "canonical_projection_schema": "newsroom.event-projection/v1",
+    "graph_context_schema": "newsroom.graph-event-context/v1",
+    "graph_projection_schema": "newsroom.graph-event-projection/v1",
+    "models": [
+      "EventProjection",
+      "GraphRunIdentity",
+      "GraphEventContext",
+      "GraphEventProjection"
+    ],
+    "services": [
+      "EventProjectionExporter",
+      "GraphEventProjectionExporter",
+      "project_canonical_event",
+      "project_graph_event"
+    ],
+    "features": [
+      "bounded stream paging",
+      "fixed durable high watermark",
+      "contiguous sequence validation",
+      "tenant and stream scope validation",
+      "atomic temporary-file replacement",
+      "directory fsync on supported platforms",
+      "projection checksum verification",
+      "source content and record checksum binding",
+      "schema-aware payload and extension reprojection",
+      "secret redaction",
+      "exact Graph context schema validation",
+      "exact run and Graph identity validation",
+      "Graph identity consistency across the projected prefix",
+      "node and node-instance pair validation",
+      "legacy orchestration alias rejection for Graph envelopes",
+      "unknown and moving version fail-closed behavior",
+      "tamper detection without live event-store writes"
+    ],
+    "framework_events_workflow_imports": 0,
+    "offline_migration_workflow_projector_imports": 0,
+    "compatibility_facade_added": false
+  },
+  "legacy_mapper_disposition": {
+    "status": "retained_until_gate_c",
+    "reason": "Existing operator, inspection, and legacy run-manifest surfaces still consume the legacy projection schema. Gate A moves reusable mechanics to the event owner without activating a new production schema or deleting historical read support.",
+    "event_owned_engine_reused": true,
+    "legacy_schema_mapper_only": true
+  },
+  "gate_classification": {
+    "gate_a_repository_preparation": "complete_for_task_4_3",
+    "gate_b_production_cutover": "not_authorized",
+    "gate_c_legacy_deletion": "not_authorized",
+    "managed_environment_activated": false,
+    "harness_graph_writer_switched": false,
+    "operator_projection_reader_switched": false,
+    "external_projection_schema_switched": false,
+    "persisted_pointer_switched": false,
+    "managed_history_migrated": false,
+    "legacy_mapper_deleted": false,
+    "reason": "This Gate A slice installs owner contracts, replacement tests, and an offline migration caller change. It does not activate a managed writer or reader, publish an external schema cutover, switch a pointer, migrate managed data, or remove legacy read support."
+  },
+  "remaining_bridge_work": [
+    "task 4.4 Gate A: install event application ports, inactive Graph adapter, typed legacy-history diagnostic, and replacement tests",
+    "task 4.11 Gate B: emit the versioned Graph context from the qualified Harness durable writer",
+    "task 4.11 Gate B: activate event projection and run inspection through the Graph application port and external schema",
+    "Gate C: remove the legacy projection mapper after zero-reference and history completion evidence"
+  ],
+  "verification": {
+    "focused_projection_migration": {
+      "command": ".\\.venv\\Scripts\\python.exe -m pytest tests/framework/events/test_event_projection.py tests/framework/workflow/runtime/test_workflow_event_projection.py tests/interfaces/services/test_event_migration_service.py tests/infrastructure/storage/events/test_migration_backfill.py tests/interfaces/services/test_event_projection_service.py -q",
+      "result": "45 passed"
+    },
+    "architecture_owner_and_freeze": {
+      "command": ".\\.venv\\Scripts\\python.exe -m pytest tests/architecture/test_framework_events_boundary.py tests/architecture/test_graph_event_owner_boundary.py tests/architecture/test_graph_only_freeze.py -q",
+      "result": "26 passed"
+    },
+    "freeze_verify": {
+      "command": ".\\.venv\\Scripts\\python.exe tests/architecture/_graph_only_freeze.py verify --project-root . --baseline tests/architecture/fixtures/graph_only_freeze_baseline.json",
+      "result": "passed"
+    },
+    "compile": {
+      "command": ".\\.venv\\Scripts\\python.exe -m scripts.dev compile",
+      "result": "passed"
+    },
+    "mandatory_smoke": {
+      "command": ".\\.venv\\Scripts\\python.exe -m scripts.dev smoke",
+      "result": "2377 passed, 23 deselected, 22 warnings; source validation is_valid=true; exit 0"
+    },
+    "change_validation": {
+      "command": "openspec validate graph-only-orchestration --strict",
+      "result": "passed"
+    },
+    "full_validation": {
+      "command": "openspec validate --all --strict",
+      "result": "533 passed, 0 failed"
+    }
+  },
+  "task_status": {
+    "task_4_3_checked": true,
+    "task_4_4_checked": false
+  }
+}

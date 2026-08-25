@@ -1,0 +1,149 @@
+{
+  "schema": "newsroom.research-reader-repair-memory-side-effect-contract/v1",
+  "captured_at": "2026-08-16",
+  "change": "graph-only-orchestration",
+  "task_refs": [
+    "3.7",
+    "5.5",
+    "5.7"
+  ],
+  "status": "gate_a_durable_adapter_complete_tasks_open",
+  "contract_commit": "09f6166f57919aed6426d8d54f9465f28a26206a",
+  "implementation_commit": "f762e7a34bfa238c9cf6fd6aa6b3538766eef180",
+  "implementation_tree": "254a803c4a1e401f28c5147e55123318ecf2653f",
+  "graph_identity": {
+    "graph_id": "research.reader_repair.graph",
+    "graph_version": "1",
+    "definition_checksum": "sha256:0cc430145c6bb59ed0436a1b71ecbdfc6c2f4d6a18d1dec880ed1617052d3cc7",
+    "checksum_unchanged_by_handler_slice": true,
+    "handler_ref": "research.reader_repair.memory.commit@1",
+    "effect_kind": "memory_write",
+    "inherited_gate_ref": "ReaderRepairMemoryPolicyGate@1"
+  },
+  "worker_candidate_boundary": {
+    "owner": "business/research/graphs/reader_repair_workers.py",
+    "function": "build_reader_repair_memory_worker_result",
+    "output_type": "MemoryWriteCandidate",
+    "required_status": "proposed",
+    "worker_origin_intent_required": true,
+    "exact_candidate_and_input_checksums_required": true,
+    "harness_bound_compound_checksum_revalidated": true,
+    "may_commit_memory": false,
+    "may_return_public_memory_refs": false,
+    "may_publish_or_promote_skill": false
+  },
+  "atomic_commit_port": {
+    "owner": "business/research/ports/repair_memory.py",
+    "port": "ReaderRepairMemoryCommitPort",
+    "request": "ReaderRepairMemoryCommitRequest",
+    "receipt": "ReaderRepairMemoryCommitReceipt",
+    "legacy_reader_repair_memory_port_wrapped": false,
+    "case_and_strategies_single_transaction_required": true,
+    "stable_idempotency_required": true,
+    "request_checksum_required": true,
+    "receipt_checksum_required": true,
+    "request_candidate_deeply_immutable": true,
+    "crash_window_retry_returns_same_receipt": true,
+    "public_refs_are_versioned": true,
+    "public_ref_shape": "memory://research.reader_repair/{case|strategy}/{object_id}/versions/{version}"
+  },
+  "handler_boundary": {
+    "owner": "infrastructure/research/reader_repair_memory_side_effect.py",
+    "handler": "ReaderRepairMemorySideEffectHandler",
+    "worker_prepare_disposition": "prepared",
+    "worker_prepare_memory_write_count": 0,
+    "worker_prepare_public_ref_count": 0,
+    "terminal_commit_disposition": "accepted",
+    "controller_terminal_authority_required": true,
+    "exact_handler_kind_scope_atomic_group_and_idempotency_required": true,
+    "exact_prepared_outcome_ref_required": true,
+    "durable_gate_evidence_required": true,
+    "adapter_receipt_revalidated": true,
+    "existing_terminal_outcome_receipt_revalidated": true
+  },
+  "durable_postgres_adapter": {
+    "migration": "infrastructure/storage/postgres/migrations/011_reader_repair_memory_commits.sql",
+    "repository": "infrastructure/storage/postgres/repair_memory_repository.py",
+    "interface_adapter": "interfaces/services/reader_repair_memory.py::PostgresReaderRepairMemoryCommitPort",
+    "inactive_factory": "interfaces/services/reader_repair_factory.py::build_reader_repair_memory_commit_port_from_env",
+    "append_only_commit_header_and_members": true,
+    "append_only_version_rows": true,
+    "deferred_exactly_one_case_constraint": true,
+    "idempotency_transaction_lock": true,
+    "canonical_object_transaction_locks": true,
+    "case_strategy_and_receipt_single_transaction": true,
+    "partial_write_rollback_verified": true,
+    "durable_retry_reconstructs_same_receipt": true,
+    "repository_record_revalidated_before_public_refs": true
+  },
+  "adversarial_matrix": {
+    "rehash_after_namespace_substitution_rejected": true,
+    "rehash_after_candidate_checksum_substitution_rejected": true,
+    "rehash_after_skill_authority_injection_rejected": true,
+    "authorization_scope_substitution_rejected": true,
+    "worker_origin_terminal_commit_rejected": true,
+    "terminal_without_prepared_outcome_rejected": true,
+    "conflicting_adapter_receipt_rejected": true,
+    "mutable_request_candidate_rejected": true
+  },
+  "production_activation": {
+    "production_atomic_adapter_exists": true,
+    "production_atomic_adapter_factory_exists": true,
+    "production_handler_registered": false,
+    "single_paper_runtime_changed": false,
+    "research_composition_changed": false,
+    "legacy_reader_repair_service_direct_case_write_present": true,
+    "legacy_reader_repair_service_direct_strategy_write_present": true,
+    "graph_only_run_admission_active": false
+  },
+  "artifact_boundary": {
+    "artifact_owner_removed": false,
+    "artifact_runtime_or_storage_removed": false,
+    "artifact_files_changed_by_commit": false,
+    "reader_repair_handler_uses_artifact_port": false,
+    "reader_repair_graph_binds_artifact_handler": false,
+    "artifact_publication_behavior_changed": false
+  },
+  "remaining_blockers": [
+    "Register exact Reader Repair Function/SubAgent workers and the memory handler only in final Graph production composition.",
+    "Remove direct commit_case and write_strategy calls from ReaderRepairService after the Graph path is activated.",
+    "Complete Graph-only compiler, durable dispatch receipt, run admission, recovery, and replay cutover."
+  ],
+  "replacement_tests": {
+    "handler_contract": "tests/infrastructure/research/test_reader_repair_memory_side_effect.py",
+    "postgres_atomic_repository": "tests/infrastructure/storage/postgres/test_repair_memory_repository.py",
+    "postgres_append_only_migration": "tests/infrastructure/storage/postgres/test_migrations.py::test_reader_repair_memory_commit_migration_is_atomic_and_append_only",
+    "interface_receipt_mapping": "tests/interfaces/services/test_reader_repair_memory.py",
+    "inactive_adapter_factory": "tests/interfaces/services/test_reader_repair_factory.py::test_reader_repair_commit_port_factory_builds_inactive_postgres_adapter",
+    "inactive_composition": "tests/architecture/test_research_boundaries.py::test_reader_repair_memory_side_effect_is_atomic_and_inactive",
+    "exact_infrastructure_port_exception": "tests/architecture/test_infrastructure_boundary.py::test_research_adapter_business_imports_are_exact_contract_exceptions",
+    "graph_checksum": "tests/business/research/graphs/test_reader_repair_graph.py::test_reader_repair_graph_is_canonical_strict_and_gate_complete"
+  },
+  "verification": {
+    "compile": "passed",
+    "focused_memory_graph_architecture": "64 passed",
+    "postgres_storage": "98 passed",
+    "interface_services": "427 passed, 2 skipped",
+    "research_reader_repair": "65 passed",
+    "framework_harness": "1471 passed",
+    "infrastructure_research": "238 passed, 3 skipped",
+    "architecture": "193 passed, 4 existing FastAPI deprecation warnings",
+    "mandatory_smoke": "2578 passed, 23 deselected, 22 warnings; exit 0",
+    "source_validation": {
+      "is_valid": true,
+      "error_count": 0,
+      "warning_count": 0
+    },
+    "openspec_change_strict": "passed",
+    "openspec_all_strict": "533 passed, 0 failed"
+  },
+  "task_status": {
+    "task_3_7_checked": false,
+    "task_5_5_checked": false,
+    "task_5_7_checked": false,
+    "reason": "The exact inactive worker/handler contract and durable Postgres atomic adapter exist, but production registration, direct-write removal, and Graph-only run admission remain outstanding.",
+    "completed_tasks": 25,
+    "open_tasks": 77,
+    "total_tasks": 102
+  }
+}

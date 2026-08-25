@@ -1,0 +1,146 @@
+{
+  "schema": "newsroom.graph-only-offline-migration-dry-run-contract/v1",
+  "captured_at": "2026-08-14",
+  "change": "graph-only-orchestration",
+  "task_refs": [
+    "8.1",
+    "8.2",
+    "8.3",
+    "8.4",
+    "8.5",
+    "8.6"
+  ],
+  "status": "gate_a_dry_run_contract_complete",
+  "implementation": {
+    "commit": "1af71b58dfeec8777addced6d55b71fea9d9cd24",
+    "tree": "2d41bf5dd46e1e65285f98b871872b23cfae398a",
+    "package": "scripts/graph_only_migration",
+    "production_imported": false,
+    "writer_surface_present": false,
+    "authority_mode": "staging_only"
+  },
+  "source_contract": {
+    "registry": "scripts/graph_only_migration/source_profiles.json",
+    "registry_schema": "newsroom.graph-history-source-profile-registry/v1",
+    "profile_count": 10,
+    "maximum_source_bytes": 67108864,
+    "maximum_source_records": 1000000,
+    "exact_schema_match_required": true,
+    "inventory_checksum_required": true,
+    "duplicate_json_keys_rejected": true,
+    "non_finite_json_rejected": true,
+    "absolute_traversing_linked_and_reparse_paths_rejected": true,
+    "source_identity_rechecked_on_open_handle": true
+  },
+  "target_contract": {
+    "dry_run_only": true,
+    "plan_schema": "newsroom.graph-history-migration-plan/v1",
+    "inventory_schema": "newsroom.graph-history-migration-inventory/v1",
+    "quarantine_schema": "newsroom.graph-history-quarantine/v1",
+    "terminal_manifest_schema": "newsroom.graph-terminal-manifest/v1",
+    "history_checkpoint_schema": "newsroom.graph-history-checkpoint/v1",
+    "history_checkpoint_resume_allowed": false,
+    "history_checkpoint_replay_validation_allowed": true,
+    "history_checkpoint_replay_execution_allowed": false,
+    "history_checkpoint_publication_allowed": false,
+    "runtime_checkpoint_claimed": false,
+    "legacy_identity_keys_in_target_payloads": 0,
+    "referential_integrity": [
+      "checkpoint boundary event must be present and exact",
+      "terminal manifest checkpoint must remain converted",
+      "replay manifest checkpoint events and artifacts must remain converted",
+      "cursor checkpoint and iteration artifact refs must remain converted",
+      "same target identity with different checksum is quarantined"
+    ]
+  },
+  "artifact_alignment": {
+    "preserved_owner": "framework.harness.artifacts",
+    "terminal_manifest_wire_contract_reused": true,
+    "legacy_manifest_owner_metadata_supported": true,
+    "manifest_self_reference_excluded": true,
+    "run_level_artifacts_require_reviewed_default_node_binding": true,
+    "artifact_path_membership_checksum_size_and_media_type_required": true
+  },
+  "stable_quarantine_reason_codes": [
+    "unknown_schema",
+    "missing_graph_identity",
+    "missing_gate_evidence",
+    "missing_terminal_evidence",
+    "illegal_source_path",
+    "illegal_artifact_path",
+    "checksum_mismatch",
+    "event_sequence_gap",
+    "ambiguous_record",
+    "incompatible_checkpoint",
+    "target_conflict",
+    "malformed_source"
+  ],
+  "fixture_plan": {
+    "plan_checksum": "sha256:17457c18074d94d9bd9ee99eed758a92c547510b15ba4ea926d547ff3ae1c748",
+    "source_aggregate_checksum": "sha256:7e446f9c123344b931c52a8697d3f0bbdc6cedb1c3ded2ecd56638722712d651",
+    "mapping_aggregate_checksum": "sha256:fe18ed55ee6114e85cbc5b189ec76b913776540f6e623c173dfb3898084f6aa0",
+    "counts": {
+      "inventory": 8,
+      "converted": 8,
+      "quarantined": 0,
+      "skipped_idempotent": 0
+    },
+    "side_effect_counts": {
+      "llm": 0,
+      "tool_or_mcp": 0,
+      "business_worker": 0,
+      "retrieval": 0,
+      "memory_write": 0,
+      "publication": 0,
+      "compensation": 0,
+      "legacy_executor": 0
+    }
+  },
+  "verification": {
+    "focused_migration_and_boundary": {
+      "command": ".\\.venv\\Scripts\\python.exe -m pytest tests/scripts/test_graph_only_migration.py tests/architecture/test_graph_only_migration_boundary.py -q",
+      "result": "24 passed"
+    },
+    "cross_owner_contracts": {
+      "command": ".\\.venv\\Scripts\\python.exe -m pytest tests/framework/harness/artifacts/test_terminal_manifest.py tests/framework/events/test_event_migration.py tests/framework/workflow/checkpoint/test_durable_checkpoint_migration.py tests/infrastructure/storage/test_conversation_store.py -q",
+      "result": "95 passed"
+    },
+    "architecture": {
+      "command": ".\\.venv\\Scripts\\python.exe -m pytest tests/architecture -q",
+      "result": "155 passed, 4 warnings"
+    },
+    "compile": {
+      "command": ".\\.venv\\Scripts\\python.exe -m scripts.dev compile",
+      "result": "passed"
+    },
+    "mandatory_smoke": {
+      "command": ".\\.venv\\Scripts\\python.exe -m scripts.dev smoke",
+      "result": "2373 passed, 23 deselected, 22 warnings; source validation is_valid=true; exit 0"
+    },
+    "change_validation": {
+      "command": "openspec validate graph-only-orchestration --strict",
+      "result": "passed"
+    },
+    "full_validation": {
+      "command": "openspec validate --all --strict",
+      "result": "533 passed, 0 failed"
+    }
+  },
+  "gate_classification": {
+    "gate_a_repository_preparation": "complete_for_tasks_8_1_through_8_6",
+    "gate_b_production_cutover": "not_authorized",
+    "gate_c_legacy_deletion": "not_authorized",
+    "production_writer_switched": false,
+    "production_reader_switched": false,
+    "persisted_pointer_switched": false,
+    "managed_environment_migrated": false,
+    "legacy_reader_deleted": false
+  },
+  "task_status": {
+    "completed": 13,
+    "total": 99,
+    "tasks_8_1_through_8_6_checked": true,
+    "tasks_8_7_through_8_10_checked": false,
+    "task_8_11_checked": false
+  }
+}

@@ -1,0 +1,145 @@
+{
+  "schema": "newsroom.research-reader-repair-graph-v2-contract-evidence/v1",
+  "captured_at": "2026-08-16",
+  "change": "graph-only-orchestration",
+  "task_refs": [
+    "2.4",
+    "2.10",
+    "3.6",
+    "3.7",
+    "4.13",
+    "5.5",
+    "5.7"
+  ],
+  "status": "gate_a_reader_repair_graph_v2_complete_production_activation_open",
+  "implementation": {
+    "commit": "107fa2e8eee999da3cd9428967c90fcadbb4d246",
+    "tree": "561edd064f5dd2c7eb971ba8a0c09ac396f2d3e1"
+  },
+  "graph_definition": {
+    "graph_id": "research.reader_repair.graph",
+    "graph_version": "2",
+    "definition_schema": "newsroom.harness-graph-definition/v5",
+    "definition_checksum": "sha256:7522777c2a8e80e249a4fa2f2a5dad33a9f6a1164d7d34cd82464f9c5350b7a0",
+    "activity_count": 10,
+    "success_sequence": [
+      "detect_reader_issue",
+      "assemble_repair_context",
+      "propose_repair_candidate",
+      "apply_repair_candidate",
+      "collect_repair_application_observation",
+      "verify_repair_application",
+      "build_repair_result",
+      "build_repair_case",
+      "prepare_skill_candidate_bundle",
+      "prepare_memory_write"
+    ],
+    "typed_leaf_binding_count": 10,
+    "task_plan_stage_binding_count": 0,
+    "artifact_handler_declared": false,
+    "artifact_terminal_policy_declared": false,
+    "production_registered": false
+  },
+  "committed_application_binding": {
+    "binding_id": "reader-repair-application-commit",
+    "producer_activity_id": "apply_repair_candidate",
+    "producer_node_id": "apply_repair_candidate",
+    "producer_output_key": "reader_repair_application_candidate",
+    "consumer_activity_id": "build_repair_result",
+    "consumer_node_id": "build_repair_result",
+    "receipt_input_key": "reader_repair_application_commit_receipt",
+    "producer_deterministically_dominates_consumer": true,
+    "receipt_is_separate_from_business_input_keys": true
+  },
+  "failure_topology": {
+    "binding_count": 4,
+    "source_node_ids": [
+      "apply_repair_candidate",
+      "collect_repair_application_observation",
+      "propose_repair_candidate",
+      "verify_repair_application"
+    ],
+    "repair_activity_id": "propose_repair_candidate",
+    "repair_node_ids_are_unique_and_outside_root": true,
+    "triggers": [
+      "verification_failure",
+      "worker_failure_after_retry_exhaustion"
+    ],
+    "subagent_effective_max_attempts": 2,
+    "deterministic_function_effective_max_attempts": 1,
+    "leaf_owned_repair_step_id_present": false,
+    "bounded_loop_used": false,
+    "run_level_max_replans_and_max_turns_required_at_admission": true
+  },
+  "committed_result_contract": {
+    "gate_ref": "ReaderRepairCommittedResultGate@1",
+    "result_model": "ReaderRepairResult",
+    "proof_model": "ReaderRepairCommittedOutputProof",
+    "proof_schema": "newsroom.reader-repair-committed-output-proof/v1",
+    "recomputes_application_verification": true,
+    "requires_successful_canonical_check_conjunction": true,
+    "requires_exact_graph_definition_checksum": true,
+    "requires_exact_graph_id_and_version": true,
+    "requires_exact_binding_activity_node_and_output": true,
+    "rehashes_full_application_candidate_against_receipt": true,
+    "binds_application_id": true,
+    "binds_verification_checksum": true,
+    "binds_receipt_resource_commit_output_checksums": true,
+    "payload_after_ref_is_real_after_payload_checksum": true,
+    "synthetic_repaired_suffix_allowed": false,
+    "candidate_ref_used_as_public_ref": false,
+    "public_ref_emitted": false,
+    "receipt_echoed_in_inactive_worker_output_for_gate_a_validation": true,
+    "live_resource_current_commit_verified_by_result_gate": false
+  },
+  "authority_boundaries": {
+    "llm_or_subagent_applies_patch": false,
+    "llm_or_subagent_decides_verdict": false,
+    "function_worker_publishes_output": false,
+    "reader_repair_binds_artifact_handler": false,
+    "artifact_owner_removed": false,
+    "artifact_owner_runtime_storage_publication_changed": false,
+    "memory_handler_accepts_failed_gate_bypass": false
+  },
+  "remaining_blockers": {
+    "graph_definition_to_normalized_graph_lineage_bound": false,
+    "live_resource_backed_executor_installed": false,
+    "live_receipt_resolver_injection_installed": false,
+    "production_worker_registration_complete": false,
+    "production_gate_registry_composition_complete": false,
+    "production_graph_admission_complete": false,
+    "legacy_synthetic_after_ref_removed": false,
+    "legacy_direct_memory_writes_removed": false,
+    "separate_failure_terminal_diagnostic_policy_declared": false
+  },
+  "validation": {
+    "focused_reader_repair_contracts_passed": 29,
+    "reader_repair_graph_boundary_passed": 97,
+    "architecture_passed": 194,
+    "architecture_warnings": 4,
+    "compile_passed": true,
+    "mandatory_smoke_passed": 2618,
+    "mandatory_smoke_deselected": 23,
+    "mandatory_smoke_warnings": 22,
+    "source_validation": {
+      "is_valid": true,
+      "error_count": 0,
+      "warning_count": 0
+    },
+    "openspec_change_strict_passed": true,
+    "openspec_strict_all_passed": 533,
+    "openspec_strict_all_failed": 0
+  },
+  "task_status": {
+    "task_2_4_checked": false,
+    "task_2_10_checked": false,
+    "task_3_6_checked": false,
+    "task_3_7_checked": false,
+    "task_4_13_checked": false,
+    "task_5_5_checked": false,
+    "task_5_7_checked": false,
+    "completed_tasks": 25,
+    "open_tasks": 77,
+    "total_tasks": 102
+  }
+}
