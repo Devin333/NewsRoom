@@ -217,14 +217,14 @@ AgentLoop Graph smoke 与 control-evidence slice 已完成 task 6.5/6.6。worker
 
 ## 10. Canonical OpenSpec 和文档同步
 
-- [ ] 10.1 将本 change 的 Graph-only delta 同步到 `harness-graph` canonical spec，并移除 `Legacy Workflow Graph Compilation`
-- [ ] 10.2 新增并同步 `graph-storage-indexing`、`approval-graph-resume-interfaces` 等 Graph capability，退役旧 capability requirements
-- [ ] 10.3 更新 `harness-runtime`、`research-runtime`、AgentLoop、artifact、architecture、interface 和 cleanup specs，消除要求旧 runtime 的条款
-- [ ] 10.4 归档 `workflow-runtime-target-closure`、`workflow-storage-indexing` 和已 superseded approval workflow capability，保留历史 provenance
-- [ ] 10.5 更新架构文档、运行手册、CLI/API/MCP 文档和 Research composition 文档，统一表述为 Graph outer orchestration + AgentLoop inner loop
-- [ ] 10.6 对 active source/docs/specs 执行 stale reference audit，所有剩余 Workflow 名称必须命中具体历史 allowlist
-- [ ] 10.7 运行 `openspec validate graph-only-orchestration --strict` 和 `openspec validate --all --strict`
-- [ ] 10.8 核对每个旧 Workflow capability 的全部 requirements 已迁入 Graph owner 或显式删除，不能只删除 capability 中的一部分 requirement
+- [x] 10.1 将本 change 的 Graph-only delta 同步到 `harness-graph` canonical spec，并移除 `Legacy Workflow Graph Compilation`
+- [x] 10.2 新增并同步 `graph-storage-indexing`、`approval-graph-resume-interfaces` 等 Graph capability，退役旧 capability requirements
+- [x] 10.3 更新 `harness-runtime`、`research-runtime`、AgentLoop、artifact、architecture、interface 和 cleanup specs，消除要求旧 runtime 的条款
+- [x] 10.4 归档 `workflow-runtime-target-closure`、`workflow-storage-indexing` 和已 superseded approval workflow capability，保留历史 provenance
+- [x] 10.5 更新架构文档、运行手册、CLI/API/MCP 文档和 Research composition 文档，统一表述为 Graph outer orchestration + AgentLoop inner loop
+- [x] 10.6 对 active source/docs/specs 执行 stale reference audit，所有剩余 Workflow 名称必须命中具体历史 allowlist
+- [x] 10.7 运行 `openspec validate graph-only-orchestration --strict` 和 `openspec validate --all --strict`
+- [x] 10.8 核对每个旧 Workflow capability 的全部 requirements 已迁入 Graph owner 或显式删除，不能只删除 capability 中的一部分 requirement
 
 当前 Reader Repair Function worker slice 已由 commit `ce95db5ce9127aac9ad4eb151acc4d204823debd`（tree `7268a0ca7fe3b5b283a01635701aa81daea7ed97`）固化；focused `19 passed`、Reader Repair full surface `125 passed`、architecture `196 passed, 4 warnings`、mandatory smoke `2632 passed, 23 deselected, 22 warnings`、source validation `true/0/0`、OpenSpec strict-all `533 passed, 0 failed`。这些结果不改变 3.6/3.7/5.5/5.7 的未勾选状态，证据见 `evidence/research-reader-repair-function-worker-contract.json`。
 
@@ -234,15 +234,19 @@ AgentLoop Graph smoke 与 control-evidence slice 已完成 task 6.5/6.6。worker
 
 ## 11. 验收和发布门禁
 
-- [ ] 11.1 运行 `python -m scripts.dev compile`，修复所有 Graph namespace、import 和 schema 错误
-- [ ] 11.2 运行与变更范围匹配的 Graph/Harness/Research/AgentLoop/artifact/approval/storage focused tests
-- [ ] 11.3 运行 `python -m scripts.dev test` 和 `python -m scripts.dev smoke`
-- [ ] 11.4 执行 production import/export/schema scan，确认旧 runtime symbol/import 为零，并确认 `workflow_id`、Workflow scope、SubAgent v1/v2 live schema、Workflow Event current registration、flat Harness state/checkpoint/replay 和 Workflow Artifact publisher 仅命中明确 history-only allowlist或完全为零
-- [ ] 11.5 执行 Graph static/dynamic Research end-to-end、approval wait/resume、crash recovery、offline replay 和 artifact inspection 验收
-- [ ] 11.6 检查 replay 的 live call count、publication count、memory-write count 和 tool authorization count 均符合 zero-side-effect 规则
-- [ ] 11.7 检查 legacy rejection/quarantine、checksum、无 fallback、无 worker/side-effect 调用和 history-only import isolation
-- [ ] 11.8 执行 release review，确认没有 compatibility facade、fallback executor、legacy writer、hidden feature flag 或未登记历史 store
+- [x] 11.1 运行 `python -m scripts.dev compile`，修复所有 Graph namespace、import 和 schema 错误
+- [x] 11.2 运行与变更范围匹配的 Graph/Harness/Research/AgentLoop/artifact/approval/storage focused tests
+- [x] 11.3 运行 `python -m scripts.dev test` 和 `python -m scripts.dev smoke`
+- [x] 11.4 执行 production import/export/schema scan，确认旧 runtime symbol/import 为零，并确认 `workflow_id`、Workflow scope、SubAgent v1/v2 live schema、Workflow Event current registration、flat Harness state/checkpoint/replay 和 Workflow Artifact publisher 仅命中明确 history-only allowlist或完全为零
+- [x] 11.5 执行 Graph static/dynamic Research end-to-end、approval wait/resume、crash recovery、offline replay 和 artifact inspection 验收
+- [x] 11.6 检查 replay 的 live call count、publication count、memory-write count 和 tool authorization count 均符合 zero-side-effect 规则
+- [x] 11.7 检查 legacy rejection/quarantine、checksum、无 fallback、无 worker/side-effect 调用和 history-only import isolation
+- [x] 11.8 执行 release review，确认没有 compatibility facade、fallback executor、legacy writer、hidden feature flag 或未登记历史 store
 - [ ] 11.9 每个职责 slice 在范围匹配的检查通过后独立提交；最终 cutover 只有在 Graph production path、zero legacy production reference、Artifact 保留约束和 mandatory smoke 全部通过后才可声明完成
+
+### 07a-07d release evidence
+
+Canonical capability traceability、superseded capability archive、stale-reference audit、production zero-reference scan、legacy deletion proof、release checklist 和 final acceptance matrix 位于 `evidence/`。本轮已验证：focused `872 passed, 1 skipped`；E2E acceptance `187 passed, 1 skipped`；full test `6343 passed, 103 skipped, 24 deselected`；mandatory smoke `2318 passed, 23 deselected`；OpenSpec strict-all `537 passed, 0 failed`；stale audit `1583 files / 0 violations`；production zero-reference `294 files / 0 violations`；OpenAPI export `123 paths / 66 schemas`。Managed production sign-off 与外部 rollback drill 明确标记为未执行，不作为本地 archive gate 的伪证据。
 
 Side-effect identity/storage fence slice 已由 commit `ad6195d4` 完成，并由 `351ea1f3` 修复其触发的 Artifact existence 根因。`side_effect_identity_key` 绑定 `run_id + graph_id/version/ref/checksum + origin + node_id/node_instance_id/activity_id + activity attempt + terminal_action + effect_id + scope refs`；Intent 默认 idempotency 不再只使用 `effect_id`，AttemptLease 补齐 `run_id/origin/terminal_action/activity_attempt`。InMemory 与 SQLite authoritative indexes 按完整 identity key 隔离，同一 logical `effect_id` 的不同 Graph node instances 可独立写入、重试和 fenced lease；effect-only reader 在多匹配时返回 `side_effect_identity_ambiguous`，错误 scope/idempotency fail closed；authorization、outcome、attempt generation 和 terminal/worker identity matching 均拒绝物理身份丢失。SQLite schema v3 对 v1/v2 文件一次性迁移 identity key 与旧 lease JSON，非法或缺少关联的 legacy data 保持 typed corruption。`FilesystemArtifactStore.exists()` 对缺失祖先返回 `False`，保留已存在路径组件的 symlink/reparse 拒绝，保证 TaskPlan immutable document 首次写入能到达真实 verifier。验证为 focused `110 passed, 2 skipped`，包含 SQLite v2 migration、parallel node-instance fence、TaskPlan artifact lineage；compile pass；mandatory smoke `2292 passed, 23 deselected, 22 warnings`，CLI Graph smoke 与 source validation `is_valid=true/error_count=0/warning_count=0`。该 slice 关闭 PRD 50.2 side-effect identity/storage fence 与 Artifact existence 的一项基础运行缺口，但不勾选 3.7/3.10/4.12，也不代表 live Artifact/event index、production pointer cutover、完整 Graph-only interface cutover 或最终 Graph-only release 已完成。
 

@@ -1,0 +1,72 @@
+{
+  "schema": "newsroom.graph-only-final-acceptance-matrix/v1",
+  "change": "graph-only-orchestration",
+  "captured_at": "2026-08-25",
+  "acceptance": [
+    {
+      "surface": "Research static Graph",
+      "status": "passed",
+      "evidence": "e2e-acceptance focused suite and mandatory smoke"
+    },
+    {
+      "surface": "Research dynamic analysis and TaskPlan",
+      "status": "passed",
+      "evidence": "business/research/graphs and TaskPlan recovery/binding tests"
+    },
+    {
+      "surface": "AgentLoop inner activity",
+      "status": "passed",
+      "evidence": "mandatory AgentLoop Graph smoke: 3 LLM calls, 1 tool call, 0 network calls"
+    },
+    {
+      "surface": "Approval Wait registration and resume",
+      "status": "passed",
+      "evidence": "Harness Wait control-plane, approval service, API and AgentLoop wait binding tests"
+    },
+    {
+      "surface": "Crash recovery and idempotent artifact publication",
+      "status": "passed",
+      "evidence": "artifact publication and Research recovery composition tests"
+    },
+    {
+      "surface": "Offline replay",
+      "status": "passed",
+      "evidence": "Graph checkpoint/replay, TaskPlan replay, context snapshot and RAG replay tests"
+    },
+    {
+      "surface": "Artifact inspection",
+      "status": "passed",
+      "evidence": "Graph terminal manifest, artifact inspection service and Graph artifact governance tests"
+    },
+    {
+      "surface": "Legacy quarantine and zero side effect",
+      "status": "passed",
+      "evidence": "history isolation inventory, migration boundary tests, deletion proof and production zero-reference scan"
+    },
+    {
+      "surface": "Canonical specification and documentation",
+      "status": "passed",
+      "evidence": "capability traceability, stale-reference audit, OpenSpec strict-all and generated OpenAPI export"
+    }
+  ],
+  "non_run_external_qualification": [
+    {
+      "item": "managed production environment sign-off",
+      "status": "not_run",
+      "reason": "outside local repository release gate scope"
+    },
+    {
+      "item": "external rollback or pointer switch drill",
+      "status": "not_run",
+      "reason": "no production deployment authority in this task"
+    }
+  ],
+  "release_review": {
+    "compatibility_facade": "absent",
+    "fallback_executor": "absent",
+    "legacy_writer": "absent",
+    "hidden_graph_only_bypass": "absent",
+    "dual_store_writer": "absent",
+    "unregistered_history_store": "absent"
+  }
+}

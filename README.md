@@ -1,6 +1,6 @@
 # NewsRoom
 
-NewsRoom is a spec-driven news intelligence runtime. The current backend product path is Harness + Research: Harness owns workflow control, deterministic gates, replayable traces, and artifact publication while Research owns paper analysis domain behavior.
+NewsRoom is a spec-driven news intelligence runtime. The current backend product path is Graph Harness + Research: the Harness owns Graph outer orchestration, deterministic gates, replayable traces, Wait/approval transitions, and artifact publication, while Research owns paper-analysis domain behavior. AgentLoop is the bounded inner single-agent loop; it produces candidate work but never owns Graph routing or publication decisions.
 
 ## Quick Start
 
@@ -147,7 +147,6 @@ python -m interfaces.cli.news dev run-live-smoke --topic "AI agents" --source-li
 ```bash
 python -m scripts.dev compile
 python -m scripts.dev test
-python -m scripts.dev test-workflows
 python -m scripts.dev test-services
 python -m scripts.dev test-interfaces
 python -m scripts.dev interface-smoke
@@ -173,7 +172,7 @@ Research production runs use real sources, real model providers when configured,
 
 ## Interface Layer
 
-The interface layer exposes CLI, HTTP API, Web Console, and MCP entrypoints over application services. Start with:
+The interface layer exposes CLI, HTTP API, Web Console, and MCP entrypoints over application services. These surfaces address Graph runs and bounded Graph Wait/approval operations; they do not expose a legacy Workflow runtime. Start with:
 
 ```text
 docs/09-INTERFACES_CLI_API_MCP.md

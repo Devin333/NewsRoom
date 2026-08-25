@@ -105,7 +105,7 @@ HTTP API:
 - `POST /api/v1/schedules/tick`
 - `POST /api/v1/schedules/{schedule_id}/trigger`
 
-## Graph Waits Page
+## Approvals Page
 
 Required views:
 
@@ -143,8 +143,8 @@ does not resolve local paths directly.
 
 HTTP API:
 
-- `GET /api/v1/artifacts`
-- `GET /api/v1/artifacts/{artifact_id}`
+- `GET /api/v2/graph-runs/{run_id}/artifacts`
+- `GET /api/v2/graph-runs/{run_id}/artifacts/{artifact_key}`
 - `GET /api/v1/storage/metrics`
 - `GET /api/v1/storage/retention/plan`
 

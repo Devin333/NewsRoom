@@ -1,0 +1,37 @@
+{
+  "schema": "newsroom.graph-only-superseded-capability-archive/v1",
+  "captured_at": "2026-08-25",
+  "archive_policy": "Retain historical provenance; no live Workflow authority or compatibility facade.",
+  "already_archived": [
+    {
+      "change": "workflow-runtime-target-closure",
+      "archive_root": "openspec/changes/archive/",
+      "canonical_tombstone": "openspec/specs/workflow-runtime-target-closure/spec.md",
+      "replacement": "harness-graph"
+    },
+    {
+      "change": "workflow-storage-indexing",
+      "archive_root": "openspec/changes/archive/",
+      "canonical_tombstone": "openspec/specs/workflow-storage-indexing/spec.md",
+      "replacement": "graph-storage-indexing"
+    },
+    {
+      "change": "approval-workflow-resume-interfaces",
+      "archive_root": "openspec/changes/archive/",
+      "canonical_tombstone": "openspec/specs/approval-workflow-resume-interfaces/spec.md",
+      "replacement": "approval-graph-resume-interfaces"
+    }
+  ],
+  "provenance_rule": "Archived change directories remain readable for history and are excluded from active production imports, canonical live requirements, and runtime registries.",
+  "validation": {
+    "status": "passed",
+    "checks": [
+      "openspec validate graph-only-orchestration --type change --strict --json",
+      "openspec validate --all --strict --json",
+      "scripts.graph_only_migration.stale_reference_audit",
+      "scripts.graph_only_migration.zero_reference_scan",
+      "scripts.graph_only_migration.deletion_proof"
+    ],
+    "result": "retired capabilities are canonical tombstones with archived provenance and no live Workflow authority"
+  }
+}

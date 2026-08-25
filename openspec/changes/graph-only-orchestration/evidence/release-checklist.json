@@ -1,0 +1,104 @@
+{
+  "schema": "newsroom.graph-only-release-checklist/v1",
+  "change": "graph-only-orchestration",
+  "captured_at": "2026-08-25",
+  "baseline_head": "33a887e9a28ec69656931e6493bc744a7a98538c",
+  "gates": [
+    {
+      "id": "compile",
+      "status": "passed",
+      "command": "python -m scripts.dev compile",
+      "result": "compileall completed for business, framework, infrastructure, interfaces, scripts"
+    },
+    {
+      "id": "focused-tests",
+      "status": "passed",
+      "command": "pytest Graph/Harness/Research/AgentLoop/artifact/approval/storage focused suite",
+      "result": {
+        "passed": 872,
+        "skipped": 1
+      }
+    },
+    {
+      "id": "full-tests",
+      "status": "passed",
+      "command": "python -m scripts.dev test",
+      "result": {
+        "passed": 6343,
+        "skipped": 103,
+        "deselected": 24,
+        "warnings": 492
+      }
+    },
+    {
+      "id": "mandatory-smoke",
+      "status": "passed",
+      "command": "python -m scripts.dev smoke",
+      "result": {
+        "passed": 2318,
+        "deselected": 23,
+        "warnings": 22,
+        "agent_loop_status": "succeeded",
+        "agent_loop_llm_calls": 3,
+        "agent_loop_tool_calls": 1,
+        "agent_loop_network_calls": 0,
+        "source_validation": "is_valid=true,error_count=0,warning_count=0"
+      }
+    },
+    {
+      "id": "e2e-acceptance",
+      "status": "passed",
+      "command": "pytest Research static/dynamic, recovery, Wait/approval, replay, artifact inspection acceptance suite",
+      "result": {
+        "passed": 187,
+        "skipped": 1
+      }
+    },
+    {
+      "id": "change-strict-validation",
+      "status": "passed",
+      "command": "openspec validate graph-only-orchestration --type change --strict --json",
+      "result": "1 passed, 0 failed"
+    },
+    {
+      "id": "all-strict-validation",
+      "status": "passed",
+      "command": "openspec validate --all --strict --json",
+      "result": "537 passed, 0 failed"
+    },
+    {
+      "id": "stale-reference-audit",
+      "status": "passed",
+      "command": "python -m scripts.graph_only_migration.stale_reference_audit",
+      "evidence": "stale-reference-audit.json",
+      "result": "1583 files scanned, 0 violations, 38 path-scoped allowlisted references"
+    },
+    {
+      "id": "production-zero-reference",
+      "status": "passed",
+      "command": "python -m scripts.graph_only_migration.zero_reference_scan",
+      "evidence": "production-zero-reference.json",
+      "result": "294 files scanned, 0 violations, 0 parse failures"
+    },
+    {
+      "id": "legacy-deletion-proof",
+      "status": "passed",
+      "command": "python -m scripts.graph_only_migration.deletion_proof",
+      "evidence": "legacy-workflow-runtime-deletion-proof.json",
+      "result": "0 retired symbol hits, 0 forbidden imports, 0 legacy schema writers"
+    },
+    {
+      "id": "openapi-export",
+      "status": "passed",
+      "command": "python -m scripts.export_openapi --summary",
+      "result": "OpenAPI 3.1.0, 123 paths, 66 schemas"
+    }
+  ],
+  "release_policy": {
+    "history_only_inputs_are_quarantined": true,
+    "replay_has_no_worker_or_external_side_effect": true,
+    "graph_harness_owns_routing_and_publication": true,
+    "agent_loop_is_inner_worker_only": true,
+    "archive_requires_all_tasks_checked": true
+  }
+}

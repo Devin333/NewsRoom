@@ -1,6 +1,6 @@
 {
   "schema": "newsroom.graph-only-production-zero-reference/v1",
-  "captured_at": "2026-08-24T01:48:22.275832+00:00",
+  "captured_at": "2026-08-25T06:04:14.340806+00:00",
   "production_roots": [
     "scripts/dev.py",
     "interfaces/services",
@@ -47,6 +47,7 @@
     "interfaces/services/feedback_memory_service.py",
     "interfaces/services/graph_memory_service.py",
     "interfaces/services/harness_graph_service.py",
+    "interfaces/services/harness_wait_runtime.py",
     "interfaces/services/harness_wait_service.py",
     "interfaces/services/json_file_store.py",
     "interfaces/services/mcp_service.py",
@@ -112,6 +113,7 @@
     "business/research/application/graph_result_committer.py",
     "business/research/application/llm_client.py",
     "business/research/application/paper_rag_session.py",
+    "business/research/application/reader_repair_runtime.py",
     "business/research/application/run_disposition.py",
     "business/research/application/single_paper_runtime.py",
     "business/research/application/visual_chunk_describer.py",
@@ -322,9 +324,9 @@
     "business/research/taxonomy/registry.py"
   ],
   "summary": {
-    "files_scanned": 292,
+    "files_scanned": 294,
     "violations": 0,
-    "allowlisted_references": 2,
+    "allowlisted_references": 1,
     "parse_failures": 0,
     "by_category": {
       "import": 0,
@@ -337,13 +339,6 @@
   "violations": [],
   "allowlisted_references": [
     {
-      "path": "business/research/document/chunk_storage.py",
-      "line": 23,
-      "category": "schema_or_reflection",
-      "value": "workflow_id",
-      "detail": "workflow identity field in non-authoritative metadata"
-    },
-    {
       "path": "business/research/rag/retrieval/policy_config.py",
       "line": 63,
       "category": "fallback",
@@ -352,8 +347,8 @@
     }
   ],
   "parse_failures": [],
-  "source_commit": "8994d39c5fad9babaece7f281136fb0f8a8f833c",
-  "source_tree": "ca7f1293462aa7438c7b578f38e9288335e8489d",
+  "source_commit": "33a887e9a28ec69656931e6493bc744a7a98538c",
+  "source_tree": "1120eebae4b80fccb4b36701ae60f82bad8296ff",
   "scan_commands": [
     "python -m scripts.graph_only_migration.zero_reference_scan --output openspec/changes/graph-only-orchestration/evidence/production-zero-reference.json",
     "pytest -q tests/architecture/test_graph_only_production_zero_reference.py"

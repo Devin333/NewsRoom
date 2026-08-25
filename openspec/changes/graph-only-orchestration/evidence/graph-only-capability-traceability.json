@@ -1,0 +1,67 @@
+{
+  "schema": "newsroom.graph-only-capability-traceability/v1",
+  "change": "graph-only-orchestration",
+  "captured_at": "2026-08-25",
+  "canonical_capabilities": [
+    {
+      "capability": "harness-graph",
+      "source_delta": "openspec/changes/graph-only-orchestration/specs/harness-graph/spec.md",
+      "canonical_spec": "openspec/specs/harness-graph/spec.md",
+      "ownership": "framework.harness.graph",
+      "coverage": [
+        "versioned Graph compilation",
+        "supported constructs and deterministic routing",
+        "repair and compensation topology",
+        "bounded loops and durable Waits",
+        "Graph preflight and legacy declaration rejection"
+      ]
+    },
+    {
+      "capability": "graph-storage-indexing",
+      "source_delta": "openspec/changes/graph-only-orchestration/specs/graph-storage-indexing/spec.md",
+      "canonical_spec": "openspec/specs/graph-storage-indexing/spec.md",
+      "ownership": "framework.harness.artifacts and storage-owned event/index adapters",
+      "coverage": [
+        "manifest-validated artifact indexing",
+        "checksum-bound Graph event indexing",
+        "run, Graph, node and sequence identity validation"
+      ]
+    },
+    {
+      "capability": "approval-graph-resume-interfaces",
+      "source_delta": "openspec/changes/graph-only-orchestration/specs/approval-graph-resume-interfaces/spec.md",
+      "canonical_spec": "openspec/specs/approval-graph-resume-interfaces/spec.md",
+      "ownership": "application service and versioned HTTP/CLI/MCP/SDK interfaces",
+      "coverage": [
+        "typed approval cause submission",
+        "durable Graph Wait resume",
+        "bounded caller input without state patch or route authority"
+      ]
+    }
+  ],
+  "retired_capabilities": [
+    {
+      "capability": "workflow-runtime-target-closure",
+      "canonical_spec": "openspec/specs/workflow-runtime-target-closure/spec.md",
+      "status": "history-only-tombstone",
+      "replacement": "harness-graph"
+    },
+    {
+      "capability": "workflow-storage-indexing",
+      "canonical_spec": "openspec/specs/workflow-storage-indexing/spec.md",
+      "status": "history-only-tombstone",
+      "replacement": "graph-storage-indexing"
+    },
+    {
+      "capability": "approval-workflow-resume-interfaces",
+      "canonical_spec": "openspec/specs/approval-workflow-resume-interfaces/spec.md",
+      "status": "history-only-tombstone",
+      "replacement": "approval-graph-resume-interfaces"
+    }
+  ],
+  "checks": [
+    "openspec validate graph-only-orchestration --strict",
+    "openspec validate --all --strict",
+    "scripts.graph_only_migration.stale_reference_audit"
+  ]
+}
