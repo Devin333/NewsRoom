@@ -13,7 +13,12 @@ from business.foundation import (
 
 def test_business_artifact_evidence_memory_refs_are_traceable() -> None:
     source = SourceRef(source_name="Source", source_type=SourceType.MANUAL, url="manual://source")
-    trace = BusinessTraceRef.create(run_id="run-1", workflow_id="wf-1", source_ref=source)
+    trace = BusinessTraceRef.create(
+        run_id="run-1",
+        graph_id="research-paper-analysis",
+        graph_version="2",
+        source_ref=source,
+    )
     manifest = BusinessRunManifestRef.create(run_id="run-1", source_ref=source, artifact_ids=["artifact-1"])
     artifact = BusinessArtifactRef.create(
         "board_output",
@@ -30,5 +35,7 @@ def test_business_artifact_evidence_memory_refs_are_traceable() -> None:
     assert evidence.evidence_id.startswith("evidence_")
     assert memory.memory_id.startswith("memory_")
     assert trace.trace_id.startswith("trace_")
+    assert trace.graph_id == "research-paper-analysis"
+    assert trace.graph_ref == "research-paper-analysis@2"
     assert manifest.manifest_id.startswith("manifest_")
     assert evidence.source_ref.source_id == source.source_id

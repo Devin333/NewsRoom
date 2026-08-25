@@ -77,7 +77,9 @@ class BusinessEvidenceRef(PrimitiveModel):
 class BusinessTraceRef(PrimitiveModel):
     trace_id: str
     run_id: str | None = None
-    workflow_id: str | None = None
+    graph_id: str | None = None
+    graph_version: str | None = None
+    graph_ref: str | None = None
     source_ref: SourceRef | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
 
@@ -89,12 +91,35 @@ class BusinessTraceRef(PrimitiveModel):
             raise ValueError("trace_id is required")
         return text
 
+    @model_validator(mode="after")
+    def _validate_graph_identity(self) -> "BusinessTraceRef":
+        values = (self.graph_id, self.graph_version, self.graph_ref)
+        if any(value is not None for value in values):
+            if not self.graph_id or not self.graph_version or not self.graph_ref:
+                raise ValueError("graph_id, graph_version, and graph_ref must be provided together")
+            if self.graph_ref != f"{self.graph_id}@{self.graph_version}":
+                raise ValueError("graph_ref must match graph_id and graph_version")
+        return self
+
     @classmethod
-    def create(cls, *, run_id: str, workflow_id: str | None = None, source_ref: SourceRef | None = None) -> "BusinessTraceRef":
+    def create(
+        cls,
+        *,
+        run_id: str,
+        graph_id: str | None = None,
+        graph_version: str | None = None,
+        graph_ref: str | None = None,
+        source_ref: SourceRef | None = None,
+    ) -> "BusinessTraceRef":
+        resolved_graph_ref = graph_ref
+        if resolved_graph_ref is None and graph_id and graph_version:
+            resolved_graph_ref = f"{graph_id}@{graph_version}"
         return cls(
-            trace_id=build_stable_id("trace", run_id, workflow_id or ""),
+            trace_id=build_stable_id("trace", run_id, resolved_graph_ref or ""),
             run_id=run_id,
-            workflow_id=workflow_id,
+            graph_id=graph_id,
+            graph_version=graph_version,
+            graph_ref=resolved_graph_ref,
             source_ref=source_ref,
         )
 

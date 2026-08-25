@@ -11,8 +11,11 @@ from business.foundation.primitives import PrimitiveModel, SourceRef, build_stab
 
 class BusinessProvenance(PrimitiveModel):
     run_id: str | None = None
-    workflow_id: str | None = None
-    step_id: str | None = None
+    graph_id: str | None = None
+    graph_version: str | None = None
+    graph_ref: str | None = None
+    node_id: str | None = None
+    node_instance_id: str | None = None
     trace_ref: SourceRef | None = None
     manifest_ref: SourceRef | None = None
     source_refs: list[SourceRef] = Field(default_factory=list)
@@ -27,6 +30,12 @@ class BusinessProvenance(PrimitiveModel):
     @model_validator(mode="after")
     def _normalize_created_at(self) -> "BusinessProvenance":
         object.__setattr__(self, "created_at", ensure_utc(self.created_at) or self.created_at)
+        values = (self.graph_id, self.graph_version, self.graph_ref)
+        if any(value is not None for value in values):
+            if not self.graph_id or not self.graph_version or not self.graph_ref:
+                raise ValueError("graph_id, graph_version, and graph_ref must be provided together")
+            if self.graph_ref != f"{self.graph_id}@{self.graph_version}":
+                raise ValueError("graph_ref must match graph_id and graph_version")
         return self
 
 

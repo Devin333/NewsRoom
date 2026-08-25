@@ -59,6 +59,7 @@ def test_board_card_serializes_without_raw_payload_and_keeps_output_contract() -
     assert "raw_payload" not in serialized
     assert card.evidence_refs
     assert card.provenance is not None
+    assert "workflow_id" not in serialized["provenance"]
     assert card.quality is not None
     assert card.ranking_reason
 

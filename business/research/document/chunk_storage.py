@@ -20,7 +20,6 @@ def _chunk_to_payload(chunk: PaperChunk) -> dict[str, Any]:
         for key in (
             "run_id",
             "session_id",
-            "workflow_id",
             "step_id",
             "tenant_id",
             "tenant",

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from business.research.document.chunk_storage import PaperChunkStoreAdapter
+from business.research.document.chunk_storage import PaperChunkStoreAdapter, _chunk_to_payload
 from business.research.document.models import PaperChunk
 from infrastructure.storage.vector.fake_store import InMemoryVectorStore
 from infrastructure.storage.vector.paper_chunk_store import PaperChunkStore
@@ -44,6 +44,13 @@ def test_paper_chunk_store_adapter_lists_paper_chunks_from_vector_payloads() -> 
 
     assert [chunk.chunk_id for chunk in chunks] == ["p1-a", "p1-b"]
     assert all(chunk.paper_id == "p1" for chunk in chunks)
+
+
+def test_paper_chunk_payload_does_not_promote_legacy_workflow_identity() -> None:
+    payload = _chunk_to_payload(_chunk("legacy-metadata", metadata={"workflow_id": "legacy"}))
+
+    assert payload["metadata"]["workflow_id"] == "legacy"
+    assert "workflow_id" not in payload
 
 
 def test_paper_chunk_store_adapter_tenant_filter_keeps_public_chunks() -> None:
