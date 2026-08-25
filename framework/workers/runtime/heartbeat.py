@@ -105,11 +105,34 @@ class WorkerHeartbeatStatus:
 
 
 class InMemoryWorkerHeartbeatStore:
-    def __init__(self) -> None:
+    def __init__(self, *, runtime_event_sink: Any | None = None) -> None:
         self._records: dict[str, WorkerHeartbeat] = {}
+        self._runtime_event_sink = runtime_event_sink
 
     def save(self, record: WorkerHeartbeat) -> WorkerHeartbeat:
         self._records[record.worker_id] = record
+        if self._runtime_event_sink is not None:
+            from framework.events.runtime.projection import RuntimeEventEmitter, RuntimeEventIdentity
+
+            RuntimeEventEmitter(
+                self._runtime_event_sink,
+                identity=RuntimeEventIdentity(attempt_id=record.current_task_id or record.worker_id),
+                source="worker-heartbeat",
+                stream_id=record.worker_id,
+            ).emit(
+                "worker_heartbeat",
+                event_id=f"worker-heartbeat:{record.worker_id}:{record.last_heartbeat_at.isoformat()}",
+                status=record.status.value,
+                reason_code="heartbeat_recorded",
+                refs=(record.worker_id, record.current_task_id) if record.current_task_id else (record.worker_id,),
+                metadata={
+                    "worker_id": record.worker_id,
+                    "queue_count": len(record.queue_names),
+                    "current_task_id": record.current_task_id,
+                    "processed_count": record.processed_count,
+                    "failed_count": record.failed_count,
+                },
+            )
         return record
 
     def heartbeat(self, record: WorkerHeartbeat) -> WorkerHeartbeat:

@@ -60,6 +60,8 @@ def test_news_client_reads_run_inspection_endpoints() -> None:
     assert client.runs.list(status="running", graph_id="research.paper_analysis") == {"ok": True}
     assert client.runs.manifest("run/1") == {"ok": True}
     assert client.runs.events("run/1", limit=2, sequence_cursor="cursor-1") == {"ok": True}
+    assert client.runs.runtime_status("run/1", node_id="node-1") == {"ok": True}
+    assert client.runs.runtime_timeline("run/1", cursor="cursor-1", limit=2) == {"ok": True}
     assert client.runs.replay("run/1") == {"ok": True}
     assert client.runs.diagnostics("run/1") == {"ok": True}
     assert client.runs.health("run/1") == {"ok": True}
@@ -78,6 +80,8 @@ def test_news_client_reads_run_inspection_endpoints() -> None:
         "https://news.example/api/v2/graph-runs?limit=20&offset=0&status=running&graph_id=research.paper_analysis",
         "https://news.example/api/v2/graph-runs/run%2F1/manifest",
         "https://news.example/api/v2/graph-runs/run%2F1/events?limit=2&offset=0&sequence_cursor=cursor-1",
+        "https://news.example/api/v2/graph-runs/run%2F1/runtime/status?node_id=node-1",
+        "https://news.example/api/v2/graph-runs/run%2F1/runtime/timeline?cursor=cursor-1&limit=2",
         "https://news.example/api/v2/graph-runs/run%2F1/replay",
         "https://news.example/api/v2/graph-runs/run%2F1/diagnostics",
         "https://news.example/api/v2/graph-runs/run%2F1/health",

@@ -5,6 +5,7 @@ from datetime import UTC, datetime
 import pytest
 
 from framework.events.canonical import checksum_for
+from framework.events.runtime.projection import RuntimeEventProjection
 from framework.harness.control_plane.harness import (
     HarnessControlPlane,
     InMemoryHarnessEventPort,
@@ -543,6 +544,27 @@ def test_timer_adapter_sink_records_wake_through_application_service() -> None:
     assert completed.lifecycle == "completed"
 
 
+def test_wait_mutations_emit_redacted_runtime_facts() -> None:
+    projection = RuntimeEventProjection()
+    service, registration, _ = _waiting_service(
+        "runtime-events",
+        wait_kind="timer",
+        runtime_event_sink=projection,
+    )
+    service.record_timer_wake(
+        HarnessWaitTimerWakeRecord(
+            _wait_scope("run-service-runtime-events", registration),
+            registration.deadline_ref,
+            checksum_for({"timer": "runtime-event"}),
+            0,
+        )
+    )
+    events = projection.timeline(stream_id="run-service-runtime-events").events
+    assert len(events) == 1
+    assert events[0].event_type.value == "worker_status"
+    assert events[0].metadata["operation"] == "timer"
+
+
 def _waiting_service(
     suffix: str,
     *,
@@ -550,6 +572,7 @@ def _waiting_service(
     actor: ActorContext | None = None,
     actor_scope_overrides: dict[str, str] | None = None,
     approval_evidence_overrides: dict[str, object] | None = None,
+    runtime_event_sink: object | None = None,
 ) -> tuple[HarnessWaitApplicationService, object, _RuntimeResolver]:
     run_id = f"run-service-{suffix}"
     tenant_scope_ref = checksum_for({"tenant": run_id})
@@ -717,6 +740,7 @@ def _waiting_service(
         actor_scope_resolver=actor_scope_resolver,
         approval_resolver=approval_resolver,
         clock=lambda: _NOW,
+        runtime_event_sink=runtime_event_sink,
     )
     return service, registration, runtime_resolver
 

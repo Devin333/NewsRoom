@@ -104,6 +104,7 @@ class AgentLoop:
         skill_runner: SkillRunnerProtocol | None = None,
         skill_selection_policy: SkillSelectionPolicy | None = None,
         agent_skill_runtime: AgentSkillRuntime | None = None,
+        runtime_event_sink: Any | None = None,
     ) -> None:
         self._llm_client = llm_client
         self._tool_executor = tool_executor
@@ -128,6 +129,7 @@ class AgentLoop:
             )
         else:
             self._skill_runtime = None
+        self._runtime_event_sink = runtime_event_sink
 
     def run(
         self,
@@ -176,6 +178,7 @@ class AgentLoop:
             agent_id=agent.agent_id,
             run_id=effective_run_id,
             execution_identity=execution_identity,
+            runtime_event_sink=self._runtime_event_sink,
         )
         trace = AgentLoopTrace(
             agent_id=agent.agent_id,

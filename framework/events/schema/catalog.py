@@ -81,6 +81,35 @@ TASK_PLAN_EVENT_TYPES = (
     "TASK_PLAN_HALTED",
 )
 
+# Runtime execution facts share one versioned payload schema.  The canonical
+# event envelope still owns identity, ordering, security classification and
+# durable checksums; this registry only admits the redacted fact body.
+RUNTIME_EVENT_DATA_SCHEMA = "newsroom.runtime-event/v1"
+RUNTIME_EVENT_TYPES = (
+    "turn_started",
+    "turn_stopped",
+    "turn_aborted",
+    "tool_requested",
+    "approval_requested",
+    "approval_decided",
+    "execution_started",
+    "execution_terminal",
+    "child_spawned",
+    "child_status",
+    "child_heartbeat",
+    "child_terminal",
+    "context_compaction_planned",
+    "context_compaction_committed",
+    "context_compaction_rejected",
+    "worker_heartbeat",
+    "worker_status",
+    "timeout",
+    "cancel_requested",
+    "cancellation_confirmed",
+    "indeterminate",
+    "runtime_error",
+)
+
 BUDGET_EVENT_DATA_SCHEMA = "newsroom.budget-event/v1"
 BUDGET_EVENT_TYPES = (
     "budget_reservation_created",
@@ -706,7 +735,119 @@ def default_event_schema_catalog(
                 current=True,
             )
         )
+    for event_type in RUNTIME_EVENT_TYPES:
+        # These two logical facts already have a canonical Harness graph event
+        # schema.  Reusing that registration avoids two current schemas for a
+        # single event type.
+        if event_type in {"context_compaction_planned", "context_compaction_rejected"}:
+            continue
+        catalog.register(
+            EventSchemaRegistration(
+                event_type=event_type,
+                data_schema=RUNTIME_EVENT_DATA_SCHEMA,
+                json_schema=_runtime_event_payload_schema(),
+                sensitivity_policy=SensitivityPolicy(),
+                current=True,
+            )
+        )
     return catalog
+
+
+def _runtime_event_payload_schema() -> dict[str, Any]:
+    # Runtime metadata is a bounded, recursively scalar/reference-shaped
+    # object.  The negative key guard keeps complete prompts, tool payloads,
+    # and secret-bearing fields out even when a caller bypasses the framework
+    # RuntimeEventEnvelope redactor and publishes through EventRuntime.
+    safe_key = (
+        r"^(?!(?i:.*(?:secret|token|password|credential|private[_-]?key|"
+        r"api[_-]?key|authorization|cookie|prompt|raw_payload|file_content).*))"
+        r"(?!(?i:arguments?|payload|output|observation|task|feedback|verdict|"
+        r"stream_event|text_delta|content|raw)$)"
+        r"[A-Za-z_][A-Za-z0-9_.:-]{0,127}$"
+    )
+    safe_value = {
+        "anyOf": [
+            {"type": ["string", "number", "boolean", "null"], "maxLength": 4096},
+            {"type": "array", "maxItems": 128, "items": {"$ref": "#/$defs/safeValue"}},
+            {"$ref": "#/$defs/safeObject"},
+        ]
+    }
+    safe_object = {
+        "type": "object",
+        "maxProperties": 64,
+        "patternProperties": {safe_key: {"$ref": "#/$defs/safeValue"}},
+        "additionalProperties": False,
+    }
+    graph_identity = {
+        "anyOf": [
+            {"type": "null"},
+            {
+                "type": "object",
+                "additionalProperties": False,
+                "required": [
+                    "run_id",
+                    "graph_id",
+                    "graph_version",
+                    "graph_ref",
+                    "graph_checksum",
+                    "node_id",
+                    "node_instance_id",
+                    "activity_id",
+                    "attempt",
+                ],
+                "properties": {
+                    "run_id": {"type": "string", "minLength": 1, "maxLength": 512},
+                    "graph_id": {"type": "string", "minLength": 1, "maxLength": 512},
+                    "graph_version": {"type": "string", "minLength": 1, "maxLength": 128},
+                    "graph_ref": {"type": "string", "minLength": 1, "maxLength": 1024},
+                    "graph_checksum": _CHECKSUM_TEXT,
+                    "node_id": {"type": "string", "minLength": 1, "maxLength": 512},
+                    "node_instance_id": {"type": "string", "minLength": 1, "maxLength": 512},
+                    "activity_id": {"type": "string", "minLength": 1, "maxLength": 512},
+                    "attempt": {"type": "integer", "minimum": 1},
+                },
+            },
+        ]
+    }
+    return {
+        "type": "object",
+        "$defs": {
+            "safeValue": safe_value,
+            "safeObject": safe_object,
+        },
+        "additionalProperties": False,
+        "required": ["schema_version", "identity", "refs", "checksums", "metadata", "source"],
+        "properties": {
+            "schema_version": {"const": RUNTIME_EVENT_DATA_SCHEMA},
+            "event_id": {"type": "string", "minLength": 1, "maxLength": 512},
+            "event_type": {"type": "string", "minLength": 1, "maxLength": 128},
+            "occurred_at": {"type": "string", "minLength": 1, "maxLength": 128},
+            "identity": {
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["graph_identity", "activity_id", "attempt_id", "node_id", "node_instance_id"],
+                "properties": {
+                    "graph_identity": graph_identity,
+                    "activity_id": {"type": ["string", "null"], "maxLength": 512},
+                    "attempt_id": {"type": ["string", "null"], "maxLength": 512},
+                    "node_id": {"type": ["string", "null"], "maxLength": 512},
+                    "node_instance_id": {"type": ["string", "null"], "maxLength": 512},
+                },
+            },
+            "status": {"type": ["string", "null"], "maxLength": 128},
+            "reason_code": {"type": ["string", "null"], "maxLength": 256},
+            "sequence": {"type": ["integer", "null"], "minimum": 1},
+            "stream_id": {"type": ["string", "null"], "maxLength": 512},
+            "refs": {"type": "array", "maxItems": 64, "items": {"type": "string", "maxLength": 2048}},
+            "checksums": {
+                "type": "object",
+                "maxProperties": 64,
+                "additionalProperties": _CHECKSUM_TEXT,
+            },
+            "metadata": {"$ref": "#/$defs/safeObject"},
+            "source": {"type": "string", "minLength": 1, "maxLength": 512},
+        },
+    }
 
 
 def _budget_event_payload_schema() -> dict[str, Any]:

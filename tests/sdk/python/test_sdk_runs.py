@@ -15,6 +15,8 @@ def test_runs_resource_paths_and_payloads() -> None:
         limit=2,
         sequence_cursor="cursor-1",
     )["ok"] is True
+    assert client.runs.runtime_status("run/1", node_id="node-1")["ok"] is True
+    assert client.runs.runtime_timeline("run/1", cursor="cursor-1", limit=2)["ok"] is True
     assert client.runs.artifacts("run/1")["ok"] is True
     assert client.runs.diagnostics("run/1")["ok"] is True
     assert client.runs.cancel("run/1", reason="manual_stop")["ok"] is True
@@ -23,6 +25,8 @@ def test_runs_resource_paths_and_payloads() -> None:
         ("GET", "/api/v2/graph-runs/run%2F1"),
         ("GET", "/api/v2/graph-runs"),
         ("GET", "/api/v2/graph-runs/run%2F1/events"),
+        ("GET", "/api/v2/graph-runs/run%2F1/runtime/status"),
+        ("GET", "/api/v2/graph-runs/run%2F1/runtime/timeline"),
         ("GET", "/api/v2/graph-runs/run%2F1/artifacts"),
         ("GET", "/api/v2/graph-runs/run%2F1/diagnostics"),
         ("POST", "/api/v2/graph-runs/run%2F1/cancel"),
@@ -30,7 +34,7 @@ def test_runs_resource_paths_and_payloads() -> None:
     assert request_func.calls[1]["params"]["status"] == "running"
     assert request_func.calls[2]["params"]["event_type"] == "step_succeeded"
     assert request_func.calls[2]["params"]["sequence_cursor"] == "cursor-1"
-    assert request_func.calls[5]["json"] == {"reason_code": "manual_stop"}
+    assert request_func.calls[7]["json"] == {"reason_code": "manual_stop"}
 
 
 class _Recorder:

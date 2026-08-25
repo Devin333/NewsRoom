@@ -46,6 +46,7 @@ class SubAgentRuntime:
         observation_sink: SubAgentTranscriptObservationSink | None = (
             DEFAULT_SUBAGENT_TRANSCRIPT_OBSERVATION_SINK
         ),
+        runtime_event_sink: Any | None = None,
     ) -> None:
         if not isinstance(transcript_store, SubAgentTranscriptStorePort):
             raise TypeError("transcript_store must implement SubAgentTranscriptStorePort")
@@ -60,6 +61,7 @@ class SubAgentRuntime:
                 "observation_sink must implement SubAgentTranscriptObservationSink"
             )
         self._observation_sink = observation_sink
+        self._runtime_event_sink = runtime_event_sink
 
     def invoke(self, invocation: SubAgentInvocation) -> SubAgentResult:
         if not isinstance(invocation, SubAgentInvocation):
@@ -67,7 +69,10 @@ class SubAgentRuntime:
         identity = subagent_attempt_identity(invocation)
         recovered = self._recover(identity)
         if recovered is not None:
+            self._emit_runtime_event(invocation, "worker_status", "recovered", "subagent_transcript_reused")
             return recovered
+
+        self._emit_runtime_event(invocation, "worker_status", "running", "worker_invocation_started")
 
         spec = invocation.subagent_spec
         context_result = self.gates.context_boundary.evaluate(invocation.context_envelope)
@@ -76,19 +81,23 @@ class SubAgentRuntime:
             {"input_refs": list(invocation.input_refs), **invocation.metadata},
         )
         if not all_subagent_gates_passed((context_result, input_result)):
-            return self._halted_result(
+            result = self._halted_result(
                 invocation,
                 (context_result, input_result),
                 errors=("subagent_plan_gates_failed",),
             )
+            self._emit_runtime_event(invocation, "worker_status", "failed", "subagent_plan_gates_failed")
+            return result
 
         worker = self.workers.get(spec.subagent_id)
         if worker is None:
-            return self._halted_result(
+            result = self._halted_result(
                 invocation,
                 (context_result, input_result),
                 errors=("subagent_worker_not_registered",),
             )
+            self._emit_runtime_event(invocation, "worker_status", "failed", "subagent_worker_not_registered")
+            return result
         task = {
             "invocation": invocation.to_dict(),
             "context": invocation.context_envelope.to_dict(),
@@ -103,11 +112,13 @@ class SubAgentRuntime:
                 execution_identity=_execution_identity_for_invocation(invocation),
             )
         except Exception:
-            return self._halted_result(
+            result = self._halted_result(
                 invocation,
                 (context_result, input_result),
                 errors=("subagent_worker_execution_failed",),
             )
+            self._emit_runtime_event(invocation, "worker_status", "failed", "subagent_worker_execution_failed")
+            return result
         output = dict(worker_result.output)
         try:
             requested_tools = tuple(str(tool) for tool in output.get("requested_tools", ()))
@@ -128,11 +139,13 @@ class SubAgentRuntime:
                 output.get("memory_write_candidates", ())
             )
         except (HarnessValidationError, TypeError, ValueError, OverflowError):
-            return self._halted_result(
+            result = self._halted_result(
                 invocation,
                 (context_result, input_result),
                 errors=("subagent_worker_output_invalid",),
             )
+            self._emit_runtime_event(invocation, "worker_status", "failed", "subagent_worker_output_invalid")
+            return result
         warning_count = _warning_count(worker_result.diagnostics.get("warnings", ()))
         base_result = SubAgentResult(
             invocation_id=invocation.invocation_id,
@@ -160,12 +173,14 @@ class SubAgentRuntime:
             self.gates.budget.evaluate(invocation, usage),
         )
         if not all_subagent_gates_passed(gate_results):
-            return self._halted_result(
+            result = self._halted_result(
                 invocation,
                 gate_results,
                 errors=("subagent_verify_gates_failed",),
                 worker_result=base_result,
             )
+            self._emit_runtime_event(invocation, "worker_status", "failed", "subagent_verify_gates_failed")
+            return result
 
         receipt = self._write_bundle(invocation, base_result, gate_results)
         final_result = _with_receipt(base_result, receipt)
@@ -175,12 +190,41 @@ class SubAgentRuntime:
             identity=identity,
         )
         if not transcript_result.passed:
-            return self._halted_result(
+            result = self._halted_result(
                 invocation,
                 (*gate_results, transcript_result),
                 errors=("subagent_transcript_verify_failed",),
             )
+            self._emit_runtime_event(invocation, "worker_status", "failed", "subagent_transcript_verify_failed")
+            return result
+        self._emit_runtime_event(invocation, "worker_status", "succeeded", "worker_completed")
         return final_result
+
+    def _emit_runtime_event(
+        self,
+        invocation: SubAgentInvocation,
+        event_type: str,
+        status: str,
+        reason_code: str,
+    ) -> None:
+        if self._runtime_event_sink is None:
+            return
+        from framework.events.runtime.projection import RuntimeEventEmitter, RuntimeEventIdentity
+
+        graph_identity = getattr(invocation.context_envelope, "task_execution_identity", None)
+        RuntimeEventEmitter(
+            self._runtime_event_sink,
+            identity=RuntimeEventIdentity(graph_identity=graph_identity, attempt_id=invocation.invocation_id),
+            source="subagent-worker-runtime",
+            stream_id=invocation.parent_run_id,
+        ).emit(
+            event_type,
+            event_id=f"worker-runtime:{invocation.invocation_id}:{event_type}:{status}",
+            status=status,
+            reason_code=reason_code,
+            refs=(invocation.invocation_id, invocation.child_run_id),
+            metadata={"subagent_id": invocation.subagent_spec.subagent_id, "status": status},
+        )
 
     def recover(self, invocation: SubAgentInvocation) -> SubAgentResult | None:
         """Read a previously committed outcome without invoking a worker."""

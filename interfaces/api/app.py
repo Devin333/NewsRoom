@@ -23,6 +23,7 @@ from framework.events import (
     default_event_telemetry,
     trace_context_scope,
 )
+from framework.events.runtime.projection import RuntimeOperatorStatusService
 from framework.tool.governance.redaction import redact_sensitive_values
 from framework.shared.public_errors import project_public_error
 from interfaces.models import (
@@ -106,6 +107,7 @@ ScheduleServiceFactory = Callable[[], ScheduleApplicationService]
 AuthServiceFactory = Callable[[], AuthApplicationService]
 ProjectServiceFactory = Callable[[], ProjectApplicationService]
 ResearchServiceFactory = Callable[[], ResearchApplicationService]
+RuntimeOperatorStatusServiceFactory = Callable[[], RuntimeOperatorStatusService]
 AuditEmitterFactory = Callable[[], AuditEmitter | None]
 ApiKeyRoles = Mapping[str, str | Sequence[str]]
 
@@ -132,6 +134,7 @@ def create_app(
     research_service_factory: ResearchServiceFactory = build_research_application_service,
     harness_graph_service_factory: HarnessGraphServiceFactory | None = None,
     harness_wait_service_factory: HarnessWaitServiceFactory | None = None,
+    runtime_operator_status_service_factory: RuntimeOperatorStatusServiceFactory | None = None,
     audit_emitter_factory: AuditEmitterFactory | None = audit_emitter_from_env,
     api_token: str | None = None,
     api_keys: ApiKeyRoles | None = None,
@@ -374,6 +377,7 @@ def create_app(
         research_service_factory=research_service_factory,
         harness_graph_service_factory=harness_graph_service_factory,
         harness_wait_service_factory=harness_wait_service_factory,
+        runtime_operator_status_service_factory=runtime_operator_status_service_factory,
     )
     helpers = ApiRouteHelpers(
         success=_success,

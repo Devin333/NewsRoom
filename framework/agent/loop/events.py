@@ -37,6 +37,7 @@ class AgentLoopEventRecorder:
         trace_context: TraceContext | None = None,
         run_id: str | None = None,
         execution_identity: GraphExecutionIdentity | None = None,
+        runtime_event_sink: Any | None = None,
     ) -> None:
         self.agent_id = agent_id
         if execution_identity is not None and not isinstance(
@@ -54,6 +55,7 @@ class AgentLoopEventRecorder:
             if trace_context is not None
             else None
         )
+        self._runtime_event_sink = runtime_event_sink
         self._events: list[AgentLoopEvent] = []
 
     def emit(
@@ -70,6 +72,38 @@ class AgentLoopEventRecorder:
             payload=dict(payload or {}),
             trace_context=self.trace_context,
         )
+        if self._runtime_event_sink is not None:
+            from framework.events.runtime.projection import RuntimeEventEmitter, RuntimeEventIdentity
+
+            RuntimeEventEmitter(
+                self._runtime_event_sink,
+                identity=RuntimeEventIdentity(
+                    graph_identity=self.execution_identity,
+                    activity_id=(self.execution_identity.activity_id if self.execution_identity else None),
+                    node_id=(self.execution_identity.node_id if self.execution_identity else None),
+                    node_instance_id=(self.execution_identity.node_instance_id if self.execution_identity else None),
+                    attempt_id=(str(self.execution_identity.attempt) if self.execution_identity else None),
+                ),
+                source="agent-loop",
+                stream_id=self.run_id,
+            ).emit(
+                event_type.value,
+                status=(
+                    str(event.payload.get("status"))
+                    if event.payload.get("status") is not None
+                    else None
+                ),
+                reason_code=(
+                    str(event.payload.get("stop_reason"))
+                    if event.payload.get("stop_reason") is not None
+                    else None
+                ),
+                metadata={
+                    "agent_id": self.agent_id,
+                    "iteration": iteration,
+                    "payload": event.payload,
+                },
+            )
         self._events.append(event)
         return event.to_dict()
 

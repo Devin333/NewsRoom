@@ -4,7 +4,7 @@ import re
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Callable, Protocol, runtime_checkable
+from typing import Any, Callable, Protocol, runtime_checkable
 
 from framework.harness.control_plane.graph_state import HarnessGraphState
 from framework.harness.control_plane.errors import HarnessValidationError
@@ -279,6 +279,8 @@ class HarnessWaitApplicationService:
         actor_scope_resolver: HarnessWaitActorScopeResolverPort,
         approval_resolver: HarnessWaitApprovalResolverPort | None = None,
         clock: Callable[[], datetime] | None = None,
+        runtime_event_sink: Any | None = None,
+        runtime_event_identity: Any | None = None,
     ) -> None:
         if not isinstance(actor, ActorContext):
             raise TypeError("actor must be ActorContext")
@@ -304,6 +306,8 @@ class HarnessWaitApplicationService:
         self._actor_scope_resolver = actor_scope_resolver
         self._approval_resolver = approval_resolver
         self._clock = clock or _utc_now
+        self._runtime_event_sink = runtime_event_sink
+        self._runtime_event_identity = runtime_event_identity
 
     def inspect_wait(
         self,
@@ -659,9 +663,102 @@ class HarnessWaitApplicationService:
         driven = binding.control_plane.recover_and_run(binding.run_spec)
         state = driven.state
         scope = cause.scope
+        self._emit_runtime_event(
+            binding,
+            cause,
+            operation=operation,
+        )
         return HarnessWaitOperationResult(
             operation=operation,
             wait=self._inspection_from_state(state, scope),
+        )
+
+    def _emit_runtime_event(
+        self,
+        binding: HarnessWaitRuntimeBinding,
+        cause: HarnessWaitCause,
+        *,
+        operation: str,
+    ) -> None:
+        if self._runtime_event_sink is None:
+            return
+        from framework.events.runtime.projection import RuntimeEventEmitter, RuntimeEventIdentity
+
+        identity = self._runtime_event_identity
+        if identity is None:
+            identity = RuntimeEventIdentity(
+                node_instance_id=cause.scope.node_instance_id,
+                attempt_id=cause.scope.wait_id,
+            )
+        elif not isinstance(identity, RuntimeEventIdentity):
+            identity = RuntimeEventIdentity(**dict(identity))
+        if identity.run_id is not None and identity.run_id != binding.run_spec.run_id:
+            raise HarnessWaitApplicationError(
+                "runtime event identity does not match the Wait run",
+                code="wait_runtime_event_identity_mismatch",
+            )
+
+        event_type = {
+            "approval": "approval_decided",
+            "cancellation": "cancellation_confirmed",
+            "timeout": "timeout",
+            "signal": "worker_status",
+            "timer": "worker_status",
+        }.get(operation, "runtime_error")
+        status = "completed"
+        reason_code = getattr(cause, "reason_code", None)
+        if operation == "approval":
+            reason_code = "approval_granted" if getattr(cause, "approved", False) else "approval_denied"
+            status = "approved" if getattr(cause, "approved", False) else "denied"
+        elif operation == "cancellation":
+            reason_code = reason_code or "wait_cancelled"
+            status = "cancelled"
+        elif operation == "timeout":
+            reason_code = reason_code or "wait_timeout"
+            status = "timed_out"
+        elif operation == "signal":
+            reason_code = "wait_signal_delivered"
+            status = "signalled"
+        elif operation == "timer":
+            reason_code = "wait_timer_woke"
+            status = "woken"
+        refs = tuple(
+            str(value)
+            for name in (
+                "approval_event_ref",
+                "actor_identity_scope_ref",
+                "payload_ref",
+                "cancellation_event_ref",
+                "deadline_ref",
+            )
+            if isinstance(value := getattr(cause, name, None), str)
+        )
+        event_id = "wait-runtime:" + canonical_checksum(
+            {
+                "operation": operation,
+                "wait_id": cause.scope.wait_id,
+                "run_id": binding.run_spec.run_id,
+                "refs": refs,
+                "status": status,
+            }
+        )
+        RuntimeEventEmitter(
+            self._runtime_event_sink,
+            identity=identity,
+            source="harness-wait-service",
+            stream_id=binding.run_spec.run_id,
+        ).emit(
+            event_type,
+            event_id=event_id,
+            status=status,
+            reason_code=reason_code,
+            refs=refs + (cause.scope.wait_id,),
+            metadata={
+                "operation": operation,
+                "wait_id": cause.scope.wait_id,
+                "node_instance_id": cause.scope.node_instance_id,
+                "status": status,
+            },
         )
 
     def _inspection(

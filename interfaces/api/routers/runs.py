@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Header, Path, Request
+from fastapi import APIRouter, Header, Path, Query, Request
 from fastapi.responses import StreamingResponse
 
 from framework.agent.artifacts import (
@@ -10,6 +10,7 @@ from framework.agent.artifacts import (
     ArtifactStoreRequiredError,
 )
 from framework.events.errors import EventStoreUnavailableError
+from framework.events.runtime.projection import RuntimeCursorConflict, RuntimeProjectionError
 from infrastructure.storage.indexing import (
     GraphStorageIndexError,
     GraphStorageIndexErrorCode,
@@ -150,6 +151,128 @@ def create_router(services: ApiServices, helpers: ApiRouteHelpers) -> APIRouter:
         except ValueError as exc:
             return helpers.error(status_code=400, code="invalid_graph_run_events_request", message=str(exc))
         return helpers.success(result.to_dict())
+
+    @router.get(f"{_GRAPH_RUNS_PREFIX}/{{run_id}}/runtime/status")
+    def get_runtime_status(
+        run_id: str = Path(min_length=1),
+        node_id: str | None = None,
+        node_instance_id: str | None = None,
+        activity_id: str | None = None,
+        attempt_id: str | None = None,
+        child_id: str | None = None,
+    ):
+        service_factory = services.runtime_operator_status_service_factory
+        if service_factory is None:
+            return helpers.error(
+                status_code=503,
+                code="runtime_projection_unavailable",
+                message="runtime operator projection is not configured",
+                retryable=True,
+            )
+        try:
+            raw_statuses = service_factory().get_status(
+                run_id=run_id,
+                node_id=node_id,
+                node_instance_id=node_instance_id,
+                activity_id=activity_id,
+                attempt_id=attempt_id,
+                child_id=child_id,
+            )
+        except (RuntimeProjectionError, ValueError) as exc:
+            return helpers.error(
+                status_code=400,
+                code="invalid_runtime_status_request",
+                message=str(exc),
+            )
+        try:
+            statuses = tuple(raw_statuses)
+        except Exception:
+            return helpers.error(
+                status_code=409,
+                code="runtime_projection_identity_conflict",
+                message="runtime status response is not a valid projection",
+            )
+        try:
+            status_identity_mismatch = any(
+                getattr(getattr(status, "identity", None), "run_id", None) != run_id
+                for status in statuses
+            )
+        except Exception:
+            status_identity_mismatch = True
+        if status_identity_mismatch:
+            return helpers.error(
+                status_code=409,
+                code="runtime_projection_identity_conflict",
+                message="runtime status contains an identity outside the graph run",
+            )
+        return helpers.success(
+            {
+                "run_id": run_id,
+                "statuses": [status.to_dict() for status in statuses],
+            }
+        )
+
+    @router.get(f"{_GRAPH_RUNS_PREFIX}/{{run_id}}/runtime/timeline")
+    def get_runtime_timeline(
+        run_id: str = Path(min_length=1),
+        stream_id: str | None = None,
+        cursor: str | None = None,
+        limit: int = Query(default=100, ge=1, le=1000),
+    ):
+        service_factory = services.runtime_operator_status_service_factory
+        if service_factory is None:
+            return helpers.error(
+                status_code=503,
+                code="runtime_projection_unavailable",
+                message="runtime operator projection is not configured",
+                retryable=True,
+            )
+        if stream_id is not None and stream_id != run_id:
+            return helpers.error(
+                status_code=400,
+                code="runtime_stream_run_mismatch",
+                message="stream_id must match the graph run path",
+            )
+        resolved_stream_id = stream_id or run_id
+        try:
+            page = service_factory().get_timeline(
+                stream_id=resolved_stream_id,
+                cursor=cursor,
+                limit=limit,
+            )
+        except RuntimeCursorConflict as exc:
+            return helpers.error(
+                status_code=409,
+                code="runtime_timeline_cursor_conflict",
+                message=str(exc),
+            )
+        except (RuntimeProjectionError, ValueError) as exc:
+            return helpers.error(
+                status_code=400,
+                code="invalid_runtime_timeline_request",
+                message=str(exc),
+            )
+        try:
+            timeline_identity_mismatch = any(
+                getattr(event, "stream_id", None) != resolved_stream_id
+                or (
+                    getattr(getattr(event, "identity", None), "run_id", None)
+                    not in {None, run_id}
+                )
+                for event in page.events
+            )
+        except Exception:
+            timeline_identity_mismatch = True
+        if timeline_identity_mismatch:
+            return helpers.error(
+                status_code=409,
+                code="runtime_projection_identity_conflict",
+                message="runtime timeline contains an event outside the graph run",
+            )
+        payload = page.to_dict()
+        payload["run_id"] = run_id
+        payload["stream_id"] = resolved_stream_id
+        return helpers.success(payload)
 
     @router.get(f"{_GRAPH_RUNS_PREFIX}/{{run_id}}/steps")
     def get_run_steps(run_id: str = Path(min_length=1)):

@@ -46,6 +46,7 @@ from framework.harness.context.verification import (
 from framework.harness.control_plane.errors import HarnessValidationError
 from framework.harness.control_plane.event import HarnessEvent, HarnessEventType
 from framework.harness.ports import HarnessEventPort
+from framework.shared.graph_identity import GraphExecutionIdentity
 
 
 @runtime_checkable
@@ -168,6 +169,8 @@ class ContextCompactionRuntime:
         executor: ContextCompactionActionExecutor | None = None,
         aggregate_verifier: ContextAggregateVerifier | None = None,
         durable_store: ContextVerifiedStorePort | None = None,
+        runtime_event_sink: Any | None = None,
+        runtime_event_identity: GraphExecutionIdentity | None = None,
     ) -> None:
         if not isinstance(materializer, ContextPhysicalMaterializerPort):
             raise HarnessValidationError(
@@ -188,6 +191,8 @@ class ContextCompactionRuntime:
         self._executor = executor or ContextCompactionActionExecutor(artifact_port)
         self._aggregate_verifier = aggregate_verifier or ContextAggregateVerifier()
         self._store = durable_store or ContextVerifiedArtifactStore(artifact_port)
+        self._runtime_event_sink = runtime_event_sink
+        self._runtime_event_identity = runtime_event_identity
         self._last_event_id: str | None = None
 
     def run(self, request: ContextCompactionRuntimeRequest) -> ContextCompactionRuntimeResult:
@@ -557,6 +562,37 @@ class ContextCompactionRuntime:
             return None
         if not isinstance(stored, HarnessEvent) or stored.event_type is not event_type:
             return None
+        if self._runtime_event_sink is not None:
+            try:
+                from framework.events.runtime.projection import RuntimeEventEmitter, RuntimeEventIdentity
+
+                canonical_type = {
+                    HarnessEventType.CONTEXT_COMPACTION_PLANNED: "context_compaction_planned",
+                    HarnessEventType.CONTEXT_COMPACTION_REJECTED: "context_compaction_rejected",
+                    HarnessEventType.CONTEXT_COMPACTION_VERIFIED: "context_compaction_committed",
+                    HarnessEventType.CONTEXT_COMPACTION_ACTION_APPLIED: "context_compaction_committed",
+                    HarnessEventType.CONTEXT_SUMMARY_CANDIDATE_CREATED: "context_compaction_committed",
+                }.get(event_type, "runtime_error")
+                RuntimeEventEmitter(
+                    self._runtime_event_sink,
+                    identity=RuntimeEventIdentity(
+                        graph_identity=self._runtime_event_identity,
+                        activity_id=(self._runtime_event_identity.activity_id if self._runtime_event_identity else None),
+                        node_id=(self._runtime_event_identity.node_id if self._runtime_event_identity else request.source_snapshot.stage_id),
+                        node_instance_id=(self._runtime_event_identity.node_instance_id if self._runtime_event_identity else None),
+                    ),
+                    source="context-compaction-runtime",
+                    stream_id=request.source_snapshot.run_id,
+                ).emit(
+                    canonical_type,
+                    event_id=stored.event_id,
+                    status=str(payload.get("status") or "committed"),
+                    reason_code=str(payload.get("reason_code") or "context_event"),
+                    refs=tuple(str(value) for key, value in payload.items() if key.endswith("_ref") and isinstance(value, str)),
+                    metadata=dict(payload),
+                )
+            except Exception:
+                return None
         self._last_event_id = stored.event_id
         return stored
 

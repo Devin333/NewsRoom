@@ -1,0 +1,1526 @@
+"""Harness-owned child-agent lifecycle supervision.
+
+The existing :mod:`framework.harness.subagents.runtime` validates worker
+inputs and persists transcript evidence.  This module adds the outer runtime
+resource boundary: admission, leases, cancellation, recovery and idempotent
+operations.  It intentionally never interprets a child result as a routing or
+quality decision.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Callable, Mapping, Sequence
+from concurrent.futures import Future, ThreadPoolExecutor, TimeoutError as FutureTimeout
+from dataclasses import dataclass, field, replace
+from datetime import UTC, datetime, timedelta
+from enum import StrEnum
+import threading
+import hashlib
+import inspect
+import re
+from typing import Any, Protocol, runtime_checkable
+from uuid import uuid4
+
+from framework.shared.graph_identity import GraphExecutionIdentity
+from framework.shared.json import stable_json_dumps
+
+
+class ChildAgentSupervisorError(RuntimeError):
+    """Base error for typed supervisor failures."""
+
+    def __init__(self, message: str, *, code: str = "child_agent_supervisor_error") -> None:
+        super().__init__(message)
+        self.code = code
+
+
+class ChildAgentAdmissionError(ChildAgentSupervisorError):
+    pass
+
+
+class ChildAgentOperationConflict(ChildAgentSupervisorError):
+    pass
+
+
+class ChildAgentNotFoundError(ChildAgentSupervisorError):
+    pass
+
+
+class ChildAgentState(StrEnum):
+    STARTING = "STARTING"
+    RUNNING = "RUNNING"
+    WAITING = "WAITING"
+    SUCCEEDED = "SUCCEEDED"
+    FAILED = "FAILED"
+    CANCEL_REQUESTED = "CANCEL_REQUESTED"
+    CANCELLED = "CANCELLED"
+    LOST = "LOST"
+    CLOSED = "CLOSED"
+
+
+TERMINAL_CHILD_STATES = frozenset(
+    {
+        ChildAgentState.SUCCEEDED,
+        ChildAgentState.FAILED,
+        ChildAgentState.CANCELLED,
+        ChildAgentState.LOST,
+        ChildAgentState.CLOSED,
+    }
+)
+_FORBIDDEN_OUTPUT_KEYS = frozenset(
+    {
+        "routing",
+        "next_step",
+        "quality",
+        "quality_passed",
+        "publication",
+        "publish_artifact",
+        "memory_write",
+        "write_memory",
+        "promote_skill",
+        "skill_promotion",
+        "sibling_control",
+        "cancel_sibling",
+        "route_graph",
+    }
+)
+_POSITIVE_BUDGET_KEYS = frozenset(
+    {
+        "turns",
+        "tokens",
+        "tool_calls",
+        "memory_ops",
+        "cpu_seconds",
+        "remaining_turns",
+        "remaining_tokens",
+        "remaining_tool_calls",
+        "remaining_memory_ops",
+        "remaining_cpu_seconds",
+        "max_turns",
+        "max_tokens",
+        "max_tool_calls",
+        "max_memory_ops",
+        "max_cpu_seconds",
+    }
+)
+_BUDGET_DIMENSIONS = ("turns", "tokens", "tool_calls", "memory_ops", "cpu_seconds")
+
+
+def _required_text(value: Any, field_name: str) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"{field_name} is required")
+    normalized = value.strip()
+    if len(normalized) > 512:
+        raise ValueError(f"{field_name} is too long")
+    return normalized
+
+
+def _utc(value: datetime, field_name: str = "timestamp") -> datetime:
+    if not isinstance(value, datetime) or value.tzinfo is None or value.utcoffset() is None:
+        raise ValueError(f"{field_name} must be timezone-aware")
+    return value.astimezone(UTC)
+
+
+def _identity(value: GraphExecutionIdentity | Mapping[str, Any], field_name: str) -> GraphExecutionIdentity:
+    if isinstance(value, GraphExecutionIdentity):
+        return value
+    try:
+        return GraphExecutionIdentity.from_dict(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{field_name} must be a GraphExecutionIdentity") from exc
+
+
+def _budget(value: Mapping[str, Any]) -> dict[str, Any]:
+    if not isinstance(value, Mapping):
+        raise ValueError("budget must be an object")
+    normalized = dict(value)
+    stable_json_dumps(normalized)
+    for key, raw in normalized.items():
+        if key not in _POSITIVE_BUDGET_KEYS:
+            continue
+        if isinstance(raw, bool) or not isinstance(raw, (int, float)) or raw <= 0:
+            raise ValueError(f"budget field {key} must have remaining capacity")
+    # A child cannot reserve more of a dimension than the parent has left.
+    # Callers may express the same contract as ``remaining_*`` or ``max_*``;
+    # both forms are validated before the request reaches a worker.
+    for dimension in _BUDGET_DIMENSIONS:
+        requested = normalized.get(dimension)
+        for available_key in (f"remaining_{dimension}", f"max_{dimension}"):
+            available = normalized.get(available_key)
+            if requested is not None and available is not None and requested > available:
+                raise ValueError(
+                    f"budget field {dimension} exceeds {available_key}"
+                )
+    return normalized
+
+
+def _budget_amounts(value: Mapping[str, Any]) -> dict[str, float]:
+    """Normalize the reservation charged to one child request."""
+    amounts: dict[str, float] = {}
+    for dimension in _BUDGET_DIMENSIONS:
+        raw = value.get(dimension)
+        if raw is None:
+            raw = value.get(f"max_{dimension}")
+        if isinstance(raw, (int, float)) and not isinstance(raw, bool) and raw > 0:
+            amounts[dimension] = float(raw)
+    return amounts
+
+
+def _budget_limits(value: Mapping[str, Any]) -> dict[str, float]:
+    """Read parent limits carried alongside a child admission request."""
+    limits: dict[str, float] = {}
+    for dimension in _BUDGET_DIMENSIONS:
+        raw = value.get(f"remaining_{dimension}")
+        if raw is None:
+            raw = value.get(f"max_{dimension}")
+        if isinstance(raw, (int, float)) and not isinstance(raw, bool) and raw > 0:
+            limits[dimension] = float(raw)
+    return limits
+
+
+def _budget_key(identity: GraphExecutionIdentity) -> str:
+    return "budget:" + hashlib.sha256(
+        stable_json_dumps(identity.to_dict()).encode("utf-8")
+    ).hexdigest()
+
+
+def _checksum(value: Any) -> str:
+    return "sha256:" + hashlib.sha256(stable_json_dumps(value).encode("utf-8")).hexdigest()
+
+
+def _event_id_from_fields(fields: Mapping[str, Any]) -> str:
+    return "child-event-" + hashlib.sha256(
+        stable_json_dumps(dict(fields)).encode("utf-8")
+    ).hexdigest()
+
+
+def _derived_child_identity(parent: GraphExecutionIdentity, child_id: str) -> GraphExecutionIdentity:
+    """Create a deterministic child activity identity when a caller omits one."""
+    suffix = child_id.replace("/", "-")
+    return GraphExecutionIdentity(
+        run_id=parent.run_id,
+        graph_id=parent.graph_id,
+        graph_version=parent.graph_version,
+        graph_ref=parent.graph_ref,
+        graph_checksum=parent.graph_checksum,
+        node_id=parent.node_id,
+        node_instance_id=f"{parent.node_instance_id}:child:{suffix}",
+        activity_id=f"{parent.activity_id}:child:{suffix}",
+        attempt=parent.attempt,
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class ChildAgentLease:
+    lease_id: str
+    issued_at: datetime
+    expires_at: datetime
+    heartbeat_seq: int = 0
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "lease_id", _required_text(self.lease_id, "lease_id"))
+        issued = _utc(self.issued_at, "issued_at")
+        expires = _utc(self.expires_at, "expires_at")
+        if expires <= issued:
+            raise ValueError("lease expires_at must be after issued_at")
+        if isinstance(self.heartbeat_seq, bool) or not isinstance(self.heartbeat_seq, int) or self.heartbeat_seq < 0:
+            raise ValueError("heartbeat_seq must be non-negative")
+        object.__setattr__(self, "issued_at", issued)
+        object.__setattr__(self, "expires_at", expires)
+
+    def is_expired(self, now: datetime) -> bool:
+        return _utc(now) >= self.expires_at
+
+
+@dataclass(frozen=True, slots=True)
+class ChildAgentHandle:
+    """Immutable identity and admitted capabilities for one child runtime."""
+
+    child_id: str
+    parent_graph_identity: GraphExecutionIdentity | Mapping[str, Any]
+    child_graph_identity: GraphExecutionIdentity | Mapping[str, Any] | None
+    stage_id: str
+    task_id: str
+    task_instance_id: str
+    attempt: int
+    allowed_tools: tuple[str, ...]
+    allowed_memory_namespaces: tuple[str, ...]
+    budget: Mapping[str, Any]
+    transcript_ref: str | None
+    operation_id: str
+    state: ChildAgentState | str
+    lease: ChildAgentLease
+    created_at: datetime
+    updated_at: datetime
+    terminal_receipt_ref: str | None = None
+
+    def __post_init__(self) -> None:
+        for name in ("child_id", "stage_id", "task_id", "task_instance_id", "operation_id"):
+            object.__setattr__(self, name, _required_text(getattr(self, name), name))
+        parent = _identity(self.parent_graph_identity, "parent_graph_identity")
+        child = None if self.child_graph_identity is None else _identity(self.child_graph_identity, "child_graph_identity")
+        if child is not None:
+            if child.run_id != parent.run_id:
+                raise ValueError("child and parent Graph identities must share run_id")
+            for field_name in ("graph_id", "graph_version", "graph_ref", "graph_checksum"):
+                if getattr(child, field_name) != getattr(parent, field_name):
+                    raise ValueError(
+                        f"child and parent Graph identities must share {field_name}"
+                    )
+        if isinstance(self.attempt, bool) or not isinstance(self.attempt, int) or self.attempt < 1:
+            raise ValueError("attempt must be positive")
+        tools = tuple(_required_text(item, "allowed_tool") for item in self.allowed_tools)
+        namespaces = tuple(_required_text(item, "allowed_memory_namespace") for item in self.allowed_memory_namespaces)
+        if not tools or not namespaces:
+            raise ValueError("child capabilities must be explicitly declared")
+        if len(set(tools)) != len(tools) or len(set(namespaces)) != len(namespaces):
+            raise ValueError("child capabilities must be unique")
+        budget = _budget(self.budget)
+        if any(tool == "*" for tool in tools) or any(namespace == "*" for namespace in namespaces):
+            raise ValueError("child capabilities cannot use wildcard admission")
+        state = ChildAgentState(self.state)
+        created = _utc(self.created_at, "created_at")
+        updated = _utc(self.updated_at, "updated_at")
+        if updated < created:
+            raise ValueError("updated_at cannot precede created_at")
+        object.__setattr__(self, "parent_graph_identity", parent)
+        object.__setattr__(self, "child_graph_identity", child)
+        object.__setattr__(self, "allowed_tools", tuple(sorted(tools)))
+        object.__setattr__(self, "allowed_memory_namespaces", tuple(sorted(namespaces)))
+        object.__setattr__(self, "budget", budget)
+        object.__setattr__(self, "state", state)
+        object.__setattr__(self, "created_at", created)
+        object.__setattr__(self, "updated_at", updated)
+        if self.transcript_ref is not None:
+            object.__setattr__(self, "transcript_ref", _required_text(self.transcript_ref, "transcript_ref"))
+        if self.terminal_receipt_ref is not None:
+            object.__setattr__(self, "terminal_receipt_ref", _required_text(self.terminal_receipt_ref, "terminal_receipt_ref"))
+
+    @property
+    def parent_identity(self) -> GraphExecutionIdentity:
+        return self.parent_graph_identity
+
+    @property
+    def graph_identity(self) -> GraphExecutionIdentity:
+        return self.child_graph_identity or self.parent_graph_identity
+
+    @property
+    def lease_expires_at(self) -> datetime:
+        return self.lease.expires_at
+
+    @property
+    def is_terminal(self) -> bool:
+        return self.state in TERMINAL_CHILD_STATES
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "child_id": self.child_id,
+            "parent_graph_identity": self.parent_graph_identity.to_dict(),
+            "child_graph_identity": self.child_graph_identity.to_dict() if self.child_graph_identity else None,
+            "stage_id": self.stage_id,
+            "task_id": self.task_id,
+            "task_instance_id": self.task_instance_id,
+            "attempt": self.attempt,
+            "allowed_tools": list(self.allowed_tools),
+            "allowed_memory_namespaces": list(self.allowed_memory_namespaces),
+            "budget": dict(self.budget),
+            "transcript_ref": self.transcript_ref,
+            "operation_id": self.operation_id,
+            "state": self.state.value,
+            "lease": {
+                "lease_id": self.lease.lease_id,
+                "issued_at": self.lease.issued_at.isoformat(),
+                "expires_at": self.lease.expires_at.isoformat(),
+                "heartbeat_seq": self.lease.heartbeat_seq,
+            },
+            "created_at": self.created_at.isoformat(),
+            "updated_at": self.updated_at.isoformat(),
+            "terminal_receipt_ref": self.terminal_receipt_ref,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class ChildAgentSpawnRequest:
+    parent_graph_identity: GraphExecutionIdentity | Mapping[str, Any]
+    stage_id: str
+    task_id: str
+    task_instance_id: str
+    attempt: int
+    allowed_tools: tuple[str, ...]
+    allowed_memory_namespaces: tuple[str, ...]
+    budget: Mapping[str, Any]
+    operation_id: str
+    child_graph_identity: GraphExecutionIdentity | Mapping[str, Any] | None = None
+    transcript_ref: str | None = None
+    lease_seconds: float = 30.0
+    child_id: str | None = None
+
+    def __post_init__(self) -> None:
+        _identity(self.parent_graph_identity, "parent_graph_identity")
+        if self.child_graph_identity is not None:
+            _identity(self.child_graph_identity, "child_graph_identity")
+        _budget(self.budget)
+        if not self.allowed_tools or not self.allowed_memory_namespaces:
+            raise ValueError("child capabilities must be explicitly declared")
+        if any(not isinstance(item, str) or not item.strip() or item.strip() == "*" for item in (*self.allowed_tools, *self.allowed_memory_namespaces)):
+            raise ValueError("child capabilities must be concrete, non-wildcard names")
+        if (
+            isinstance(self.lease_seconds, bool)
+            or not isinstance(self.lease_seconds, (int, float))
+            or self.lease_seconds <= 0
+            or self.lease_seconds > 3600
+        ):
+            raise ValueError("lease_seconds must be in (0, 3600]")
+        object.__setattr__(self, "operation_id", _required_text(self.operation_id, "operation_id"))
+
+    @classmethod
+    def from_mapping(cls, value: Mapping[str, Any]) -> "ChildAgentSpawnRequest":
+        return cls(**dict(value))
+
+
+@dataclass(frozen=True, slots=True)
+class ChildAgentHeartbeat:
+    child_id: str
+    lease_id: str
+    heartbeat_seq: int
+    observed_at: datetime
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "child_id", _required_text(self.child_id, "child_id"))
+        object.__setattr__(self, "lease_id", _required_text(self.lease_id, "lease_id"))
+        if isinstance(self.heartbeat_seq, bool) or not isinstance(self.heartbeat_seq, int) or self.heartbeat_seq < 1:
+            raise ValueError("heartbeat_seq must be positive")
+        object.__setattr__(self, "observed_at", _utc(self.observed_at, "observed_at"))
+
+
+@dataclass(frozen=True, slots=True)
+class ChildAgentTerminalReceipt:
+    child_id: str
+    operation_id: str
+    parent_graph_identity: GraphExecutionIdentity | Mapping[str, Any]
+    status: ChildAgentState | str
+    reason_code: str
+    result_ref: str | None
+    result_checksum: str | None
+    termination_confirmed: bool
+    completed_at: datetime
+    receipt_checksum: str = field(init=False)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "child_id", _required_text(self.child_id, "child_id"))
+        object.__setattr__(self, "operation_id", _required_text(self.operation_id, "operation_id"))
+        object.__setattr__(self, "parent_graph_identity", _identity(self.parent_graph_identity, "parent_graph_identity"))
+        state = ChildAgentState(self.status)
+        if state not in TERMINAL_CHILD_STATES - {ChildAgentState.CLOSED}:
+            raise ValueError("terminal receipt requires a terminal child state")
+        object.__setattr__(self, "status", state)
+        object.__setattr__(self, "reason_code", _required_text(self.reason_code, "reason_code"))
+        result_ref = None if self.result_ref is None else _required_text(self.result_ref, "result_ref")
+        result_checksum = self.result_checksum
+        if result_checksum is not None:
+            result_checksum = str(result_checksum).strip().lower()
+            if re.fullmatch(r"sha256:[0-9a-f]{64}", result_checksum) is None:
+                raise ValueError("result_checksum must be a sha256 checksum")
+        if result_checksum is not None and result_ref is None:
+            raise ValueError("result_checksum requires result_ref")
+        if state is ChildAgentState.SUCCEEDED and (result_ref is None or result_checksum is None):
+            raise ValueError("succeeded terminal receipt requires result ref and checksum")
+        if not isinstance(self.termination_confirmed, bool):
+            raise ValueError("termination_confirmed must be boolean")
+        if state in {
+            ChildAgentState.SUCCEEDED,
+            ChildAgentState.FAILED,
+            ChildAgentState.CANCELLED,
+        } and not self.termination_confirmed:
+            raise ValueError(f"{state.value} terminal receipt requires confirmed termination")
+        object.__setattr__(self, "result_ref", result_ref)
+        object.__setattr__(self, "result_checksum", result_checksum)
+        object.__setattr__(self, "completed_at", _utc(self.completed_at, "completed_at"))
+        object.__setattr__(self, "receipt_checksum", _checksum(self.checksum_projection()))
+
+    def checksum_projection(self) -> dict[str, Any]:
+        return {
+            "child_id": self.child_id,
+            "operation_id": self.operation_id,
+            "parent_graph_identity": self.parent_graph_identity.to_dict(),
+            "status": self.status.value,
+            "reason_code": self.reason_code,
+            "result_ref": self.result_ref,
+            "result_checksum": self.result_checksum,
+            "termination_confirmed": self.termination_confirmed,
+            "completed_at": self.completed_at.isoformat(),
+        }
+
+    def to_dict(self) -> dict[str, Any]:
+        return {**self.checksum_projection(), "receipt_checksum": self.receipt_checksum}
+
+
+@dataclass(frozen=True, slots=True)
+class ChildAgentOperationResult:
+    operation_id: str
+    child_id: str
+    handle: ChildAgentHandle
+    receipt: ChildAgentTerminalReceipt | None = None
+    result: Mapping[str, Any] | None = None
+
+
+@runtime_checkable
+class ChildAgentEventSink(Protocol):
+    def record(self, event: Mapping[str, Any]) -> Any: ...
+
+
+@runtime_checkable
+class ChildAgentWorker(Protocol):
+    def run(self, handle: ChildAgentHandle) -> Mapping[str, Any] | Any: ...
+
+    def cancel(self, handle: ChildAgentHandle) -> bool: ...
+
+
+class InMemoryChildAgentEventLog:
+    """Durable-shaped event log used by tests and local supervision."""
+
+    def __init__(self, events: Sequence[Mapping[str, Any]] | None = None) -> None:
+        self._lock = threading.RLock()
+        self.events: list[dict[str, Any]] = []
+        self._by_id: dict[str, dict[str, Any]] = {}
+        for event in events or ():
+            self.record(event)
+
+    def record(self, event: Mapping[str, Any]) -> dict[str, Any]:
+        with self._lock:
+            item = dict(event)
+            event_id = item.get("event_id")
+            if isinstance(event_id, str):
+                previous = self._by_id.get(event_id)
+                if previous is not None:
+                    if stable_json_dumps(previous) != stable_json_dumps(item):
+                        raise ChildAgentOperationConflict(
+                            "child lifecycle event identity has conflicting content",
+                            code="event_identity_conflict",
+                        )
+                    return dict(previous)
+                self._by_id[event_id] = item
+            self.events.append(item)
+            return item
+
+    def for_child(self, child_id: str) -> tuple[dict[str, Any], ...]:
+        with self._lock:
+            return tuple(item for item in self.events if item.get("child_id") == child_id)
+
+
+class ChildAgentSupervisor:
+    """Bounded, idempotent child-agent lifecycle controller.
+
+    ``worker_factory`` may return a callable, an object with ``run`` or an
+    object with ``invoke``.  Worker execution is deliberately treated as a
+    candidate producer; all lifecycle and terminal state changes remain here.
+    """
+
+    def __init__(
+        self,
+        *,
+        worker_factory: Callable[[ChildAgentHandle], Any] | Callable[[ChildAgentHandle, Mapping[str, Any]], Any] | None = None,
+        event_sink: ChildAgentEventSink | Callable[[Mapping[str, Any]], Any] | None = None,
+        runtime_event_sink: Any | None = None,
+        result_resolver: Callable[[str], Mapping[str, Any] | None] | None = None,
+        budget_admitter: Callable[[GraphExecutionIdentity, Mapping[str, Any]], bool] | None = None,
+        clock: Callable[[], datetime] | None = None,
+        max_children: int = 32,
+        default_lease_seconds: float = 30.0,
+        cancel_timeout_seconds: float = 5.0,
+        events: InMemoryChildAgentEventLog | None = None,
+    ) -> None:
+        if max_children < 1:
+            raise ValueError("max_children must be positive")
+        if default_lease_seconds <= 0:
+            raise ValueError("default_lease_seconds must be positive")
+        if cancel_timeout_seconds <= 0 or cancel_timeout_seconds > 60:
+            raise ValueError("cancel_timeout_seconds must be in (0, 60]")
+        self._worker_factory = worker_factory
+        self._events = events or InMemoryChildAgentEventLog()
+        self._event_sink = event_sink or self._events
+        self._runtime_event_sink = runtime_event_sink
+        self._result_resolver = result_resolver
+        self._budget_admitter = budget_admitter
+        self._clock = clock or (lambda: datetime.now(UTC))
+        self._max_children = max_children
+        self._default_lease_seconds = float(default_lease_seconds)
+        self._cancel_timeout_seconds = float(cancel_timeout_seconds)
+        self._handles: dict[str, ChildAgentHandle] = {}
+        self._operations: dict[str, ChildAgentOperationResult] = {}
+        self._budget_reservations: dict[str, dict[str, float]] = {}
+        self._budget_consumed: dict[str, dict[str, float]] = {}
+        self._budget_limits_by_key: dict[str, dict[str, float]] = {}
+        self._budget_by_operation: dict[str, tuple[str, dict[str, float]]] = {}
+        self._workers: dict[str, Any] = {}
+        self._futures: dict[str, Future[Any]] = {}
+        self._executor = ThreadPoolExecutor(max_workers=max_children, thread_name_prefix="newsroom-child")
+        self._lock = threading.RLock()
+
+    @property
+    def events(self) -> InMemoryChildAgentEventLog:
+        return self._events
+
+    def spawn(self, request: ChildAgentSpawnRequest | Mapping[str, Any]) -> ChildAgentHandle:
+        if not isinstance(request, ChildAgentSpawnRequest):
+            request = ChildAgentSpawnRequest.from_mapping(request)
+        with self._lock:
+            previous = self._operations.get(request.operation_id)
+            if previous is not None:
+                if previous.handle.parent_graph_identity != _identity(request.parent_graph_identity, "parent_graph_identity"):
+                    raise ChildAgentOperationConflict("operation identity was reused for another parent", code="operation_identity_conflict")
+                return previous.handle
+            active = sum(1 for item in self._handles.values() if self._capacity_occupied(item))
+            if active >= self._max_children:
+                raise ChildAgentAdmissionError("child capacity is exhausted", code="child_capacity_exhausted")
+            parent = _identity(request.parent_graph_identity, "parent_graph_identity")
+            if self._budget_admitter is not None:
+                try:
+                    admitted = bool(self._budget_admitter(parent, request.budget))
+                except Exception as exc:
+                    raise ChildAgentAdmissionError(
+                        "parent Graph budget admission could not be verified",
+                        code="child_budget_unavailable",
+                    ) from exc
+                if not admitted:
+                    raise ChildAgentAdmissionError(
+                        "child request exceeds the parent Graph budget",
+                        code="child_budget_exhausted",
+                    )
+            budget_key = _budget_key(parent)
+            self._reserve_budget(budget_key, request.operation_id, request.budget)
+            child_id = request.child_id or f"child-{uuid4().hex}"
+            child = (
+                _identity(request.child_graph_identity, "child_graph_identity")
+                if request.child_graph_identity is not None
+                else _derived_child_identity(parent, child_id)
+            )
+            now = _utc(self._clock(), "clock")
+            lease = ChildAgentLease(
+                lease_id=f"lease-{uuid4().hex}",
+                issued_at=now,
+                expires_at=now + timedelta(seconds=float(request.lease_seconds or self._default_lease_seconds)),
+            )
+            handle = ChildAgentHandle(
+                child_id=child_id,
+                parent_graph_identity=parent,
+                child_graph_identity=child,
+                stage_id=request.stage_id,
+                task_id=request.task_id,
+                task_instance_id=request.task_instance_id,
+                attempt=request.attempt,
+                allowed_tools=request.allowed_tools,
+                allowed_memory_namespaces=request.allowed_memory_namespaces,
+                budget=request.budget,
+                transcript_ref=request.transcript_ref,
+                operation_id=request.operation_id,
+                state=ChildAgentState.STARTING,
+                lease=lease,
+                created_at=now,
+                updated_at=now,
+            )
+            # Persist the admission fact before exposing the handle.  A
+            # canonical sink failure therefore cannot leave a half-admitted
+            # child in the in-memory supervisor.
+            try:
+                self._emit("child_spawned", handle=handle)
+            except Exception:
+                self._finalize_budget_for_operation(request.operation_id, consume=False)
+                raise
+            self._handles[handle.child_id] = handle
+            self._operations[request.operation_id] = ChildAgentOperationResult(request.operation_id, handle.child_id, handle)
+            try:
+                worker = self._build_worker(handle)
+            except Exception as exc:
+                # The spawn fact is already durable. Retain the operation and
+                # commit a terminal failure so recovery cannot resurrect a
+                # phantom STARTING child or admit a duplicate side effect.
+                try:
+                    self._finish(
+                        handle,
+                        ChildAgentState.FAILED,
+                        reason_code="worker_admission_failed",
+                        termination_confirmed=True,
+                        result={"error_type": type(exc).__name__},
+                    )
+                except Exception:
+                    # If the terminal append is unavailable, keep the
+                    # non-terminal handle and reservation in memory.
+                    pass
+                raise
+            if worker is not None:
+                try:
+                    self._workers[handle.child_id] = worker
+                    handle = replace(handle, state=ChildAgentState.RUNNING, updated_at=_utc(self._clock()))
+                    self._emit("child_status", handle=handle, reason_code="worker_started")
+                    self._replace(handle)
+                    handle = self._start_worker(handle, worker)
+                except Exception as exc:
+                    # Durable spawn/status facts remain authoritative. Do not
+                    # remove their indexes after a worker start failure.
+                    self._futures.pop(handle.child_id, None)
+                    self._workers.pop(handle.child_id, None)
+                    try:
+                        current = self._handles.get(handle.child_id, handle)
+                        if current.state not in TERMINAL_CHILD_STATES:
+                            self._finish(
+                                current,
+                                ChildAgentState.FAILED,
+                                reason_code="worker_start_failed",
+                                termination_confirmed=True,
+                                result={"error_type": type(exc).__name__},
+                            )
+                    except Exception:
+                        pass
+                    raise
+            return handle
+
+    def status(self, child_id: str, *, operation_id: str | None = None) -> ChildAgentHandle:
+        with self._lock:
+            handle = self._require(child_id)
+            if operation_id is not None and operation_id != handle.operation_id:
+                raise ChildAgentOperationConflict("operation does not belong to child", code="operation_identity_conflict")
+            handle = self._expire_if_stale(handle)
+            return handle
+
+    def wait(self, child_id: str, *, operation_id: str, timeout_seconds: float | None = None) -> ChildAgentOperationResult:
+        handle = self.status(child_id, operation_id=operation_id)
+        if timeout_seconds is not None and timeout_seconds < 0:
+            raise ValueError("timeout_seconds must be non-negative")
+        future = self._futures.get(child_id)
+        if future is not None and not future.done():
+            try:
+                future.result(timeout=timeout_seconds)
+            except FutureTimeout:
+                pass
+            except Exception:
+                pass
+        if future is not None and future.done():
+            self._settle_future(child_id, future)
+        with self._lock:
+            result = self._operations.get(operation_id)
+            if result is None or result.child_id != child_id:
+                raise ChildAgentOperationConflict("unknown wait operation", code="operation_not_found")
+            return result
+
+    def heartbeat(self, heartbeat: ChildAgentHeartbeat | Mapping[str, Any]) -> ChildAgentHandle:
+        if not isinstance(heartbeat, ChildAgentHeartbeat):
+            heartbeat = ChildAgentHeartbeat(**dict(heartbeat))
+        with self._lock:
+            handle = self._require(heartbeat.child_id)
+            if handle.state in TERMINAL_CHILD_STATES:
+                return handle
+            if heartbeat.lease_id != handle.lease.lease_id:
+                raise ChildAgentOperationConflict("heartbeat lease does not match handle", code="lease_conflict")
+            if heartbeat.heartbeat_seq <= handle.lease.heartbeat_seq:
+                return handle
+            now = _utc(self._clock())
+            observed_at = _utc(heartbeat.observed_at, "observed_at")
+            if observed_at > now + timedelta(seconds=5):
+                raise ChildAgentOperationConflict(
+                    "heartbeat timestamp is too far in the future",
+                    code="heartbeat_timestamp_invalid",
+                )
+            # An expired lease cannot be revived by a late heartbeat.  The
+            # supervisor owns reclaim and records the uncertain termination.
+            if handle.lease.is_expired(now):
+                return self._expire_if_stale(handle, now=now)
+            now = max(now, observed_at)
+            duration = max(0.001, (handle.lease.expires_at - handle.lease.issued_at).total_seconds())
+            lease = ChildAgentLease(handle.lease.lease_id, now, now + timedelta(seconds=duration), heartbeat.heartbeat_seq)
+            handle = replace(handle, lease=lease, state=ChildAgentState.RUNNING, updated_at=now)
+            self._emit("child_heartbeat", handle=handle)
+            self._replace(handle)
+            return handle
+
+    def cancel(self, child_id: str, *, operation_id: str, reason: str = "operator_cancel") -> ChildAgentOperationResult:
+        with self._lock:
+            handle = self._require(child_id)
+            existing = self._operations.get(operation_id)
+            if existing is not None and existing.receipt is not None:
+                return existing
+            if operation_id != handle.operation_id and existing is None:
+                raise ChildAgentOperationConflict("unknown cancellation operation", code="operation_identity_conflict")
+            if handle.state is ChildAgentState.CANCELLED:
+                return self._operations[operation_id]
+            if handle.state in {ChildAgentState.SUCCEEDED, ChildAgentState.FAILED, ChildAgentState.LOST, ChildAgentState.CLOSED}:
+                return self._operations[operation_id]
+            handle = replace(handle, state=ChildAgentState.CANCEL_REQUESTED, updated_at=_utc(self._clock()))
+            self._emit("child_cancel_requested", handle=handle, reason_code=reason)
+            self._replace(handle)
+            worker = self._workers.get(child_id)
+            confirmed = self._cancel_worker(worker, handle)
+            if confirmed:
+                return self._finish(handle, ChildAgentState.CANCELLED, reason_code=reason, termination_confirmed=True)
+            return self._finish(handle, ChildAgentState.LOST, reason_code="cancellation_unconfirmed", termination_confirmed=False)
+
+    def close(self, child_id: str, *, operation_id: str) -> ChildAgentOperationResult:
+        with self._lock:
+            handle = self._require(child_id)
+            result = self._operations.get(operation_id)
+            if result is None or result.child_id != child_id:
+                raise ChildAgentOperationConflict("unknown close operation", code="operation_identity_conflict")
+            if handle.state is ChildAgentState.CLOSED:
+                if result.receipt is None:
+                    raise ChildAgentSupervisorError(
+                        "closed child has no verified receipt",
+                        code="terminal_receipt_missing",
+                    )
+                return result
+            if handle.state not in TERMINAL_CHILD_STATES:
+                raise ChildAgentSupervisorError("child must be terminal before close", code="child_not_terminal")
+            if result.receipt is None:
+                raise ChildAgentSupervisorError(
+                    "terminal child has no verified receipt",
+                    code="terminal_receipt_missing",
+                )
+            if handle.state is ChildAgentState.LOST and not result.receipt.termination_confirmed:
+                raise ChildAgentSupervisorError(
+                    "lost child termination is not confirmed",
+                    code="termination_unconfirmed",
+                )
+            handle = replace(handle, state=ChildAgentState.CLOSED, updated_at=_utc(self._clock()))
+            self._emit("child_closed", handle=handle)
+            self._replace(handle)
+            self._operations[operation_id] = replace(result, handle=handle)
+            return self._operations[operation_id]
+
+    def shutdown(self, *, wait: bool = True) -> None:
+        """Release supervisor worker resources after all lifecycle facts settle."""
+        self._executor.shutdown(wait=wait, cancel_futures=True)
+
+    def __enter__(self) -> "ChildAgentSupervisor":
+        return self
+
+    def __exit__(self, _exc_type: Any, _exc: Any, _tb: Any) -> None:
+        self.shutdown()
+
+    def reclaim_stale(self, *, now: datetime | None = None) -> tuple[ChildAgentHandle, ...]:
+        now = _utc(now or self._clock())
+        with self._lock:
+            changed: list[ChildAgentHandle] = []
+            for handle in tuple(self._handles.values()):
+                if handle.state in TERMINAL_CHILD_STATES or not handle.lease.is_expired(now):
+                    continue
+                changed.append(self._expire_if_stale(handle, now=now))
+            return tuple(changed)
+
+    def recover(self, events: Sequence[Mapping[str, Any]] | None = None) -> tuple[ChildAgentHandle, ...]:
+        """Rebuild handles from lifecycle facts without starting workers."""
+        source = tuple(events) if events is not None else tuple(self._events.events)
+        with self._lock:
+            # Recovery is a replacement of the committed view, not an
+            # incremental merge.  Clear derived indexes first so a reused
+            # supervisor cannot expose children absent from durable history.
+            self._handles.clear()
+            self._operations.clear()
+            self._workers.clear()
+            self._futures.clear()
+            # Reconstruct the in-memory reservation view from the durable
+            # lifecycle facts as well as the handles. This prevents a parent
+            # restart from admitting a second child against already consumed
+            # or still-indeterminate Graph budget.
+            self._budget_reservations.clear()
+            self._budget_consumed.clear()
+            self._budget_limits_by_key.clear()
+            self._budget_by_operation.clear()
+            grouped: dict[str, list[Mapping[str, Any]]] = {}
+            for event in source:
+                child_id = event.get("child_id")
+                if isinstance(child_id, str):
+                    grouped.setdefault(child_id, []).append(event)
+            recovered: list[ChildAgentHandle] = []
+            for child_id, facts in grouped.items():
+                facts = sorted(
+                    facts,
+                    key=lambda item: _event_sort_key(item),
+                )
+                spawned = next((item for item in facts if item.get("event_type") == "child_spawned"), None)
+                if not spawned:
+                    continue
+                try:
+                    handle = _handle_from_event(spawned)
+                except (TypeError, ValueError, KeyError):
+                    continue
+                recovery_corrupt = False
+                latest_state = handle.state
+                for event in facts:
+                    try:
+                        event_metadata = event.get("metadata")
+                        if not isinstance(event_metadata, Mapping):
+                            event_metadata = {}
+                        event_receipt = event.get("terminal_receipt")
+                        if not isinstance(event_receipt, Mapping):
+                            event_receipt = event_metadata.get("terminal_receipt")
+                        if not isinstance(event_receipt, Mapping):
+                            event_receipt = {}
+                        expected_event_id = _event_id_from_fields(
+                            {
+                                "child_id": event.get("child_id"),
+                                "operation_id": event.get("operation_id"),
+                                "event_type": event.get("event_type"),
+                                "state": event.get("state"),
+                                "reason_code": event.get("reason_code"),
+                                "heartbeat_seq": event.get("heartbeat_seq", 0),
+                                "result_checksum": event.get("result_checksum")
+                                or event_metadata.get("result_checksum"),
+                                "receipt_checksum": event_receipt.get("receipt_checksum"),
+                            }
+                        )
+                        if event.get("event_id") != expected_event_id:
+                            recovery_corrupt = True
+                        occurred_at = _event_time(event)
+                    except (TypeError, ValueError):
+                        recovery_corrupt = True
+                        continue
+                    try:
+                        if (
+                            event.get("operation_id") != handle.operation_id
+                            or _identity(event.get("parent_graph_identity"), "parent_graph_identity")
+                            != handle.parent_graph_identity
+                            or (
+                                event.get("child_graph_identity") is not None
+                                and _identity(event.get("child_graph_identity"), "child_graph_identity")
+                                != handle.child_graph_identity
+                            )
+                        ):
+                            recovery_corrupt = True
+                            continue
+                    except (TypeError, ValueError):
+                        recovery_corrupt = True
+                        continue
+                    state = event.get("state")
+                    if state:
+                        try:
+                            lease_id = event.get("lease_id") or handle.lease.lease_id
+                            lease_issued_at = event.get("lease_issued_at") or handle.lease.issued_at.isoformat()
+                            lease_expires_at = event.get("lease_expires_at") or handle.lease.expires_at.isoformat()
+                            heartbeat_seq = int(event.get("heartbeat_seq", handle.lease.heartbeat_seq))
+                            if heartbeat_seq < handle.lease.heartbeat_seq:
+                                recovery_corrupt = True
+                                continue
+                            lease = ChildAgentLease(
+                                lease_id=lease_id,
+                                issued_at=datetime.fromisoformat(lease_issued_at),
+                                expires_at=datetime.fromisoformat(lease_expires_at),
+                                heartbeat_seq=heartbeat_seq,
+                            )
+                            parsed_state = ChildAgentState(state)
+                            latest_state = parsed_state
+                            handle = replace(
+                                handle,
+                                state=parsed_state,
+                                lease=lease,
+                                updated_at=occurred_at,
+                            )
+                        except (TypeError, ValueError, KeyError):
+                            recovery_corrupt = True
+                self._handles[child_id] = handle
+                operation = ChildAgentOperationResult(handle.operation_id, child_id, handle)
+                terminal_event = next(
+                    (item for item in reversed(facts) if item.get("event_type") == "child_terminal"),
+                    None,
+                )
+                if terminal_event is None and latest_state in TERMINAL_CHILD_STATES:
+                    recovery_corrupt = True
+                if terminal_event is not None:
+                    metadata = terminal_event.get("metadata") or {}
+                    raw_receipt = (
+                        terminal_event.get("terminal_receipt")
+                        or metadata.get("terminal_receipt")
+                    )
+                    if isinstance(raw_receipt, Mapping):
+                        try:
+                            receipt = _terminal_receipt_from_dict(raw_receipt)
+                            if (
+                                receipt.child_id != handle.child_id
+                                or receipt.operation_id != handle.operation_id
+                                or receipt.parent_graph_identity != handle.parent_graph_identity
+                            ):
+                                raise ValueError("terminal receipt identity does not match recovered handle")
+                            event_result_ref = terminal_event.get("result_ref")
+                            event_result_checksum = terminal_event.get("result_checksum")
+                            metadata_result_ref = metadata.get("result_ref")
+                            metadata_result_checksum = metadata.get("result_checksum")
+                            if event_result_ref is not None and event_result_ref != receipt.result_ref:
+                                raise ValueError("terminal event result ref does not match receipt")
+                            if event_result_checksum is not None and event_result_checksum != receipt.result_checksum:
+                                raise ValueError("terminal event result checksum does not match receipt")
+                            if metadata_result_ref is not None and metadata_result_ref != receipt.result_ref:
+                                raise ValueError("terminal metadata result ref does not match receipt")
+                            if metadata_result_checksum is not None and metadata_result_checksum != receipt.result_checksum:
+                                raise ValueError("terminal metadata result checksum does not match receipt")
+                            if terminal_event.get("state") not in {None, receipt.status.value}:
+                                raise ValueError("terminal event state does not match receipt")
+                            if latest_state not in {receipt.status, ChildAgentState.CLOSED}:
+                                raise ValueError("latest lifecycle state does not match receipt")
+                            handle = replace(
+                                handle,
+                                state=(
+                                    ChildAgentState.CLOSED
+                                    if latest_state is ChildAgentState.CLOSED
+                                    else receipt.status
+                                ),
+                                terminal_receipt_ref=(
+                                    f"child-receipt://{handle.child_id}/{handle.operation_id}"
+                                ),
+                            )
+                            recovered_result = None
+                            if receipt.result_ref and self._result_resolver is not None:
+                                try:
+                                    recovered_result = self._result_resolver(receipt.result_ref)
+                                except Exception:
+                                    recovered_result = None
+                                if recovered_result is None:
+                                    raise ValueError("terminal result reference could not be resolved")
+                                checksum = "sha256:" + hashlib.sha256(
+                                    stable_json_dumps(recovered_result).encode("utf-8")
+                                ).hexdigest()
+                                if checksum != receipt.result_checksum:
+                                    raise ValueError("recovered result checksum does not match receipt")
+                            operation = ChildAgentOperationResult(
+                                handle.operation_id,
+                                child_id,
+                                handle,
+                                receipt,
+                                recovered_result,
+                            )
+                        except (TypeError, ValueError, KeyError):
+                            recovery_corrupt = True
+                    else:
+                        recovery_corrupt = True
+                if recovery_corrupt:
+                    # An ambiguous history cannot be replayed as a completed
+                    # child. Mark it LOST without a confirmed receipt so its
+                    # capacity remains occupied pending reconciliation.
+                    handle = replace(
+                        handle,
+                        state=ChildAgentState.LOST,
+                        terminal_receipt_ref=None,
+                        updated_at=_utc(self._clock()),
+                    )
+                    operation = ChildAgentOperationResult(handle.operation_id, child_id, handle)
+                self._handles[child_id] = handle
+                self._operations[handle.operation_id] = operation
+                self._restore_budget_for_recovered_operation(handle, operation)
+                recovered.append(handle)
+            return tuple(recovered)
+
+    def validate_output(self, output: Mapping[str, Any] | Any, *, handle: ChildAgentHandle | str) -> dict[str, Any]:
+        if isinstance(handle, str):
+            handle = self._require(handle)
+        if not isinstance(output, Mapping):
+            raise ChildAgentSupervisorError("child output must be an object", code="child_output_invalid")
+        forbidden = sorted(_find_forbidden_keys(output, _FORBIDDEN_OUTPUT_KEYS))
+        if forbidden:
+            self._emit("child_boundary_violation", handle=handle, reason_code="child_control_field_forbidden", metadata={"fields": forbidden})
+            raise ChildAgentSupervisorError("child output contains control authority fields", code="child_control_field_forbidden")
+        return dict(output)
+
+    def _build_worker(self, handle: ChildAgentHandle) -> Any:
+        if self._worker_factory is None:
+            return None
+        factory = self._worker_factory
+        # Choose the supported call shape before invocation. Retrying a
+        # factory after an in-body TypeError could duplicate admission or
+        # external side effects.
+        try:
+            signature = inspect.signature(factory)
+        except (TypeError, ValueError):
+            return factory(handle)
+        try:
+            signature.bind(handle, {})
+        except TypeError:
+            return factory(handle)
+        return factory(handle, {})  # type: ignore[misc]
+
+    def _start_worker(self, handle: ChildAgentHandle, worker: Any) -> ChildAgentHandle:
+        # The supervisor owns a bounded thread pool so status/wait/cancel can
+        # observe a live child without handing lifecycle authority to the worker.
+        if isinstance(worker, Mapping):
+            return self.complete(
+                handle.child_id,
+                operation_id=handle.operation_id,
+                output=worker,
+            ).handle
+            return
+        run = getattr(worker, "run", None) or getattr(worker, "invoke", None)
+        if run is None and callable(worker):
+            run = worker
+        if not callable(run):
+            return self._finish(
+                handle,
+                ChildAgentState.FAILED,
+                reason_code="worker_not_runnable",
+                termination_confirmed=True,
+                result={"error_code": "worker_not_runnable"},
+            ).handle
+        future = self._executor.submit(run, handle)
+        self._futures[handle.child_id] = future
+        future.add_done_callback(
+            lambda completed, child_id=handle.child_id: self._settle_future_safely(
+                child_id, completed
+            )
+        )
+        return handle
+
+    def _settle_future_safely(self, child_id: str, future: Future[Any]) -> None:
+        try:
+            self._settle_future(child_id, future)
+        except (ChildAgentSupervisorError, ChildAgentNotFoundError):
+            # The operation may have been cancelled/reclaimed concurrently;
+            # the committed supervisor state remains authoritative.
+            return
+
+    def _settle_future(self, child_id: str, future: Future[Any]) -> None:
+        with self._lock:
+            handle = self._require(child_id)
+            if handle.state in TERMINAL_CHILD_STATES:
+                return
+            try:
+                output = future.result()
+                if output is None:
+                    self._finish(
+                        handle,
+                        ChildAgentState.FAILED,
+                        reason_code="worker_output_missing",
+                        termination_confirmed=True,
+                        result={"error_code": "worker_output_missing"},
+                    )
+                    return
+                self.complete(child_id, operation_id=handle.operation_id, output=output)
+            except ChildAgentSupervisorError as exc:
+                # A worker that returns an invalid candidate is a failed child,
+                # not a permanently RUNNING lease.  ``complete`` may already
+                # have committed this terminal state for boundary violations.
+                current = self._handles.get(child_id)
+                if current is not None and current.state not in TERMINAL_CHILD_STATES:
+                    self._finish(
+                        current,
+                        ChildAgentState.FAILED,
+                        reason_code=getattr(exc, "code", "worker_output_invalid"),
+                        termination_confirmed=True,
+                        result={"error_code": getattr(exc, "code", type(exc).__name__)},
+                    )
+            except Exception as exc:
+                self._finish(handle, ChildAgentState.FAILED, reason_code="worker_failed", termination_confirmed=True, result={"error_type": type(exc).__name__})
+
+    def complete(self, child_id: str, *, operation_id: str, output: Mapping[str, Any] | Any, result_ref: str | None = None) -> ChildAgentOperationResult:
+        with self._lock:
+            handle = self._require(child_id)
+            if operation_id != handle.operation_id:
+                raise ChildAgentOperationConflict("operation identity does not match child", code="operation_identity_conflict")
+            existing = self._operations.get(operation_id)
+            if existing is not None and existing.receipt is not None:
+                return existing
+            if handle.state in TERMINAL_CHILD_STATES:
+                raise ChildAgentOperationConflict(
+                    "child already has a terminal state without a receipt",
+                    code="terminal_receipt_missing",
+                )
+            try:
+                result = self.validate_output(output, handle=handle)
+            except ChildAgentSupervisorError as exc:
+                self._finish(
+                    handle,
+                    ChildAgentState.FAILED,
+                    reason_code=getattr(exc, "code", "child_output_invalid"),
+                    termination_confirmed=True,
+                    result={"error_code": getattr(exc, "code", type(exc).__name__)},
+                )
+                raise
+            return self._finish(handle, ChildAgentState.SUCCEEDED, reason_code="worker_completed", termination_confirmed=True, result=result, result_ref=result_ref)
+
+    def _finish(self, handle: ChildAgentHandle, state: ChildAgentState, *, reason_code: str, termination_confirmed: bool, result: Mapping[str, Any] | None = None, result_ref: str | None = None) -> ChildAgentOperationResult:
+        existing = self._operations.get(handle.operation_id)
+        if existing is not None and existing.receipt is not None:
+            return existing
+        now = _utc(self._clock())
+        result_ref = result_ref or (
+            f"child-result://{handle.child_id}/{handle.operation_id}"
+            if result is not None
+            else None
+        )
+        result_checksum = (
+            "sha256:" + hashlib.sha256(stable_json_dumps(result).encode("utf-8")).hexdigest()
+            if result is not None
+            else None
+        )
+        receipt = ChildAgentTerminalReceipt(
+            child_id=handle.child_id,
+            operation_id=handle.operation_id,
+            parent_graph_identity=handle.parent_graph_identity,
+            status=state,
+            reason_code=reason_code,
+            result_ref=result_ref,
+            result_checksum=result_checksum,
+            termination_confirmed=termination_confirmed,
+            completed_at=now,
+        )
+        handle = replace(handle, state=state, updated_at=now, terminal_receipt_ref=f"child-receipt://{handle.child_id}/{handle.operation_id}")
+        op = ChildAgentOperationResult(
+            handle.operation_id,
+            handle.child_id,
+            handle,
+            receipt,
+            dict(result) if result is not None else None,
+        )
+        self._emit(
+            "child_terminal",
+            handle=handle,
+            reason_code=reason_code,
+            metadata={
+                "termination_confirmed": termination_confirmed,
+                "terminal_receipt": receipt.to_dict(),
+                "result_ref": result_ref,
+                "result_checksum": result_checksum,
+            },
+        )
+        self._replace(handle)
+        self._operations[handle.operation_id] = op
+        self._finalize_budget_for_operation(
+            handle.operation_id,
+            consume=termination_confirmed and state in {
+                ChildAgentState.SUCCEEDED,
+                ChildAgentState.FAILED,
+            },
+        )
+        return op
+
+    def _expire_if_stale(self, handle: ChildAgentHandle, *, now: datetime | None = None) -> ChildAgentHandle:
+        now = _utc(now or self._clock())
+        if handle.state not in TERMINAL_CHILD_STATES and handle.lease.is_expired(now):
+            requested = replace(handle, state=ChildAgentState.CANCEL_REQUESTED, updated_at=now)
+            self._emit("child_cancel_requested", handle=requested, reason_code="child_lease_expired")
+            self._replace(requested)
+            worker = self._workers.get(handle.child_id)
+            confirmed = self._cancel_worker(worker, requested)
+            result = self._finish(
+                requested,
+                ChildAgentState.LOST,
+                reason_code=("child_lease_expired" if confirmed else "termination_unconfirmed"),
+                termination_confirmed=confirmed,
+            )
+            return result.handle
+        return handle
+
+    def _cancel_worker(self, worker: Any, handle: ChildAgentHandle) -> bool:
+        if worker is None:
+            return True
+        cancel = getattr(worker, "cancel", None)
+        if not callable(cancel):
+            return False
+        outcome: list[bool] = []
+
+        def invoke() -> None:
+            try:
+                outcome.append(bool(cancel(handle)))
+            except Exception:
+                outcome.append(False)
+
+        thread = threading.Thread(
+            target=invoke,
+            name=f"newsroom-child-cancel-{handle.child_id}",
+            daemon=True,
+        )
+        thread.start()
+        thread.join(timeout=self._cancel_timeout_seconds)
+        if thread.is_alive():
+            return False
+        return bool(outcome and outcome[0])
+
+    def _replace(self, handle: ChildAgentHandle) -> None:
+        self._handles[handle.child_id] = handle
+        result = self._operations.get(handle.operation_id)
+        if result is not None and result.receipt is None:
+            self._operations[handle.operation_id] = replace(result, handle=handle)
+
+    def _capacity_occupied(self, handle: ChildAgentHandle) -> bool:
+        if handle.state is ChildAgentState.CLOSED:
+            return False
+        if handle.state is not ChildAgentState.LOST:
+            return True
+        result = self._operations.get(handle.operation_id)
+        return result is None or result.receipt is None or not result.receipt.termination_confirmed
+
+    def _reserve_budget(
+        self,
+        budget_key: str,
+        operation_id: str,
+        budget: Mapping[str, Any],
+    ) -> None:
+        amounts = _budget_amounts(budget)
+        if not amounts:
+            return
+        limits = _budget_limits(budget)
+        if limits:
+            existing_limits = self._budget_limits_by_key.setdefault(budget_key, {})
+            for dimension, limit in limits.items():
+                previous = existing_limits.get(dimension)
+                if previous is not None and previous != limit:
+                    raise ChildAgentAdmissionError(
+                        f"parent budget limit for {dimension} changed during admission",
+                        code="child_budget_conflict",
+                    )
+                existing_limits[dimension] = limit
+        reserved = self._budget_reservations.setdefault(budget_key, {})
+        consumed = self._budget_consumed.get(budget_key, {})
+        known_limits = self._budget_limits_by_key.get(budget_key, {})
+        for dimension, amount in amounts.items():
+            limit = known_limits.get(dimension)
+            if limit is not None and reserved.get(dimension, 0.0) + consumed.get(dimension, 0.0) + amount > limit:
+                raise ChildAgentAdmissionError(
+                    f"child budget exceeds remaining {dimension} capacity",
+                    code="child_budget_exhausted",
+                )
+        for dimension, amount in amounts.items():
+            reserved[dimension] = reserved.get(dimension, 0.0) + amount
+        self._budget_by_operation[operation_id] = (budget_key, amounts)
+
+    def _finalize_budget_for_operation(self, operation_id: str, *, consume: bool) -> None:
+        reservation = self._budget_by_operation.get(operation_id)
+        if reservation is None:
+            return
+        budget_key, amounts = reservation
+        current = self._budget_reservations.get(budget_key, {})
+        consumed = self._budget_consumed.setdefault(budget_key, {})
+        for dimension, amount in amounts.items():
+            remaining = current.get(dimension, 0.0) - amount
+            if remaining > 0:
+                current[dimension] = remaining
+            else:
+                current.pop(dimension, None)
+            if consume:
+                consumed[dimension] = consumed.get(dimension, 0.0) + amount
+        if not current:
+            self._budget_reservations.pop(budget_key, None)
+        self._budget_by_operation.pop(operation_id, None)
+
+    def _restore_budget_for_recovered_operation(
+        self,
+        handle: ChildAgentHandle,
+        operation: ChildAgentOperationResult,
+    ) -> None:
+        amounts = _budget_amounts(handle.budget)
+        if not amounts:
+            return
+        budget_key = _budget_key(handle.parent_identity)
+        limits = _budget_limits(handle.budget)
+        if limits:
+            existing = self._budget_limits_by_key.setdefault(budget_key, {})
+            for dimension, limit in limits.items():
+                if dimension in existing and existing[dimension] != limit:
+                    # Conflicting parent budget facts are not safe to merge.
+                    raise ChildAgentAdmissionError(
+                        f"recovered parent budget limit for {dimension} conflicts",
+                        code="child_budget_conflict",
+                    )
+                existing[dimension] = limit
+        receipt = operation.receipt
+        if receipt is None or not receipt.termination_confirmed:
+            reserved = self._budget_reservations.setdefault(budget_key, {})
+            for dimension, amount in amounts.items():
+                reserved[dimension] = reserved.get(dimension, 0.0) + amount
+            self._budget_by_operation[handle.operation_id] = (budget_key, amounts)
+            return
+        if receipt.status in {ChildAgentState.SUCCEEDED, ChildAgentState.FAILED}:
+            consumed = self._budget_consumed.setdefault(budget_key, {})
+            for dimension, amount in amounts.items():
+                consumed[dimension] = consumed.get(dimension, 0.0) + amount
+
+    def _require(self, child_id: str) -> ChildAgentHandle:
+        try:
+            return self._handles[child_id]
+        except KeyError as exc:
+            raise ChildAgentNotFoundError("child agent was not found", code="child_not_found") from exc
+
+    def _emit(self, event_type: str, *, handle: ChildAgentHandle, reason_code: str | None = None, metadata: Mapping[str, Any] | None = None) -> None:
+        metadata = dict(metadata or {})
+        heartbeat_seq = handle.lease.heartbeat_seq
+        terminal_receipt = metadata.get("terminal_receipt")
+        result_checksum = (
+            terminal_receipt.get("result_checksum")
+            if isinstance(terminal_receipt, Mapping)
+            else None
+        )
+        receipt_checksum = (
+            terminal_receipt.get("receipt_checksum")
+            if isinstance(terminal_receipt, Mapping)
+            else None
+        )
+        stable_event_id = _event_id_from_fields(
+            {
+                "child_id": handle.child_id,
+                "operation_id": handle.operation_id,
+                "event_type": event_type,
+                "state": handle.state.value,
+                "reason_code": reason_code,
+                "heartbeat_seq": heartbeat_seq,
+                "result_checksum": result_checksum,
+                "receipt_checksum": receipt_checksum,
+            }
+        )
+        event = {
+            "event_type": event_type,
+            "event_id": stable_event_id,
+            "child_id": handle.child_id,
+            "operation_id": handle.operation_id,
+            "state": handle.state.value,
+            "parent_graph_identity": handle.parent_graph_identity.to_dict(),
+            "child_graph_identity": handle.child_graph_identity.to_dict() if handle.child_graph_identity else None,
+            "stage_id": handle.stage_id,
+            "task_id": handle.task_id,
+            "task_instance_id": handle.task_instance_id,
+            "attempt": handle.attempt,
+            "lease_id": handle.lease.lease_id,
+            "lease_issued_at": handle.lease.issued_at.isoformat(),
+            "lease_expires_at": handle.lease.expires_at.isoformat(),
+            "heartbeat_seq": heartbeat_seq,
+            "occurred_at": _utc(self._clock()).isoformat(),
+            "reason_code": reason_code,
+            "metadata": metadata,
+            "allowed_tools": list(handle.allowed_tools),
+            "allowed_memory_namespaces": list(handle.allowed_memory_namespaces),
+            "budget": dict(handle.budget),
+            "transcript_ref": handle.transcript_ref,
+        }
+        terminal_receipt = metadata.get("terminal_receipt")
+        if isinstance(terminal_receipt, Mapping):
+            event["terminal_receipt"] = dict(terminal_receipt)
+            event["result_ref"] = terminal_receipt.get("result_ref")
+            event["result_checksum"] = terminal_receipt.get("result_checksum")
+        if self._runtime_event_sink is not None:
+            from framework.events.runtime.projection import RuntimeEventEmitter, RuntimeEventIdentity
+
+            runtime_type = {
+                "child_cancel_requested": "cancel_requested",
+                "child_boundary_violation": "runtime_error",
+            }.get(event_type, event_type)
+            RuntimeEventEmitter(
+                self._runtime_event_sink,
+                identity=RuntimeEventIdentity(
+                    graph_identity=handle.graph_identity,
+                    activity_id=handle.graph_identity.activity_id,
+                    node_id=handle.graph_identity.node_id,
+                    node_instance_id=handle.graph_identity.node_instance_id,
+                    attempt_id=handle.operation_id,
+                ),
+                source="child-agent-supervisor",
+                stream_id=handle.parent_graph_identity.run_id,
+            ).emit(
+                runtime_type,
+                event_id=stable_event_id,
+                status=handle.state.value.lower(),
+                reason_code=reason_code,
+                refs=tuple(
+                    ref
+                    for ref in (handle.child_id, handle.transcript_ref, handle.terminal_receipt_ref)
+                    if ref
+                ),
+                metadata={
+                    "child_id": handle.child_id,
+                    "operation_id": handle.operation_id,
+                    "stage_id": handle.stage_id,
+                    "task_id": handle.task_id,
+                    "state": handle.state.value,
+                    **metadata,
+                },
+            )
+        sink = self._event_sink
+        if callable(sink):
+            sink(event)
+        else:
+            sink.record(event)
+        if sink is not self._events:
+            self._events.record(event)
+
+
+def _find_forbidden_keys(value: Any, forbidden: frozenset[str], *, path: str = "$") -> set[str]:
+    found: set[str] = set()
+    if isinstance(value, Mapping):
+        for key, child in value.items():
+            normalized = str(key).casefold()
+            if normalized in forbidden:
+                found.add(path + "." + str(key))
+            found.update(_find_forbidden_keys(child, forbidden, path=path + "." + str(key)))
+    elif isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
+        for index, child in enumerate(value):
+            found.update(_find_forbidden_keys(child, forbidden, path=f"{path}[{index}]"))
+    return found
+
+
+def _handle_from_event(event: Mapping[str, Any]) -> ChildAgentHandle:
+    lease = event.get("lease") or {
+        "lease_id": event["lease_id"],
+        "issued_at": event.get("lease_issued_at") or event["occurred_at"],
+        "expires_at": event["lease_expires_at"],
+        "heartbeat_seq": event.get("heartbeat_seq", 0),
+    }
+    return ChildAgentHandle(
+        child_id=event["child_id"],
+        parent_graph_identity=event["parent_graph_identity"],
+        child_graph_identity=event.get("child_graph_identity"),
+        stage_id=event["stage_id"],
+        task_id=event["task_id"],
+        task_instance_id=event["task_instance_id"],
+        attempt=event["attempt"],
+        allowed_tools=tuple(event.get("allowed_tools", ("unknown",))),
+        allowed_memory_namespaces=tuple(event.get("allowed_memory_namespaces", ("unknown",))),
+        budget=event.get("budget", {}),
+        transcript_ref=event.get("transcript_ref"),
+        operation_id=event["operation_id"],
+        state=event.get("state", ChildAgentState.STARTING),
+        lease=ChildAgentLease(
+            lease_id=lease["lease_id"],
+            issued_at=datetime.fromisoformat(lease["issued_at"]),
+            expires_at=datetime.fromisoformat(lease["expires_at"]),
+            heartbeat_seq=lease.get("heartbeat_seq", 0),
+        ),
+        created_at=datetime.fromisoformat(event["occurred_at"]),
+        updated_at=datetime.fromisoformat(event["occurred_at"]),
+    )
+
+
+def _terminal_receipt_from_dict(value: Mapping[str, Any]) -> ChildAgentTerminalReceipt:
+    payload = dict(value)
+    supplied_checksum = payload.pop("receipt_checksum", None)
+    completed_at = payload.get("completed_at")
+    if isinstance(completed_at, str):
+        payload["completed_at"] = datetime.fromisoformat(completed_at)
+    receipt = ChildAgentTerminalReceipt(**payload)
+    if supplied_checksum != receipt.receipt_checksum:
+        raise ValueError("terminal receipt checksum does not match canonical projection")
+    return receipt
+
+
+def _event_time(event: Mapping[str, Any]) -> datetime:
+    raw = event.get("occurred_at")
+    if not isinstance(raw, str):
+        raise ValueError("lifecycle event occurred_at is required")
+    return _utc(datetime.fromisoformat(raw), "occurred_at")
+
+
+def _event_sort_key(event: Mapping[str, Any]) -> datetime:
+    try:
+        return _event_time(event)
+    except (TypeError, ValueError):
+        return datetime.min.replace(tzinfo=UTC)
+
+
+__all__ = [
+    "ChildAgentAdmissionError",
+    "ChildAgentEventSink",
+    "ChildAgentHandle",
+    "ChildAgentHeartbeat",
+    "ChildAgentLease",
+    "ChildAgentNotFoundError",
+    "ChildAgentOperationConflict",
+    "ChildAgentOperationResult",
+    "ChildAgentSpawnRequest",
+    "ChildAgentState",
+    "ChildAgentSupervisor",
+    "ChildAgentSupervisorError",
+    "ChildAgentTerminalReceipt",
+    "ChildAgentWorker",
+    "InMemoryChildAgentEventLog",
+    "TERMINAL_CHILD_STATES",
+]

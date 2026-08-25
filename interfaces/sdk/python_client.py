@@ -207,6 +207,43 @@ class RunsClient:
             },
         )
 
+    def runtime_status(
+        self,
+        run_id: str,
+        *,
+        node_id: str | None = None,
+        node_instance_id: str | None = None,
+        activity_id: str | None = None,
+        attempt_id: str | None = None,
+        child_id: str | None = None,
+    ) -> dict[str, Any]:
+        return self.client.get(
+            f"{self._PREFIX}/{_quote_path_segment(run_id)}/runtime/status",
+            params={
+                "node_id": node_id,
+                "node_instance_id": node_instance_id,
+                "activity_id": activity_id,
+                "attempt_id": attempt_id,
+                "child_id": child_id,
+            },
+        )
+
+    def runtime_timeline(
+        self,
+        run_id: str,
+        *,
+        stream_id: str | None = None,
+        cursor: str | None = None,
+        limit: int = 100,
+    ) -> dict[str, Any]:
+        return self.client.get(
+            f"{self._PREFIX}/{_quote_path_segment(run_id)}/runtime/timeline",
+            params={"stream_id": stream_id, "cursor": cursor, "limit": limit},
+        )
+
+    status = runtime_status
+    timeline = runtime_timeline
+
     def replay(self, run_id: str) -> dict[str, Any]:
         return self.client.get(f"{self._PREFIX}/{_quote_path_segment(run_id)}/replay")
 

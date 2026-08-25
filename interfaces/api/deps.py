@@ -33,6 +33,7 @@ from interfaces.services.source_service import SourceApplicationService
 from interfaces.services.storage_service import StorageApplicationService
 from interfaces.services.subscription_service import SubscriptionApplicationService
 from interfaces.services.worker_service import WorkerApplicationService
+from framework.events.runtime.projection import RuntimeOperatorStatusService
 
 
 WorkerServiceFactory = Callable[[], WorkerApplicationService]
@@ -55,6 +56,7 @@ ScheduleServiceFactory = Callable[[], ScheduleApplicationService]
 AuthServiceFactory = Callable[[], AuthApplicationService]
 ProjectServiceFactory = Callable[[], ProjectApplicationService]
 ResearchServiceFactory = Callable[[], ResearchApplicationService]
+RuntimeOperatorStatusServiceFactory = Callable[[], RuntimeOperatorStatusService]
 
 
 @dataclass(frozen=True)
@@ -79,6 +81,7 @@ class ApiServices:
     research_service_factory: ResearchServiceFactory
     harness_graph_service_factory: HarnessGraphServiceFactory | None = None
     harness_wait_service_factory: HarnessWaitServiceFactory | None = None
+    runtime_operator_status_service_factory: RuntimeOperatorStatusServiceFactory | None = None
 
 
 @dataclass(frozen=True)
@@ -115,6 +118,7 @@ def build_api_services(
     research_service_factory: ResearchServiceFactory = build_research_application_service,
     harness_graph_service_factory: HarnessGraphServiceFactory | None = None,
     harness_wait_service_factory: HarnessWaitServiceFactory | None = None,
+    runtime_operator_status_service_factory: RuntimeOperatorStatusServiceFactory | None = None,
 ) -> ApiServices:
     return ApiServices(
         worker_service_factory=worker_service_factory,
@@ -137,6 +141,7 @@ def build_api_services(
         research_service_factory=research_service_factory,
         harness_graph_service_factory=harness_graph_service_factory,
         harness_wait_service_factory=harness_wait_service_factory,
+        runtime_operator_status_service_factory=runtime_operator_status_service_factory,
     )
 
 

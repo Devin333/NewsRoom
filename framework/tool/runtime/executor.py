@@ -26,6 +26,16 @@ from framework.shared.attempts import (
     derive_idempotency_key,
 )
 from framework.shared.graph_identity import GraphExecutionIdentity
+from framework.execution_environment import (
+    ExecutionEnvironmentError,
+    ExecutionEnvironmentUnavailableError,
+    ExecutionEnvironmentRegistry,
+    ExecutionMode,
+    ExecutionOutcome,
+    ExecutionProfile,
+    ExecutionRequest,
+    ResourceLimits,
+)
 from framework.shared.json import to_jsonable
 from framework.events.propagation import (
     W3CSpanContext,
@@ -176,6 +186,11 @@ class ToolExecutor:
         trace_context: TraceContext | W3CSpanContext | None = None,
         defer_result_persistence: bool = False,
         graph_identity: GraphExecutionIdentity | Mapping[str, Any] | None = None,
+        execution_environment: Any | None = None,
+        execution_environment_registry: Any | None = None,
+        runtime_event_sink: Any | None = None,
+        runtime_event_projection: Any | None = None,
+        require_explicit_execution_profile: bool = False,
     ) -> None:
         self._registry = registry
         self._artifact_manager = artifact_manager
@@ -193,6 +208,21 @@ class ToolExecutor:
         if not isinstance(defer_result_persistence, bool):
             raise TypeError("defer_result_persistence must be boolean")
         self._defer_result_persistence = defer_result_persistence
+        if execution_environment is not None and execution_environment_registry is not None:
+            raise ValueError(
+                "provide only one of execution_environment or execution_environment_registry"
+            )
+        self._execution_environment = (
+            execution_environment
+            if execution_environment is not None
+            else execution_environment_registry
+        )
+        if runtime_event_sink is not None and runtime_event_projection is not None:
+            raise ValueError("provide only one of runtime_event_sink or runtime_event_projection")
+        self._runtime_event_sink = runtime_event_sink or runtime_event_projection
+        if not isinstance(require_explicit_execution_profile, bool):
+            raise TypeError("require_explicit_execution_profile must be boolean")
+        self._require_explicit_execution_profile = require_explicit_execution_profile
         self._events: list[ToolEvent] = []
         self._metrics = ToolMetrics()
         self._records: list[ToolExecutionRecord] = []
@@ -255,6 +285,7 @@ class ToolExecutor:
         attempts_used = 0
         last_attempt_context: AttemptContext | None = None
         resolved_definition: Any | None = None
+        execution_receipt_metadata: dict[str, Any] = {}
 
         def record_attempt(attempt: int, context: AttemptContext) -> None:
             nonlocal attempts_used, last_attempt_context
@@ -346,16 +377,33 @@ class ToolExecutor:
                 policy_trace.approval_granted = True
             policy_trace.add("tool.approval", "safety", True, "approval gate passed")
 
-            arguments = _arguments_with_secrets(
-                arguments,
-                registered.definition,
-                self._secret_provider,
-            )
-            policy_trace.add("tool.secrets", "safety", True, "secret injection passed")
-
             max_attempts = _max_attempts(registered.definition, policy)
+            execution_receipt_metadata.clear()
+            raw_profile = registered.definition.metadata.get("execution_profile")
+            if raw_profile is None:
+                arguments = _arguments_with_secrets(
+                    arguments,
+                    registered.definition,
+                    self._secret_provider,
+                )
+                policy_trace.add("tool.secrets", "safety", True, "secret injection passed")
+            else:
+                # Named secret handles are resolved by the physical provider;
+                # raw secret values must never enter a sandbox argv or env.
+                policy_trace.add(
+                    "tool.secrets",
+                    "safety",
+                    True,
+                    "sandbox execution delegates secret handles to the provider",
+                )
+            physical_executor = self._resolve_executor(
+                registered,
+                call,
+                arguments,
+                receipt_holder=execution_receipt_metadata,
+            )
             raw_output, attempts_used, last_attempt_context = _invoke_with_retry(
-                _trace_scoped_executor(registered.executor, scoped_context),
+                _trace_scoped_executor(physical_executor, scoped_context),
                 arguments,
                 _timeout_seconds(registered.definition, policy),
                 max_attempts,
@@ -421,18 +469,28 @@ class ToolExecutor:
                 "output size gate passed",
                 metadata={"output_bytes": output_bytes},
             )
+            tool_result = self._tool_result(
+                call,
+                safe_output,
+                policy,
+                output_bytes,
+                media_type=result_contract.media_type,
+            )
+            if execution_receipt_metadata:
+                tool_result = _copy_tool_result(
+                    tool_result,
+                    metadata={**tool_result.metadata, **execution_receipt_metadata},
+                )
             return _copy_tool_result(
-                self._tool_result(
-                    call,
-                    safe_output,
-                    policy,
-                    output_bytes,
-                    media_type=result_contract.media_type,
-                ),
+                tool_result,
                 **_attempt_result_fields(last_attempt_context),
             )
 
-        self._emit("tool_call_requested", call, {"call": call.to_dict()})
+        self._emit(
+            "tool_call_requested",
+            call,
+            {"argument_keys": sorted(str(key) for key in call.arguments)},
+        )
         try:
             result, elapsed_ms = timed_tool_call(invoke)
         except ToolPermissionError as exc:
@@ -492,15 +550,29 @@ class ToolExecutor:
             elapsed_ms = 0.0
         except Exception as exc:
             policy_trace.add("tool.execution", "compatibility", False, str(exc))
+            execution_error_metadata = (
+                {"reason_code": exc.reason_code, "details": dict(exc.details)}
+                if isinstance(exc, ExecutionEnvironmentError)
+                else {}
+            )
+            if isinstance(exc, ExecutionEnvironmentError):
+                execution_error_metadata["execution_environment_halt"] = True
             result = ToolResult(
                 status=ToolStatus.FAILED,
                 error_type=type(exc).__name__,
                 error_message=str(exc),
                 call_id=call.call_id,
                 tool_name=call.tool_name,
+                metadata=execution_error_metadata,
                 **_attempt_result_fields(last_attempt_context),
             )
             elapsed_ms = 0.0
+
+        if execution_receipt_metadata:
+            result = _copy_tool_result(
+                result,
+                metadata={**result.metadata, **execution_receipt_metadata},
+            )
 
         result = _standardize_tool_result(
             _with_tool_gate(_with_duration(_with_call(result, call), elapsed_ms), call),
@@ -509,6 +581,12 @@ class ToolExecutor:
             trace_context=event_trace_context,
             retry_count=max(0, attempts_used - 1),
         )
+        if result.metadata.get("execution_environment_halt"):
+            result = _copy_tool_result(
+                result,
+                error_type="execution_environment_unavailable",
+                error_message=result.error_message,
+            )
         if resolved_definition is not None:
             metadata = {
                 **result.metadata,
@@ -548,6 +626,213 @@ class ToolExecutor:
             )
         )
         return observation
+
+    def _resolve_executor(
+        self,
+        registered: Any,
+        call: ToolCall,
+        arguments: dict[str, Any],
+        *,
+        receipt_holder: dict[str, Any] | None = None,
+    ) -> Any:
+        """Select the physical execution boundary declared by the tool.
+
+        Existing tools remain trusted only when they do not declare an
+        ``execution_profile``.  A tool that declares ``sandboxed_process`` can
+        never fall back to its in-process callable: a missing registry or an
+        invalid request is a typed fail-closed error.
+        """
+        metadata = registered.definition.metadata
+        raw_profile = metadata.get("execution_profile")
+        if raw_profile is None:
+            if self._require_explicit_execution_profile:
+                raise ToolRuntimeError(
+                    "tool must explicitly declare trusted_in_process or sandboxed_process execution"
+                )
+            return registered.executor
+        try:
+            profile = (
+                raw_profile
+                if isinstance(raw_profile, ExecutionProfile)
+                else ExecutionProfile.from_dict(raw_profile)
+            )
+        except (TypeError, ValueError) as exc:
+            raise ToolRuntimeError(
+                f"tool {call.tool_name} has an invalid execution profile: {exc}"
+            ) from exc
+        if profile.mode is ExecutionMode.TRUSTED_IN_PROCESS:
+            return registered.executor
+        registry = self._execution_environment
+        if registry is None:
+            raise ExecutionEnvironmentUnavailableError(
+                "sandboxed tool execution requires a Harness ExecutionEnvironment",
+            )
+        if not hasattr(registry, "execute"):
+            raise ExecutionEnvironmentUnavailableError(
+                "execution environment does not expose execute"
+            )
+
+        execution_spec = metadata.get("execution")
+        if not isinstance(execution_spec, Mapping):
+            raise ToolRuntimeError(
+                "sandboxed tool must declare an execution object with image and argv"
+            )
+        graph_identity = call.graph_identity or self._graph_identity
+        if graph_identity is None:
+            raise ToolRuntimeError(
+                "sandboxed tool execution requires an exact Graph identity"
+            )
+        image = execution_spec.get("image")
+        argv = execution_spec.get("argv")
+        if isinstance(argv, str):
+            argv = (argv,)
+        if not isinstance(argv, (tuple, list)):
+            raise ToolRuntimeError("sandboxed tool execution argv must be an array")
+        if any(not isinstance(token, str) for token in argv):
+            raise ToolRuntimeError("sandboxed tool execution argv must contain strings")
+        # Never serialize the complete argument object into argv: even when
+        # secret injection is disabled, command lines are observable by other
+        # processes.  Providers receive named ``secret_handles`` separately.
+        if any(token == "{arguments}" or "{secret" in token.casefold() for token in argv):
+            raise ToolRuntimeError(
+                "sandbox execution cannot expand raw arguments or secrets into argv"
+            )
+        argv = tuple(argv)
+        raw_secret_handles = execution_spec.get("secret_handles", ())
+        if isinstance(raw_secret_handles, (str, bytes)) or not isinstance(raw_secret_handles, (tuple, list)):
+            raise ToolRuntimeError("sandboxed tool secret_handles must be an array")
+        declared_secret_handles = tuple(raw_secret_handles)
+        required_secret_names = tuple(getattr(registered.definition, "required_secret_names", ()) or ())
+        if required_secret_names and not set(required_secret_names).issubset(set(declared_secret_handles)):
+            raise ToolRuntimeError(
+                "sandboxed tool must declare every required secret as a named handle"
+            )
+        attempt_context = current_attempt_context()
+        operation_id = (
+            attempt_context.operation_id
+            if attempt_context is not None and attempt_context.operation_id
+            else _tool_idempotency_key(call)
+        )
+        attempt_id = (
+            attempt_context.attempt_id
+            if attempt_context is not None and attempt_context.attempt_id
+            else f"{operation_id}:attempt-1"
+        )
+        execution_id = f"exec:{operation_id}:{attempt_id}"
+        request = ExecutionRequest(
+            execution_id=execution_id,
+            tool_id=registered.definition.tool_id,
+            graph_identity=graph_identity,
+            operation_id=operation_id,
+            attempt_id=attempt_id,
+            profile=profile,
+            image=str(image or ""),
+            argv=argv,
+            read_roots=_execution_paths(execution_spec.get("read_roots", ()), "read_roots"),
+            write_roots=_execution_paths(execution_spec.get("write_roots", ()), "write_roots"),
+            working_directory=execution_spec.get("working_directory"),
+            environment=dict(execution_spec.get("environment", {})),
+            secret_handles=declared_secret_handles,
+            resource_limits=ResourceLimits(
+                **dict(execution_spec.get("resource_limits", {}))
+            ),
+            timeout_seconds=execution_spec.get("timeout_seconds")
+            or registered.definition.timeout_seconds,
+            cancellation_grace_seconds=float(
+                execution_spec.get("cancellation_grace_seconds")
+                or registered.definition.cancellation_grace_seconds
+                or 5.0
+            ),
+            approval_evidence_ref=execution_spec.get("approval_evidence_ref"),
+            budget_ref=execution_spec.get("budget_ref"),
+        )
+
+        def execute(_: dict[str, Any]) -> Any:
+            try:
+                outcome = registry.execute(request)
+            except ExecutionEnvironmentError:
+                raise
+            if not isinstance(outcome, ExecutionOutcome):
+                raise ToolRuntimeError("execution environment returned an invalid outcome")
+            receipt = outcome.receipt
+            if not receipt.matches_request(request):
+                raise ToolRuntimeError("execution receipt identity does not match request")
+            provider_capabilities = getattr(registry, "capabilities", None)
+            provider_checksum = getattr(provider_capabilities, "checksum", None)
+            if provider_checksum is not None and receipt.provider_capability_checksum != provider_checksum:
+                raise ToolRuntimeError(
+                    "execution receipt capability checksum does not match provider"
+                )
+            if receipt_holder is not None:
+                receipt_holder.update(
+                    {
+                        "execution_id": receipt.execution_id,
+                        "execution_receipt_ref": f"execution-receipt://{receipt.execution_id}",
+                        "execution_receipt_checksum": receipt.receipt_checksum,
+                        "execution_capability_checksum": receipt.provider_capability_checksum,
+                        "execution_provider_id": receipt.provider_id,
+                        "execution_status": receipt.status.value,
+                        "execution_reason_code": receipt.reason_code,
+                        "termination_confirmed": receipt.termination_confirmed,
+                    }
+                )
+            if receipt.status.value in {"rejected", "indeterminate", "timed_out", "cancelled", "failed"}:
+                error = ToolRuntimeError(
+                    f"sandbox execution {receipt.status.value}: {receipt.reason_code}"
+                )
+                if receipt.status.value == "indeterminate":
+                    raise ToolIndeterminateError(
+                        str(error),
+                        attempt_id=attempt_id,
+                        idempotency_key=operation_id,
+                        operation_id=operation_id,
+                        operation_kind="tool_call",
+                        local_attempt_no=1,
+                        retry_credit_id=None,
+                        cause_type=receipt.reason_code,
+                    )
+                raise error
+            if not receipt.termination_confirmed:
+                raise ToolIndeterminateError(
+                    "sandbox execution succeeded without termination confirmation",
+                    attempt_id=attempt_id,
+                    idempotency_key=operation_id,
+                    operation_id=operation_id,
+                    operation_kind="tool_call",
+                    local_attempt_no=1,
+                    retry_credit_id=None,
+                    cause_type="termination_unconfirmed",
+                )
+            if outcome.output is not None and receipt.output_checksum is None:
+                raise ToolRuntimeError(
+                    "sandbox execution output is missing its receipt checksum"
+                )
+            if outcome.output is not None:
+                output_bytes = (
+                    outcome.output
+                    if isinstance(outcome.output, bytes)
+                    else str(outcome.output).encode("utf-8")
+                )
+                expected_checksum = "sha256:" + sha256(output_bytes).hexdigest()
+                if receipt.output_checksum != expected_checksum:
+                    raise ToolRuntimeError(
+                        "sandbox execution output checksum does not match its receipt"
+                    )
+                if receipt.output_bytes != len(output_bytes):
+                    raise ToolRuntimeError(
+                        "sandbox execution output size does not match its receipt"
+                    )
+            output = outcome.output
+            if isinstance(output, bytes):
+                output = output.decode("utf-8", errors="replace")
+            if isinstance(output, str) and registered.definition.result_persistence.media_type.endswith("json"):
+                try:
+                    return json.loads(output)
+                except json.JSONDecodeError:
+                    return output
+            return output
+
+        return execute
 
     def _tool_result(
         self,
@@ -730,7 +1015,111 @@ class ToolExecutor:
             graph_identity=call.graph_identity,
         )
         self._events.append(event)
+        self._emit_runtime_event(event_type, call, payload or {})
         return event
+
+    def _emit_runtime_event(
+        self,
+        event_type: str,
+        call: ToolCall,
+        payload: dict[str, Any],
+    ) -> None:
+        sink = self._runtime_event_sink
+        if sink is None:
+            return
+        from framework.events.runtime.projection import (
+            RuntimeEventEnvelope,
+            RuntimeEventIdentity,
+            RuntimeEventType,
+        )
+
+        mapping = {
+            "tool_call_requested": RuntimeEventType.TOOL_REQUESTED,
+            "tool_started": RuntimeEventType.EXECUTION_STARTED,
+            "attempt_started": RuntimeEventType.EXECUTION_STARTED,
+            "tool_approval_required": RuntimeEventType.APPROVAL_REQUESTED,
+            "tool_succeeded": RuntimeEventType.EXECUTION_TERMINAL,
+            "tool_failed": RuntimeEventType.EXECUTION_TERMINAL,
+            "tool_timeout": RuntimeEventType.TIMEOUT,
+            "tool_call_blocked": RuntimeEventType.RUNTIME_ERROR,
+            "attempt_admission_rejected": RuntimeEventType.RUNTIME_ERROR,
+            "attempt_terminal": RuntimeEventType.EXECUTION_TERMINAL,
+        }
+        canonical_type = mapping.get(event_type, RuntimeEventType.RUNTIME_ERROR)
+        identity = RuntimeEventIdentity(
+            graph_identity=call.graph_identity,
+            activity_id=(call.graph_identity.activity_id if call.graph_identity else None),
+            attempt_id=(payload.get("attempt_id") or payload.get("operation_id")),
+            node_id=(call.graph_identity.node_id if call.graph_identity else None),
+            node_instance_id=(
+                call.graph_identity.node_instance_id if call.graph_identity else None
+            ),
+        )
+        status = payload.get("status")
+        if status is None:
+            status = {
+                "tool_succeeded": "succeeded",
+                "tool_failed": "failed",
+                "tool_timeout": "timed_out",
+                "tool_call_blocked": "rejected",
+                "attempt_admission_rejected": "rejected",
+            }.get(event_type)
+        operation_identity = (
+            payload.get("attempt_id")
+            or payload.get("operation_id")
+            or _tool_idempotency_key(call)
+        )
+        stable_event_id = "tool-runtime:" + sha256(
+            f"{call.call_id}|{event_type}|{operation_identity}|{status}|{payload.get('reason_code') or payload.get('reason')}".encode("utf-8")
+        ).hexdigest()
+        event = RuntimeEventEnvelope(
+            event_id=stable_event_id,
+            event_type=canonical_type,
+            occurred_at=datetime.now(UTC),
+            identity=identity,
+            status=str(status) if status is not None else None,
+            reason_code=payload.get("reason_code") or payload.get("reason"),
+            stream_id=call.graph_identity.run_id if call.graph_identity else None,
+            refs=tuple(
+                str(value)
+                for key, value in payload.items()
+                if key.endswith("_ref") and isinstance(value, str)
+            ),
+            checksums=(
+                {
+                    key: str(payload[key])
+                    for key in ("execution_receipt_checksum", "execution_capability_checksum")
+                    if isinstance(payload.get(key), str)
+                    and payload[key].startswith("sha256:")
+                }
+            ),
+            metadata={
+                "tool_name": call.tool_name,
+                "tool_call_id": call.call_id,
+                "argument_keys": payload.get("argument_keys"),
+                "status": status,
+                "execution_receipt_ref": payload.get("execution_receipt_ref"),
+                "execution_receipt_checksum": payload.get("execution_receipt_checksum"),
+                "execution_capability_checksum": payload.get("execution_capability_checksum"),
+                "execution_provider_id": payload.get("execution_provider_id"),
+                "termination_confirmed": payload.get("termination_confirmed"),
+                "execution_environment_halt": payload.get("execution_environment_halt"),
+            },
+            source="tool",
+        )
+        try:
+            if callable(sink):
+                sink(event)
+            elif hasattr(sink, "append"):
+                sink.append(event)
+            elif hasattr(sink, "publish"):
+                sink.publish(event)
+            else:
+                raise TypeError("runtime event sink must be callable or expose append/publish")
+        except Exception:
+            # Runtime event projection is a required canonical boundary when
+            # supplied; make failures visible instead of silently losing facts.
+            raise
 
     def _approval_gate(self, call: ToolCall, definition: Any, policy: ToolPolicy) -> ToolResult | None:
         if not (
@@ -781,6 +1170,12 @@ def _result_event_payload(observation: ToolObservation) -> dict[str, Any]:
         "operation_kind": observation.result.operation_kind,
         "local_attempt_no": observation.result.local_attempt_no,
         "retry_credit_id": observation.result.retry_credit_id,
+        "reason_code": observation.result.metadata.get("reason_code"),
+        "execution_receipt_ref": observation.result.metadata.get("execution_receipt_ref"),
+        "execution_receipt_checksum": observation.result.metadata.get("execution_receipt_checksum"),
+        "execution_capability_checksum": observation.result.metadata.get("execution_capability_checksum"),
+        "execution_provider_id": observation.result.metadata.get("execution_provider_id"),
+        "execution_environment_halt": observation.result.metadata.get("execution_environment_halt"),
     }
 
 
@@ -1540,6 +1935,14 @@ def _result_size_bytes(value: Any, media_type: str) -> int:
     if not isinstance(value, (bytes, bytearray)):
         raise ToolRuntimeError("binary tool result must be bytes")
     return len(value)
+
+
+def _execution_paths(value: Any, field_name: str) -> tuple[str, ...]:
+    if isinstance(value, (str, bytes)) or not isinstance(value, (tuple, list)):
+        raise ToolRuntimeError(f"sandbox execution {field_name} must be an array")
+    if any(not isinstance(item, str) for item in value):
+        raise ToolRuntimeError(f"sandbox execution {field_name} must contain strings")
+    return tuple(value)
 
 
 def _safe_tool_output(value: Any, media_type: str) -> Any:

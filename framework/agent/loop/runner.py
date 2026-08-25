@@ -37,6 +37,8 @@ class AgentRunner:
         memory_policy: MemoryPolicy | None = None,
         output_judge: OutputJudge | None = None,
         output_normalizer: OutputNormalizer | None = None,
+        runtime_event_sink: Any | None = None,
+        require_explicit_execution_profile: bool = False,
     ) -> None:
         self._llm_client = llm_client
         self._tool_registry = tool_registry
@@ -47,6 +49,8 @@ class AgentRunner:
         self._memory_policy = memory_policy
         self._output_judge = output_judge or OutputJudge()
         self._output_normalizer = output_normalizer
+        self._runtime_event_sink = runtime_event_sink
+        self._require_explicit_execution_profile = require_explicit_execution_profile
 
     def run(
         self,
@@ -151,6 +155,8 @@ class AgentRunner:
             tool_executor=ToolExecutor(
                 self._tool_registry,
                 graph_identity=graph_identity,
+                runtime_event_sink=self._runtime_event_sink,
+                require_explicit_execution_profile=self._require_explicit_execution_profile,
             ),
             prompt_builder=PromptBuilder(),
             action_parser=AgentActionParser(),
@@ -160,6 +166,7 @@ class AgentRunner:
             subagent_executor=self._subagent_executor,
             memory_runtime=self._memory_runtime,
             memory_policy=self._memory_policy,
+            runtime_event_sink=self._runtime_event_sink,
         )
         result = loop.run(
             agent,
