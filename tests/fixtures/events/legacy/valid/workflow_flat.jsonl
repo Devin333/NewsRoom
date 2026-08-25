@@ -1,2 +1,0 @@
-{"event_id":"evt-flat-001","event_type":"workflow_succeeded","occurred_at":"2026-05-23T04:00:00Z","payload":{"path":["collect","report"]},"run_id":"run-fixture-4","step_id":null}
-

@@ -13,6 +13,7 @@ _RUNTIME_ROOTS = (
     _PROJECT_ROOT / "framework",
     _PROJECT_ROOT / "interfaces",
     _PROJECT_ROOT / "infrastructure",
+    _PROJECT_ROOT / "scripts",
 )
 _FORBIDDEN_MIGRATION_IMPORTS = (
     "business",
@@ -49,7 +50,7 @@ def test_graph_only_migrator_does_not_import_live_or_legacy_runtime() -> None:
 def test_runtime_packages_do_not_import_migration_only_tooling() -> None:
     violations: list[str] = []
     for root in _RUNTIME_ROOTS:
-        for path in sorted(root.rglob("*.py")):
+        for path in _production_python_files(root):
             tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
             for node in ast.walk(tree):
                 if isinstance(node, ast.Import):
@@ -65,6 +66,47 @@ def test_runtime_packages_do_not_import_migration_only_tooling() -> None:
                             f"{node.lineno}:{module_name}"
                         )
     assert violations == []
+
+
+def test_all_production_roots_are_unreachable_from_history_tooling() -> None:
+    """The offline package must stay outside every production composition root."""
+
+    migration_prefix = "scripts.graph_only_migration"
+    violations: list[str] = []
+    for root in _RUNTIME_ROOTS:
+        for path in _production_python_files(root):
+            if "__pycache__" in path.parts:
+                continue
+            tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Import):
+                    names = [alias.name for alias in node.names]
+                elif isinstance(node, ast.ImportFrom) and node.module is not None:
+                    names = [node.module]
+                else:
+                    continue
+                if any(
+                    name == migration_prefix
+                    or name.startswith(migration_prefix + ".")
+                    for name in names
+                ):
+                    violations.append(
+                        f"{path.relative_to(_PROJECT_ROOT).as_posix()}:{node.lineno}"
+                    )
+    assert violations == []
+
+
+def _production_python_files(root: Path) -> list[Path]:
+    if root.is_file():
+        return [root] if root.suffix == ".py" else []
+    return sorted(
+        path
+        for path in root.rglob("*.py")
+        if "__pycache__" not in path.parts
+        and not path.relative_to(_PROJECT_ROOT).as_posix().startswith(
+            "scripts/graph_only_migration/"
+        )
+    )
 
 
 def test_importing_migrator_does_not_load_retired_runtime_in_fresh_process() -> None:

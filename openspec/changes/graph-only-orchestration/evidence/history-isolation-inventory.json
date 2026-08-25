@@ -1,0 +1,72 @@
+{
+  "schema": "newsroom.graph-only-history-isolation-inventory/v1",
+  "change": "graph-only-orchestration",
+  "scope": "06c-06d",
+  "history_tool": {
+    "root": "scripts/graph_only_migration/",
+    "mode": "offline_read_only",
+    "authority_mode": "typed_quarantine_only",
+    "production_import_allowed": false,
+    "writes_graph_state": false,
+    "writes_checkpoint": false,
+    "writes_index": false,
+    "writes_memory": false,
+    "writes_artifact": false,
+    "dispatches_worker": false,
+    "resumes_or_replays": false
+  },
+  "frozen_fixture_root": {
+    "root": "tests/fixtures/graph_only_migration/",
+    "production_import_allowed": false,
+    "source_checksum_required": true,
+    "record_identity_required": true
+  },
+  "removed_only_legacy_fixtures": [
+    "tests/fixtures/events/legacy/",
+    "tests/fixtures/events/schema/workflow_payloads_v1.json",
+    "tests/fixtures/harness/graph_migration/current_v1_golden.json"
+  ],
+  "production_import_graph": {
+    "roots": [
+      "framework",
+      "business",
+      "interfaces",
+      "infrastructure",
+      "scripts"
+    ],
+    "history_to_production_edges": 0,
+    "history_to_forbidden_runtime_edges": 0,
+    "production_to_history_edges": 0,
+    "parse_failures": 0,
+    "evidence": "legacy-history-import-graph.json"
+  },
+  "legacy_workflow_deletion": {
+    "deletion_commit": "ad48da64d5e3798d301ea0a7efd77b2e2f66e6ea",
+    "active_runtime_paths": [],
+    "active_public_exports": [],
+    "active_migrator_or_legacy_reader": false,
+    "dual_store_writer": false,
+    "rollback_pointer_switch": false,
+    "evidence": "legacy-workflow-runtime-deletion-proof.json"
+  },
+  "non_workflow_migration_boundaries": [
+    {
+      "name": "research_run_disposition_schema_compatibility",
+      "legacy_workflow_authority": false,
+      "graph_history_authority": false,
+      "pointer_or_dual_store_writer": false
+    },
+    {
+      "name": "durable_replay_component_version_migration",
+      "legacy_workflow_authority": false,
+      "graph_history_authority": false,
+      "pointer_or_dual_store_writer": false
+    },
+    {
+      "name": "harness_sqlite_schema_migration",
+      "legacy_workflow_authority": false,
+      "graph_history_authority": false,
+      "pointer_or_dual_store_writer": false
+    }
+  ]
+}

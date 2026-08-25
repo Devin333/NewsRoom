@@ -1,2 +1,0 @@
-{"event":{"created_at":"2026-05-25T06:00:00Z","event_type":"step_started","metadata":{},"payload":{},"run_id":"run-authoritative-a","schema_version":"newsroom.event.v1","source":"workflow","span_id":"6666666666666666","trace_id":"66666666666666666666666666666666"},"event_id":"evt-conflict-001","run_id":"run-conflicting-b","schema_version":"newsroom.event_envelope.v1","span_id":"7777777777777777","trace_id":"77777777777777777777777777777777"}
-

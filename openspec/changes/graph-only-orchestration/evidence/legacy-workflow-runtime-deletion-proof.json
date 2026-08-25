@@ -1,0 +1,439 @@
+{
+  "schema": "newsroom.graph-only-legacy-workflow-deletion-proof/v1",
+  "deletion_commit": "ad48da64d5e3798d301ea0a7efd77b2e2f66e6ea",
+  "deletion_parent": "5d622142a1a8d030d9984a43c46ebced35457f50",
+  "tracked_source": {
+    "workflow_runtime_files": [],
+    "harness_workflow_files": [],
+    "workflow_spec_file": null
+  },
+  "deleted_paths": {
+    "workflow_runtime": {
+      "count": 93,
+      "paths": [
+        "framework/specs/workflow.py",
+        "framework/workflow/__init__.py",
+        "framework/workflow/buffer/__init__.py",
+        "framework/workflow/buffer/data_buffer.py",
+        "framework/workflow/checkpoint/__init__.py",
+        "framework/workflow/checkpoint/checksum.py",
+        "framework/workflow/checkpoint/durable.py",
+        "framework/workflow/checkpoint/envelope.py",
+        "framework/workflow/checkpoint/migration.py",
+        "framework/workflow/checkpoint/model.py",
+        "framework/workflow/checkpoint/recovery.py",
+        "framework/workflow/checkpoint/reference.py",
+        "framework/workflow/checkpoint/resume.py",
+        "framework/workflow/checkpoint/store.py",
+        "framework/workflow/compiler/__init__.py",
+        "framework/workflow/compiler/compiler.py",
+        "framework/workflow/compiler/graph_builder.py",
+        "framework/workflow/compiler/validator.py",
+        "framework/workflow/governance/__init__.py",
+        "framework/workflow/governance/budget.py",
+        "framework/workflow/governance/resource.py",
+        "framework/workflow/governance/retry.py",
+        "framework/workflow/governance/safety.py",
+        "framework/workflow/governance/timeout.py",
+        "framework/workflow/inspection/__init__.py",
+        "framework/workflow/inspection/inspector.py",
+        "framework/workflow/operations/__init__.py",
+        "framework/workflow/operations/cancel.py",
+        "framework/workflow/operations/rerun.py",
+        "framework/workflow/operations/resume.py",
+        "framework/workflow/operations/service.py",
+        "framework/workflow/routing/__init__.py",
+        "framework/workflow/routing/builtin_predicates.py",
+        "framework/workflow/routing/conditions.py",
+        "framework/workflow/routing/engine.py",
+        "framework/workflow/routing/errors.py",
+        "framework/workflow/routing/predicates.py",
+        "framework/workflow/runners/__init__.py",
+        "framework/workflow/runners/_memory_utils.py",
+        "framework/workflow/runners/_tool_utils.py",
+        "framework/workflow/runners/_utils.py",
+        "framework/workflow/runners/agent_loop.py",
+        "framework/workflow/runners/artifact.py",
+        "framework/workflow/runners/base.py",
+        "framework/workflow/runners/default_registry.py",
+        "framework/workflow/runners/function.py",
+        "framework/workflow/runners/human_review.py",
+        "framework/workflow/runners/join.py",
+        "framework/workflow/runners/memory.py",
+        "framework/workflow/runners/parallel.py",
+        "framework/workflow/runners/quality_gate.py",
+        "framework/workflow/runners/registry.py",
+        "framework/workflow/runners/router.py",
+        "framework/workflow/runners/skill/__init__.py",
+        "framework/workflow/runners/skill/accessors.py",
+        "framework/workflow/runners/skill/context.py",
+        "framework/workflow/runners/skill/context_builder.py",
+        "framework/workflow/runners/skill/input_resolver.py",
+        "framework/workflow/runners/skill/output_writer.py",
+        "framework/workflow/runners/skill/result_mapper.py",
+        "framework/workflow/runners/skill/runner.py",
+        "framework/workflow/runners/skill/validators.py",
+        "framework/workflow/runners/subworkflow.py",
+        "framework/workflow/runners/tool.py",
+        "framework/workflow/runners/tool_batch.py",
+        "framework/workflow/runtime/__init__.py",
+        "framework/workflow/runtime/artifact_publishers.py",
+        "framework/workflow/runtime/attempt_event_sink.py",
+        "framework/workflow/runtime/checkpoint_coordinator.py",
+        "framework/workflow/runtime/context.py",
+        "framework/workflow/runtime/errors.py",
+        "framework/workflow/runtime/event_emitter.py",
+        "framework/workflow/runtime/event_projection.py",
+        "framework/workflow/runtime/execution_context.py",
+        "framework/workflow/runtime/execution_loop.py",
+        "framework/workflow/runtime/executor.py",
+        "framework/workflow/runtime/manifest.py",
+        "framework/workflow/runtime/manifest_updater.py",
+        "framework/workflow/runtime/outcome_finalizer.py",
+        "framework/workflow/runtime/result.py",
+        "framework/workflow/runtime/run_result.py",
+        "framework/workflow/runtime/runner.py",
+        "framework/workflow/runtime/runtime_event_bridge.py",
+        "framework/workflow/runtime/runtime_quality.py",
+        "framework/workflow/runtime/state.py",
+        "framework/workflow/runtime/state_machine.py",
+        "framework/workflow/runtime/status_classifier.py",
+        "framework/workflow/runtime/step_invoker.py",
+        "framework/workflow/runtime/timeout.py",
+        "framework/workflow/runtime/verification.py",
+        "framework/workflow/scheduling/__init__.py",
+        "framework/workflow/scheduling/scheduler.py",
+        "framework/workflow/specs/__init__.py"
+      ]
+    },
+    "harness_workflow_namespace": {
+      "count": 5,
+      "paths": [
+        "framework/harness/workflow/__init__.py",
+        "framework/harness/workflow/compiler.py",
+        "framework/harness/workflow/reader.py",
+        "framework/harness/workflow/spec.py",
+        "framework/harness/workflow/versioning.py"
+      ]
+    },
+    "workflow_spec_models": {
+      "count": 9,
+      "paths": [
+        "framework/specs/__init__.py",
+        "framework/specs/edge.py",
+        "framework/specs/policy.py",
+        "framework/specs/registry.py",
+        "framework/specs/skill_step.py",
+        "framework/specs/step.py",
+        "framework/specs/trigger.py",
+        "framework/specs/validation.py",
+        "framework/specs/workflow.py"
+      ]
+    },
+    "legacy_tests": {
+      "count": 43,
+      "paths": [
+        "tests/framework/contracts/test_workflow_runtime_contract.py",
+        "tests/framework/harness/workflow/test_graph_compiler.py",
+        "tests/framework/harness/workflow/test_graph_dsl_contracts.py",
+        "tests/framework/harness/workflow/test_graph_migration_goldens.py",
+        "tests/framework/harness/workflow/test_graph_preflight.py",
+        "tests/framework/harness/workflow/test_graph_preflight_regressions.py",
+        "tests/framework/harness/workflow/test_workflow_contract_reader.py",
+        "tests/framework/workflow/checkpoint/test_active_durable_checkpoint.py",
+        "tests/framework/workflow/checkpoint/test_checkpoint_manifest_ref.py",
+        "tests/framework/workflow/checkpoint/test_durable_checkpoint_migration.py",
+        "tests/framework/workflow/checkpoint/test_resume_planner.py",
+        "tests/framework/workflow/compiler/test_runtime_quality_policy_validation.py",
+        "tests/framework/workflow/runtime/test_approval_resume_target_step.py",
+        "tests/framework/workflow/runtime/test_atomic_pause_recovery.py",
+        "tests/framework/workflow/runtime/test_attempt_isolation.py",
+        "tests/framework/workflow/runtime/test_context_state_result.py",
+        "tests/framework/workflow/runtime/test_durable_status_commit_order.py",
+        "tests/framework/workflow/runtime/test_manifest_integration.py",
+        "tests/framework/workflow/runtime/test_runner_durable_inspection.py",
+        "tests/framework/workflow/runtime/test_scoped_durable_event_emitter.py",
+        "tests/framework/workflow/runtime/test_status_classifier.py",
+        "tests/framework/workflow/runtime/test_step_gate_integration.py",
+        "tests/framework/workflow/runtime/test_step_outcome_standardization.py",
+        "tests/framework/workflow/runtime/test_subworkflow_durable_events.py",
+        "tests/framework/workflow/runtime/test_thin_executor_components.py",
+        "tests/framework/workflow/runtime/test_workflow_event_projection.py",
+        "tests/framework/workflow/runtime/test_workflow_result_standardization.py",
+        "tests/framework/workflow/runtime/test_workflow_trace_context.py",
+        "tests/framework/workflow/test_agent_loop_step_outcome.py",
+        "tests/framework/workflow/test_artifact_integrity.py",
+        "tests/framework/workflow/test_artifact_path_boundary.py",
+        "tests/framework/workflow/test_artifact_step_runner.py",
+        "tests/framework/workflow/test_imports.py",
+        "tests/framework/workflow/test_module_layout.py",
+        "tests/framework/workflow/test_skill_step_runner.py",
+        "tests/framework/workflow/test_skill_step_spec.py",
+        "tests/framework/workflow/test_unified_budget_governance.py",
+        "tests/framework/workflow/test_workflow_skill_step_integration.py",
+        "tests/interfaces/api/test_api_run_inspection.py",
+        "tests/interfaces/api/test_api_run_operations.py",
+        "tests/interfaces/cli/test_runs_commands.py",
+        "tests/interfaces/services/test_run_inspection_factory.py",
+        "tests/interfaces/services/test_run_inspection_service.py"
+      ]
+    }
+  },
+  "zero_reference_scan": {
+    "production_roots": [
+      "business",
+      "framework",
+      "infrastructure",
+      "interfaces",
+      "scripts"
+    ],
+    "files_scanned": 1425,
+    "references": [],
+    "allowlisted_references": [
+      {
+        "path": "framework/harness/artifacts/terminal_manifest.py",
+        "line": 1053,
+        "category": "schema_writer",
+        "value": "newsroom.workflow_run_manifest."
+      }
+    ],
+    "summary": {
+      "retired_symbol_hits": 0,
+      "forbidden_import_hits": 0,
+      "legacy_schema_writer_hits": 0,
+      "allowlisted_reference_hits": 1,
+      "is_valid": true
+    }
+  },
+  "symbol_deletion_proof": {
+    "flat_harness_state": {
+      "status": "deleted",
+      "symbols": {
+        "WorkflowRunContext": {
+          "status": "deleted",
+          "tracked_definition_or_export_hits": 0,
+          "hits": []
+        },
+        "WorkflowState": {
+          "status": "deleted",
+          "tracked_definition_or_export_hits": 0,
+          "hits": []
+        },
+        "DataBuffer": {
+          "status": "deleted",
+          "tracked_definition_or_export_hits": 0,
+          "hits": []
+        }
+      }
+    },
+    "subagent_v1_v2": {
+      "status": "deleted",
+      "symbols": {
+        "SUBAGENT_NODE_RESULT_SCHEMA_V1": {
+          "status": "deleted",
+          "tracked_definition_or_export_hits": 0,
+          "hits": []
+        },
+        "SUBAGENT_NODE_RESULT_SCHEMA_V2": {
+          "status": "deleted",
+          "tracked_definition_or_export_hits": 0,
+          "hits": []
+        },
+        "SUBAGENT_MATERIALIZED_BUNDLE_SCHEMA_V1": {
+          "status": "deleted",
+          "tracked_definition_or_export_hits": 0,
+          "hits": []
+        },
+        "SUBAGENT_MATERIALIZED_BUNDLE_SCHEMA_V2": {
+          "status": "deleted",
+          "tracked_definition_or_export_hits": 0,
+          "hits": []
+        }
+      }
+    },
+    "workflow_event_catalog_facade": {
+      "status": "deleted",
+      "symbols": {
+        "WorkflowEvent": {
+          "status": "deleted",
+          "tracked_definition_or_export_hits": 0,
+          "hits": []
+        },
+        "WorkflowEventEmitter": {
+          "status": "deleted",
+          "tracked_definition_or_export_hits": 0,
+          "hits": []
+        },
+        "WorkflowEventRecorderFacade": {
+          "status": "deleted",
+          "tracked_definition_or_export_hits": 0,
+          "hits": []
+        }
+      }
+    },
+    "workflow_memory_governance_worker_skill_llm": {
+      "status": "deleted",
+      "symbols": {
+        "WorkflowMemoryAdapter": {
+          "status": "deleted",
+          "tracked_definition_or_export_hits": 0,
+          "hits": []
+        },
+        "WorkflowGovernancePort": {
+          "status": "deleted",
+          "tracked_definition_or_export_hits": 0,
+          "hits": []
+        },
+        "AgentLoopStepRunner": {
+          "status": "deleted",
+          "tracked_definition_or_export_hits": 0,
+          "hits": []
+        },
+        "SkillStepRunner": {
+          "status": "deleted",
+          "tracked_definition_or_export_hits": 0,
+          "hits": []
+        },
+        "WorkflowLLMPort": {
+          "status": "deleted",
+          "tracked_definition_or_export_hits": 0,
+          "hits": []
+        }
+      }
+    },
+    "flat_harness_checkpoint_replay": {
+      "status": "deleted",
+      "symbols": {
+        "HarnessCheckpoint": {
+          "status": "deleted",
+          "tracked_definition_or_export_hits": 0,
+          "hits": []
+        },
+        "InMemoryHarnessCheckpointStore": {
+          "status": "deleted",
+          "tracked_definition_or_export_hits": 0,
+          "hits": []
+        },
+        "WorkflowReplayBundle": {
+          "status": "deleted",
+          "tracked_definition_or_export_hits": 0,
+          "hits": []
+        }
+      }
+    },
+    "workflow_artifact_publisher": {
+      "status": "deleted",
+      "symbols": {
+        "WorkflowArtifactPublisher": {
+          "status": "deleted",
+          "tracked_definition_or_export_hits": 0,
+          "hits": []
+        },
+        "WorkflowArtifactPublisherRegistry": {
+          "status": "deleted",
+          "tracked_definition_or_export_hits": 0,
+          "hits": []
+        }
+      }
+    },
+    "graph_replacement_owners": {
+      "status": "retained_graph_owner",
+      "owners": {
+        "HarnessGraphState": {
+          "status": "retained_graph_owner",
+          "owner": "framework.harness.control_plane.graph_state",
+          "definition_present": true
+        },
+        "HarnessGraphCheckpoint": {
+          "status": "retained_graph_owner",
+          "owner": "framework.harness.control_plane.graph_checkpoint",
+          "definition_present": true
+        },
+        "StoredEvent": {
+          "status": "retained_graph_owner",
+          "owner": "framework.events.canonical",
+          "definition_present": true
+        },
+        "EventSchemaCatalog": {
+          "status": "retained_graph_owner",
+          "owner": "framework.events.schema.catalog",
+          "definition_present": true
+        },
+        "ArtifactPort": {
+          "status": "retained_graph_owner",
+          "owner": "framework.harness.artifacts.ports",
+          "definition_present": true
+        },
+        "ArtifactPublisher": {
+          "status": "retained_graph_owner",
+          "owner": "framework.agent.artifacts.runtime.publisher",
+          "definition_present": true
+        }
+      }
+    }
+  },
+  "history_allowlist": [
+    "framework/harness/artifacts/terminal_manifest.py",
+    "scripts/graph_only_migration/",
+    "tests/fixtures/graph_only_migration/"
+  ],
+  "non_workflow_migration_boundaries": {
+    "research_run_disposition_schema_compatibility": {
+      "scope": "Research run-disposition record schema compatibility",
+      "paths": [
+        "business/research/application/run_disposition.py",
+        "business/research/ports/run_store.py",
+        "infrastructure/research/filesystem_run_store.py",
+        "interfaces/composition/research.py",
+        "interfaces/composition/research_settings.py"
+      ],
+      "legacy_workflow_authority": false,
+      "graph_history_authority": false,
+      "pointer_or_dual_store_writer": false,
+      "reason": "The v1/v2 reader and v2 writer classify Research run disposition; they do not read, resume, replay, or publish legacy Workflow history.",
+      "tracked_paths": {
+        "business/research/application/run_disposition.py": true,
+        "business/research/ports/run_store.py": true,
+        "infrastructure/research/filesystem_run_store.py": true,
+        "interfaces/composition/research.py": true,
+        "interfaces/composition/research_settings.py": true
+      },
+      "is_valid": true
+    },
+    "durable_replay_component_version_migration": {
+      "scope": "Canonical durable replay component version migration",
+      "paths": [
+        "framework/events/runtime/history.py"
+      ],
+      "legacy_workflow_authority": false,
+      "graph_history_authority": false,
+      "pointer_or_dual_store_writer": false,
+      "reason": "Exact-version replay migration is owned by the canonical event history runtime and is not a legacy Workflow record migrator.",
+      "tracked_paths": {
+        "framework/events/runtime/history.py": true
+      },
+      "is_valid": true
+    },
+    "harness_sqlite_schema_migration": {
+      "scope": "Harness side-effect SQLite schema migration",
+      "paths": [
+        "infrastructure/storage/harness/sqlite.py"
+      ],
+      "legacy_workflow_authority": false,
+      "graph_history_authority": false,
+      "pointer_or_dual_store_writer": false,
+      "reason": "SQLite schema upgrades are storage initialization for the active Harness side-effect store and do not select a history runtime or execution path.",
+      "tracked_paths": {
+        "infrastructure/storage/harness/sqlite.py": true
+      },
+      "is_valid": true
+    }
+  },
+  "proof_policy": {
+    "ignored_bytecode_is_not_source": true,
+    "history_inputs_are_read_only": true,
+    "history_inputs_cannot_grant_execution_authority": true,
+    "history_tooling_excluded_from_production_scan": true,
+    "allowlist_is_path_scoped": true
+  }
+}

@@ -193,27 +193,27 @@ AgentLoop Graph smoke 与 control-evidence slice 已完成 task 6.5/6.6。worker
 - [x] 8.5 用 fixture snapshot 验证转换前后 identity、sequence、artifact containment、terminal status、gate evidence 和 replay decision 等价性，并证明 history-only checkpoint 不能被 production resume/replay/publication 路径接受
 - [x] 8.6 确认 migrator 在测试中 live LLM/Tool/worker/retrieval/memory/publication call count 始终为零
 - [x] 8.7 将 live legacy reader、resume、replay、worker dispatch 和 publication 统一改为 typed quarantine/fail-closed，不接受 legacy record 执行
-- [ ] 8.8 将 history-only fixture 与 raw record 隔离到非 production import 路径，保留 source checksum 和 reason code
-- [ ] 8.9 删除 production migration pointer、dual-store writer 和任何依赖 rollback 的切换代码
-- [ ] 8.10 增加重复 legacy input、未知 schema、identity mismatch、checksum tamper 和 side-effect count 为零的 rejection tests
-- [ ] 8.11 删除 active migrator/legacy reader；只保留明确标记的 history-only fixture 或审计报告
-- [ ] 8.12 对 `framework`、`business`、`interfaces`、`infrastructure` 和 `scripts` 执行 import graph 检查，证明 history-only reader/classifier 不可从 production composition 到达
+- [x] 8.8 将 history-only fixture 与 raw record 隔离到非 production import 路径，保留 source checksum 和 reason code；离线工具、冻结 fixture 目录与生产入口由 `history-isolation-inventory.json`、边界测试和 import graph 明确隔离
+- [x] 8.9 删除 production migration pointer、dual-store writer 和任何依赖 rollback 的切换代码；旧 Workflow history authority 已由 deletion proof 证明为零，Research run-disposition v1/v2 compatibility、durable replay version migration 和 Harness SQLite schema migration 明确记录为非 Workflow 边界
+- [x] 8.10 增加重复 legacy input、未知 schema、identity mismatch、checksum tamper 和 side-effect count 为零的 rejection tests；migration planner/reader focused suite 覆盖全部 rejection reason 和 zero-live-side-effect contract
+- [x] 8.11 删除 active migrator/legacy reader；只保留明确标记的 history-only fixture 或审计报告；`scripts.graph_only_migration` 仅提供 typed quarantine/dry-run，不拥有 resume、replay、worker 或 publication authority
+- [x] 8.12 对 `framework`、`business`、`interfaces`、`infrastructure` 和 `scripts` 执行 import graph 检查，证明 history-only reader/classifier 不可从 production composition 到达；graph evidence 同时拒绝 production-to-history 与 history-to-runtime edges
 
 ## 9. 删除旧 Workflow runtime
 
 本节在 replacement owner、caller 清单和 focused tests 到位后直接执行；不依赖外部环境验收、rollback point 或观察期。
 
-- [ ] 9.1 运行 caller-count gate，确认 `framework/workflow`、`framework/specs.workflow`、Harness Workflow namespace 和旧 runner symbols 的 production caller 全部为零
-- [ ] 9.2 删除 `framework/workflow/runners` 及其 registry、executor-facing tests，确保 leaf activity tests 已迁到 Graph binding tests
-- [ ] 9.3 删除 `framework/workflow/routing`、`scheduling`、`compiler` 和 `governance`，确保 Graph evaluator/scheduler/budget tests 已覆盖原行为
-- [ ] 9.4 删除 `framework/workflow/checkpoint`、`buffer`、`inspection`、`operations` 和 `runtime`，确保 Graph checkpoint/event/artifact/application services 已接管
-- [ ] 9.5 删除 `framework/workflow/specs`、`framework/specs/workflow.py`、Workflow registry 和仅服务旧 aggregate 的 exports
-- [ ] 9.6 删除 `framework/harness/workflow` legacy namespace、`HarnessWorkflowSpec`、legacy reader/compiler、routing models 和 schema constants
-- [ ] 9.7 删除 `framework/__init__.py` 和其他 root package 的 `WorkflowRunner`、`WorkflowExecutor`、legacy `RunResult` 等 exports
-- [ ] 9.8 删除旧 Workflow API/CLI/MCP/SDK surface、schema writers/readers、reflection registrations 和 compatibility tests
-- [ ] 9.9 删除 only-legacy fixtures；保留并标记离线 migration fixture，不允许被 production import
-- [ ] 9.10 对删除后的 tracked files、imports、public symbols、registries 和 generated schemas 生成 deletion proof
-- [ ] 9.11 对 control-plane flat state、SubAgent v1/v2、Workflow Event catalog/facade、Workflow Memory/Governance/Worker/Skill/LLM scope、flat Harness checkpoint/replay 和 Workflow Artifact publisher 生成逐 symbol deletion proof
+- [x] 9.1 运行 caller-count gate，确认 `framework/workflow`、`framework/specs.workflow`、Harness Workflow namespace 和旧 runner symbols 的 production caller 全部为零；tracked source 与 import scan 均为零
+- [x] 9.2 删除 `framework/workflow/runners` 及其 registry、executor-facing tests，确保 leaf activity tests 已迁到 Graph binding tests；删除清单由 `ad48da64d5e3798d301ea0a7efd77b2e2f66e6ea` 固化
+- [x] 9.3 删除 `framework/workflow/routing`、`scheduling`、`compiler` 和 `governance`，确保 Graph evaluator/scheduler/budget tests 已覆盖原行为
+- [x] 9.4 删除 `framework/workflow/checkpoint`、`buffer`、`inspection`、`operations` 和 `runtime`，确保 Graph checkpoint/event/artifact/application services 已接管
+- [x] 9.5 删除 `framework/workflow/specs`、`framework/specs/workflow.py`、Workflow registry 和仅服务旧 aggregate 的 exports
+- [x] 9.6 删除 `framework/harness/workflow` legacy namespace、`HarnessWorkflowSpec`、legacy reader/compiler、routing models 和 schema constants
+- [x] 9.7 删除 `framework/__init__.py` 和其他 root package 的 `WorkflowRunner`、`WorkflowExecutor`、legacy `RunResult` 等 exports
+- [x] 9.8 删除旧 Workflow API/CLI/MCP/SDK surface、schema writers/readers、reflection registrations 和 compatibility tests
+- [x] 9.9 删除 only-legacy fixtures；保留并标记离线 migration fixture，不允许被 production import；旧 `tests/fixtures/events/legacy/**`、`workflow_payloads_v1.json` 和 `current_v1_golden.json` 已移除
+- [x] 9.10 对删除后的 tracked files、imports、public symbols、registries 和 generated schemas 生成 deletion proof；proof 以 tracked Git paths 为准并忽略 bytecode
+- [x] 9.11 对 control-plane flat state、SubAgent v1/v2、Workflow Event catalog/facade、Workflow Memory/Governance/Worker/Skill/LLM scope、flat Harness checkpoint/replay 和 Workflow Artifact publisher 生成逐 symbol deletion proof，并核验 Graph replacement owners 仍存在
 
 ## 10. Canonical OpenSpec 和文档同步
 

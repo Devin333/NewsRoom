@@ -20,10 +20,13 @@ DEFAULT_PRODUCTION_ROOTS = (
     "interfaces",
     "scripts",
 )
-# The zero-reference scanner is an audit tool whose forbidden symbol table is
-# intentionally made of retired names; it is not a runtime caller or export.
+# Audit tools whose forbidden symbol tables intentionally contain retired names
+# are not runtime callers or exports. Keep this allowlist exact and path scoped.
 NON_RUNTIME_AUDIT_FILES = frozenset(
-    {"scripts/graph_only_migration/zero_reference_scan.py"}
+    {
+        "scripts/graph_only_migration/deletion_proof.py",
+        "scripts/graph_only_migration/zero_reference_scan.py",
+    }
 )
 FORBIDDEN_NAMESPACE_PREFIXES = (
     "framework.workflow",

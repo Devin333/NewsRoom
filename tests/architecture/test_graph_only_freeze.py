@@ -27,6 +27,17 @@ def test_graph_only_legacy_dependency_baseline_is_exact() -> None:
     assert violations == []
 
 
+def test_history_deletion_proof_is_an_explicit_non_runtime_audit_file() -> None:
+    from tests.architecture._graph_only_freeze import NON_RUNTIME_AUDIT_FILES
+
+    assert NON_RUNTIME_AUDIT_FILES == frozenset(
+        {
+            "scripts/graph_only_migration/deletion_proof.py",
+            "scripts/graph_only_migration/zero_reference_scan.py",
+        }
+    )
+
+
 def test_new_external_forbidden_import_fails(tmp_path: Path) -> None:
     baseline = _capture(tmp_path, {"business/service.py": "VALUE = 1\n"})
     _write(
