@@ -1490,6 +1490,7 @@ def _build_configured_composition(
             child_lease_repository=harness_wait_runtime_registry,
             projection_checkpoint_reader=durable_events.replay_checkpoint_store,
         )
+        execution_composition.require_control_plane_ports()
         graph_index_store = _compose_component(
             ResearchCapability.GRAPH_ARTIFACT_PERSISTENCE,
             lambda: LocalGraphStorageIndexStore(
