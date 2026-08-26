@@ -25,12 +25,12 @@
 - [x] 4.1 Enforce the production caller inventory with source validation that fails for unapproved Harness-managed process creation, raw external execution, or uncomposed external `ToolExecutor` construction.
 - [x] 4.2 Verify execution wiring does not transfer Graph routing, quality gate, approval, memory write, artifact publication, runtime-event authority, or business side-effect authority to LLM/worker/parser code.
 - [x] 4.3 Record the selected parser/Docker capability matrix and fingerprints; when Docker is unavailable, record typed blocked/skip evidence and do not claim real sandbox qualification.
-- [ ] 4.4 Complete an independent review of AC-01 through AC-08, source inventory, authority boundaries, evidence labels, and follow-up handoffs.
-- [ ] 4.5 Run focused tests, compile, mandatory `python -m scripts.dev smoke`, target and repository-wide strict OpenSpec validation, and record exact commands/results.
+- [x] 4.4 Complete an independent review of AC-01 through AC-08, source inventory, authority boundaries, evidence labels, and follow-up handoffs.
+- [x] 4.5 Run focused tests, compile, mandatory `python -m scripts.dev smoke`, target and repository-wide strict OpenSpec validation, and record exact commands/results.
 
 ## 5. Documentation and commit
 
-- [ ] 5.1 Update `prd.md` baseline/status and `evidence.md` to describe final execution-only ownership, supported profiles, fingerprints, known blockers, and implementation commits.
-- [ ] 5.2 Scan repository documentation for stale claims that this change owns child lifecycle, durable event/operator reconnect, side-effect recovery, optional Research provider fallback, or host-process parser execution.
-- [ ] 5.3 Ensure `evidence.md` distinguishes local contract evidence, environment-blocked Docker qualification, follow-up change ownership, and external evidence that is explicitly outside this change.
-- [ ] 5.4 Commit code and OpenSpec updates with path-scoped staging after all required gates pass.
+- [x] 5.1 Update `prd.md` baseline/status and `evidence.md` to describe final execution-only ownership, supported profiles, fingerprints, known blockers, and implementation commits.
+- [x] 5.2 Scan repository documentation for stale claims that this change owns child lifecycle, durable event/operator reconnect, side-effect recovery, optional Research provider fallback, or host-process parser execution.
+- [x] 5.3 Ensure `evidence.md` distinguishes local contract evidence, environment-blocked Docker qualification, follow-up change ownership, and external evidence that is explicitly outside this change.
+- [x] 5.4 Commit code and OpenSpec updates with path-scoped staging after all required gates pass.

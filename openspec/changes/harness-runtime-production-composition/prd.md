@@ -7,12 +7,12 @@
 | Change | `harness-runtime-production-composition` |
 | 交付切片 | Production Execution Wiring |
 | 优先级 | P0 / P1 / P2 |
-| 状态 | Draft，待实现 |
+| 状态 | Implementation complete；Docker live-isolation qualification remains environment-blocked |
 | 产品原则 | LLM as worker, Harness as control plane |
 
 本 PRD 只解决一个问题：**把已经存在的 `ExecutionEnvironment` 能力接入真实生产调用链**。它不是新的 Agent 平台，也不重新定义 child lifecycle、durable event 或 side-effect authority。
 
-## 2. 当前基线
+## 2. 实现基线
 
 已有能力：
 
@@ -21,14 +21,16 @@
 - `framework/tool/runtime/executor.py` 已能在 sandboxed activity 缺少 provider 时 fail closed。
 - `ChildAgentSupervisor`、runtime event projection 和 durable event runtime 已分别由现有 OpenSpec change 定义或实现。
 
-当前缺口集中在默认接线：
+本切片已经完成默认 execution wiring：
 
-1. [runner.py](F:/github/NewsRoom/framework/agent/loop/runner.py:155) 创建 `ToolExecutor` 时没有传入 execution environment。
-2. Harness tool activity、batch executor 和部分其他 `ToolExecutor` 调用点同样没有统一的 provider 注入。
-3. [docker_pdf_parser.py](F:/github/NewsRoom/business/research/document/docker_pdf_parser.py:50) 和 [pdf_compiler.py](F:/github/NewsRoom/business/research/document/pdf_compiler.py:1281) 仍有 Research-managed direct subprocess 入口。
-4. 非测试生产代码尚未形成一个明确的 execution composition root。
+1. `AgentRunner`、Harness tool activity、batch executor 和 external subagent tool path 从 process composition 获取 execution registry/profile policy。
+2. API、worker、CLI、Harness 与 Research 使用同一 composition/config/policy 解析结果，并保留各自的 process-local 对象实例。
+3. Research Marker/MinerU parser 通过 `ResearchParserExecutionAdapter` 进入 Docker provider contract；业务 parser 不再拥有 host-process fallback。
+4. provider、profile、Graph identity、capability、execution spec 和 composition drift 均有稳定 typed denial 与 readiness/admission diagnostics。
+5. `GraphExecutionIdentity` 从 Research activity 经 compiler 与 parser cascade 原样传入执行 adapter；`ExecutionEnvironmentError` 不会被 parser fallback 或 abstract fallback 吞掉。
+6. authoring host 的 Docker daemon 不可用，因此真实 isolation receipt 仍明确标记为 blocked；本地 contract/smoke 通过不替代目标部署资格。
 
-因此当前不是“缺少安全模型”，而是“安全模型没有成为默认执行路径”。
+Child lifecycle、durable event/operator reconnect、business side-effect recovery 与 outbound MCP/sidecar 纵向切片仍由第 10 节列出的后续 change 负责，不是本 change 的未完成实现。
 
 ## 3. 目标
 
