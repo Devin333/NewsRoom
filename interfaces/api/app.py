@@ -24,6 +24,7 @@ from framework.events import (
     trace_context_scope,
 )
 from framework.events.runtime.projection import RuntimeOperatorStatusService
+from framework.execution_environment.composition import RuntimeExecutionComposition
 from framework.tool.governance.redaction import redact_sensitive_values
 from framework.shared.public_errors import project_public_error
 from interfaces.models import (
@@ -135,6 +136,7 @@ def create_app(
     harness_graph_service_factory: HarnessGraphServiceFactory | None = None,
     harness_wait_service_factory: HarnessWaitServiceFactory | None = None,
     runtime_operator_status_service_factory: RuntimeOperatorStatusServiceFactory | None = None,
+    runtime_execution_composition: RuntimeExecutionComposition | None = None,
     audit_emitter_factory: AuditEmitterFactory | None = audit_emitter_from_env,
     api_token: str | None = None,
     api_keys: ApiKeyRoles | None = None,
@@ -144,6 +146,11 @@ def create_app(
     telemetry: EventTelemetry | None = None,
 ) -> FastAPI:
     api = FastAPI(title="NewsRoom API", version="0.1.0")
+    if runtime_execution_composition is not None:
+        if not isinstance(runtime_execution_composition, RuntimeExecutionComposition):
+            raise TypeError("runtime_execution_composition must be RuntimeExecutionComposition")
+        runtime_execution_composition.verify_integrity()
+    api.state.runtime_execution_composition = runtime_execution_composition
     resolved_api_keys = _build_api_key_registry(api_token=api_token, api_keys=api_keys)
     rate_limiter = _build_rate_limiter(api_rate_limit_per_minute, clock=rate_limit_clock)
     audit_emitter = audit_emitter_factory() if audit_emitter_factory else None
@@ -378,6 +385,7 @@ def create_app(
         harness_graph_service_factory=harness_graph_service_factory,
         harness_wait_service_factory=harness_wait_service_factory,
         runtime_operator_status_service_factory=runtime_operator_status_service_factory,
+        runtime_execution_composition=runtime_execution_composition,
     )
     helpers = ApiRouteHelpers(
         success=_success,

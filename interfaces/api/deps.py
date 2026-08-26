@@ -34,6 +34,7 @@ from interfaces.services.storage_service import StorageApplicationService
 from interfaces.services.subscription_service import SubscriptionApplicationService
 from interfaces.services.worker_service import WorkerApplicationService
 from framework.events.runtime.projection import RuntimeOperatorStatusService
+from framework.execution_environment.composition import RuntimeExecutionComposition
 
 
 WorkerServiceFactory = Callable[[], WorkerApplicationService]
@@ -82,6 +83,7 @@ class ApiServices:
     harness_graph_service_factory: HarnessGraphServiceFactory | None = None
     harness_wait_service_factory: HarnessWaitServiceFactory | None = None
     runtime_operator_status_service_factory: RuntimeOperatorStatusServiceFactory | None = None
+    runtime_execution_composition: RuntimeExecutionComposition | None = None
 
 
 @dataclass(frozen=True)
@@ -119,6 +121,7 @@ def build_api_services(
     harness_graph_service_factory: HarnessGraphServiceFactory | None = None,
     harness_wait_service_factory: HarnessWaitServiceFactory | None = None,
     runtime_operator_status_service_factory: RuntimeOperatorStatusServiceFactory | None = None,
+    runtime_execution_composition: RuntimeExecutionComposition | None = None,
 ) -> ApiServices:
     return ApiServices(
         worker_service_factory=worker_service_factory,
@@ -142,6 +145,7 @@ def build_api_services(
         harness_graph_service_factory=harness_graph_service_factory,
         harness_wait_service_factory=harness_wait_service_factory,
         runtime_operator_status_service_factory=runtime_operator_status_service_factory,
+        runtime_execution_composition=runtime_execution_composition,
     )
 
 

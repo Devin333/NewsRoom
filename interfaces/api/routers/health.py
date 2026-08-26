@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter
 
+from framework.execution_environment.errors import ExecutionEnvironmentError
 from interfaces.api.deps import ApiRouteHelpers, ApiServices
 
 
@@ -18,6 +19,28 @@ def create_router(services: ApiServices, helpers: ApiRouteHelpers) -> APIRouter:
 
     @router.get("/health/ready")
     def ready_health() -> dict:
+        composition = services.runtime_execution_composition
+        if composition is not None:
+            try:
+                diagnostics = composition.diagnostics()
+            except Exception as exc:
+                reason_code = getattr(exc, "reason_code", "runtime_composition_unavailable")
+                details = getattr(exc, "details", {})
+                return helpers.error(
+                    status_code=503,
+                    code=str(reason_code),
+                    message="runtime execution composition is not ready",
+                    details=dict(details),
+                    retryable=isinstance(exc, ExecutionEnvironmentError),
+                )
+            return helpers.success(
+                {
+                    "status": "ok",
+                    "service": "newsroom-api",
+                    "ready": True,
+                    "runtime_composition": diagnostics,
+                }
+            )
         return helpers.success({"status": "ok", "service": "newsroom-api", "ready": True})
 
     @router.get("/health/dependencies")
