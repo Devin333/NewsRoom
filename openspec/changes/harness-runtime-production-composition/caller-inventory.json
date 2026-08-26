@@ -113,11 +113,11 @@
       "kind": "runtime_event_authority",
       "path": "interfaces/composition/research.py",
       "symbol": "_build_configured_composition",
-      "classification": "migrate",
-      "state": "migrated",
+      "classification": "blocked",
+      "state": "follow-up-required",
       "owner": "runtime-event-transport",
-      "rationale": "Research binds durable EventRuntime through CanonicalRuntimeEventPublisher at its composition boundary.",
-      "non_harness_managed_proof": "The publisher is constructed from durable_event_storage.event_runtime; no in-memory projection is installed.",
+      "rationale": "Existing durable event authority remains owned by runtime-event-transport; this execution-only change does not migrate or replace it.",
+      "non_harness_managed_proof": "Research constructs its existing durable event runtime independently of RuntimeExecutionComposition; execution wiring neither binds nor replaces that authority.",
       "review_by": "2026-11-26",
       "check": "tests/interfaces/composition/test_research_composition.py"
     }
