@@ -8,6 +8,7 @@ from business.research.domain.document import ResearchDocument, ResearchSection
 from business.research.domain.paper import PaperSourceRecord
 from business.research.ports.document_compiler import DocumentCompilerPort
 from business.research.ports.document_parser import DocumentParserPort
+from framework.execution_environment.errors import ExecutionEnvironmentError
 from framework.shared.graph_identity import GraphExecutionIdentity
 from infrastructure.external.sources.arxiv import ArxivSourceConnector
 from infrastructure.external.sources.fetch_policy import SourceRateLimitExceededError
@@ -55,6 +56,8 @@ class ResearchDocumentCompilerAdapter:
         else:
             try:
                 document = self._latex_compiler.compile(source)
+            except ExecutionEnvironmentError:
+                raise
             except Exception as exc:
                 attempts.append(_failed_attempt("latex", exc))
             else:
@@ -84,6 +87,8 @@ class ResearchDocumentCompilerAdapter:
                     # two-argument protocol. Inspect before calling so a
                     # compatibility path cannot execute a side effect twice.
                     document = parse_method(source.paper_id, package.content)
+            except ExecutionEnvironmentError:
+                raise
             except Exception as exc:
                 attempts.append(_failed_attempt("pdf_cascade", exc))
             else:

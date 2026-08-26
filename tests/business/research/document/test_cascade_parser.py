@@ -14,6 +14,8 @@ from business.research.document.cascade_parser import (
 )
 from business.research.domain.common import SourceLineage
 from business.research.domain.document import ResearchDocument, ResearchSection
+from framework.execution_environment import ExecutionEnvironmentUnavailableError
+from framework.shared.graph_identity import GraphExecutionIdentity
 
 
 class _Parser:
@@ -37,6 +39,22 @@ class _LatexParser:
     def parse(self, paper_id: str, source_bytes: bytes) -> ResearchDocument:
         self.calls += 1
         return _doc(paper_id, "latex", sections=3, chars=120)
+
+
+class _ExecutionAwareParser(_Parser):
+    def __init__(self, document: ResearchDocument) -> None:
+        super().__init__(document)
+        self.identities: list[GraphExecutionIdentity | None] = []
+
+    def parse(
+        self,
+        paper_id: str,
+        source_bytes: bytes,
+        *,
+        execution_identity: GraphExecutionIdentity | None = None,
+    ) -> ResearchDocument:
+        self.identities.append(execution_identity)
+        return super().parse(paper_id, source_bytes)
 
 
 def _doc(
@@ -85,6 +103,20 @@ def _probe() -> DocumentQualityProbe:
     )
 
 
+def _identity() -> GraphExecutionIdentity:
+    return GraphExecutionIdentity(
+        run_id="run-parser-cascade",
+        graph_id="research-graph",
+        graph_version="1.0.0",
+        graph_ref="research-graph@1.0.0",
+        graph_checksum="sha256:" + "a" * 64,
+        node_id="compile_document",
+        node_instance_id="compile-document-1",
+        activity_id="compile-document-activity",
+        attempt=1,
+    )
+
+
 def test_cascade_returns_first_backend_when_quality_passes() -> None:
     first = _Parser(_doc("paper-1", "mineru", sections=2, chars=80))
     second = _Parser(_doc("paper-1", "marker", sections=2, chars=80))
@@ -112,6 +144,40 @@ def test_cascade_falls_through_after_parse_error() -> None:
     assert "RuntimeError: boom" in attempts[0]["reason"]
     assert attempts[1]["backend"] == "marker"
     assert attempts[1]["status"] == "success"
+
+
+def test_cascade_forwards_exact_execution_identity_to_aware_backend() -> None:
+    backend = _ExecutionAwareParser(
+        _doc("paper-1", "mineru", sections=2, chars=80)
+    )
+    parser = CascadeDocumentParser([("mineru", backend)], probe=_probe())
+    identity = _identity()
+
+    parser.parse(
+        "paper-1",
+        b"%PDF-1.7",
+        execution_identity=identity,
+    )
+
+    assert backend.identities == [identity]
+
+
+def test_cascade_propagates_execution_denial_without_fallback() -> None:
+    denied = _Parser(exc=ExecutionEnvironmentUnavailableError("docker unavailable"))
+    second = _Parser(_doc("paper-1", "marker", sections=2, chars=80))
+    fallback = _Parser(_doc("paper-1", "pymupdf", sections=2, chars=80))
+    parser = CascadeDocumentParser(
+        [("mineru", denied), ("marker", second)],
+        probe=_probe(),
+        fallback=fallback,
+    )
+
+    with pytest.raises(ExecutionEnvironmentUnavailableError, match="docker unavailable"):
+        parser.parse("paper-1", b"%PDF-1.7", execution_identity=_identity())
+
+    assert denied.calls == 1
+    assert second.calls == 0
+    assert fallback.calls == 0
 
 
 def test_cascade_falls_through_after_quality_rejection() -> None:
@@ -161,6 +227,26 @@ def test_pymupdf_fallback_extracts_gzipped_pdf_via_cascade_arxiv_parser() -> Non
     assert latex.calls == 0
     assert doc.metadata["parse_source"] == "pymupdf"
     assert "Gzipped PDF text." in doc.sections[0].text
+
+
+def test_cascade_arxiv_parser_forwards_execution_identity_to_pdf_cascade() -> None:
+    backend = _ExecutionAwareParser(
+        _doc("paper-1", "mineru", sections=2, chars=80)
+    )
+    pdf_parser = CascadeDocumentParser([("mineru", backend)], probe=_probe())
+    parser = CascadeArxivDocumentParser(
+        latex_parser=_LatexParser(),
+        pdf_parser=pdf_parser,
+    )
+    identity = _identity()
+
+    parser.parse(
+        "paper-1",
+        _pdf(["Identity-aware PDF."]),
+        execution_identity=identity,
+    )
+
+    assert backend.identities == [identity]
 
 
 def test_cascade_arxiv_parser_keeps_latex_routing() -> None:

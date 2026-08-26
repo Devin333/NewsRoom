@@ -31,8 +31,19 @@ from business.research.application.single_paper_runtime import (
     _ResearchRunWorkspace,
 )
 from business.research.document.cascade_parser import CascadeDocumentParser
+from business.research.domain.paper import PaperSourceRecord
 from business.research.document.chunk_storage import PaperChunkStoreAdapter
 from business.research.document.latex_compiler import ArxivLatexDocumentCompiler
+from framework.execution_environment import (
+    ExecutionCapabilityProfile,
+    ExecutionEnvironmentRegistry,
+    ExecutionEnvironmentUnavailableError,
+    ExecutionProfile,
+    ExecutionProfileRegistry,
+    FakeExecutionEnvironment,
+    RuntimeCompositionManifest,
+    RuntimeExecutionComposition,
+)
 from framework.harness import ArtifactReferenceVerifierPort, ContextAssembler
 from framework.harness.control_plane.durable_events import (
     DurableHarnessTransitionPort,
@@ -77,6 +88,11 @@ from interfaces.composition.research import (
     reset_default_research_runtime,
 )
 from interfaces.composition.research_settings import ResearchRuntimeSettings
+from interfaces.composition.runtime_execution import (
+    RESEARCH_MARKER_PROFILE_ID,
+    RESEARCH_MINERU_PROFILE_ID,
+)
+from framework.shared.graph_identity import GraphExecutionIdentity
 from interfaces.services.research_service import (
     InMemoryResearchRunStore,
     ResearchAnalyzeInput,
@@ -306,6 +322,93 @@ def test_valid_settings_without_activity_key_fail_closed_as_event_log_unavailabl
     moved_database.replace(event_database)
     composition.close()
     composition.close()
+
+
+def test_default_research_pdf_parser_fails_closed_when_docker_is_unavailable(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("NEWSROOM_PARSER_RUN_ROOT", str(tmp_path / "parser-runs"))
+    settings = _settings(tmp_path)
+    capabilities = ExecutionCapabilityProfile(
+        provider_id="docker",
+        available=False,
+    )
+    registry = ExecutionEnvironmentRegistry()
+    provider = FakeExecutionEnvironment(
+        capabilities,
+        lambda _request: pytest.fail("unavailable Docker provider must not execute"),
+    )
+    registry.register(provider)
+    profiles = ExecutionProfileRegistry()
+    profiles.register(
+        RESEARCH_MINERU_PROFILE_ID,
+        ExecutionProfile.external_process(
+            provider_id="docker",
+            allowed_argv_prefixes=(("mineru",),),
+        ),
+    )
+    profiles.register(
+        RESEARCH_MARKER_PROFILE_ID,
+        ExecutionProfile.external_process(
+            provider_id="docker",
+            allowed_argv_prefixes=(("marker_single",),),
+        ),
+    )
+    manifest = RuntimeCompositionManifest.from_registries(
+        composition_id="research-parser-unavailable",
+        profile_registry=profiles,
+        execution_registry=registry,
+    )
+    execution_composition = RuntimeExecutionComposition(
+        manifest=manifest,
+        profile_registry=profiles,
+        execution_registry=registry,
+        required_provider_ids=("docker",),
+    )
+    parser = research_composition._build_research_pdf_parser(
+        settings.parser,
+        execution_composition=execution_composition,
+    )
+    compiler = ResearchDocumentCompilerAdapter(
+        SimpleNamespace(
+            fetch_pdf_package=lambda _arxiv_id: SimpleNamespace(
+                content=b"%PDF-1.7\n",
+                checksum="recorded-pdf-checksum",
+            )
+        ),
+        pdf_parser=parser,
+        allow_abstract_fallback=True,
+    )
+    source = PaperSourceRecord(
+        source_id="arxiv:2606.00001",
+        paper_id="2606.00001",
+        source_type="arxiv",
+        source_url="https://arxiv.org/abs/2606.00001",
+        source_hash="a" * 64,
+        metadata={
+            "arxiv_id": "2606.00001",
+            "title": "Harness-grounded Research",
+            "abstract": "This fallback must not be used.",
+        },
+    )
+    identity = GraphExecutionIdentity(
+        run_id="run-parser-unavailable",
+        graph_id="research-graph",
+        graph_version="1.0.0",
+        graph_ref="research-graph@1.0.0",
+        graph_checksum="sha256:" + "a" * 64,
+        node_id="compile_document",
+        node_instance_id="compile-document-1",
+        activity_id="compile-document-activity",
+        attempt=1,
+    )
+
+    with pytest.raises(ExecutionEnvironmentUnavailableError) as raised:
+        compiler.compile(source, execution_identity=identity)
+
+    assert raised.value.reason_code == "execution_environment_unavailable"
+    assert provider.requests == []
 
 
 def test_valid_settings_compose_full_durable_production_graph(

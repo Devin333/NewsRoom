@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 import os
 import time
 from dataclasses import dataclass
@@ -14,6 +15,7 @@ from business.research.document.source_format import SourceFormat, detect_source
 from business.research.domain.common import SourceLineage
 from business.research.domain.document import ResearchDocument, ResearchSection
 from business.research.ports.document_parser import DocumentParserPort
+from framework.execution_environment.errors import ExecutionEnvironmentError
 
 
 @dataclass(frozen=True)
@@ -199,12 +201,25 @@ class CascadeDocumentParser:
         self._probe = probe or DocumentQualityProbe.from_env()
         self._fallback = fallback or PyMuPDFTextDocumentParser()
 
-    def parse(self, paper_id: str, source_bytes: bytes) -> ResearchDocument:
+    def parse(
+        self,
+        paper_id: str,
+        source_bytes: bytes,
+        *,
+        execution_identity: Any | None = None,
+    ) -> ResearchDocument:
         attempts: list[ParserAttempt] = []
         for backend, parser in self._backends:
             started = time.perf_counter()
             try:
-                document = parser.parse(paper_id, source_bytes)
+                document = _parse_with_execution_identity(
+                    parser,
+                    paper_id,
+                    source_bytes,
+                    execution_identity=execution_identity,
+                )
+            except ExecutionEnvironmentError:
+                raise
             except Exception as exc:  # noqa: BLE001 - cascade records and falls through
                 attempts.append(ParserAttempt(
                     backend=backend,
@@ -236,7 +251,12 @@ class CascadeDocumentParser:
             ))
 
         started = time.perf_counter()
-        document = self._fallback.parse(paper_id, source_bytes)
+        document = _parse_with_execution_identity(
+            self._fallback,
+            paper_id,
+            source_bytes,
+            execution_identity=execution_identity,
+        )
         quality = self._probe.evaluate(document)
         attempts.append(ParserAttempt(
             backend="pymupdf",
@@ -264,10 +284,20 @@ class CascadeArxivDocumentParser:
         self._latex = latex_parser or LatexSourceParser()
         self._pdf = pdf_parser or build_default_pdf_cascade_parser()
 
-    def parse(self, paper_id: str, source_bytes: bytes) -> ResearchDocument:
+    def parse(
+        self,
+        paper_id: str,
+        source_bytes: bytes,
+        *,
+        execution_identity: Any | None = None,
+    ) -> ResearchDocument:
         fmt, canonical = detect_source_format(source_bytes)
         if fmt is SourceFormat.PDF:
-            return self._pdf.parse(paper_id, canonical)
+            return self._pdf.parse(
+                paper_id,
+                canonical,
+                execution_identity=execution_identity,
+            )
         if fmt in (SourceFormat.HTML, SourceFormat.ZIP, SourceFormat.UNKNOWN):
             raise NotImplementedError(
                 f"CascadeArxivDocumentParser does not support format '{fmt.value}' — "
@@ -340,6 +370,34 @@ def _with_cascade_metadata(
 
 def _elapsed_ms(started: float) -> float:
     return (time.perf_counter() - started) * 1000.0
+
+
+def _parse_with_execution_identity(
+    parser: DocumentParserPort,
+    paper_id: str,
+    source_bytes: bytes,
+    *,
+    execution_identity: Any | None,
+) -> ResearchDocument:
+    parse_method = parser.parse
+    if _accepts_keyword(parse_method, "execution_identity"):
+        return parse_method(
+            paper_id,
+            source_bytes,
+            execution_identity=execution_identity,
+        )
+    return parse_method(paper_id, source_bytes)
+
+
+def _accepts_keyword(callable_value: Any, keyword: str) -> bool:
+    try:
+        parameter = inspect.signature(callable_value).parameters.get(keyword)
+    except (TypeError, ValueError):
+        return False
+    return parameter is not None and parameter.kind in {
+        inspect.Parameter.POSITIONAL_OR_KEYWORD,
+        inspect.Parameter.KEYWORD_ONLY,
+    }
 
 
 def _env_int(name: str, default: int) -> int:

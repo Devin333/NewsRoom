@@ -17,6 +17,8 @@ from infrastructure.external.sources.fetch_policy import (
     SourceRateLimitExceededError,
     UnsupportedContentTypeError,
 )
+from framework.execution_environment import ExecutionEnvironmentUnavailableError
+from framework.shared.graph_identity import GraphExecutionIdentity
 from infrastructure.research import (
     ArxivResearchSourceProvider,
     ResearchDocumentCompileError,
@@ -247,6 +249,24 @@ def test_document_compiler_uses_real_pdf_bytes_after_latex_failure() -> None:
     }
 
 
+def test_document_compiler_propagates_execution_denial_without_abstract_fallback() -> None:
+    identity = _execution_identity()
+    denial = ExecutionEnvironmentUnavailableError("docker unavailable")
+    parser = _ExecutionDeniedPdfParser(denial)
+    compiler = ResearchDocumentCompilerAdapter(
+        _PdfFetcher(b"%PDF-recorded"),
+        latex_compiler=_Compiler(error=RuntimeError("latex unavailable")),
+        pdf_parser=parser,
+        allow_abstract_fallback=True,
+    )
+
+    with pytest.raises(ExecutionEnvironmentUnavailableError) as raised:
+        compiler.compile(_source_record(), execution_identity=identity)
+
+    assert raised.value is denial
+    assert parser.identities == [identity]
+
+
 def test_document_compiler_abstract_fallback_is_truth_preserving_and_sanitized() -> None:
     secret = "postgresql://admin:TOPSECRET@db/news"
     compiler = ResearchDocumentCompilerAdapter(
@@ -417,6 +437,20 @@ def _source_record() -> PaperSourceRecord:
     )
 
 
+def _execution_identity() -> GraphExecutionIdentity:
+    return GraphExecutionIdentity(
+        run_id="run-document-compiler",
+        graph_id="research-graph",
+        graph_version="1.0.0",
+        graph_ref="research-graph@1.0.0",
+        graph_checksum="sha256:" + "a" * 64,
+        node_id="compile_document",
+        node_instance_id="compile-document-1",
+        activity_id="compile-document-activity",
+        attempt=1,
+    )
+
+
 def _document(*, parse_source: str) -> ResearchDocument:
     return ResearchDocument(
         paper_id="2606.00001",
@@ -508,3 +542,20 @@ class _PdfParser:
     def parse(self, paper_id: str, content: bytes) -> ResearchDocument:
         self.calls.append((paper_id, content))
         return self.result
+
+
+class _ExecutionDeniedPdfParser:
+    def __init__(self, error: ExecutionEnvironmentUnavailableError) -> None:
+        self.error = error
+        self.identities: list[GraphExecutionIdentity | None] = []
+
+    def parse(
+        self,
+        paper_id: str,
+        content: bytes,
+        *,
+        execution_identity: GraphExecutionIdentity | None = None,
+    ) -> ResearchDocument:
+        del paper_id, content
+        self.identities.append(execution_identity)
+        raise self.error
