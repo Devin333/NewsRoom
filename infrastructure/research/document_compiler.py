@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 from typing import Any
 
 from business.research.domain.common import SourceLineage, stable_research_id
@@ -71,19 +72,18 @@ class ResearchDocumentCompilerAdapter:
             try:
                 package = self._source_fetcher.fetch_pdf_package(arxiv_id)
                 parser = self._pdf_parser
-                try:
+                parse_method = parser.parse
+                if _accepts_keyword(parse_method, "execution_identity"):
                     document = parser.parse(
                         source.paper_id,
                         package.content,
                         execution_identity=execution_identity,
                     )
-                except TypeError as exc:
+                else:
                     # Existing pure/fake parser ports intentionally keep the
-                    # two-argument protocol.  Only the external adapter needs
-                    # the physical Graph identity keyword.
-                    if "execution_identity" not in str(exc):
-                        raise
-                    document = parser.parse(source.paper_id, package.content)
+                    # two-argument protocol. Inspect before calling so a
+                    # compatibility path cannot execute a side effect twice.
+                    document = parse_method(source.paper_id, package.content)
             except Exception as exc:
                 attempts.append(_failed_attempt("pdf_cascade", exc))
             else:
@@ -158,6 +158,19 @@ def _abstract_document(
             "arxiv_id": arxiv_id,
         },
     )
+
+
+def _accepts_keyword(callable_value: Any, keyword: str) -> bool:
+    """Return whether a callable explicitly exposes the optional keyword."""
+
+    try:
+        parameter = inspect.signature(callable_value).parameters.get(keyword)
+    except (TypeError, ValueError):
+        return False
+    return parameter is not None and parameter.kind in {
+        inspect.Parameter.POSITIONAL_OR_KEYWORD,
+        inspect.Parameter.KEYWORD_ONLY,
+    }
 
 
 def _failed_attempt(compiler: str, exc: Exception) -> dict[str, Any]:

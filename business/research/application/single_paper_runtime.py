@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 import logging
 from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
@@ -1657,17 +1658,15 @@ class ResearchSinglePaperRuntime:
             workspace.request,
             stage_id="compile_document",
         ).to_graph_execution_identity()
-        try:
+        if _accepts_keyword(compile_method, "execution_identity"):
             document = compile_method(
                 workspace.source_record,
                 execution_identity=execution_identity,
             )
-        except TypeError as exc:
+        else:
             # Contract fakes and deterministic in-process compilers may keep
-            # the original one-argument application port.  Production parser
-            # adapters accept and enforce the exact physical identity.
-            if "execution_identity" not in str(exc):
-                raise
+            # the original one-argument application port. Inspect before
+            # calling so compatibility does not execute a side effect twice.
             document = compile_method(workspace.source_record)
         workspace.document = document
         return _ok({"document": document.to_dict(), "source_refs": document.lineage.source_refs})
@@ -2743,6 +2742,19 @@ def _rag_max_replans_from_options(options: dict[str, Any]) -> int:
     if value < 0 or value > 4:
         raise ValueError("rag_max_replans must be an integer between 0 and 4")
     return value
+
+
+def _accepts_keyword(callable_value: Any, keyword: str) -> bool:
+    """Return whether a callable explicitly exposes the optional keyword."""
+
+    try:
+        parameter = inspect.signature(callable_value).parameters.get(keyword)
+    except (TypeError, ValueError):
+        return False
+    return parameter is not None and parameter.kind in {
+        inspect.Parameter.POSITIONAL_OR_KEYWORD,
+        inspect.Parameter.KEYWORD_ONLY,
+    }
 
 
 def _ok(
