@@ -3,7 +3,9 @@ from __future__ import annotations
 import pytest
 
 from framework.execution_environment import (
+    ExecutionCapabilityProfile,
     ExecutionEnvironmentRegistry,
+    ExecutionEnvironmentUnavailableError,
     ExecutionProfile,
     ExecutionProfileRegistry,
     RuntimeCompositionDriftError,
@@ -11,6 +13,7 @@ from framework.execution_environment import (
     RuntimeCompositionProfileError,
     RuntimeExecutionComposition,
 )
+from framework.execution_environment.ports import ExecutionEnvironmentPort
 from framework.tool import ToolRegistry
 
 
@@ -97,3 +100,76 @@ def test_required_control_plane_ports_are_typed_and_fail_closed() -> None:
 
     with pytest.raises(RuntimeCompositionDriftError):
         required.bind_control_plane_ports(canonical_event_publisher=object())
+
+
+class _UnavailableProvider:
+    @property
+    def capabilities(self) -> ExecutionCapabilityProfile:
+        return ExecutionCapabilityProfile(
+            provider_id="offline",
+            available=False,
+        )
+
+    def execute(self, request):
+        raise AssertionError("unavailable provider must not execute")
+
+
+def test_required_execution_provider_blocks_readiness_with_stable_denial() -> None:
+    profiles = ExecutionProfileRegistry()
+    profiles.register(
+        "external",
+        ExecutionProfile.external_process(
+            provider_id="offline",
+            allowed_argv_prefixes=(("worker",),),
+        ),
+    )
+    providers = ExecutionEnvironmentRegistry()
+    provider: ExecutionEnvironmentPort = _UnavailableProvider()
+    providers.register(provider)
+    manifest = RuntimeCompositionManifest.from_registries(
+        composition_id="offline-process",
+        profile_registry=profiles,
+        execution_registry=providers,
+    )
+    composition = RuntimeExecutionComposition(
+        manifest=manifest,
+        profile_registry=profiles,
+        execution_registry=providers,
+        required_provider_ids=("offline",),
+    )
+
+    diagnostics = composition.diagnostics()
+    assert diagnostics["status"] == "blocked"
+    assert diagnostics["required_providers"] == ["offline"]
+    assert diagnostics["unavailable_providers"] == ["offline"]
+
+    with pytest.raises(ExecutionEnvironmentUnavailableError) as raised:
+        composition.require_ready()
+
+    assert raised.value.details["denial_code_version"] == (
+        "newsroom.execution-capability-denials/v1"
+    )
+    assert raised.value.details["denial_code"] == "execution_provider_unavailable"
+
+
+def test_unregistered_required_provider_is_reported_without_provider_fallback() -> None:
+    profiles = ExecutionProfileRegistry()
+    profiles.register("trusted", ExecutionProfile.trusted_in_process())
+    providers = ExecutionEnvironmentRegistry()
+    manifest = RuntimeCompositionManifest.from_registries(
+        composition_id="missing-provider-process",
+        profile_registry=profiles,
+        execution_registry=providers,
+    )
+    composition = RuntimeExecutionComposition(
+        manifest=manifest,
+        profile_registry=profiles,
+        execution_registry=providers,
+        required_provider_ids=("docker",),
+    )
+
+    assert composition.diagnostics()["unavailable_providers"] == ["docker"]
+    with pytest.raises(ExecutionEnvironmentUnavailableError) as raised:
+        composition.require_ready()
+
+    assert raised.value.details["provider_ids"] == ["docker"]

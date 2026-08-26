@@ -131,25 +131,52 @@ class DiagnosticApplicationService:
                 },
                 remediation="Resolve the manifest/provider drift before starting the process.",
             )
-        provider_capabilities = diagnostics.get("provider_capabilities", {})
-        unavailable = sorted(
-            provider_id
-            for provider_id, capabilities in provider_capabilities.items()
-            if not capabilities.get("available", False)
-        )
-        if unavailable:
+        if diagnostics.get("status") != "ready":
+            try:
+                composition.require_ready()
+            except ExecutionEnvironmentError as exc:
+                return DiagnoseCheck(
+                    check_id="runtime_composition",
+                    name="Runtime execution composition",
+                    status="error",
+                    message="Runtime execution composition is not ready.",
+                    details={
+                        "configured": True,
+                        "reason_code": exc.reason_code,
+                        "details": dict(exc.details),
+                        "unavailable_providers": diagnostics.get(
+                            "unavailable_providers", []
+                        ),
+                        "missing_control_plane_ports": diagnostics.get(
+                            "missing_control_plane_ports", []
+                        ),
+                    },
+                    remediation=(
+                        "Provision each role-required provider and bind every "
+                        "required control-plane port before starting this process."
+                    ),
+                )
             return DiagnoseCheck(
                 check_id="runtime_composition",
                 name="Runtime execution composition",
-                status="warning",
-                message="Runtime composition is valid, but one or more providers are unavailable.",
+                status="error",
+                message="Runtime execution composition is not ready.",
                 details={
                     "configured": True,
                     "manifest_fingerprint": diagnostics["manifest_fingerprint"],
-                    "unavailable_providers": unavailable,
+                    "unavailable_providers": diagnostics.get(
+                        "unavailable_providers", []
+                    ),
+                    "required_providers": diagnostics.get("required_providers", []),
+                    "missing_control_plane_ports": diagnostics.get(
+                        "missing_control_plane_ports", []
+                    ),
                     "providers": diagnostics.get("providers", []),
                 },
-                remediation="Provision the declared provider before requesting external activity.",
+                remediation=(
+                    "Provision each role-required provider and bind every required "
+                    "control-plane port before starting this process."
+                ),
             )
         return DiagnoseCheck(
             check_id="runtime_composition",

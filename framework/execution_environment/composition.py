@@ -2,8 +2,10 @@ from __future__ import annotations
 
 """Process-scoped runtime composition contracts.
 
-This module only binds execution providers and profiles. Application layers
-remain responsible for supplying durable stores and other control-plane ports.
+The composition owns the provider/profile policy and records any durable
+control-plane ports supplied by the application root.  ``required_provider_ids``
+is deliberately explicit: a profile may be present in the shared catalog for
+another process role without making that provider a startup dependency here.
 """
 
 from collections.abc import Mapping, Sequence
@@ -17,7 +19,12 @@ from framework.execution_environment.errors import (
     RuntimeCompositionDriftError,
     RuntimeCompositionProfileError,
 )
-from framework.execution_environment.models import ExecutionMode, ExecutionProfile
+from framework.execution_environment.models import (
+    CAPABILITY_DENIAL_CODE_VERSION,
+    ExecutionMode,
+    ExecutionProfile,
+    capability_denial_code,
+)
 from framework.execution_environment.registry import ExecutionEnvironmentRegistry
 from framework.shared.json import stable_json_dumps
 
@@ -191,6 +198,7 @@ class RuntimeExecutionComposition:
         require_explicit_execution_profile: bool = True,
         control_plane_ports: Mapping[str, Any] | None = None,
         required_control_plane_ports: Sequence[str] = (),
+        required_provider_ids: Sequence[str] = (),
     ) -> None:
         if not isinstance(manifest, RuntimeCompositionManifest):
             raise TypeError("manifest must be RuntimeCompositionManifest")
@@ -211,6 +219,22 @@ class RuntimeExecutionComposition:
             )
         if len(set(required_ports)) != len(required_ports):
             raise ValueError("required runtime control-plane ports must be unique")
+        required_providers = tuple(
+            _identifier(value, "required_provider_id")
+            for value in required_provider_ids
+        )
+        if len(set(required_providers)) != len(required_providers):
+            raise ValueError("required execution providers must be unique")
+        if expected_manifest_fingerprint is not None:
+            expected_manifest_fingerprint = str(expected_manifest_fingerprint).strip().lower()
+            if _CHECKSUM.fullmatch(expected_manifest_fingerprint) is None:
+                raise RuntimeCompositionDriftError(
+                    "expected runtime composition fingerprint is invalid",
+                    details={
+                        "expected_manifest_fingerprint": expected_manifest_fingerprint,
+                        "actual_manifest_fingerprint": manifest.fingerprint,
+                    },
+                )
         if expected_manifest_fingerprint is not None and expected_manifest_fingerprint != manifest.fingerprint:
             raise RuntimeCompositionDriftError(
                 details={
@@ -233,6 +257,7 @@ class RuntimeExecutionComposition:
         self.execution_registry = execution_registry
         self.require_explicit_execution_profile = require_explicit_execution_profile
         self._required_control_plane_ports = required_ports
+        self._required_provider_ids = required_providers
         self._control_plane_ports = dict(control_plane_ports or {})
         self._validate_control_plane_port_names(self._control_plane_ports)
 
@@ -284,8 +309,13 @@ class RuntimeExecutionComposition:
             for profile_id in self.profile_registry.profile_ids
         }
         missing_control_plane_ports = self.missing_control_plane_ports
+        unavailable_providers = self.unavailable_provider_ids
         return {
-            "status": "blocked" if missing_control_plane_ports else "ready",
+            "status": (
+                "blocked"
+                if missing_control_plane_ports or unavailable_providers
+                else "ready"
+            ),
             "composition_id": self.manifest.composition_id,
             "manifest_fingerprint": self.manifest.fingerprint,
             "policy_fingerprint": self.manifest.policy_fingerprint,
@@ -293,6 +323,8 @@ class RuntimeExecutionComposition:
             "profiles": list(self.profile_registry.profile_ids),
             "profile_catalog": profiles,
             "providers": list(self.execution_registry.provider_ids()),
+            "required_providers": list(self.required_provider_ids),
+            "unavailable_providers": list(unavailable_providers),
             "provider_capabilities": provider_capabilities,
             "control_plane_ports": sorted(self._control_plane_ports),
             "required_control_plane_ports": list(self._required_control_plane_ports),
@@ -321,6 +353,20 @@ class RuntimeExecutionComposition:
         )
 
     @property
+    def required_provider_ids(self) -> tuple[str, ...]:
+        return self._required_provider_ids
+
+    @property
+    def unavailable_provider_ids(self) -> tuple[str, ...]:
+        registered = set(self.execution_registry.provider_ids())
+        return tuple(
+            provider_id
+            for provider_id in self.required_provider_ids
+            if provider_id not in registered
+            or not self.execution_registry.resolve_capabilities(provider_id).available
+        )
+
+    @property
     def control_plane_fingerprint(self) -> str:
         return _fingerprint(
             [
@@ -340,6 +386,38 @@ class RuntimeExecutionComposition:
                 "required runtime control-plane ports are not bound",
                 details={"missing_control_plane_ports": list(missing)},
             )
+
+    def require_ready(self) -> None:
+        """Fail closed unless every role-required provider and port is available.
+
+        Catalogued providers that are not listed in ``required_provider_ids``
+        remain admission-gated when an activity requests them, but do not make
+        an otherwise trusted-only process report itself unavailable.
+        """
+
+        self.verify_integrity()
+        unavailable = self.unavailable_provider_ids
+        if unavailable:
+            raise ExecutionEnvironmentUnavailableError(
+                "required runtime execution providers are unavailable",
+                details={
+                    "provider_ids": list(unavailable),
+                    "missing": ["provider_unavailable"],
+                    "denial_code_version": CAPABILITY_DENIAL_CODE_VERSION,
+                    "denial_code": capability_denial_code("provider_unavailable"),
+                    "denials": [
+                        {
+                            "provider_id": provider_id,
+                            "capability": "provider_unavailable",
+                            "denial_code": capability_denial_code(
+                                "provider_unavailable"
+                            ),
+                        }
+                        for provider_id in unavailable
+                    ],
+                },
+            )
+        self.require_control_plane_ports()
 
     @staticmethod
     def _validate_control_plane_port_names(ports: Mapping[str, Any]) -> None:

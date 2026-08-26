@@ -3,11 +3,54 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from framework.execution_environment import (
+    ExecutionCapabilityProfile,
+    ExecutionEnvironmentRegistry,
+    ExecutionProfile,
+    ExecutionProfileRegistry,
+    RuntimeCompositionManifest,
+    RuntimeExecutionComposition,
+)
+from framework.execution_environment.ports import ExecutionEnvironmentPort
 from interfaces.services.diagnose_service import (
     DiagnoseCheck,
     DiagnoseResult,
     DiagnosticApplicationService,
 )
+
+
+class _UnavailableProvider:
+    @property
+    def capabilities(self) -> ExecutionCapabilityProfile:
+        return ExecutionCapabilityProfile(provider_id="offline", available=False)
+
+    def execute(self, request):
+        raise AssertionError("unavailable provider must not execute")
+
+
+def _unavailable_composition() -> RuntimeExecutionComposition:
+    profiles = ExecutionProfileRegistry()
+    profiles.register(
+        "external",
+        ExecutionProfile.external_process(
+            provider_id="offline",
+            allowed_argv_prefixes=(("worker",),),
+        ),
+    )
+    providers = ExecutionEnvironmentRegistry()
+    provider: ExecutionEnvironmentPort = _UnavailableProvider()
+    providers.register(provider)
+    manifest = RuntimeCompositionManifest.from_registries(
+        composition_id="diagnostic-offline-process",
+        profile_registry=profiles,
+        execution_registry=providers,
+    )
+    return RuntimeExecutionComposition(
+        manifest=manifest,
+        profile_registry=profiles,
+        execution_registry=providers,
+        required_provider_ids=("offline",),
+    )
 
 
 def test_diagnose_result_aggregates_warning() -> None:
@@ -35,6 +78,51 @@ def test_diagnostic_service_runs_injected_checks() -> None:
 
     assert result.status == "error"
     assert [check.check_id for check in result.checks] == ["redis", "qdrant"]
+
+
+def test_diagnostic_service_reports_required_provider_unavailable_as_error() -> None:
+    service = DiagnosticApplicationService(
+        runtime_execution_composition=_unavailable_composition(),
+        checks=[],
+    )
+
+    check = service._check_runtime_composition()
+
+    assert check.status == "error"
+    assert check.details["reason_code"] == "execution_environment_unavailable"
+    assert check.details["details"]["denial_code"] == "execution_provider_unavailable"
+    assert check.details["unavailable_providers"] == ["offline"]
+
+
+def test_diagnostic_service_reports_required_control_plane_port_as_error() -> None:
+    profiles = ExecutionProfileRegistry()
+    profiles.register("trusted", ExecutionProfile.trusted_in_process())
+    providers = ExecutionEnvironmentRegistry()
+    manifest = RuntimeCompositionManifest.from_registries(
+        composition_id="diagnostic-missing-port-process",
+        profile_registry=profiles,
+        execution_registry=providers,
+    )
+    composition = RuntimeExecutionComposition(
+        manifest=manifest,
+        profile_registry=profiles,
+        execution_registry=providers,
+        required_control_plane_ports=("canonical_event_publisher",),
+    )
+
+    check = DiagnosticApplicationService(
+        runtime_execution_composition=composition,
+        checks=[],
+    )._check_runtime_composition()
+
+    assert check.status == "error"
+    assert check.details["reason_code"] == "runtime_composition_drift"
+    assert check.details["details"] == {
+        "missing_control_plane_ports": ["canonical_event_publisher"]
+    }
+    assert check.details["missing_control_plane_ports"] == [
+        "canonical_event_publisher"
+    ]
 
 
 def test_dashscope_key_check_does_not_expose_secret() -> None:

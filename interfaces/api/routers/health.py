@@ -23,6 +23,8 @@ def create_router(services: ApiServices, helpers: ApiRouteHelpers) -> APIRouter:
         if composition is not None:
             try:
                 diagnostics = composition.diagnostics()
+                if diagnostics.get("unavailable_providers"):
+                    composition.require_ready()
             except Exception as exc:
                 reason_code = getattr(exc, "reason_code", "runtime_composition_unavailable")
                 details = getattr(exc, "details", {})

@@ -30,11 +30,14 @@ from framework.execution_environment import (
     ExecutionEnvironmentError,
     ExecutionEnvironmentUnavailableError,
     ExecutionEnvironmentRegistry,
+    ExecutionIdentityMismatchError,
     ExecutionMode,
     ExecutionOutcome,
+    ExecutionPolicyViolationError,
     ExecutionProfile,
     ExecutionRequest,
     ResourceLimits,
+    RuntimeCompositionProfileError,
 )
 from framework.shared.json import to_jsonable
 from framework.events.propagation import (
@@ -551,7 +554,11 @@ class ToolExecutor:
         except Exception as exc:
             policy_trace.add("tool.execution", "compatibility", False, str(exc))
             execution_error_metadata = (
-                {"reason_code": exc.reason_code, "details": dict(exc.details)}
+                {
+                    "reason_code": exc.reason_code,
+                    "details": dict(exc.details),
+                    "execution_error_type": type(exc).__name__,
+                }
                 if isinstance(exc, ExecutionEnvironmentError)
                 else {}
             )
@@ -584,7 +591,10 @@ class ToolExecutor:
         if result.metadata.get("execution_environment_halt"):
             result = _copy_tool_result(
                 result,
-                error_type="execution_environment_unavailable",
+                error_type=str(
+                    result.metadata.get("reason_code")
+                    or "execution_environment_unavailable"
+                ),
                 error_message=result.error_message,
             )
         if resolved_definition is not None:
@@ -646,8 +656,12 @@ class ToolExecutor:
         raw_profile = metadata.get("execution_profile")
         if raw_profile is None:
             if self._require_explicit_execution_profile:
-                raise ToolRuntimeError(
-                    "tool must explicitly declare trusted_in_process or sandboxed_process execution"
+                raise RuntimeCompositionProfileError(
+                    "tool must explicitly declare trusted_in_process or sandboxed_process execution",
+                    details={
+                        "tool_id": registered.definition.tool_id,
+                        "missing": ["execution_profile"],
+                    },
                 )
             return registered.executor
         try:
@@ -657,8 +671,12 @@ class ToolExecutor:
                 else ExecutionProfile.from_dict(raw_profile)
             )
         except (TypeError, ValueError) as exc:
-            raise ToolRuntimeError(
-                f"tool {call.tool_name} has an invalid execution profile: {exc}"
+            raise RuntimeCompositionProfileError(
+                f"tool {call.tool_name} has an invalid execution profile",
+                details={
+                    "tool_id": registered.definition.tool_id,
+                    "profile_error_type": type(exc).__name__,
+                },
             ) from exc
         if profile.mode is ExecutionMode.TRUSTED_IN_PROCESS:
             return registered.executor
@@ -666,46 +684,94 @@ class ToolExecutor:
         if registry is None:
             raise ExecutionEnvironmentUnavailableError(
                 "sandboxed tool execution requires a Harness ExecutionEnvironment",
+                details={
+                    "tool_id": registered.definition.tool_id,
+                    "missing": ["execution_environment"],
+                },
             )
         if not hasattr(registry, "execute"):
             raise ExecutionEnvironmentUnavailableError(
-                "execution environment does not expose execute"
+                "execution environment does not expose execute",
+                details={
+                    "tool_id": registered.definition.tool_id,
+                    "missing": ["execution_environment.execute"],
+                },
             )
 
         execution_spec = metadata.get("execution")
         if not isinstance(execution_spec, Mapping):
-            raise ToolRuntimeError(
-                "sandboxed tool must declare an execution object with image and argv"
+            raise ExecutionPolicyViolationError(
+                "sandboxed tool must declare an execution object with image and argv",
+                details={
+                    "tool_id": registered.definition.tool_id,
+                    "violation": "sandbox_execution_spec_invalid",
+                    "missing": ["execution"],
+                },
             )
         graph_identity = call.graph_identity or self._graph_identity
         if graph_identity is None:
-            raise ToolRuntimeError(
-                "sandboxed tool execution requires an exact Graph identity"
+            raise ExecutionIdentityMismatchError(
+                "sandboxed tool execution requires an exact Graph identity",
+                details={
+                    "tool_id": registered.definition.tool_id,
+                    "missing": ["graph_identity"],
+                },
             )
         image = execution_spec.get("image")
         argv = execution_spec.get("argv")
         if isinstance(argv, str):
             argv = (argv,)
         if not isinstance(argv, (tuple, list)):
-            raise ToolRuntimeError("sandboxed tool execution argv must be an array")
+            raise ExecutionPolicyViolationError(
+                "sandboxed tool execution argv must be an array",
+                details={
+                    "tool_id": registered.definition.tool_id,
+                    "violation": "sandbox_execution_spec_invalid",
+                    "field": "argv",
+                },
+            )
         if any(not isinstance(token, str) for token in argv):
-            raise ToolRuntimeError("sandboxed tool execution argv must contain strings")
+            raise ExecutionPolicyViolationError(
+                "sandboxed tool execution argv must contain strings",
+                details={
+                    "tool_id": registered.definition.tool_id,
+                    "violation": "sandbox_execution_spec_invalid",
+                    "field": "argv",
+                },
+            )
         # Never serialize the complete argument object into argv: even when
         # secret injection is disabled, command lines are observable by other
         # processes.  Providers receive named ``secret_handles`` separately.
         if any(token == "{arguments}" or "{secret" in token.casefold() for token in argv):
-            raise ToolRuntimeError(
-                "sandbox execution cannot expand raw arguments or secrets into argv"
+            raise ExecutionPolicyViolationError(
+                "sandbox execution cannot expand raw arguments or secrets into argv",
+                details={
+                    "tool_id": registered.definition.tool_id,
+                    "violation": "sandbox_execution_spec_invalid",
+                    "field": "argv",
+                },
             )
         argv = tuple(argv)
         raw_secret_handles = execution_spec.get("secret_handles", ())
         if isinstance(raw_secret_handles, (str, bytes)) or not isinstance(raw_secret_handles, (tuple, list)):
-            raise ToolRuntimeError("sandboxed tool secret_handles must be an array")
+            raise ExecutionPolicyViolationError(
+                "sandboxed tool secret_handles must be an array",
+                details={
+                    "tool_id": registered.definition.tool_id,
+                    "violation": "sandbox_execution_spec_invalid",
+                    "field": "secret_handles",
+                },
+            )
         declared_secret_handles = tuple(raw_secret_handles)
         required_secret_names = tuple(getattr(registered.definition, "required_secret_names", ()) or ())
         if required_secret_names and not set(required_secret_names).issubset(set(declared_secret_handles)):
-            raise ToolRuntimeError(
-                "sandboxed tool must declare every required secret as a named handle"
+            raise ExecutionPolicyViolationError(
+                "sandboxed tool must declare every required secret as a named handle",
+                details={
+                    "tool_id": registered.definition.tool_id,
+                    "violation": "sandbox_execution_spec_invalid",
+                    "field": "secret_handles",
+                },
             )
         attempt_context = current_attempt_context()
         operation_id = (
@@ -719,33 +785,43 @@ class ToolExecutor:
             else f"{operation_id}:attempt-1"
         )
         execution_id = f"exec:{operation_id}:{attempt_id}"
-        request = ExecutionRequest(
-            execution_id=execution_id,
-            tool_id=registered.definition.tool_id,
-            graph_identity=graph_identity,
-            operation_id=operation_id,
-            attempt_id=attempt_id,
-            profile=profile,
-            image=str(image or ""),
-            argv=argv,
-            read_roots=_execution_paths(execution_spec.get("read_roots", ()), "read_roots"),
-            write_roots=_execution_paths(execution_spec.get("write_roots", ()), "write_roots"),
-            working_directory=execution_spec.get("working_directory"),
-            environment=dict(execution_spec.get("environment", {})),
-            secret_handles=declared_secret_handles,
-            resource_limits=ResourceLimits(
-                **dict(execution_spec.get("resource_limits", {}))
-            ),
-            timeout_seconds=execution_spec.get("timeout_seconds")
-            or registered.definition.timeout_seconds,
-            cancellation_grace_seconds=float(
-                execution_spec.get("cancellation_grace_seconds")
-                or registered.definition.cancellation_grace_seconds
-                or 5.0
-            ),
-            approval_evidence_ref=execution_spec.get("approval_evidence_ref"),
-            budget_ref=execution_spec.get("budget_ref"),
-        )
+        try:
+            request = ExecutionRequest(
+                execution_id=execution_id,
+                tool_id=registered.definition.tool_id,
+                graph_identity=graph_identity,
+                operation_id=operation_id,
+                attempt_id=attempt_id,
+                profile=profile,
+                image=str(image or ""),
+                argv=argv,
+                read_roots=_execution_paths(execution_spec.get("read_roots", ()), "read_roots"),
+                write_roots=_execution_paths(execution_spec.get("write_roots", ()), "write_roots"),
+                working_directory=execution_spec.get("working_directory"),
+                environment=dict(execution_spec.get("environment", {})),
+                secret_handles=declared_secret_handles,
+                resource_limits=ResourceLimits(
+                    **dict(execution_spec.get("resource_limits", {}))
+                ),
+                timeout_seconds=execution_spec.get("timeout_seconds")
+                or registered.definition.timeout_seconds,
+                cancellation_grace_seconds=float(
+                    execution_spec.get("cancellation_grace_seconds")
+                    or registered.definition.cancellation_grace_seconds
+                    or 5.0
+                ),
+                approval_evidence_ref=execution_spec.get("approval_evidence_ref"),
+                budget_ref=execution_spec.get("budget_ref"),
+            )
+        except (TypeError, ValueError) as exc:
+            raise ExecutionPolicyViolationError(
+                "sandboxed tool execution specification is not admitted",
+                details={
+                    "tool_id": registered.definition.tool_id,
+                    "violation": "sandbox_execution_spec_invalid",
+                    "spec_error_type": type(exc).__name__,
+                },
+            ) from exc
 
         def execute(_: dict[str, Any]) -> Any:
             try:

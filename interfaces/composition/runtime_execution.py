@@ -8,6 +8,7 @@ provider or downgrade to host execution.
 from __future__ import annotations
 
 from functools import lru_cache
+import os
 
 from framework.execution_environment import (
     ExecutionEnvironmentRegistry,
@@ -50,6 +51,8 @@ def _shared_docker_provider() -> DockerExecutionEnvironment:
 def build_process_execution_composition(
     *,
     required_control_plane_ports: tuple[str, ...] = (),
+    required_provider_ids: tuple[str, ...] = (),
+    expected_manifest_fingerprint: str | None = None,
 ) -> RuntimeExecutionComposition:
     """Build the shared execution composition used by every process root.
 
@@ -59,6 +62,10 @@ def build_process_execution_composition(
     provider.
     """
 
+    if expected_manifest_fingerprint is None:
+        expected_manifest_fingerprint = os.environ.get(
+            "NEWSROOM_RUNTIME_COMPOSITION_FINGERPRINT"
+        )
     execution_registry = ExecutionEnvironmentRegistry()
     execution_registry.register(_shared_docker_provider())
     profile_registry = ExecutionProfileRegistry()
@@ -105,6 +112,8 @@ def build_process_execution_composition(
         profile_registry=profile_registry,
         execution_registry=execution_registry,
         required_control_plane_ports=required_control_plane_ports,
+        required_provider_ids=required_provider_ids,
+        expected_manifest_fingerprint=expected_manifest_fingerprint,
     )
 
 
@@ -113,6 +122,7 @@ def build_research_execution_composition() -> RuntimeExecutionComposition:
 
     return build_process_execution_composition(
         required_control_plane_ports=RESEARCH_REQUIRED_CONTROL_PLANE_PORTS,
+        required_provider_ids=("docker",),
     )
 
 

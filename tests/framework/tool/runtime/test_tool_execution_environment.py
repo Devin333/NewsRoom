@@ -119,6 +119,111 @@ def test_sandboxed_definition_without_environment_fails_closed() -> None:
     assert observation.result.metadata["resolved_tool_id"] == "sample.sandboxed@1.0.0"
     assert observation.result.error_type == "execution_environment_unavailable"
     assert observation.result.metadata["reason_code"] == "execution_environment_unavailable"
+    assert observation.result.metadata["execution_error_type"] == "ExecutionEnvironmentUnavailableError"
+    assert observation.result.metadata["details"]["missing"] == ["execution_environment"]
+
+
+def test_invalid_sandbox_execution_profile_is_a_typed_denial() -> None:
+    registry = ToolRegistry()
+    registry.register(
+        ToolDefinition(
+            name="sample.invalid-profile",
+            metadata={
+                "execution_profile": {"mode": "sandboxed_process", "unknown": True},
+            },
+        ),
+        lambda _: {"unsafe": True},
+    )
+
+    observation = ToolExecutor(registry, graph_identity=_identity()).execute(
+        ToolCall(tool_name="sample.invalid-profile", graph_identity=_identity()),
+        ToolPolicy(allowed_tools=["sample.invalid-profile"]),
+    )
+
+    assert observation.status is ToolStatus.FAILED
+    assert observation.result.error_type == "runtime_profile_denied"
+    assert observation.result.metadata["reason_code"] == "runtime_profile_denied"
+    assert observation.result.metadata["execution_error_type"] == "RuntimeCompositionProfileError"
+    assert observation.result.metadata["details"] == {
+        "tool_id": "sample.invalid-profile@1.0.0",
+        "profile_error_type": "ValueError",
+    }
+
+
+def test_sandboxed_definition_without_graph_identity_is_a_typed_denial() -> None:
+    profile = ExecutionProfile.sandboxed_process(
+        provider_id="fake",
+        allowed_argv_prefixes=(("python",),),
+        require_filesystem_isolation=False,
+        require_resource_limits=False,
+    )
+    registry = ToolRegistry()
+    registry.register(
+        ToolDefinition(
+            name="sample.missing-identity",
+            metadata={
+                "execution_profile": profile.to_dict(),
+                "execution": {"image": "python", "argv": ["python"]},
+            },
+        ),
+        lambda _: {"unsafe": True},
+    )
+
+    observation = ToolExecutor(
+        registry,
+        execution_environment=ExecutionEnvironmentRegistry(),
+    ).execute(
+        ToolCall(tool_name="sample.missing-identity"),
+        ToolPolicy(allowed_tools=["sample.missing-identity"]),
+    )
+
+    assert observation.status is ToolStatus.FAILED
+    assert observation.result.error_type == "execution_identity_mismatch"
+    assert observation.result.metadata["reason_code"] == "execution_identity_mismatch"
+    assert observation.result.metadata["execution_error_type"] == "ExecutionIdentityMismatchError"
+    assert observation.result.metadata["details"] == {
+        "tool_id": "sample.missing-identity@1.0.0",
+        "missing": ["graph_identity"],
+    }
+
+
+def test_invalid_sandbox_execution_spec_is_a_typed_denial() -> None:
+    profile = ExecutionProfile.sandboxed_process(
+        provider_id="fake",
+        allowed_argv_prefixes=(("python",),),
+        require_filesystem_isolation=False,
+        require_resource_limits=False,
+    )
+    registry = ToolRegistry()
+    registry.register(
+        ToolDefinition(
+            name="sample.invalid-spec",
+            metadata={
+                "execution_profile": profile.to_dict(),
+                "execution": None,
+            },
+        ),
+        lambda _: {"unsafe": True},
+    )
+
+    observation = ToolExecutor(
+        registry,
+        execution_environment=ExecutionEnvironmentRegistry(),
+        graph_identity=_identity(),
+    ).execute(
+        ToolCall(tool_name="sample.invalid-spec", graph_identity=_identity()),
+        ToolPolicy(allowed_tools=["sample.invalid-spec"]),
+    )
+
+    assert observation.status is ToolStatus.FAILED
+    assert observation.result.error_type == "execution_policy_violation"
+    assert observation.result.metadata["reason_code"] == "execution_policy_violation"
+    assert observation.result.metadata["execution_error_type"] == "ExecutionPolicyViolationError"
+    assert observation.result.metadata["details"] == {
+        "tool_id": "sample.invalid-spec@1.0.0",
+        "violation": "sandbox_execution_spec_invalid",
+        "missing": ["execution"],
+    }
 
 
 def test_sandbox_never_places_secret_values_in_argv() -> None:
