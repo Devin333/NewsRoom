@@ -8,6 +8,7 @@ from framework.execution_environment.errors import (
 )
 from framework.execution_environment.fake import FakeExecutionEnvironment
 from framework.execution_environment.models import (
+    CAPABILITY_DENIAL_CODE_VERSION,
     ExecutionCapabilityProfile,
     ExecutionMode,
     ExecutionOutcome,
@@ -20,6 +21,7 @@ from framework.execution_environment.models import (
     NetworkPolicyMode,
     ProcessPolicy,
     ResourceLimits,
+    capability_denial_code,
 )
 from framework.execution_environment.ports import ExecutionEnvironmentPort
 from framework.execution_environment.registry import ExecutionEnvironmentRegistry
@@ -35,6 +37,7 @@ from framework.execution_environment.errors import (
 )
 
 __all__ = [
+    "CAPABILITY_DENIAL_CODE_VERSION",
     "ExecutionCapabilityProfile",
     "ExecutionEnvironmentError",
     "ExecutionEnvironmentPort",
@@ -49,6 +52,7 @@ __all__ = [
     "ExecutionReceipt",
     "ExecutionRequest",
     "ExecutionStatus",
+    "capability_denial_code",
     "FakeExecutionEnvironment",
     "NetworkEndpoint",
     "NetworkPolicy",

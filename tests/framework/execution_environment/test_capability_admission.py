@@ -1,0 +1,197 @@
+from __future__ import annotations
+
+import pytest
+
+from framework.execution_environment import (
+    CAPABILITY_DENIAL_CODE_VERSION,
+    ExecutionCapabilityProfile,
+    ExecutionEnvironmentRegistry,
+    ExecutionEnvironmentUnavailableError,
+    ExecutionProfile,
+    ExecutionRequest,
+    FakeExecutionEnvironment,
+    ResourceLimits,
+    capability_denial_code,
+)
+from framework.shared.graph_identity import GraphExecutionIdentity
+
+
+def _identity() -> GraphExecutionIdentity:
+    return GraphExecutionIdentity(
+        run_id="run-1",
+        graph_id="graph",
+        graph_version="1.0.0",
+        graph_ref="graph@1.0.0",
+        graph_checksum="sha256:" + "a" * 64,
+        node_id="node",
+        node_instance_id="node-1",
+        activity_id="activity",
+        attempt=1,
+    )
+
+
+def _request() -> ExecutionRequest:
+    profile = ExecutionProfile.sandboxed_process(
+        provider_id="test-provider",
+        allowed_argv_prefixes=(("python",),),
+        network_policy={
+            "mode": "allowlist",
+            "allowlist": [{"host": "api.example", "port": 443}],
+        },
+        require_filesystem_isolation=False,
+        require_resource_limits=True,
+    )
+    return ExecutionRequest(
+        execution_id="execution-1",
+        tool_id="tool.example@1.0.0",
+        graph_identity=_identity(),
+        operation_id="operation-1",
+        attempt_id="attempt-1",
+        profile=profile,
+        image="python:3.12",
+        argv=("python", "-c", "print(1)"),
+        secret_handles=("vault/key",),
+        resource_limits=ResourceLimits(max_memory_bytes=1 << 20),
+    )
+
+
+def test_capability_diagnostics_expose_stable_codes_without_request_material() -> None:
+    request = _request()
+    capabilities = ExecutionCapabilityProfile(
+        provider_id="test-provider",
+        available=True,
+        isolates_environment=True,
+        enforces_argv_policy=True,
+        controls_process_tree=True,
+        confirms_termination=True,
+    )
+
+    diagnostics = capabilities.admission_diagnostics(request)
+
+    assert diagnostics["status"] == "rejected"
+    assert diagnostics["denial_code_version"] == CAPABILITY_DENIAL_CODE_VERSION
+    assert diagnostics["provider_capability_checksum"] == capabilities.checksum
+    assert diagnostics["missing"] == [
+        "network_allowlist",
+        "memory_limits",
+        "secret_handle_injection",
+    ]
+    assert diagnostics["denials"] == [
+        {
+            "capability": "network_allowlist",
+            "denial_code": "execution_network_policy_unsupported",
+        },
+        {
+            "capability": "memory_limits",
+            "denial_code": "execution_resource_limits_unsupported",
+        },
+        {
+            "capability": "secret_handle_injection",
+            "denial_code": "execution_secret_handles_unsupported",
+        },
+    ]
+    assert "api.example" not in str(diagnostics)
+    assert "vault/key" not in str(diagnostics)
+
+
+def test_registry_preserves_reason_code_and_adds_specific_single_denial_code() -> None:
+    request = _request()
+    capabilities = ExecutionCapabilityProfile(
+        provider_id="test-provider",
+        available=True,
+        enforces_network_deny=True,
+        isolates_environment=True,
+        enforces_argv_policy=True,
+        controls_process_tree=True,
+        enforces_resource_limits=True,
+        enforces_memory_limits=True,
+        confirms_termination=True,
+        supports_secret_handles=True,
+    )
+    registry = ExecutionEnvironmentRegistry()
+    registry.register(
+        FakeExecutionEnvironment(capabilities, lambda _: pytest.fail("must not execute"))
+    )
+
+    with pytest.raises(ExecutionEnvironmentUnavailableError) as raised:
+        registry.resolve(request)
+
+    assert raised.value.reason_code == "execution_environment_unavailable"
+    assert raised.value.details["denial_code"] == "execution_network_policy_unsupported"
+    assert raised.value.details["denial_code_version"] == CAPABILITY_DENIAL_CODE_VERSION
+    assert raised.value.details["denials"] == [
+        {
+            "capability": "network_allowlist",
+            "denial_code": "execution_network_policy_unsupported",
+        }
+    ]
+
+
+def test_registry_reports_unregistered_provider_as_structured_denial() -> None:
+    request = _request()
+    registry = ExecutionEnvironmentRegistry()
+
+    with pytest.raises(ExecutionEnvironmentUnavailableError) as raised:
+        registry.resolve(request)
+
+    assert raised.value.reason_code == "execution_environment_unavailable"
+    assert raised.value.details["denial_code"] == "execution_provider_unavailable"
+    assert raised.value.details["missing"] == ["provider"]
+    assert raised.value.details["denials"] == [
+        {
+            "capability": "provider_unavailable",
+            "denial_code": "execution_provider_unavailable",
+        }
+    ]
+
+
+def test_unavailable_provider_keeps_provider_code_primary() -> None:
+    request = _request()
+    capabilities = ExecutionCapabilityProfile(
+        provider_id="test-provider",
+        available=False,
+        enforces_argv_policy=True,
+        controls_process_tree=True,
+        confirms_termination=True,
+    )
+    registry = ExecutionEnvironmentRegistry()
+    registry.register(
+        FakeExecutionEnvironment(capabilities, lambda _: pytest.fail("must not execute"))
+    )
+
+    with pytest.raises(ExecutionEnvironmentUnavailableError) as raised:
+        registry.resolve(request)
+
+    assert raised.value.details["denial_code"] == "execution_provider_unavailable"
+    assert raised.value.details["denials"][0] == {
+        "capability": "provider_unavailable",
+        "denial_code": "execution_provider_unavailable",
+    }
+
+
+def test_resource_capability_checks_requested_dimensions_independently() -> None:
+    request = _request()
+    capabilities = ExecutionCapabilityProfile(
+        provider_id="test-provider",
+        available=True,
+        isolates_environment=True,
+        enforces_argv_policy=True,
+        controls_process_tree=True,
+        enforces_resource_limits=True,
+        confirms_termination=True,
+    )
+
+    diagnostics = capabilities.admission_diagnostics(request)
+
+    assert diagnostics["missing"] == ["network_allowlist", "memory_limits", "secret_handle_injection"]
+    assert {
+        item["denial_code"] for item in diagnostics["denials"]
+    } == {
+        "execution_network_policy_unsupported",
+        "execution_resource_limits_unsupported",
+        "execution_secret_handles_unsupported",
+    }
+
+
+def test_unknown_capability_uses_versioned_generic_code() -> None:
+    assert capability_denial_code("future_capability") == "execution_capability_unsupported"

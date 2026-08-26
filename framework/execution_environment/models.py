@@ -13,6 +13,7 @@ from enum import StrEnum
 import hashlib
 import math
 import re
+from types import MappingProxyType
 from typing import Any
 
 from framework.shared.graph_identity import GraphExecutionIdentity
@@ -55,6 +56,38 @@ class ExecutionStatus(StrEnum):
     TIMED_OUT = "timed_out"
     CANCELLED = "cancelled"
     INDETERMINATE = "indeterminate"
+
+
+# The mapping is part of the execution boundary contract.  Keep capability
+# names stable for provider implementations while exposing a coarser denial
+# vocabulary to operators and callers.
+CAPABILITY_DENIAL_CODE_VERSION = "newsroom.execution-capability-denials/v1"
+_CAPABILITY_DENIAL_CODES = MappingProxyType({
+    "provider_unavailable": "execution_provider_unavailable",
+    "filesystem_roots": "execution_filesystem_isolation_unsupported",
+    "network_deny": "execution_network_policy_unsupported",
+    "network_allowlist": "execution_network_policy_unsupported",
+    "environment_isolation": "execution_environment_isolation_unsupported",
+    "argv_policy": "execution_argv_policy_unsupported",
+    "process_tree_control": "execution_process_tree_unsupported",
+    "child_process_allowlist": "execution_child_process_policy_unsupported",
+    "resource_limits": "execution_resource_limits_unsupported",
+    "memory_limits": "execution_resource_limits_unsupported",
+    "cpu_limits": "execution_resource_limits_unsupported",
+    "process_limits": "execution_resource_limits_unsupported",
+    "termination_confirmation": "execution_termination_confirmation_unsupported",
+    "secret_handle_injection": "execution_secret_handles_unsupported",
+})
+
+
+def capability_denial_code(capability: str) -> str:
+    """Return the stable operator-facing denial code for one capability."""
+
+    normalized = str(capability).strip()
+    return _CAPABILITY_DENIAL_CODES.get(
+        normalized,
+        "execution_capability_unsupported",
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -588,7 +621,7 @@ class ExecutionCapabilityProfile:
             or profile.process_policy.require_child_process_allowlist
         ) and not self.enforces_child_process_allowlist:
             missing.append("child_process_allowlist")
-        if profile.require_resource_limits and not self.enforces_resource_limits:
+        if profile.require_resource_limits:
             limits = request.resource_limits
             if limits.max_memory_bytes is not None and not self.enforces_memory_limits:
                 missing.append("memory_limits")
@@ -600,6 +633,7 @@ class ExecutionCapabilityProfile:
                 limits.max_memory_bytes is None
                 and limits.max_cpu_seconds is None
                 and limits.max_processes is None
+                and not self.enforces_resource_limits
             ):
                 missing.append("resource_limits")
         if profile.require_termination_confirmation and not self.confirms_termination:
@@ -607,6 +641,44 @@ class ExecutionCapabilityProfile:
         if request.secret_handles and not self.supports_secret_handles:
             missing.append("secret_handle_injection")
         return tuple(missing)
+
+    def admission_diagnostics(self, request: ExecutionRequest) -> dict[str, Any]:
+        """Describe capability admission without exposing request contents.
+
+        The returned shape is deliberately stable and suitable for operator
+        projections.  ``missing`` remains the low-level capability vocabulary;
+        ``denials`` provides versioned, coarser denial codes for callers.
+        """
+
+        missing = self.missing_for(request)
+        denials = [
+            {
+                "capability": capability,
+                "denial_code": capability_denial_code(capability),
+            }
+            for capability in missing
+        ]
+        diagnostics: dict[str, Any] = {
+            "status": "admitted" if not missing else "rejected",
+            "denial_code_version": CAPABILITY_DENIAL_CODE_VERSION,
+            "provider_id": self.provider_id,
+            "provider_capability_version": self.version,
+            "provider_capability_checksum": self.checksum,
+            "missing": list(missing),
+            "denials": denials,
+        }
+        if denials:
+            # Provider availability is the primary admission failure: other
+            # advertised controls are not actionable until a provider exists.
+            if "provider_unavailable" in missing:
+                diagnostics["denial_code"] = capability_denial_code(
+                    "provider_unavailable"
+                )
+            elif len(denials) == 1:
+                diagnostics["denial_code"] = denials[0]["denial_code"]
+            else:
+                diagnostics["denial_code"] = "execution_capability_admission_denied"
+        return diagnostics
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -856,6 +928,7 @@ def _optional_checksum(value: Any, field_name: str) -> str | None:
 
 
 __all__ = [
+    "CAPABILITY_DENIAL_CODE_VERSION",
     "ExecutionCapabilityProfile",
     "ExecutionMode",
     "ExecutionOutcome",
@@ -863,6 +936,7 @@ __all__ = [
     "ExecutionReceipt",
     "ExecutionRequest",
     "ExecutionStatus",
+    "capability_denial_code",
     "NetworkEndpoint",
     "NetworkPolicy",
     "NetworkPolicyMode",

@@ -8,7 +8,12 @@ from framework.execution_environment.errors import (
     ExecutionEnvironmentUnavailableError,
     ExecutionIdentityMismatchError,
 )
-from framework.execution_environment.models import ExecutionOutcome, ExecutionRequest
+from framework.execution_environment.models import (
+    CAPABILITY_DENIAL_CODE_VERSION,
+    ExecutionOutcome,
+    ExecutionRequest,
+    capability_denial_code,
+)
 from framework.execution_environment.ports import ExecutionEnvironmentPort
 
 
@@ -31,19 +36,40 @@ class ExecutionEnvironmentRegistry:
         if provider_id is None:
             raise ExecutionEnvironmentUnavailableError(
                 "sandboxed execution profile has no pinned provider",
-                details={"missing": ["provider_id"]},
+                details={
+                    "missing": ["provider_id"],
+                    "denial_code_version": CAPABILITY_DENIAL_CODE_VERSION,
+                    "denial_code": "execution_provider_unavailable",
+                    "denials": [
+                        {
+                            "capability": "provider_unavailable",
+                            "denial_code": capability_denial_code("provider_unavailable"),
+                        }
+                    ],
+                },
             )
         provider = self._providers.get(provider_id)
         if provider is None:
             raise ExecutionEnvironmentUnavailableError(
                 "requested execution environment provider is not registered",
-                details={"provider_id": provider_id, "missing": ["provider"]},
+                details={
+                    "provider_id": provider_id,
+                    "missing": ["provider"],
+                    "denial_code_version": CAPABILITY_DENIAL_CODE_VERSION,
+                    "denial_code": "execution_provider_unavailable",
+                    "denials": [
+                        {
+                            "capability": "provider_unavailable",
+                            "denial_code": capability_denial_code("provider_unavailable"),
+                        }
+                    ],
+                },
             )
-        missing = provider.capabilities.missing_for(request)
-        if missing:
+        diagnostics = provider.capabilities.admission_diagnostics(request)
+        if diagnostics["missing"]:
             raise ExecutionEnvironmentUnavailableError(
                 "requested execution environment capabilities are unavailable",
-                details={"provider_id": provider_id, "missing": list(missing)},
+                details=diagnostics,
             )
         return provider
 
@@ -128,6 +154,18 @@ class ExecutionEnvironmentRegistry:
 
     def provider_ids(self) -> tuple[str, ...]:
         return tuple(sorted(self._providers))
+
+    def resolve_capabilities(self, provider_id: str):
+        """Return the advertised capabilities without admitting a request."""
+
+        normalized = str(provider_id).strip()
+        provider = self._providers.get(normalized)
+        if provider is None:
+            raise ExecutionEnvironmentUnavailableError(
+                "requested execution environment provider is not registered",
+                details={"provider_id": normalized, "missing": ["provider"]},
+            )
+        return provider.capabilities
 
     @property
     def fingerprint(self) -> str:
