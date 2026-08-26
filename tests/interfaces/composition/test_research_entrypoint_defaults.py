@@ -17,6 +17,7 @@ from interfaces.mcp.server import NewsMCPServerAdapter
 from interfaces.mcp.stdio_server import handle_jsonrpc_request, run_stdio
 from interfaces.services.mcp_service import MCPApplicationService
 from interfaces.services.research_service import ResearchServiceError
+from interfaces.services.source_runtime import SourceRuntimeProvider
 
 
 class _ResearchService:
@@ -36,6 +37,7 @@ class _CountingProvider:
     def __init__(self, service: _ResearchService) -> None:
         self.service = service
         self.calls = 0
+        self.source_runtime_provider = SourceRuntimeProvider()
 
     def service_factory(self) -> _ResearchService:
         self.calls += 1
@@ -98,7 +100,7 @@ def _analyze_error_surfaces(
     def research_factory():
         return service
 
-    def mcp_factory():
+    def mcp_factory(*_args):
         return MCPApplicationService(
             research_service_factory=research_factory,
         )

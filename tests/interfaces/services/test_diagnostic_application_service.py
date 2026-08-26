@@ -94,37 +94,6 @@ def test_diagnostic_service_reports_required_provider_unavailable_as_error() -> 
     assert check.details["unavailable_providers"] == ["offline"]
 
 
-def test_diagnostic_service_reports_required_control_plane_port_as_error() -> None:
-    profiles = ExecutionProfileRegistry()
-    profiles.register("trusted", ExecutionProfile.trusted_in_process())
-    providers = ExecutionEnvironmentRegistry()
-    manifest = RuntimeCompositionManifest.from_registries(
-        composition_id="diagnostic-missing-port-process",
-        profile_registry=profiles,
-        execution_registry=providers,
-    )
-    composition = RuntimeExecutionComposition(
-        manifest=manifest,
-        profile_registry=profiles,
-        execution_registry=providers,
-        required_control_plane_ports=("canonical_event_publisher",),
-    )
-
-    check = DiagnosticApplicationService(
-        runtime_execution_composition=composition,
-        checks=[],
-    )._check_runtime_composition()
-
-    assert check.status == "error"
-    assert check.details["reason_code"] == "runtime_composition_drift"
-    assert check.details["details"] == {
-        "missing_control_plane_ports": ["canonical_event_publisher"]
-    }
-    assert check.details["missing_control_plane_ports"] == [
-        "canonical_event_publisher"
-    ]
-
-
 def test_dashscope_key_check_does_not_expose_secret() -> None:
     service = DiagnosticApplicationService(env={"DASHSCOPE_API_KEY": "secret-value"}, checks=[])
 

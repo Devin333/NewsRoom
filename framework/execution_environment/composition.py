@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-"""Process-scoped runtime composition contracts.
+"""Process-scoped execution composition contracts.
 
-The composition owns the provider/profile policy and records any durable
-control-plane ports supplied by the application root.  ``required_provider_ids``
-is deliberately explicit: a profile may be present in the shared catalog for
-another process role without making that provider a startup dependency here.
+The composition owns execution provider/profile policy only.
+``required_provider_ids`` is deliberately explicit: a profile may be present
+in the shared catalog for another process role without making that provider a
+startup dependency here.
 """
 
 from collections.abc import Mapping, Sequence
@@ -32,19 +32,6 @@ from framework.shared.json import stable_json_dumps
 _IDENTIFIER = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:@/+\-]{0,255}\Z")
 _CHECKSUM = re.compile(r"sha256:[0-9a-f]{64}\Z")
 
-RUNTIME_CONTROL_PLANE_PORT_CONTRACTS: Mapping[str, str] = {
-    "durable_intent_repository": "newsroom.runtime-intent/v1",
-    "execution_receipt_repository": "newsroom.execution-receipt/v1",
-    "child_lease_repository": "newsroom.child-lease/v1",
-    "idempotency_reconciliation_port": "newsroom.idempotency-reconciliation/v1",
-    "canonical_event_publisher": "newsroom.runtime-event-publisher/v1",
-    "durable_event_storage": "newsroom.runtime-event-store/v1",
-    "projection_checkpoint_reader": "newsroom.runtime-projection-checkpoint/v1",
-    "operator_authorizer": "newsroom.operator-authorizer/v1",
-    "operator_service": "newsroom.operator-service/v1",
-}
-
-
 def _identifier(value: Any, field_name: str) -> str:
     normalized = str(value or "").strip()
     if _IDENTIFIER.fullmatch(normalized) is None:
@@ -58,20 +45,6 @@ def _fingerprint(value: Any) -> str:
     ).hexdigest()
 
 
-def _port_identity(port: Any) -> str:
-    for attribute in ("composition_fingerprint", "fingerprint", "checksum"):
-        value = getattr(port, attribute, None)
-        if callable(value):
-            try:
-                value = value()
-            except TypeError:
-                value = None
-        if isinstance(value, str) and value.strip():
-            return value.strip()
-    port_type = type(port)
-    return f"{port_type.__module__}.{port_type.__qualname__}"
-
-
 @dataclass(frozen=True, slots=True)
 class RuntimeCompositionManifest:
     """Immutable identity shared by all instances of one process role."""
@@ -80,8 +53,6 @@ class RuntimeCompositionManifest:
     version: str = "1"
     policy_fingerprint: str = "sha256:" + "0" * 64
     provider_fingerprint: str = "sha256:" + "0" * 64
-    event_schema_version: str = "newsroom.runtime-events/v1"
-    durable_store_contract: str = "newsroom.durable-store/v1"
     metadata: Mapping[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
@@ -92,8 +63,6 @@ class RuntimeCompositionManifest:
             if _CHECKSUM.fullmatch(value) is None:
                 raise ValueError(f"{name} must be a sha256 checksum")
             object.__setattr__(self, name, value)
-        object.__setattr__(self, "event_schema_version", _identifier(self.event_schema_version, "event_schema_version"))
-        object.__setattr__(self, "durable_store_contract", _identifier(self.durable_store_contract, "durable_store_contract"))
         object.__setattr__(self, "metadata", dict(self.metadata))
 
     @property
@@ -122,7 +91,7 @@ class RuntimeCompositionManifest:
             raise TypeError("runtime composition manifest must be an object")
         expected = {
             "composition_id", "version", "policy_fingerprint", "provider_fingerprint",
-            "event_schema_version", "durable_store_contract", "metadata",
+            "metadata",
         }
         unknown = sorted(set(value) - expected)
         if unknown:
@@ -135,8 +104,6 @@ class RuntimeCompositionManifest:
             "version": self.version,
             "policy_fingerprint": self.policy_fingerprint,
             "provider_fingerprint": self.provider_fingerprint,
-            "event_schema_version": self.event_schema_version,
-            "durable_store_contract": self.durable_store_contract,
             "metadata": dict(self.metadata),
         }
 
@@ -196,8 +163,6 @@ class RuntimeExecutionComposition:
         execution_registry: ExecutionEnvironmentRegistry,
         expected_manifest_fingerprint: str | None = None,
         require_explicit_execution_profile: bool = True,
-        control_plane_ports: Mapping[str, Any] | None = None,
-        required_control_plane_ports: Sequence[str] = (),
         required_provider_ids: Sequence[str] = (),
     ) -> None:
         if not isinstance(manifest, RuntimeCompositionManifest):
@@ -208,17 +173,6 @@ class RuntimeExecutionComposition:
             raise TypeError("execution_registry must be ExecutionEnvironmentRegistry")
         if not isinstance(require_explicit_execution_profile, bool):
             raise TypeError("require_explicit_execution_profile must be boolean")
-        required_ports = tuple(str(name).strip() for name in required_control_plane_ports)
-        unknown_required_ports = sorted(
-            set(required_ports) - set(RUNTIME_CONTROL_PLANE_PORT_CONTRACTS)
-        )
-        if unknown_required_ports:
-            raise ValueError(
-                "unknown required runtime control-plane ports: "
-                f"{unknown_required_ports}"
-            )
-        if len(set(required_ports)) != len(required_ports):
-            raise ValueError("required runtime control-plane ports must be unique")
         required_providers = tuple(
             _identifier(value, "required_provider_id")
             for value in required_provider_ids
@@ -256,10 +210,7 @@ class RuntimeExecutionComposition:
         self.profile_registry = profile_registry
         self.execution_registry = execution_registry
         self.require_explicit_execution_profile = require_explicit_execution_profile
-        self._required_control_plane_ports = required_ports
         self._required_provider_ids = required_providers
-        self._control_plane_ports = dict(control_plane_ports or {})
-        self._validate_control_plane_port_names(self._control_plane_ports)
 
     @property
     def fingerprint(self) -> str:
@@ -308,14 +259,9 @@ class RuntimeExecutionComposition:
             profile_id: self.profile_registry.resolve(profile_id).to_dict()
             for profile_id in self.profile_registry.profile_ids
         }
-        missing_control_plane_ports = self.missing_control_plane_ports
         unavailable_providers = self.unavailable_provider_ids
         return {
-            "status": (
-                "blocked"
-                if missing_control_plane_ports or unavailable_providers
-                else "ready"
-            ),
+            "status": "blocked" if unavailable_providers else "ready",
             "composition_id": self.manifest.composition_id,
             "manifest_fingerprint": self.manifest.fingerprint,
             "policy_fingerprint": self.manifest.policy_fingerprint,
@@ -326,31 +272,7 @@ class RuntimeExecutionComposition:
             "required_providers": list(self.required_provider_ids),
             "unavailable_providers": list(unavailable_providers),
             "provider_capabilities": provider_capabilities,
-            "control_plane_ports": sorted(self._control_plane_ports),
-            "required_control_plane_ports": list(self._required_control_plane_ports),
-            "missing_control_plane_ports": list(missing_control_plane_ports),
-            "control_plane_contracts": {
-                name: RUNTIME_CONTROL_PLANE_PORT_CONTRACTS[name]
-                for name in sorted(self._control_plane_ports)
-            },
-            "control_plane_fingerprint": self.control_plane_fingerprint,
         }
-
-    @property
-    def control_plane_ports(self) -> Mapping[str, Any]:
-        return dict(self._control_plane_ports)
-
-    @property
-    def required_control_plane_ports(self) -> tuple[str, ...]:
-        return self._required_control_plane_ports
-
-    @property
-    def missing_control_plane_ports(self) -> tuple[str, ...]:
-        return tuple(
-            name
-            for name in self._required_control_plane_ports
-            if name not in self._control_plane_ports
-        )
 
     @property
     def required_provider_ids(self) -> tuple[str, ...]:
@@ -366,29 +288,8 @@ class RuntimeExecutionComposition:
             or not self.execution_registry.resolve_capabilities(provider_id).available
         )
 
-    @property
-    def control_plane_fingerprint(self) -> str:
-        return _fingerprint(
-            [
-                {
-                    "name": name,
-                    "contract": RUNTIME_CONTROL_PLANE_PORT_CONTRACTS[name],
-                    "port": _port_identity(self._control_plane_ports[name]),
-                }
-                for name in sorted(self._control_plane_ports)
-            ]
-        )
-
-    def require_control_plane_ports(self) -> None:
-        missing = self.missing_control_plane_ports
-        if missing:
-            raise RuntimeCompositionDriftError(
-                "required runtime control-plane ports are not bound",
-                details={"missing_control_plane_ports": list(missing)},
-            )
-
     def require_ready(self) -> None:
-        """Fail closed unless every role-required provider and port is available.
+        """Fail closed unless every role-required provider is available.
 
         Catalogued providers that are not listed in ``required_provider_ids``
         remain admission-gated when an activity requests them, but do not make
@@ -417,33 +318,6 @@ class RuntimeExecutionComposition:
                     ],
                 },
             )
-        self.require_control_plane_ports()
-
-    @staticmethod
-    def _validate_control_plane_port_names(ports: Mapping[str, Any]) -> None:
-        unknown = sorted(set(ports) - set(RUNTIME_CONTROL_PLANE_PORT_CONTRACTS))
-        if unknown:
-            raise ValueError(f"unknown runtime control-plane ports: {unknown}")
-
-    def bind_control_plane_ports(self, **ports: Any) -> None:
-        """Bind durable/control-plane ports exactly once during startup."""
-
-        self._validate_control_plane_port_names(ports)
-        duplicate = sorted(set(ports).intersection(self._control_plane_ports))
-        if duplicate:
-            raise RuntimeCompositionDriftError(
-                "runtime control-plane port was bound more than once",
-                details={"ports": duplicate},
-            )
-        for name, port in ports.items():
-            if not isinstance(name, str) or not name.strip():
-                raise ValueError("control-plane port names must be non-empty strings")
-            if port is None:
-                raise RuntimeCompositionDriftError(
-                    "required runtime control-plane port is unavailable",
-                    details={"port": name},
-                )
-        self._control_plane_ports.update(ports)
 
     def tool_executor_factory(self, registry: Any, **kwargs: Any) -> Any:
         self.verify_integrity()
@@ -473,7 +347,6 @@ def build_runtime_execution_composition(
 
 __all__ = [
     "ExecutionProfileRegistry",
-    "RUNTIME_CONTROL_PLANE_PORT_CONTRACTS",
     "RuntimeCompositionManifest",
     "RuntimeExecutionComposition",
     "build_runtime_execution_composition",

@@ -147,14 +147,8 @@ class DiagnosticApplicationService:
                         "unavailable_providers": diagnostics.get(
                             "unavailable_providers", []
                         ),
-                        "missing_control_plane_ports": diagnostics.get(
-                            "missing_control_plane_ports", []
-                        ),
                     },
-                    remediation=(
-                        "Provision each role-required provider and bind every "
-                        "required control-plane port before starting this process."
-                    ),
+                    remediation="Provision each role-required execution provider.",
                 )
             return DiagnoseCheck(
                 check_id="runtime_composition",
@@ -168,15 +162,9 @@ class DiagnosticApplicationService:
                         "unavailable_providers", []
                     ),
                     "required_providers": diagnostics.get("required_providers", []),
-                    "missing_control_plane_ports": diagnostics.get(
-                        "missing_control_plane_ports", []
-                    ),
                     "providers": diagnostics.get("providers", []),
                 },
-                remediation=(
-                    "Provision each role-required provider and bind every required "
-                    "control-plane port before starting this process."
-                ),
+                remediation="Provision each role-required execution provider.",
             )
         return DiagnoseCheck(
             check_id="runtime_composition",

@@ -32,15 +32,6 @@ RESEARCH_MINERU_PROFILE_ID = "research-parser-mineru"
 # when a particular process does not invoke a parser.
 RESEARCH_RUNTIME_COMPOSITION_ID = PRODUCTION_RUNTIME_COMPOSITION_ID
 RESEARCH_RUNTIME_COMPOSITION_VERSION = PRODUCTION_RUNTIME_COMPOSITION_VERSION
-RESEARCH_REQUIRED_CONTROL_PLANE_PORTS = (
-    "durable_event_storage",
-    "canonical_event_publisher",
-    "execution_receipt_repository",
-    "child_lease_repository",
-    "projection_checkpoint_reader",
-)
-
-
 @lru_cache(maxsize=1)
 def _shared_docker_provider() -> DockerExecutionEnvironment:
     """Probe Docker once per interpreter and reuse its immutable provider."""
@@ -50,7 +41,6 @@ def _shared_docker_provider() -> DockerExecutionEnvironment:
 
 def build_process_execution_composition(
     *,
-    required_control_plane_ports: tuple[str, ...] = (),
     required_provider_ids: tuple[str, ...] = (),
     expected_manifest_fingerprint: str | None = None,
 ) -> RuntimeExecutionComposition:
@@ -111,7 +101,6 @@ def build_process_execution_composition(
         manifest=manifest,
         profile_registry=profile_registry,
         execution_registry=execution_registry,
-        required_control_plane_ports=required_control_plane_ports,
         required_provider_ids=required_provider_ids,
         expected_manifest_fingerprint=expected_manifest_fingerprint,
     )
@@ -121,7 +110,6 @@ def build_research_execution_composition() -> RuntimeExecutionComposition:
     """Build the Research view of the shared process composition."""
 
     return build_process_execution_composition(
-        required_control_plane_ports=RESEARCH_REQUIRED_CONTROL_PLANE_PORTS,
         required_provider_ids=("docker",),
     )
 
@@ -133,7 +121,6 @@ __all__ = [
     "RESEARCH_MINERU_PROFILE_ID",
     "RESEARCH_RUNTIME_COMPOSITION_ID",
     "RESEARCH_RUNTIME_COMPOSITION_VERSION",
-    "RESEARCH_REQUIRED_CONTROL_PLANE_PORTS",
     "RUNTIME_TRUSTED_PROFILE_ID",
     "build_process_execution_composition",
     "build_research_execution_composition",

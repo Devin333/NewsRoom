@@ -1479,18 +1479,6 @@ def _build_configured_composition(
             reader=durable_events.event_store,
             schema_catalog=durable_events.schema_catalog,
         )
-        from framework.events.runtime.projection import CanonicalRuntimeEventPublisher
-
-        execution_composition.bind_control_plane_ports(
-            durable_event_storage=durable_events,
-            canonical_event_publisher=CanonicalRuntimeEventPublisher(
-                durable_events.event_runtime
-            ),
-            execution_receipt_repository=side_effect_store,
-            child_lease_repository=harness_wait_runtime_registry,
-            projection_checkpoint_reader=durable_events.replay_checkpoint_store,
-        )
-        execution_composition.require_control_plane_ports()
         graph_index_store = _compose_component(
             ResearchCapability.GRAPH_ARTIFACT_PERSISTENCE,
             lambda: LocalGraphStorageIndexStore(

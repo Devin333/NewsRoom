@@ -27,7 +27,6 @@ from framework.execution_environment.ports import ExecutionEnvironmentPort
 from framework.execution_environment.registry import ExecutionEnvironmentRegistry
 from framework.execution_environment.composition import (
     ExecutionProfileRegistry,
-    RUNTIME_CONTROL_PLANE_PORT_CONTRACTS,
     RuntimeCompositionManifest,
     RuntimeExecutionComposition,
     build_runtime_execution_composition,
@@ -61,7 +60,6 @@ __all__ = [
     "ProcessPolicy",
     "ResourceLimits",
     "RuntimeCompositionDriftError",
-    "RUNTIME_CONTROL_PLANE_PORT_CONTRACTS",
     "RuntimeCompositionManifest",
     "RuntimeCompositionProfileError",
     "RuntimeExecutionComposition",

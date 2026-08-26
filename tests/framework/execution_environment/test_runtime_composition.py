@@ -75,31 +75,15 @@ def test_tool_executor_factory_binds_execution_registry() -> None:
     assert executor._require_explicit_execution_profile is True
 
 
-def test_required_control_plane_ports_are_typed_and_fail_closed() -> None:
+def test_execution_composition_does_not_own_control_plane_ports() -> None:
     composition, _profiles, _providers = _composition()
-    required = RuntimeExecutionComposition(
-        manifest=composition.manifest,
-        profile_registry=composition.profile_registry,
-        execution_registry=composition.execution_registry,
-        required_control_plane_ports=("canonical_event_publisher",),
-    )
 
-    diagnostics = required.diagnostics()
-    assert diagnostics["status"] == "blocked"
-    assert diagnostics["missing_control_plane_ports"] == [
-        "canonical_event_publisher"
-    ]
+    diagnostics = composition.diagnostics()
 
-    required.bind_control_plane_ports(canonical_event_publisher=object())
-    diagnostics = required.diagnostics()
     assert diagnostics["status"] == "ready"
-    assert diagnostics["control_plane_contracts"] == {
-        "canonical_event_publisher": "newsroom.runtime-event-publisher/v1"
-    }
-    assert diagnostics["control_plane_fingerprint"].startswith("sha256:")
-
-    with pytest.raises(RuntimeCompositionDriftError):
-        required.bind_control_plane_ports(canonical_event_publisher=object())
+    assert "control_plane_ports" not in diagnostics
+    assert "missing_control_plane_ports" not in diagnostics
+    assert not hasattr(composition, "bind_control_plane_ports")
 
 
 class _UnavailableProvider:

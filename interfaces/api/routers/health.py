@@ -23,7 +23,7 @@ def create_router(services: ApiServices, helpers: ApiRouteHelpers) -> APIRouter:
         if composition is not None:
             try:
                 diagnostics = composition.diagnostics()
-                if diagnostics.get("unavailable_providers"):
+                if diagnostics.get("status") != "ready":
                     composition.require_ready()
             except Exception as exc:
                 reason_code = getattr(exc, "reason_code", "runtime_composition_unavailable")
@@ -34,14 +34,6 @@ def create_router(services: ApiServices, helpers: ApiRouteHelpers) -> APIRouter:
                     message="runtime execution composition is not ready",
                     details=dict(details),
                     retryable=isinstance(exc, ExecutionEnvironmentError),
-                )
-            if diagnostics.get("status") != "ready":
-                return helpers.error(
-                    status_code=503,
-                    code="runtime_composition_ports_missing",
-                    message="runtime execution composition is missing required ports",
-                    details=diagnostics,
-                    retryable=False,
                 )
             return helpers.success(
                 {
