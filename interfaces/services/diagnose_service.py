@@ -9,6 +9,8 @@ from typing import Any, Callable, Iterator, Literal
 
 from framework.llm import DEFAULT_MODELS_CONFIG_PATH, load_openai_compatible_deployment
 from framework.llm.clients.openai_compatible import LLMConfigurationError
+from framework.execution_environment.composition import RuntimeExecutionComposition
+from framework.execution_environment.errors import ExecutionEnvironmentError
 from business.layers.signal.source_config import SourceConfigError, build_default_source_registry
 
 _LLM_ENV_OVERRIDE_KEYS = (
@@ -83,9 +85,18 @@ class DiagnosticApplicationService:
         *,
         env: dict[str, str] | None = None,
         checks: list[Callable[[], DiagnoseCheck]] | None = None,
+        runtime_execution_composition: RuntimeExecutionComposition | None = None,
     ) -> None:
         self.env = env if env is not None else os.environ
+        if runtime_execution_composition is not None and not isinstance(
+            runtime_execution_composition, RuntimeExecutionComposition
+        ):
+            raise TypeError(
+                "runtime_execution_composition must be RuntimeExecutionComposition"
+            )
+        self.runtime_execution_composition = runtime_execution_composition
         self.checks = checks or [
+            *([self._check_runtime_composition] if runtime_execution_composition else []),
             self._check_source_config,
             self._check_model_config,
             self._check_dashscope_key,
@@ -93,6 +104,65 @@ class DiagnosticApplicationService:
             self._check_qdrant,
             self._check_postgres,
         ]
+
+    def _check_runtime_composition(self) -> DiagnoseCheck:
+        composition = self.runtime_execution_composition
+        if composition is None:
+            return DiagnoseCheck(
+                check_id="runtime_composition",
+                name="Runtime execution composition",
+                status="error",
+                message="Runtime execution composition is not configured.",
+                details={"configured": False},
+                remediation="Build the process-scoped RuntimeExecutionComposition at startup.",
+            )
+        try:
+            diagnostics = composition.diagnostics()
+        except ExecutionEnvironmentError as exc:
+            return DiagnoseCheck(
+                check_id="runtime_composition",
+                name="Runtime execution composition",
+                status="error",
+                message="Runtime execution composition is not ready.",
+                details={
+                    "configured": True,
+                    "reason_code": exc.reason_code,
+                    "details": dict(exc.details),
+                },
+                remediation="Resolve the manifest/provider drift before starting the process.",
+            )
+        provider_capabilities = diagnostics.get("provider_capabilities", {})
+        unavailable = sorted(
+            provider_id
+            for provider_id, capabilities in provider_capabilities.items()
+            if not capabilities.get("available", False)
+        )
+        if unavailable:
+            return DiagnoseCheck(
+                check_id="runtime_composition",
+                name="Runtime execution composition",
+                status="warning",
+                message="Runtime composition is valid, but one or more providers are unavailable.",
+                details={
+                    "configured": True,
+                    "manifest_fingerprint": diagnostics["manifest_fingerprint"],
+                    "unavailable_providers": unavailable,
+                    "providers": diagnostics.get("providers", []),
+                },
+                remediation="Provision the declared provider before requesting external activity.",
+            )
+        return DiagnoseCheck(
+            check_id="runtime_composition",
+            name="Runtime execution composition",
+            status="ok",
+            message="Runtime execution composition is valid.",
+            details={
+                "configured": True,
+                "manifest_fingerprint": diagnostics["manifest_fingerprint"],
+                "providers": diagnostics.get("providers", []),
+                "profiles": diagnostics.get("profiles", []),
+            },
+        )
 
     def run(self) -> DiagnoseResult:
         checks = []
@@ -291,4 +361,3 @@ def _llm_env_overrides(env: Any) -> Iterator[None]:
                 os.environ.pop(key, None)
             else:
                 os.environ[key] = value
-

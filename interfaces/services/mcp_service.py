@@ -13,6 +13,7 @@ from framework.events.errors import (
     EventStoreUnavailableError,
 )
 from framework.shared.public_errors import PublicErrorProjection, project_public_error
+from framework.execution_environment.composition import RuntimeExecutionComposition
 from interfaces.models.actor import ActorContext
 from interfaces.mcp.models import (
     MCPCatalog,
@@ -129,11 +130,24 @@ class MCPApplicationService:
         research_service_factory: Callable[[], Any] | None = None,
         event_operator_service_factory: Callable[[ActorContext], Any] | None = None,
         operator_actor: ActorContext | None = None,
+        runtime_execution_composition: RuntimeExecutionComposition | None = None,
     ) -> None:
         if source_runtime_provider is not None and source_service_factory is not None:
             raise ValueError(
                 "source_runtime_provider and source_service_factory are mutually exclusive"
             )
+        if runtime_execution_composition is None:
+            from interfaces.composition.runtime_execution import (
+                build_process_execution_composition,
+            )
+
+            runtime_execution_composition = build_process_execution_composition()
+        if not isinstance(runtime_execution_composition, RuntimeExecutionComposition):
+            raise TypeError(
+                "runtime_execution_composition must be RuntimeExecutionComposition"
+            )
+        runtime_execution_composition.verify_integrity()
+        self.runtime_execution_composition = runtime_execution_composition
         self.run_service_factory = run_service_factory or _run_service_factory
         self.report_service_factory = report_service_factory or _report_service_factory
         self._source_runtime_provider = source_runtime_provider
@@ -154,16 +168,24 @@ class MCPApplicationService:
             self.worker_service_factory = worker_service_factory
         elif self._source_runtime_provider is not None:
             self.worker_service_factory = _worker_service_factory_for_source_runtime(
-                self._source_runtime_provider
+                self._source_runtime_provider,
+                runtime_execution_composition,
             )
         else:
-            self.worker_service_factory = _worker_service_factory
+            self.worker_service_factory = _worker_service_factory(
+                runtime_execution_composition,
+            )
         self.entity_service_factory = entity_service_factory or _entity_service_factory
         self.subscription_service_factory = (
             subscription_service_factory or _subscription_service_factory
         )
         self.memory_service_factory = memory_service_factory or _memory_service_factory
-        self.diagnostic_service_factory = diagnostic_service_factory or _diagnostic_service_factory
+        self.diagnostic_service_factory = (
+            diagnostic_service_factory
+            or _diagnostic_service_factory_for_composition(
+                runtime_execution_composition
+            )
+        )
         self.harness_wait_service_factory = harness_wait_service_factory
         self.graph_run_inspection_service_factory = (
             graph_run_inspection_service_factory or _graph_run_inspection_service_factory
@@ -2750,17 +2772,27 @@ def _to_dict(value: Any) -> dict[str, Any]:
     raise TypeError(f"value is not JSON-safe: {type(value).__name__}")
 
 
-def _worker_service_factory():
+def _worker_service_factory(
+    runtime_execution_composition: RuntimeExecutionComposition | None = None,
+):
     from interfaces.services.worker_service import WorkerApplicationService
 
-    return WorkerApplicationService()
+    return WorkerApplicationService(
+        runtime_execution_composition=runtime_execution_composition,
+    )
 
 
-def _worker_service_factory_for_source_runtime(source_runtime_provider: Any):
+def _worker_service_factory_for_source_runtime(
+    source_runtime_provider: Any,
+    runtime_execution_composition: RuntimeExecutionComposition | None = None,
+):
     def factory():
         from interfaces.services.worker_service import WorkerApplicationService
 
-        return WorkerApplicationService(source_runtime_provider=source_runtime_provider)
+        return WorkerApplicationService(
+            source_runtime_provider=source_runtime_provider,
+            runtime_execution_composition=runtime_execution_composition,
+        )
 
     return factory
 
@@ -2827,6 +2859,19 @@ def _diagnostic_service_factory():
     from interfaces.services.diagnose_service import DiagnosticApplicationService
 
     return DiagnosticApplicationService()
+
+
+def _diagnostic_service_factory_for_composition(
+    runtime_execution_composition: RuntimeExecutionComposition,
+):
+    def factory():
+        from interfaces.services.diagnose_service import DiagnosticApplicationService
+
+        return DiagnosticApplicationService(
+            runtime_execution_composition=runtime_execution_composition,
+        )
+
+    return factory
 
 
 def _graph_run_inspection_service_factory():

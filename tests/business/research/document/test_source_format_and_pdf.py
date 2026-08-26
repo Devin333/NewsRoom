@@ -41,6 +41,7 @@ from business.research.document.pdf_compiler import (
 from business.research.document.pdf_parser_backend import pdf_parser_backend_name
 from business.research.document.pdf_visual_sidecar import merge_pdf_visual_sidecar
 from business.research.document.source_format import SourceFormat, detect_source_format
+from framework.execution_environment.errors import ExecutionEnvironmentUnavailableError
 
 # ── helpers ───────────────────────────────────────────────────────────────────
 
@@ -708,61 +709,39 @@ def test_parse_mmd_source_ref_propagated():
 # ── PdfDocumentParser (nougat mocked) ────────────────────────────────────────
 
 
-def test_run_nougat_invokes_docker_compose(monkeypatch, tmp_path):
-    """_run_nougat shells out to `docker compose run --rm nougat` with the PDF
-    staged inside the project tree and mapped to /workspace. The --model flag
-    is injected by the container entrypoint (compose), not by Python."""
-    monkeypatch.setattr(
-        "business.research.document.pdf_compiler._project_root",
-        lambda: str(tmp_path),
-    )
+def test_run_nougat_requires_composed_execution_adapter():
+    with pytest.raises(ExecutionEnvironmentUnavailableError) as raised:
+        _run_nougat(b"%PDF placeholder", "paper")
+
+    assert raised.value.reason_code == "execution_environment_unavailable"
+    assert raised.value.details["reason"] == "direct_parser_process_disabled"
+
+
+def test_run_nougat_invokes_injected_execution_adapter(monkeypatch, tmp_path):
+    monkeypatch.setenv("NEWSROOM_PARSER_RUN_ROOT", str(tmp_path))
     commands = []
-    work = tmp_path / ".newsroom" / "nougat"
-    work.mkdir(parents=True)
-    (work / "paper.mmd").write_text("stale output", encoding="utf-8")
 
     def fake_run(cmd, **kwargs):
         commands.append(cmd)
-        assert kwargs["timeout"] == 3600
-        assert not (work / "paper.mmd").exists()
-        # emulate nougat writing <id>.mmd into the host work dir
-        (work / "paper.mmd").write_text(_SAMPLE_MMD, encoding="utf-8")
+        assert kwargs["timeout_seconds"] == 3600
+        assert kwargs["backend"] == "nougat"
+        output_mount = next(item for item in cmd if item.endswith(":/output"))
+        output_dir = Path(output_mount[: -len(":/output")])
+        (output_dir / "paper.mmd").write_text(_SAMPLE_MMD, encoding="utf-8")
         return None
 
-    with patch("business.research.document.pdf_compiler.subprocess.run", side_effect=fake_run):
-        result = _run_nougat(b"%PDF placeholder", "paper")
-
-    assert result == _SAMPLE_MMD
-    cmd = commands[0]
-    assert cmd[:5] == ["docker", "compose", "run", "--rm", "nougat"]
-    assert cmd[5] == "/workspace/.newsroom/nougat/paper.pdf"
-    assert cmd[cmd.index("-o") + 1] == "/workspace/.newsroom/nougat"
-    assert "--recompute" in cmd
-
-
-def test_run_nougat_invokes_container_entrypoint_in_direct_mode(monkeypatch, tmp_path):
-    monkeypatch.setattr(
-        "business.research.document.pdf_compiler._project_root",
-        lambda: str(tmp_path),
+    result = _run_nougat(
+        b"%PDF placeholder",
+        "paper",
+        command_runner=fake_run,
+        execution_identity={"run_id": "run-1"},
     )
-    monkeypatch.setenv("NEWSROOM_NOUGAT_DIRECT", "1")
-    commands = []
-    work = tmp_path / ".newsroom" / "nougat"
-    work.mkdir(parents=True)
-
-    def fake_run(cmd, **kwargs):
-        commands.append(cmd)
-        assert kwargs["timeout"] == 3600
-        (work / "paper.mmd").write_text(_SAMPLE_MMD, encoding="utf-8")
-        return None
-
-    with patch("business.research.document.pdf_compiler.subprocess.run", side_effect=fake_run):
-        result = _run_nougat(b"%PDF placeholder", "paper")
 
     assert result == _SAMPLE_MMD
     cmd = commands[0]
-    assert cmd[:2] == ["newsroom-nougat", "/workspace/.newsroom/nougat/paper.pdf"]
-    assert cmd[cmd.index("-o") + 1] == "/workspace/.newsroom/nougat"
+    assert cmd[:3] == ["docker", "run", "--rm"]
+    assert cmd[cmd.index("nougat") + 1] == "/input/paper.pdf"
+    assert cmd[cmd.index("-o") + 1] == "/output"
     assert "--recompute" in cmd
 
 

@@ -38,7 +38,11 @@ from interfaces.composition.research_graph_artifacts import (
 )
 from interfaces.composition.source import build_source_runtime_provider
 from interfaces.composition.runtime_execution import (
+    PRODUCTION_RUNTIME_COMPOSITION_ID,
+    PRODUCTION_RUNTIME_COMPOSITION_VERSION,
+    RUNTIME_TRUSTED_PROFILE_ID,
     build_research_execution_composition,
+    build_process_execution_composition,
 )
 
 __all__ = [
@@ -62,6 +66,10 @@ __all__ = [
     "build_research_application_service",
     "build_source_runtime_provider",
     "build_research_execution_composition",
+    "build_process_execution_composition",
+    "PRODUCTION_RUNTIME_COMPOSITION_ID",
+    "PRODUCTION_RUNTIME_COMPOSITION_VERSION",
+    "RUNTIME_TRUSTED_PROFILE_ID",
     "build_research_graph_artifact_governance_service",
     "build_research_runtime_composition",
     "build_cache_aware_llm_router",

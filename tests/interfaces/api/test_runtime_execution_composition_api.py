@@ -10,6 +10,8 @@ from framework.execution_environment import (
     RuntimeExecutionComposition,
 )
 from interfaces.api import create_app
+from interfaces.composition.runtime_execution import build_process_execution_composition
+from interfaces.services.worker_service import WorkerApplicationService
 
 
 def _composition() -> tuple[RuntimeExecutionComposition, ExecutionProfileRegistry]:
@@ -52,3 +54,12 @@ def test_api_readiness_fails_closed_after_composition_drift() -> None:
 
     assert response.status_code == 503
     assert response.json()["error"]["code"] == "runtime_composition_drift"
+
+
+def test_default_process_roots_share_manifest_fingerprint() -> None:
+    app = create_app(audit_emitter_factory=None)
+    worker = WorkerApplicationService(queue=object(), handlers={})
+    composition = build_process_execution_composition()
+
+    assert app.state.runtime_execution_composition.fingerprint == composition.fingerprint
+    assert worker.runtime_execution_composition.fingerprint == composition.fingerprint

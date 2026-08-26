@@ -4,7 +4,16 @@ import argparse
 import json
 
 from interfaces.cli.commands.dispatch import CommandHandler, call_handler
-from interfaces.composition.source import build_source_runtime_provider
+from interfaces.services.source_runtime import (
+    SourceRuntimeProvider,
+    build_source_runtime_composition,
+)
+
+
+def build_source_runtime_provider() -> SourceRuntimeProvider:
+    """Create the CLI source provider from this module's composition hook."""
+
+    return SourceRuntimeProvider(factory=build_source_runtime_composition)
 
 
 def register(subparsers: argparse._SubParsersAction) -> None:
@@ -353,7 +362,7 @@ def _source_service(args: argparse.Namespace):
     provider = getattr(args, "source_runtime_provider", None)
     if provider is not None:
         return provider.get().source_service
-    return build_source_runtime_provider().get().source_service
+    return build_source_runtime_composition().source_service
 
 
 def _print_source_fetch_result(payload: dict) -> None:

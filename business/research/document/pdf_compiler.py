@@ -6,16 +6,16 @@ import io
 import json
 import os
 import re
-import shutil
-import subprocess
 import urllib.request
 from dataclasses import dataclass, field
 from hashlib import sha256
-from typing import Any
+from pathlib import Path
+from typing import Any, Callable
 
 import fitz  # PyMuPDF
 
 from business.foundation import build_stable_id
+from business.research.document.docker_pdf_parser import safe_paper_id
 from business.research.domain.common import SourceLineage
 from business.research.domain.document import (
     ResearchDocument,
@@ -24,6 +24,7 @@ from business.research.domain.document import (
     ResearchSection,
     ResearchTable,
 )
+from framework.execution_environment.errors import ExecutionEnvironmentUnavailableError
 
 # ── figures ───────────────────────────────────────────────────────────────────
 
@@ -1164,13 +1165,6 @@ _EQUATION_QUERY_STOP_WORDS = {
     "where",
 }
 
-# Directory (relative to project root) where PDFs are staged for the nougat
-# container and where .mmd output lands. The compose file mounts the project
-# root at /workspace, so both paths must live inside the project tree.
-_NOUGAT_WORK_REL = os.path.join(".newsroom", "nougat")
-_NOUGAT_CONTAINER_WORK = "/workspace/.newsroom/nougat"
-
-
 def _nougat_timeout_seconds() -> int:
     raw = os.environ.get("NOUGAT_TIMEOUT_SECONDS", "3600")
     try:
@@ -1204,96 +1198,85 @@ def _pdf_ocr_dpi() -> int:
     return value
 
 
-def _env_flag(name: str, *, default: bool = False) -> bool:
-    raw = os.environ.get(name)
-    if raw is None:
-        return default
-    return raw.strip().lower() in {"1", "true", "yes", "on"}
-
-
-def _project_root() -> str:
-    """Locate the project root by walking up to the docker-compose.yml."""
-    cur = os.path.abspath(os.path.dirname(__file__))
-    while cur != os.path.dirname(cur):
-        if os.path.exists(os.path.join(cur, "docker-compose.yml")):
-            return cur
-        cur = os.path.dirname(cur)
-    raise RuntimeError(
-        "could not locate project root (docker-compose.yml not found)"
-    )
-
-
-def _run_nougat_directly() -> bool:
-    if "NEWSROOM_NOUGAT_DIRECT" in os.environ:
-        return _env_flag("NEWSROOM_NOUGAT_DIRECT")
-    return bool(os.path.exists("/.dockerenv") and shutil.which("newsroom-nougat"))
-
-
-def _nougat_command(pdf_name: str) -> list[str]:
-    if _run_nougat_directly():
-        return [
-            "newsroom-nougat",
-            f"{_NOUGAT_CONTAINER_WORK}/{pdf_name}",
-            "-o",
-            _NOUGAT_CONTAINER_WORK,
-            "--recompute",
-        ]
+def _nougat_command(*, input_dir: Path, output_dir: Path, pdf_name: str) -> list[str]:
+    image = os.environ.get("NEWSROOM_NOUGAT_DOCKER_IMAGE", "newsroom-nougat:latest").strip()
     return [
         "docker",
-        "compose",
         "run",
         "--rm",
+        "-v",
+        f"{input_dir.resolve()}:/input",
+        "-v",
+        f"{output_dir.resolve()}:/output",
+        image,
         "nougat",
-        f"{_NOUGAT_CONTAINER_WORK}/{pdf_name}",
+        f"/input/{pdf_name}",
         "-o",
-        _NOUGAT_CONTAINER_WORK,
+        "/output",
         "--recompute",
     ]
 
 
-def _run_nougat(pdf_bytes: bytes, paper_id: str) -> str:
-    """Run Nougat (via `docker compose run`) on the PDF and return .mmd content.
+def _run_nougat(
+    pdf_bytes: bytes,
+    paper_id: str,
+    *,
+    command_runner: Callable[..., Any] | None = None,
+    execution_identity: Any | None = None,
+) -> str:
+    """Run Nougat through an injected Harness execution adapter.
 
-    Nougat executes inside the `nougat` compose service (image
-    newsroom-nougat:local). The compose entrypoint injects
-    --model ${NOUGAT_MODEL:-0.1.0-base} automatically. The project root is
-    mounted at /workspace, so the staged PDF and the output directory both
-    live under <root>/.newsroom/nougat/.
+    A missing runner is an intentional typed denial.  The old host
+    ``subprocess.run`` fallback is not a valid production execution path.
     """
-    root = _project_root()
-    work_dir = os.path.join(root, _NOUGAT_WORK_REL)
-    os.makedirs(work_dir, exist_ok=True)
+    if command_runner is None:
+        raise ExecutionEnvironmentUnavailableError(
+            "Nougat execution requires a composed external-process adapter",
+            details={
+                "reason": "direct_parser_process_disabled",
+                "backend": "nougat",
+                "execution_identity_present": execution_identity is not None,
+            },
+        )
+
+    run_root = Path(
+        os.environ.get("NEWSROOM_PARSER_RUN_ROOT", ".newsroom/parser-runs")
+    ).resolve()
+    work_dir = run_root / "nougat" / safe_paper_id(paper_id)
+    input_dir = work_dir / "input"
+    output_dir = work_dir / "output"
+    input_dir.mkdir(parents=True, exist_ok=True)
+    output_dir.mkdir(parents=True, exist_ok=True)
 
     safe_id = re.sub(r"[^\w.\-]", "_", paper_id)
     pdf_name = f"{safe_id}.pdf"
-    pdf_path = os.path.join(work_dir, pdf_name)
-    with open(pdf_path, "wb") as f:
-        f.write(pdf_bytes)
+    pdf_path = input_dir / pdf_name
+    pdf_path.write_bytes(pdf_bytes)
 
-    mmd_path = os.path.join(work_dir, f"{safe_id}.mmd")
+    mmd_path = output_dir / f"{safe_id}.mmd"
     try:
         os.unlink(mmd_path)
     except FileNotFoundError:
         pass
 
     try:
-        try:
-            subprocess.run(
-                _nougat_command(pdf_name),
-                check=True,
-                timeout=_nougat_timeout_seconds(),
-                cwd=root,
-            )
-        except subprocess.CalledProcessError as exc:
-            raise RuntimeError(
-                f"nougat docker run failed (exit {exc.returncode})"
-            ) from exc
+        command_runner(
+            _nougat_command(
+                input_dir=input_dir,
+                output_dir=output_dir,
+                pdf_name=pdf_name,
+            ),
+            timeout_seconds=_nougat_timeout_seconds(),
+            execution_identity=execution_identity,
+            paper_id=paper_id,
+            backend="nougat",
+        )
 
         if not os.path.exists(mmd_path):
-            actual = os.listdir(work_dir)
+            actual = os.listdir(output_dir)
             raise FileNotFoundError(
                 f"nougat did not produce {mmd_path}\n"
-                f"files in {work_dir}: {actual}"
+                f"files in {output_dir}: {actual}"
             )
         with open(mmd_path, encoding="utf-8") as f:
             return f.read()
@@ -1930,8 +1913,15 @@ def _parse_pdf(
     source_ref: str,
     source_hash: str,
     pdf_bytes: bytes,
+    command_runner: Callable[..., Any] | None = None,
+    execution_identity: Any | None = None,
 ) -> ResearchDocument:
-    mmd = _run_nougat(pdf_bytes, paper_id)
+    mmd = _run_nougat(
+        pdf_bytes,
+        paper_id,
+        command_runner=command_runner,
+        execution_identity=execution_identity,
+    )
 
     sections, equations, figures, tables = _parse_mmd(mmd, paper_id, source_ref)
     missing_pages = _extract_missing_pages(mmd)
@@ -2034,12 +2024,23 @@ def _parse_pdf(
 
 
 class PdfDocumentParser:
-    def parse(self, paper_id: str, source_bytes: bytes) -> ResearchDocument:
+    def __init__(self, *, command_runner: Callable[..., Any] | None = None) -> None:
+        self._command_runner = command_runner
+
+    def parse(
+        self,
+        paper_id: str,
+        source_bytes: bytes,
+        *,
+        execution_identity: Any | None = None,
+    ) -> ResearchDocument:
         return _parse_pdf(
             paper_id=paper_id,
             source_ref=f"arxiv://{paper_id}/pdf",
             source_hash=sha256(source_bytes).hexdigest(),
             pdf_bytes=source_bytes,
+            command_runner=self._command_runner,
+            execution_identity=execution_identity,
         )
 
 

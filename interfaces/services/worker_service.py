@@ -35,6 +35,7 @@ from framework.shared.attempts import (
     current_attempt_context,
 )
 from framework.shared.public_errors import project_public_error, sanitize_public_error_fields
+from framework.execution_environment.composition import RuntimeExecutionComposition
 from framework.workers import (
     LeasedTask,
     StaleTaskLeaseError,
@@ -274,11 +275,24 @@ class WorkerApplicationService:
             [LeasedTask, ExecutionLimits], AttemptLifecycleSink | None
         ]
         | None = None,
+        runtime_execution_composition: RuntimeExecutionComposition | None = None,
     ) -> None:
         if source_service_factory is not None and source_runtime_provider is not None:
             raise ValueError(
                 "source_service_factory and source_runtime_provider are mutually exclusive"
             )
+        if runtime_execution_composition is None:
+            from interfaces.composition.runtime_execution import (
+                build_process_execution_composition,
+            )
+
+            runtime_execution_composition = build_process_execution_composition()
+        if not isinstance(runtime_execution_composition, RuntimeExecutionComposition):
+            raise TypeError(
+                "runtime_execution_composition must be RuntimeExecutionComposition"
+            )
+        runtime_execution_composition.verify_integrity()
+        self._runtime_execution_composition = runtime_execution_composition
         self.artifact_root = Path(artifact_root)
         redis_client = None
         if queue is None:
@@ -307,6 +321,10 @@ class WorkerApplicationService:
             ),
         )
         self._attempt_event_sink_factory = attempt_event_sink_factory
+
+    @property
+    def runtime_execution_composition(self) -> RuntimeExecutionComposition:
+        return self._runtime_execution_composition
 
     @property
     def handlers(self) -> dict[str, TaskHandler]:

@@ -33,6 +33,14 @@ def create_router(services: ApiServices, helpers: ApiRouteHelpers) -> APIRouter:
                     details=dict(details),
                     retryable=isinstance(exc, ExecutionEnvironmentError),
                 )
+            if diagnostics.get("status") != "ready":
+                return helpers.error(
+                    status_code=503,
+                    code="runtime_composition_ports_missing",
+                    message="runtime execution composition is missing required ports",
+                    details=diagnostics,
+                    retryable=False,
+                )
             return helpers.success(
                 {
                     "status": "ok",
@@ -41,7 +49,13 @@ def create_router(services: ApiServices, helpers: ApiRouteHelpers) -> APIRouter:
                     "runtime_composition": diagnostics,
                 }
             )
-        return helpers.success({"status": "ok", "service": "newsroom-api", "ready": True})
+        return helpers.error(
+            status_code=503,
+            code="runtime_composition_missing",
+            message="runtime execution composition is not configured",
+            details={"configured": False},
+            retryable=False,
+        )
 
     @router.get("/health/dependencies")
     def dependency_health() -> dict:

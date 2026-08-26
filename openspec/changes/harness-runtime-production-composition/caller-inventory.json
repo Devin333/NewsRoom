@@ -25,8 +25,8 @@
       "classification": "blocked",
       "state": "follow-up-required",
       "owner": "research-document",
-      "rationale": "Nougat still invokes a compose command directly and is outside the selected Marker/MinerU production vertical slice.",
-      "non_harness_managed_proof": "None; this caller must not be enabled for production external activity.",
+      "rationale": "Legacy Nougat parser now requires an injected execution adapter; its default entrypoint is fail-closed until a production profile is wired.",
+      "non_harness_managed_proof": "The parser no longer creates a host process; the missing adapter remains an explicit blocked capability.",
       "review_by": "2026-09-25",
       "check": "tests/business/research/document/test_source_format_and_pdf.py"
     },

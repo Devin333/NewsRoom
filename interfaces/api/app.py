@@ -55,6 +55,9 @@ from interfaces.composition.research import (
     build_research_application_service,
     default_source_runtime_provider,
 )
+from interfaces.composition.runtime_execution import (
+    build_process_execution_composition,
+)
 from interfaces.events import AuditEmitter, audit_emitter_from_env
 from framework.shared.env import load_root_env
 from interfaces.services.auth_service import AuthApplicationService
@@ -146,10 +149,11 @@ def create_app(
     telemetry: EventTelemetry | None = None,
 ) -> FastAPI:
     api = FastAPI(title="NewsRoom API", version="0.1.0")
-    if runtime_execution_composition is not None:
-        if not isinstance(runtime_execution_composition, RuntimeExecutionComposition):
-            raise TypeError("runtime_execution_composition must be RuntimeExecutionComposition")
-        runtime_execution_composition.verify_integrity()
+    if runtime_execution_composition is None:
+        runtime_execution_composition = build_process_execution_composition()
+    if not isinstance(runtime_execution_composition, RuntimeExecutionComposition):
+        raise TypeError("runtime_execution_composition must be RuntimeExecutionComposition")
+    runtime_execution_composition.verify_integrity()
     api.state.runtime_execution_composition = runtime_execution_composition
     resolved_api_keys = _build_api_key_registry(api_token=api_token, api_keys=api_keys)
     rate_limiter = _build_rate_limiter(api_rate_limit_per_minute, clock=rate_limit_clock)
@@ -335,14 +339,30 @@ def create_app(
     if source_service_factory is SourceApplicationService:
         source_runtime_provider = default_source_runtime_provider()
         source_service_factory = source_runtime_provider.source_service_factory
-        if worker_service_factory is WorkerApplicationService:
+    if worker_service_factory is WorkerApplicationService:
 
-            def default_worker_service_factory() -> WorkerApplicationService:
-                return WorkerApplicationService(
-                    source_service_factory=source_service_factory,
+        def default_worker_service_factory() -> WorkerApplicationService:
+            kwargs: dict[str, Any] = {
+                "runtime_execution_composition": runtime_execution_composition,
+            }
+            if source_runtime_provider is not None:
+                kwargs["source_service_factory"] = (
+                    source_runtime_provider.source_service_factory
                 )
+            elif source_service_factory is not SourceApplicationService:
+                kwargs["source_service_factory"] = source_service_factory
+            return WorkerApplicationService(**kwargs)
 
-            worker_service_factory = default_worker_service_factory
+        worker_service_factory = default_worker_service_factory
+
+    if diagnostic_service_factory is DiagnosticApplicationService:
+
+        def default_diagnostic_service_factory() -> DiagnosticApplicationService:
+            return DiagnosticApplicationService(
+                runtime_execution_composition=runtime_execution_composition,
+            )
+
+        diagnostic_service_factory = default_diagnostic_service_factory
 
     resolved_mcp_service_factory = _mcp_service_factory(
         mcp_service_factory=mcp_service_factory,
@@ -362,6 +382,7 @@ def create_app(
         storage_service_factory=storage_service_factory,
         harness_wait_service_factory=harness_wait_service_factory,
         research_service_factory=research_service_factory,
+        runtime_execution_composition=runtime_execution_composition,
     )
     services = build_api_services(
         worker_service_factory=worker_service_factory,
@@ -444,6 +465,7 @@ def _mcp_service_factory(
     storage_service_factory: StorageServiceFactory,
     harness_wait_service_factory: HarnessWaitServiceFactory | None,
     research_service_factory: ResearchServiceFactory,
+    runtime_execution_composition: RuntimeExecutionComposition,
 ) -> MCPServiceFactory:
     if mcp_service_factory is not MCPApplicationService:
         return mcp_service_factory
@@ -468,6 +490,7 @@ def _mcp_service_factory(
             storage_service_factory=storage_service_factory,
             harness_wait_service_factory=harness_wait_service_factory,
             research_service_factory=research_service_factory,
+            runtime_execution_composition=runtime_execution_composition,
         )
 
     return factory

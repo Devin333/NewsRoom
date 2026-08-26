@@ -4,6 +4,7 @@ import json
 
 import interfaces.cli.news as news_cli
 from interfaces.cli.commands import workers as worker_commands
+from interfaces.composition.runtime_execution import build_process_execution_composition
 
 
 def test_cli_worker_and_workers_alias_use_worker_service(monkeypatch, capsys) -> None:
@@ -60,6 +61,15 @@ def test_cli_worker_reuses_parser_source_runtime_provider(monkeypatch, capsys) -
     assert args.handler(args) == 0
     capsys.readouterr()
     assert captured == [provider]
+
+
+def test_cli_parser_resolves_shared_runtime_composition() -> None:
+    parser = news_cli.build_parser()
+    args = parser.parse_args(["worker", "status", "--json"])
+
+    assert args.runtime_execution_composition.fingerprint == (
+        build_process_execution_composition().fingerprint
+    )
 
 
 class _FakeResult:

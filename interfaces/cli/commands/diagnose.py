@@ -6,6 +6,9 @@ import json
 from interfaces.services.diagnose_service import DiagnosticApplicationService
 
 
+_DEFAULT_DIAGNOSTIC_SERVICE = DiagnosticApplicationService
+
+
 def register(subparsers: argparse._SubParsersAction) -> None:
     diagnose_parser = subparsers.add_parser("diagnose", help="Run local diagnostics")
     diagnose_parser.add_argument("--json", action="store_true", help="Print machine-readable JSON")
@@ -13,7 +16,23 @@ def register(subparsers: argparse._SubParsersAction) -> None:
 
 
 def diagnose(args: argparse.Namespace) -> int:
-    result = DiagnosticApplicationService().run()
+    runtime_execution_composition = getattr(
+        args,
+        "runtime_execution_composition",
+        None,
+    )
+    if (
+        runtime_execution_composition is not None
+        and DiagnosticApplicationService is _DEFAULT_DIAGNOSTIC_SERVICE
+    ):
+        service = DiagnosticApplicationService(
+            runtime_execution_composition=runtime_execution_composition,
+        )
+    else:
+        # Tests and embedding callers may replace the service with a factory
+        # that intentionally has no composition keyword.
+        service = DiagnosticApplicationService()
+    result = service.run()
     payload = result.to_dict()
 
     if args.json:

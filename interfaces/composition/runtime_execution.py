@@ -7,6 +7,8 @@ provider or downgrade to host execution.
 
 from __future__ import annotations
 
+from functools import lru_cache
+
 from framework.execution_environment import (
     ExecutionEnvironmentRegistry,
     ExecutionProfile,
@@ -18,14 +20,38 @@ from framework.execution_environment import (
 from infrastructure.execution_environment.docker import DockerExecutionEnvironment
 
 
-RESEARCH_RUNTIME_COMPOSITION_ID = "research-runtime"
-RESEARCH_RUNTIME_COMPOSITION_VERSION = "1"
+PRODUCTION_RUNTIME_COMPOSITION_ID = "newsroom-runtime"
+PRODUCTION_RUNTIME_COMPOSITION_VERSION = "1"
+RUNTIME_TRUSTED_PROFILE_ID = "runtime-trusted-in-process"
 RESEARCH_MARKER_PROFILE_ID = "research-parser-marker"
 RESEARCH_MINERU_PROFILE_ID = "research-parser-mineru"
 
+# Keep the Research names as aliases while all process roots resolve the same
+# manifest.  The parser profiles are part of the shared policy catalog even
+# when a particular process does not invoke a parser.
+RESEARCH_RUNTIME_COMPOSITION_ID = PRODUCTION_RUNTIME_COMPOSITION_ID
+RESEARCH_RUNTIME_COMPOSITION_VERSION = PRODUCTION_RUNTIME_COMPOSITION_VERSION
+RESEARCH_REQUIRED_CONTROL_PLANE_PORTS = (
+    "durable_event_storage",
+    "canonical_event_publisher",
+    "execution_receipt_repository",
+    "child_lease_repository",
+    "projection_checkpoint_reader",
+)
 
-def build_research_execution_composition() -> RuntimeExecutionComposition:
-    """Build the process-scoped Research execution composition.
+
+@lru_cache(maxsize=1)
+def _shared_docker_provider() -> DockerExecutionEnvironment:
+    """Probe Docker once per interpreter and reuse its immutable provider."""
+
+    return DockerExecutionEnvironment()
+
+
+def build_process_execution_composition(
+    *,
+    required_control_plane_ports: tuple[str, ...] = (),
+) -> RuntimeExecutionComposition:
+    """Build the shared execution composition used by every process root.
 
     Docker availability is intentionally represented in the provider
     capability fingerprint.  An unavailable daemon remains a typed admission
@@ -34,8 +60,12 @@ def build_research_execution_composition() -> RuntimeExecutionComposition:
     """
 
     execution_registry = ExecutionEnvironmentRegistry()
-    execution_registry.register(DockerExecutionEnvironment())
+    execution_registry.register(_shared_docker_provider())
     profile_registry = ExecutionProfileRegistry()
+    profile_registry.register(
+        RUNTIME_TRUSTED_PROFILE_ID,
+        ExecutionProfile.trusted_in_process(),
+    )
     profile_registry.register(
         RESEARCH_MARKER_PROFILE_ID,
         ExecutionProfile.external_process(
@@ -56,7 +86,14 @@ def build_research_execution_composition() -> RuntimeExecutionComposition:
         profile_registry=profile_registry,
         execution_registry=execution_registry,
         metadata={
-            "role": "research",
+            "profile_catalog": {
+                "trusted_in_process": [RUNTIME_TRUSTED_PROFILE_ID],
+                "sandboxed": [],
+                "external_process": [
+                    RESEARCH_MARKER_PROFILE_ID,
+                    RESEARCH_MINERU_PROFILE_ID,
+                ],
+            },
             "parser_profiles": {
                 "marker": RESEARCH_MARKER_PROFILE_ID,
                 "mineru": RESEARCH_MINERU_PROFILE_ID,
@@ -67,13 +104,27 @@ def build_research_execution_composition() -> RuntimeExecutionComposition:
         manifest=manifest,
         profile_registry=profile_registry,
         execution_registry=execution_registry,
+        required_control_plane_ports=required_control_plane_ports,
+    )
+
+
+def build_research_execution_composition() -> RuntimeExecutionComposition:
+    """Build the Research view of the shared process composition."""
+
+    return build_process_execution_composition(
+        required_control_plane_ports=RESEARCH_REQUIRED_CONTROL_PLANE_PORTS,
     )
 
 
 __all__ = [
+    "PRODUCTION_RUNTIME_COMPOSITION_ID",
+    "PRODUCTION_RUNTIME_COMPOSITION_VERSION",
     "RESEARCH_MARKER_PROFILE_ID",
     "RESEARCH_MINERU_PROFILE_ID",
     "RESEARCH_RUNTIME_COMPOSITION_ID",
     "RESEARCH_RUNTIME_COMPOSITION_VERSION",
+    "RESEARCH_REQUIRED_CONTROL_PLANE_PORTS",
+    "RUNTIME_TRUSTED_PROFILE_ID",
+    "build_process_execution_composition",
     "build_research_execution_composition",
 ]
