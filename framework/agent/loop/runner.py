@@ -38,6 +38,7 @@ class AgentRunner:
         output_judge: OutputJudge | None = None,
         output_normalizer: OutputNormalizer | None = None,
         runtime_event_sink: Any | None = None,
+        execution_environment: Any | None = None,
         require_explicit_execution_profile: bool = False,
     ) -> None:
         self._llm_client = llm_client
@@ -50,6 +51,7 @@ class AgentRunner:
         self._output_judge = output_judge or OutputJudge()
         self._output_normalizer = output_normalizer
         self._runtime_event_sink = runtime_event_sink
+        self._execution_environment = execution_environment
         self._require_explicit_execution_profile = require_explicit_execution_profile
 
     def run(
@@ -155,6 +157,7 @@ class AgentRunner:
             tool_executor=ToolExecutor(
                 self._tool_registry,
                 graph_identity=graph_identity,
+                execution_environment=self._execution_environment,
                 runtime_event_sink=self._runtime_event_sink,
                 require_explicit_execution_profile=self._require_explicit_execution_profile,
             ),

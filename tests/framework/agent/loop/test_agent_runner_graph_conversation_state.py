@@ -56,6 +56,34 @@ class _AcceptedLoop:
         )
 
 
+def test_agent_runner_passes_execution_environment_to_tool_executor(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, Any] = {}
+
+    class _CapturingToolExecutor:
+        def __init__(self, *_args: Any, **kwargs: Any) -> None:
+            captured.update(kwargs)
+
+    monkeypatch.setattr(runner_module, "ToolExecutor", _CapturingToolExecutor)
+    monkeypatch.setattr(runner_module, "AgentLoop", _AcceptedLoop)
+    environment = object()
+    runner = AgentRunner(
+        llm_client=object(),
+        tool_registry=ToolRegistry(),
+        execution_environment=environment,
+    )
+    agent = AgentSpec(
+        agent_id="analyst",
+        name="Analyst",
+        instructions="Return a bounded answer.",
+    )
+
+    runner.run(agent, {"query": "inspect"}, standalone=True)
+
+    assert captured["execution_environment"] is environment
+
+
 @pytest.fixture
 def graph_runner(
     monkeypatch: pytest.MonkeyPatch,

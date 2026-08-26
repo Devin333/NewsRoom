@@ -147,6 +147,47 @@ def test_parallel_tool_batch_copies_trace_scope_into_worker_threads() -> None:
     assert len({context.span_id for context in observed}) == 2
 
 
+def test_tool_batch_executor_passes_execution_environment_to_each_executor(
+    monkeypatch,
+) -> None:
+    import framework.tool.runtime.batch_executor as batch_module
+
+    captured: list[object] = []
+
+    class _CapturingToolExecutor:
+        def __init__(self, *_args, **kwargs) -> None:
+            captured.append(kwargs["execution_environment"])
+
+        def execute(self, call, _policy):
+            from framework.tool.models import ToolObservation, ToolResult
+
+            return ToolObservation(
+                call=call,
+                result=ToolResult(
+                    status=ToolStatus.SUCCEEDED,
+                    output={"ok": True},
+                    call_id=call.call_id,
+                    tool_name=call.tool_name,
+                ),
+                elapsed_ms=0.0,
+            )
+
+    monkeypatch.setattr(batch_module, "ToolExecutor", _CapturingToolExecutor)
+    registry = ToolRegistry()
+    registry.register(ToolDefinition(name="sample.echo"), lambda _args: {"ok": True})
+    environment = object()
+    result = ToolBatchExecutor(
+        registry,
+        execution_environment=environment,
+    ).execute_batch(
+        [ToolCall(tool_name="sample.echo")],
+        ToolPolicy(allowed_tools=["sample.echo"]),
+    )
+
+    assert result[0].status is ToolStatus.SUCCEEDED
+    assert captured == [environment]
+
+
 def test_tool_executor_preserves_transport_only_w3c_context_in_all_outputs() -> None:
     parent = W3CSpanContext.root()
     registry = ToolRegistry()

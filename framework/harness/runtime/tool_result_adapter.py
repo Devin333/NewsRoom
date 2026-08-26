@@ -547,6 +547,7 @@ def build_harness_tool_activity_runtime(
     graph_runtime: HarnessGraphControlPlaneRuntime,
     approval_store: Any | None = None,
     secret_provider: Any | None = None,
+    execution_environment: Any | None = None,
     trace_context: Any | None = None,
 ) -> HarnessToolActivityRuntime:
     """Wire the canonical production Tool path without a legacy artifact writer."""
@@ -557,6 +558,7 @@ def build_harness_tool_activity_runtime(
         registry,
         approval_store=approval_store,
         secret_provider=secret_provider,
+        execution_environment=execution_environment,
         trace_context=trace_context,
         defer_result_persistence=True,
     )

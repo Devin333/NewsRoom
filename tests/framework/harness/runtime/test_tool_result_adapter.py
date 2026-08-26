@@ -63,6 +63,7 @@ def _runtime(
     attempts=None,
     cache=None,
     catalog=None,
+    execution_environment=None,
 ):
     registry = ToolRegistry()
     registry.register(definition, executor_fn)
@@ -87,6 +88,7 @@ def _runtime(
         registry=registry,
         materializer=materializer,
         graph_runtime=graph_runtime,
+        execution_environment=execution_environment,
     )
     return (
         runtime,
@@ -98,6 +100,20 @@ def _runtime(
         catalog,
         registry,
     )
+
+
+def test_harness_tool_runtime_binds_execution_environment() -> None:
+    fixture = _dispatched("run-tool-environment")
+    definition = ToolDefinition(name="sample.echo")
+    environment = object()
+    runtime, *_ = _runtime(
+        fixture,
+        definition,
+        lambda _args: {"ok": True},
+        execution_environment=environment,
+    )
+
+    assert runtime._executor._execution_environment is environment
 
 
 def _execute(runtime, fixture, definition, *, call_id="call-1", policy=None):

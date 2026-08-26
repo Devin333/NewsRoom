@@ -50,6 +50,7 @@ class ToolBatchExecutor:
         artifact_manager: Any | None = None,
         run_id: str | None = None,
         secret_provider: Any | None = None,
+        execution_environment: Any | None = None,
         max_workers: int = 4,
         trace_context: TraceContext | W3CSpanContext | None = None,
         compensating_actions: dict[str, Callable[[ToolObservation], None]] | None = None,
@@ -58,6 +59,7 @@ class ToolBatchExecutor:
         self._artifact_manager = artifact_manager
         self._run_id = run_id
         self._secret_provider = secret_provider
+        self._execution_environment = execution_environment
         self._max_workers = max(1, max_workers)
         self._trace_context = trace_context
         # Fix #5: registry of rollback callables keyed by tool name
@@ -225,6 +227,7 @@ class ToolBatchExecutor:
             artifact_manager=self._artifact_manager,
             run_id=self._run_id,
             secret_provider=self._secret_provider,
+            execution_environment=self._execution_environment,
             trace_context=self._trace_context or current_trace_context(),
         )
         return executor.execute(call, policy)
