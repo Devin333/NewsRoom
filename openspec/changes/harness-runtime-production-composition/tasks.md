@@ -1,9 +1,9 @@
 ## 1. Baseline and contract inventory
 
-- [ ] 1.1 Freeze the current baseline: record date, `HEAD`, all related OpenSpec counts, existing safety receipts, and the supported production entrypoints; label the values as a snapshot rather than live status.
-- [ ] 1.2 Complete or explicitly hand off `harness-runtime-execution-safety` tasks 5.1-5.4, mapping each predecessor evidence item to this change without duplicate completion claims.
+- [x] 1.1 Freeze the current baseline: record date, `HEAD`, all related OpenSpec counts, existing safety receipts, and the supported production entrypoints; label the values as a snapshot rather than live status.
+- [x] 1.2 Complete or explicitly hand off `harness-runtime-execution-safety` tasks 5.1-5.4, mapping each predecessor evidence item to this change without duplicate completion claims.
 - [x] 1.3 Produce a versioned production-runtime caller inventory for `ToolExecutor`, `ExecutionEnvironment`, `subprocess`, `SubAgentRuntime`, `ChildAgentSupervisor`, runtime event sink, projection, and operator service construction sites; classify each as migrate, trusted exemption, or blocked. Every exemption must name an owner, rationale, non-Harness-managed proof, expiry/review date, and test/static check.
-- [ ] 1.4 Define the capability/profile registry for `trusted_in_process`, `sandboxed`, and `external_process`, including unsupported Docker capabilities, outbound MCP/sidecar network/credential requirements, and stable typed denial codes.
+- [x] 1.4 Define the capability/profile registry for `trusted_in_process`, `sandboxed`, and `external_process`, including unsupported Docker capabilities, outbound MCP/sidecar network/credential requirements, and stable typed denial codes.
 
 ## 2. Production execution composition (P0)
 
@@ -12,7 +12,7 @@
 - [x] 2.3 Inject the execution environment into `AgentRunner`, Harness tool activity, batch executor, and every external `ToolExecutor` path; make external activity admission fail closed by default.
 - [ ] 2.4 Convert Research parser/PDF compiler and other approved direct process callers to execution adapters carrying cwd, mounts, env, timeout, cancellation, and receipt mapping.
 - [ ] 2.5 Separate inbound MCP server routing from outbound `ToolRuntime` MCP adapter/sidecar execution; only outbound activity enters execution admission with explicit network, credential, timeout, and cancellation capabilities.
-- [ ] 2.6 Add startup/admission diagnostics for provider unavailable, capability unsupported, Graph identity mismatch, invalid profile, manifest drift, and durable store unavailable; verify no host-process fallback.
+- [x] 2.6 Add startup/admission diagnostics for provider unavailable, capability unsupported, Graph identity mismatch, invalid profile, manifest drift, and durable store unavailable; verify no host-process fallback.
 - [x] 2.7 Add a production caller scan that fails on unapproved direct subprocess, raw external tool execution, direct child launch, or executor construction without composition injection.
 
 ## 3. Harness-owned child dispatch (P1)
@@ -38,13 +38,13 @@
 - [ ] 5.2 Add crash/restart integration tests at execution, child dispatch, event publish, projection apply, and side-effect receipt boundaries.
 - [ ] 5.3 Add timeout/termination tests that verify process cleanup, termination confirmation, and indeterminate classification when confirmation is unavailable.
 - [ ] 5.4 Add idempotency/reconciliation tests proving identical receipts are replayed, conflicting bodies fail, dispatch-without-receipt is never blindly retried, and receipt-without-event only replays the outbox.
-- [ ] 5.5 Run focused tests, compile, appropriate smoke, strict validation for this change and related changes; record commands and results in evidence.
+- [x] 5.5 Run focused tests, compile, appropriate smoke, strict validation for this change and related changes; record commands and results in evidence.
 - [ ] 5.6 Produce a deployment capability matrix for Docker, durable event store, secret provider, network policy, child limits, and rollback observer; mark unavailable capabilities as blocked.
-- [ ] 5.7 Create and maintain `openspec/changes/harness-runtime-production-composition/evidence.md` with baseline, manifest/provider fingerprints, commands, environment capabilities, pass/skip/block classifications, real receipt/event refs, and external signature state.
+- [x] 5.7 Create and maintain `openspec/changes/harness-runtime-production-composition/evidence.md` with baseline, manifest/provider fingerprints, commands, environment capabilities, pass/skip/block classifications, real receipt/event refs, and external signature state.
 - [ ] 5.8 Complete an independent production/restart/rollback evidence review; do not close tasks that require external signatures without the real signature chain.
 
 ## 6. Documentation and handoff
 
 - [ ] 6.1 Update the PRD/design/evidence with final composition ownership, migration flags, supported profiles, and known blockers.
 - [ ] 6.2 Verify no stale documentation claims in-memory projection, optional provider injection, or old child runtime as the default production path.
-- [ ] 6.3 Commit the change with path-scoped staging after strict validation and attach the final test/capability evidence.
+- [x] 6.3 Commit the change with path-scoped staging after strict validation and attach the final test/capability evidence.
