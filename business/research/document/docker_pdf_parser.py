@@ -2,12 +2,13 @@ from __future__ import annotations
 
 import os
 import re
-import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 import fitz
+
+from framework.execution_environment.errors import ExecutionEnvironmentUnavailableError
 
 
 @dataclass(frozen=True)
@@ -45,17 +46,32 @@ def stage_pdf_for_docker(
     return input_dir, output_dir, pdf_path
 
 
-def run_docker_command(command: list[str], *, timeout_seconds: int) -> None:
-    try:
-        subprocess.run(command, check=True, timeout=timeout_seconds)
-    except subprocess.TimeoutExpired as exc:
-        raise RuntimeError(
-            f"docker parser timed out after {timeout_seconds} seconds"
-        ) from exc
-    except subprocess.CalledProcessError as exc:
-        raise RuntimeError(
-            f"docker parser failed (exit {exc.returncode})"
-        ) from exc
+def run_docker_command(
+    command: list[str],
+    *,
+    timeout_seconds: int,
+    execution_identity: Any | None = None,
+    paper_id: str | None = None,
+    backend: str | None = None,
+) -> None:
+    """Reject an unbound parser process invocation.
+
+    Production composition injects the infrastructure execution adapter into
+    the parser.  Keeping this compatibility symbol lets parser bake-off tests
+    replace it with a fake runner without leaving a host-process escape hatch.
+    """
+
+    raise ExecutionEnvironmentUnavailableError(
+        "Research parser execution requires a composed external-process adapter",
+        details={
+            "reason": "direct_parser_process_disabled",
+            "paper_id": paper_id,
+            "backend": backend,
+            "execution_identity_present": execution_identity is not None,
+            "timeout_seconds": timeout_seconds,
+            "command_length": len(command),
+        },
+    )
 
 
 def source_locator(source_ref: str, *, page: int | None, pdf_rect: Any = None) -> str:

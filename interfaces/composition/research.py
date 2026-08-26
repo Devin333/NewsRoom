@@ -117,6 +117,12 @@ from framework.harness.runtime import (
 )
 from framework.shared.time import utc_now
 from framework.shared.graph_identity import GraphExecutionIdentity
+from infrastructure.research.document_execution_adapter import ResearchParserExecutionAdapter
+from interfaces.composition.runtime_execution import (
+    RESEARCH_MARKER_PROFILE_ID,
+    RESEARCH_MINERU_PROFILE_ID,
+    build_research_execution_composition,
+)
 from framework.harness.ports import HarnessTransitionPort
 from infrastructure.external.sources.arxiv import (
     ArxivConnector,
@@ -308,6 +314,7 @@ class ResearchRuntimeComposition:
         "_availability_error",
         "_close_lock",
         "_closed",
+        "_execution_composition",
         "_graph_artifact_governance_service",
         "_harness_wait_approval_resolver",
         "_harness_wait_actor_scope_resolver",
@@ -334,6 +341,7 @@ class ResearchRuntimeComposition:
         harness_wait_runtime_registry: HarnessWaitRuntimeRegistry | None = None,
         harness_wait_approval_resolver: DurableHarnessWaitApprovalResolver | None = None,
         harness_wait_actor_scope_resolver: _ResearchHarnessWaitActorScopeResolver | None = None,
+        execution_composition: Any | None = None,
     ) -> None:
         if settings is not None and not isinstance(settings, ResearchRuntimeSettings):
             raise TypeError("settings must be ResearchRuntimeSettings")
@@ -374,6 +382,7 @@ class ResearchRuntimeComposition:
             unique_resources.append(resource)
 
         self._settings = settings
+        self._execution_composition = execution_composition
         self._service = service
         self._source_runtime_provider = source_runtime_provider
         self._resources = tuple(unique_resources)
@@ -399,6 +408,12 @@ class ResearchRuntimeComposition:
     @property
     def source_runtime_provider(self) -> SourceRuntimeProvider:
         return self._source_runtime_provider
+
+    @property
+    def execution_composition(self) -> Any | None:
+        """Process-scoped execution composition used by external adapters."""
+
+        return self._execution_composition
 
     @property
     def resources(self) -> tuple[Any, ...]:
@@ -1314,6 +1329,10 @@ def _build_configured_composition(
 ) -> ResearchRuntimeComposition:
     owned_resources: list[Any] = []
     try:
+        execution_composition = _compose_component(
+            ResearchCapability.DOCUMENT_COMPILER,
+            build_research_execution_composition,
+        )
         source_runtime = _compose_component(
             ResearchCapability.SOURCE,
             source_runtime_provider.get,
@@ -1352,7 +1371,10 @@ def _build_configured_composition(
             lambda: ResearchDocumentCompilerAdapter(
                 package_connector,
                 latex_compiler=ArxivLatexDocumentCompiler(package_connector),
-                pdf_parser=_build_research_pdf_parser(settings.parser),
+                pdf_parser=_build_research_pdf_parser(
+                    settings.parser,
+                    execution_composition=execution_composition,
+                ),
                 allow_abstract_fallback=settings.parser.allow_abstract_fallback,
             ),
         )
@@ -1414,6 +1436,7 @@ def _build_configured_composition(
             ),
         )
         owned_resources.append(side_effect_store)
+        owned_resources.append(execution_composition)
         node_output_resource = _compose_component(
             ResearchCapability.GRAPH_ARTIFACT_PERSISTENCE,
             lambda: SQLiteHarnessNodeOutputResource(
@@ -1455,6 +1478,17 @@ def _build_configured_composition(
         graph_event_projection = DurableGraphEventProjectionAdapter(
             reader=durable_events.event_store,
             schema_catalog=durable_events.schema_catalog,
+        )
+        from framework.events.runtime.projection import CanonicalRuntimeEventPublisher
+
+        execution_composition.bind_control_plane_ports(
+            durable_event_storage=durable_events,
+            canonical_event_publisher=CanonicalRuntimeEventPublisher(
+                durable_events.event_runtime
+            ),
+            execution_receipt_repository=side_effect_store,
+            child_lease_repository=harness_wait_runtime_registry,
+            projection_checkpoint_reader=durable_events.replay_checkpoint_store,
         )
         graph_index_store = _compose_component(
             ResearchCapability.GRAPH_ARTIFACT_PERSISTENCE,
@@ -1940,6 +1974,7 @@ def _build_configured_composition(
             service=service,
             source_runtime_provider=source_runtime_provider,
             resources=owned_resources,
+            execution_composition=execution_composition,
             graph_artifact_governance_service=(
                 graph_artifact_components.governance_service
             ),
@@ -2277,13 +2312,31 @@ def _configure_research_source_connector(
 
 def _build_research_pdf_parser(
     settings: ResearchParserSettings,
+    *,
+    execution_composition: Any | None = None,
 ) -> CascadeDocumentParser:
     factories: dict[str, Callable[[], Any]] = {
         "marker": MarkerPdfDocumentParser,
         "mineru": MinerUPdfDocumentParser,
     }
+    profile_ids = {
+        "marker": RESEARCH_MARKER_PROFILE_ID,
+        "mineru": RESEARCH_MINERU_PROFILE_ID,
+    }
     backends = [
-        (backend, factories[backend]())
+        (
+            backend,
+            factories[backend](
+                command_runner=(
+                    ResearchParserExecutionAdapter(
+                        execution_environment=execution_composition.execution_registry,
+                        profile=execution_composition.resolve_profile(profile_ids[backend]),
+                    )
+                    if execution_composition is not None
+                    else None
+                )
+            ),
+        )
         for backend in settings.backends
         if backend != "pymupdf"
     ]

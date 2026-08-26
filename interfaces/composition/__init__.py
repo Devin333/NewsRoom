@@ -37,6 +37,9 @@ from interfaces.composition.research_graph_artifacts import (
     compose_research_graph_artifact_runtime,
 )
 from interfaces.composition.source import build_source_runtime_provider
+from interfaces.composition.runtime_execution import (
+    build_research_execution_composition,
+)
 
 __all__ = [
     "LLMCacheConfigurationError",
@@ -58,6 +61,7 @@ __all__ = [
     "ResearchSourceSettings",
     "build_research_application_service",
     "build_source_runtime_provider",
+    "build_research_execution_composition",
     "build_research_graph_artifact_governance_service",
     "build_research_runtime_composition",
     "build_cache_aware_llm_router",

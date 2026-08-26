@@ -163,6 +163,7 @@ class RuntimeExecutionComposition:
         execution_registry: ExecutionEnvironmentRegistry,
         expected_manifest_fingerprint: str | None = None,
         require_explicit_execution_profile: bool = True,
+        control_plane_ports: Mapping[str, Any] | None = None,
     ) -> None:
         if not isinstance(manifest, RuntimeCompositionManifest):
             raise TypeError("manifest must be RuntimeCompositionManifest")
@@ -193,6 +194,7 @@ class RuntimeExecutionComposition:
         self.profile_registry = profile_registry
         self.execution_registry = execution_registry
         self.require_explicit_execution_profile = require_explicit_execution_profile
+        self._control_plane_ports = dict(control_plane_ports or {})
 
     @property
     def fingerprint(self) -> str:
@@ -201,7 +203,10 @@ class RuntimeExecutionComposition:
     def resolve_profile(self, profile_id: str) -> ExecutionProfile:
         self.verify_integrity()
         profile = self.profile_registry.resolve(profile_id)
-        if profile.mode is ExecutionMode.SANDBOXED_PROCESS and profile.provider_id not in self.execution_registry.provider_ids():
+        if profile.mode in {
+            ExecutionMode.SANDBOXED_PROCESS,
+            ExecutionMode.EXTERNAL_PROCESS,
+        } and profile.provider_id not in self.execution_registry.provider_ids():
             raise ExecutionEnvironmentUnavailableError(
                 "execution profile provider is not registered",
                 details={"profile_id": profile_id, "provider_id": profile.provider_id},
@@ -238,7 +243,31 @@ class RuntimeExecutionComposition:
             "provider_fingerprint": self.manifest.provider_fingerprint,
             "profiles": list(self.profile_registry.profile_ids),
             "providers": list(self.execution_registry.provider_ids()),
+            "control_plane_ports": sorted(self._control_plane_ports),
         }
+
+    @property
+    def control_plane_ports(self) -> Mapping[str, Any]:
+        return dict(self._control_plane_ports)
+
+    def bind_control_plane_ports(self, **ports: Any) -> None:
+        """Bind durable/control-plane ports exactly once during startup."""
+
+        duplicate = sorted(set(ports).intersection(self._control_plane_ports))
+        if duplicate:
+            raise RuntimeCompositionDriftError(
+                "runtime control-plane port was bound more than once",
+                details={"ports": duplicate},
+            )
+        for name, port in ports.items():
+            if not isinstance(name, str) or not name.strip():
+                raise ValueError("control-plane port names must be non-empty strings")
+            if port is None:
+                raise RuntimeCompositionDriftError(
+                    "required runtime control-plane port is unavailable",
+                    details={"port": name},
+                )
+        self._control_plane_ports.update(ports)
 
     def tool_executor_factory(self, registry: Any, **kwargs: Any) -> Any:
         self.verify_integrity()

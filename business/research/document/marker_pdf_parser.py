@@ -10,7 +10,7 @@ import time
 from hashlib import sha256
 from html.parser import HTMLParser
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from business.foundation import build_stable_id
 from business.research.document.docker_pdf_parser import (
@@ -36,7 +36,16 @@ from business.research.domain.document import (
 class MarkerPdfDocumentParser:
     """Docker-backed Marker parser for PDF parser bake-off and cascade use."""
 
-    def parse(self, paper_id: str, source_bytes: bytes) -> ResearchDocument:
+    def __init__(self, *, command_runner: Callable[..., Any] | None = None) -> None:
+        self._command_runner = command_runner or run_docker_command
+
+    def parse(
+        self,
+        paper_id: str,
+        source_bytes: bytes,
+        *,
+        execution_identity: Any | None = None,
+    ) -> ResearchDocument:
         source_hash = sha256(source_bytes).hexdigest()
         source_ref = f"arxiv://{paper_id}/pdf"
         started_at = time.perf_counter()
@@ -46,8 +55,17 @@ class MarkerPdfDocumentParser:
             pdf_bytes=source_bytes,
         )
         command = _marker_command(input_dir=input_dir, output_dir=output_dir)
-        run_docker_command(command, timeout_seconds=_marker_timeout_seconds())
-        return _document_from_marker_output(
+        runner_kwargs: dict[str, Any] = {
+            "timeout_seconds": _marker_timeout_seconds(),
+        }
+        if self._command_runner is not run_docker_command:
+            runner_kwargs.update(
+                execution_identity=execution_identity,
+                paper_id=paper_id,
+                backend="marker",
+            )
+        outcome = self._command_runner(command, **runner_kwargs)
+        document = _document_from_marker_output(
             paper_id=paper_id,
             source_ref=source_ref,
             source_hash=source_hash,
@@ -56,6 +74,24 @@ class MarkerPdfDocumentParser:
             duration_seconds=time.perf_counter() - started_at,
             command=command,
         )
+        return _with_execution_receipt(document, outcome)
+
+
+def _with_execution_receipt(document: ResearchDocument, outcome: Any) -> ResearchDocument:
+    receipt = getattr(outcome, "receipt", None)
+    if receipt is None:
+        return document
+    return document.model_copy(
+        update={
+            "metadata": {
+                **dict(document.metadata),
+                "execution_receipt_ref": f"execution-receipt://{receipt.execution_id}",
+                "execution_receipt_checksum": receipt.receipt_checksum,
+                "execution_provider": receipt.provider_id,
+                "execution_status": receipt.status.value,
+            }
+        }
+    )
 
 
 def _marker_command(*, input_dir: Path, output_dir: Path) -> list[str]:

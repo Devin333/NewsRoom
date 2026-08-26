@@ -7,6 +7,7 @@ from business.research.domain.document import ResearchDocument, ResearchSection
 from business.research.domain.paper import PaperSourceRecord
 from business.research.ports.document_compiler import DocumentCompilerPort
 from business.research.ports.document_parser import DocumentParserPort
+from framework.shared.graph_identity import GraphExecutionIdentity
 from infrastructure.external.sources.arxiv import ArxivSourceConnector
 from infrastructure.external.sources.fetch_policy import SourceRateLimitExceededError
 from infrastructure.research.errors import (
@@ -32,7 +33,12 @@ class ResearchDocumentCompilerAdapter:
         self._pdf_parser = pdf_parser
         self._allow_abstract_fallback = bool(allow_abstract_fallback)
 
-    def compile(self, source: PaperSourceRecord) -> ResearchDocument:
+    def compile(
+        self,
+        source: PaperSourceRecord,
+        *,
+        execution_identity: GraphExecutionIdentity | None = None,
+    ) -> ResearchDocument:
         if source.source_type != "arxiv":
             raise ResearchDocumentCompileError("only arXiv Research sources are supported")
         if not source.source_hash:
@@ -64,7 +70,20 @@ class ResearchDocumentCompilerAdapter:
         else:
             try:
                 package = self._source_fetcher.fetch_pdf_package(arxiv_id)
-                document = self._pdf_parser.parse(source.paper_id, package.content)
+                parser = self._pdf_parser
+                try:
+                    document = parser.parse(
+                        source.paper_id,
+                        package.content,
+                        execution_identity=execution_identity,
+                    )
+                except TypeError as exc:
+                    # Existing pure/fake parser ports intentionally keep the
+                    # two-argument protocol.  Only the external adapter needs
+                    # the physical Graph identity keyword.
+                    if "execution_identity" not in str(exc):
+                        raise
+                    document = parser.parse(source.paper_id, package.content)
             except Exception as exc:
                 attempts.append(_failed_attempt("pdf_cascade", exc))
             else:

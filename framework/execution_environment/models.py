@@ -40,6 +40,7 @@ _PROTECTED_ENVIRONMENT_NAME = re.compile(
 class ExecutionMode(StrEnum):
     TRUSTED_IN_PROCESS = "trusted_in_process"
     SANDBOXED_PROCESS = "sandboxed_process"
+    EXTERNAL_PROCESS = "external_process"
 
 
 class NetworkPolicyMode(StrEnum):
@@ -256,18 +257,22 @@ class ExecutionProfile:
                 raise ValueError("trusted_in_process profile cannot declare a process policy")
         else:
             if provider_id is None:
-                raise ValueError("sandboxed_process profile requires an explicit provider_id")
+                raise ValueError(
+                    f"{mode.value} profile requires an explicit provider_id"
+                )
             if not (
                 self.require_environment_isolation
                 and self.require_process_tree_control
                 and self.require_termination_confirmation
             ):
                 raise ValueError(
-                    "sandboxed_process profile must require environment isolation, "
+                    f"{mode.value} profile must require environment isolation, "
                     "process-tree control, and termination confirmation"
                 )
             if not process_policy.allowed_argv_prefixes:
-                raise ValueError("sandboxed_process profile requires allowed argv prefixes")
+                raise ValueError(
+                    f"{mode.value} profile requires allowed argv prefixes"
+                )
         object.__setattr__(self, "mode", mode)
         object.__setattr__(self, "provider_id", provider_id)
         object.__setattr__(self, "network_policy", network_policy)
@@ -297,6 +302,46 @@ class ExecutionProfile:
             process_policy=ProcessPolicy(
                 allowed_argv_prefixes=tuple(tuple(item) for item in allowed_argv_prefixes),
                 allowed_child_argv_prefixes=tuple(tuple(item) for item in allowed_child_argv_prefixes),
+                max_processes=max_processes,
+                require_child_process_allowlist=require_child_process_allowlist,
+            ),
+            require_filesystem_isolation=require_filesystem_isolation,
+            require_environment_isolation=True,
+            require_process_tree_control=True,
+            require_resource_limits=require_resource_limits,
+            require_termination_confirmation=True,
+        )
+
+    @classmethod
+    def external_process(
+        cls,
+        *,
+        provider_id: str,
+        allowed_argv_prefixes: Sequence[Sequence[str]],
+        network_policy: NetworkPolicy | Mapping[str, Any] | None = None,
+        require_filesystem_isolation: bool = True,
+        require_resource_limits: bool = True,
+        max_processes: int = 1,
+        require_child_process_allowlist: bool = False,
+        allowed_child_argv_prefixes: Sequence[Sequence[str]] = (),
+    ) -> "ExecutionProfile":
+        """Declare an external process with the same fail-closed controls.
+
+        ``external_process`` is intentionally a distinct profile identity so
+        callers cannot silently reinterpret a parser, sidecar, or child
+        process as a generic sandboxed tool.  Physical admission remains
+        provider-owned and uses the same capability contract.
+        """
+
+        return cls(
+            mode=ExecutionMode.EXTERNAL_PROCESS,
+            provider_id=provider_id,
+            network_policy=network_policy or NetworkPolicy(),
+            process_policy=ProcessPolicy(
+                allowed_argv_prefixes=tuple(tuple(item) for item in allowed_argv_prefixes),
+                allowed_child_argv_prefixes=tuple(
+                    tuple(item) for item in allowed_child_argv_prefixes
+                ),
                 max_processes=max_processes,
                 require_child_process_allowlist=require_child_process_allowlist,
             ),
@@ -378,8 +423,13 @@ class ExecutionRequest:
         profile = self.profile
         if not isinstance(profile, ExecutionProfile):
             profile = ExecutionProfile.from_dict(profile)
-        if profile.mode is not ExecutionMode.SANDBOXED_PROCESS:
-            raise ValueError("ExecutionRequest requires a sandboxed_process profile")
+        if profile.mode not in {
+            ExecutionMode.SANDBOXED_PROCESS,
+            ExecutionMode.EXTERNAL_PROCESS,
+        }:
+            raise ValueError(
+                "ExecutionRequest requires a sandboxed_process or external_process profile"
+            )
         image = str(self.image).strip()
         if not image or len(image) > 512 or any(character.isspace() for character in image):
             raise ValueError("sandbox image is invalid")

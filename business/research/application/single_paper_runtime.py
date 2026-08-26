@@ -1651,7 +1651,24 @@ class ResearchSinglePaperRuntime:
     def _compile_document(self, task: dict[str, Any], workspace: "_ResearchRunWorkspace") -> HarnessWorkerResult:
         if workspace.paper is None or workspace.source_record is None:
             return _failed("paper source must be loaded before compile_document")
-        document = self.document_compiler.compile(workspace.source_record)
+        compile_method = self.document_compiler.compile
+        execution_identity = _context_graph_identity_for_activity(
+            task,
+            workspace.request,
+            stage_id="compile_document",
+        ).to_graph_execution_identity()
+        try:
+            document = compile_method(
+                workspace.source_record,
+                execution_identity=execution_identity,
+            )
+        except TypeError as exc:
+            # Contract fakes and deterministic in-process compilers may keep
+            # the original one-argument application port.  Production parser
+            # adapters accept and enforce the exact physical identity.
+            if "execution_identity" not in str(exc):
+                raise
+            document = compile_method(workspace.source_record)
         workspace.document = document
         return _ok({"document": document.to_dict(), "source_refs": document.lineage.source_refs})
 
