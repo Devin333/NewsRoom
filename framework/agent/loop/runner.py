@@ -54,6 +54,12 @@ class AgentRunner:
         self._execution_environment = execution_environment
         self._require_explicit_execution_profile = require_explicit_execution_profile
 
+    @property
+    def execution_environment(self) -> Any | None:
+        """Return the provider registry bound to this runner, if any."""
+
+        return self._execution_environment
+
     def run(
         self,
         agent: AgentSpec,

@@ -83,6 +83,8 @@ from interfaces.composition.agent_loop_graph import (
     build_agent_loop_graph_application_service,
     build_agent_loop_graph_runtime_composition,
 )
+from interfaces.composition.runtime_execution import build_process_execution_composition
+from framework.execution_environment.errors import RuntimeCompositionDriftError
 from interfaces.services.agent_loop_graph_service import (
     AgentLoopGraphApplicationService,
     SQLiteAgentLoopActivityResultStore,
@@ -422,6 +424,57 @@ def test_runtime_composition_installs_agent_loop_into_the_graph_dispatcher(
         event.event_type.value == "graph_worker_result_recorded"
         for event in runtime.control_plane.event_port.read_history(run_spec.run_id)
     )
+
+
+def test_runtime_composition_binds_shared_execution_registry(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "runtime-composition-shared"
+    composition = build_process_execution_composition()
+    runner = AgentRunner(
+        llm_client=FakeLLMClient(
+            [
+                json.dumps(
+                    {
+                        "action_type": "final_output",
+                        "output": {"analysis_result": {"topic": "runtime-topic"}},
+                    }
+                )
+            ]
+        ),
+        tool_registry=ToolRegistry(),
+        conversation_store=LocalJsonConversationStore(root / "conversation"),
+        execution_environment=composition.execution_registry,
+        require_explicit_execution_profile=composition.require_explicit_execution_profile,
+    )
+    runtime = build_agent_loop_graph_runtime_composition(
+        agent_runner=runner,
+        agent=_agent(),
+        artifact_port=FilesystemHarnessArtifactPort(root),
+        node_output_resource=SQLiteHarnessNodeOutputResource(root / "node.sqlite3"),
+        event_port=_durable_event_port(root),
+        worker_ref=WORKER_REF,
+        activity_ref=ACTIVITY_REF,
+        runtime_execution_composition=composition,
+    )
+
+    assert runtime.runtime_execution_composition is composition
+
+
+def test_runtime_composition_rejects_runner_registry_drift(tmp_path: Path) -> None:
+    root = tmp_path / "runtime-composition-drift"
+    composition = build_process_execution_composition()
+    with pytest.raises(RuntimeCompositionDriftError, match="execution registry"):
+        build_agent_loop_graph_runtime_composition(
+            agent_runner=_runner(root, "runtime-topic"),
+            agent=_agent(),
+            artifact_port=FilesystemHarnessArtifactPort(root),
+            node_output_resource=SQLiteHarnessNodeOutputResource(root / "node.sqlite3"),
+            event_port=_durable_event_port(root),
+            worker_ref=WORKER_REF,
+            activity_ref=ACTIVITY_REF,
+            runtime_execution_composition=composition,
+        )
 
 
 def test_runtime_composition_registers_approval_wait_through_harness_only(

@@ -161,6 +161,7 @@ class LocalSubAgentExecutor:
         allow_nested_subagents: bool = False,
         trace_propagator: W3CTracePropagator | None = None,
         telemetry: EventTelemetry | None = None,
+        runtime_execution_composition: Any | None = None,
     ) -> None:
         self._agents = dict(agents)
         self._llm_client = llm_client
@@ -168,6 +169,17 @@ class LocalSubAgentExecutor:
         self._conversation_store = conversation_store
         self._global_budget_tracker = global_budget_tracker
         self._allow_nested_subagents = allow_nested_subagents
+        if runtime_execution_composition is not None:
+            from framework.execution_environment.composition import (
+                RuntimeExecutionComposition,
+            )
+
+            if not isinstance(runtime_execution_composition, RuntimeExecutionComposition):
+                raise TypeError(
+                    "runtime_execution_composition must be RuntimeExecutionComposition"
+                )
+            runtime_execution_composition.verify_integrity()
+        self._runtime_execution_composition = runtime_execution_composition
         self._trace_propagator = trace_propagator or W3CTracePropagator()
         self._telemetry = telemetry or default_event_telemetry(
             resource=TelemetryResource(service_name="newsroom-agent-runtime"),
@@ -225,6 +237,16 @@ class LocalSubAgentExecutor:
                 conversation_store=self._conversation_store,
                 global_budget_tracker=child_budget_tracker,
                 subagent_executor=self if self._allow_nested_subagents else None,
+                execution_environment=(
+                    self._runtime_execution_composition.execution_registry
+                    if self._runtime_execution_composition is not None
+                    else None
+                ),
+                require_explicit_execution_profile=(
+                    self._runtime_execution_composition.require_explicit_execution_profile
+                    if self._runtime_execution_composition is not None
+                    else False
+                ),
             ).run(
                 child_agent,
                 child_inputs,

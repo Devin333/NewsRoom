@@ -29,6 +29,8 @@ from framework.harness.side_effects import (
 from framework.shared.attempts import AttemptSupervisor
 from framework.shared.time import utc_now
 from framework.agent.models import AgentSpec
+from framework.execution_environment.composition import RuntimeExecutionComposition
+from framework.execution_environment.errors import RuntimeCompositionDriftError
 from interfaces.services.agent_loop_graph_service import (
     AgentLoopGraphApplicationService,
 )
@@ -54,6 +56,7 @@ class AgentLoopGraphRuntimeComposition:
         activity_ref: HarnessContractReference,
         side_effect_registry: HarnessSideEffectRegistry | None = None,
         side_effect_store: HarnessSideEffectStorePort | None = None,
+        runtime_execution_composition: RuntimeExecutionComposition | None = None,
     ) -> None:
         if not isinstance(agent_runner, AgentRunner):
             raise TypeError("agent_runner must be AgentRunner")
@@ -72,6 +75,19 @@ class AgentLoopGraphRuntimeComposition:
                 "AgentLoop Graph production composition requires a durable "
                 "HarnessTransitionPort; InMemoryHarnessEventPort is test-only"
             )
+        if runtime_execution_composition is not None:
+            if not isinstance(runtime_execution_composition, RuntimeExecutionComposition):
+                raise TypeError(
+                    "runtime_execution_composition must be RuntimeExecutionComposition"
+                )
+            runtime_execution_composition.verify_integrity()
+            if agent_runner.execution_environment is not runtime_execution_composition.execution_registry:
+                raise RuntimeCompositionDriftError(
+                    "AgentRunner execution registry does not match runtime composition",
+                    details={
+                        "composition_fingerprint": runtime_execution_composition.fingerprint,
+                    },
+                )
 
         bundle = build_agent_loop_graph_activity_binding_bundle(
             worker_ref=worker_ref,
@@ -110,6 +126,7 @@ class AgentLoopGraphRuntimeComposition:
         control_plane.install_graph_activity_dispatcher(dispatcher)
         self._bundle = bundle
         self._control_plane = control_plane
+        self._runtime_execution_composition = runtime_execution_composition
 
     @property
     def binding_bundle(self) -> AgentLoopGraphActivityBindingBundle:
@@ -118,6 +135,10 @@ class AgentLoopGraphRuntimeComposition:
     @property
     def control_plane(self) -> HarnessControlPlane:
         return self._control_plane
+
+    @property
+    def runtime_execution_composition(self) -> RuntimeExecutionComposition | None:
+        return self._runtime_execution_composition
 
     def run(self, run_spec: HarnessRunSpec) -> HarnessRunResult:
         if not isinstance(run_spec, HarnessRunSpec):
@@ -190,6 +211,7 @@ def build_agent_loop_graph_runtime_composition(
     activity_ref: HarnessContractReference,
     side_effect_registry: HarnessSideEffectRegistry | None = None,
     side_effect_store: HarnessSideEffectStorePort | None = None,
+    runtime_execution_composition: RuntimeExecutionComposition | None = None,
 ) -> AgentLoopGraphRuntimeComposition:
     """Compose one durable AgentLoop Graph worker and its Harness dispatcher."""
 
@@ -203,6 +225,7 @@ def build_agent_loop_graph_runtime_composition(
         activity_ref=activity_ref,
         side_effect_registry=side_effect_registry,
         side_effect_store=side_effect_store,
+        runtime_execution_composition=runtime_execution_composition,
     )
 
 
