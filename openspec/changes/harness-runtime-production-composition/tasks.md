@@ -2,18 +2,18 @@
 
 - [ ] 1.1 Freeze the current baseline: record date, `HEAD`, all related OpenSpec counts, existing safety receipts, and the supported production entrypoints; label the values as a snapshot rather than live status.
 - [ ] 1.2 Complete or explicitly hand off `harness-runtime-execution-safety` tasks 5.1-5.4, mapping each predecessor evidence item to this change without duplicate completion claims.
-- [ ] 1.3 Produce a versioned production-runtime caller inventory for `ToolExecutor`, `ExecutionEnvironment`, `subprocess`, `SubAgentRuntime`, `ChildAgentSupervisor`, runtime event sink, projection, and operator service construction sites; classify each as migrate, trusted exemption, or blocked. Every exemption must name an owner, rationale, non-Harness-managed proof, expiry/review date, and test/static check.
+- [x] 1.3 Produce a versioned production-runtime caller inventory for `ToolExecutor`, `ExecutionEnvironment`, `subprocess`, `SubAgentRuntime`, `ChildAgentSupervisor`, runtime event sink, projection, and operator service construction sites; classify each as migrate, trusted exemption, or blocked. Every exemption must name an owner, rationale, non-Harness-managed proof, expiry/review date, and test/static check.
 - [ ] 1.4 Define the capability/profile registry for `trusted_in_process`, `sandboxed`, and `external_process`, including unsupported Docker capabilities, outbound MCP/sidecar network/credential requirements, and stable typed denial codes.
 
 ## 2. Production execution composition (P0)
 
 - [ ] 2.1 Implement a versioned `RuntimeCompositionManifest` and one `RuntimeExecutionComposition` per process at the application composition boundary. Bind composition/policy/provider fingerprints, execution registry, durable intent/receipt repository, child lease/receipt repository, idempotency/reconciliation port, event/outbox publisher, projection checkpoint reader, operator authorizer, and operator service.
 - [ ] 2.2 Wire API, worker, CLI, Harness, and Research entrypoints to resolve the same manifest fingerprint; reject startup/health/admission on composition drift and remove local provider/registry/event-authority construction from production paths.
-- [ ] 2.3 Inject the execution environment into `AgentRunner`, Harness tool activity, batch executor, and every external `ToolExecutor` path; make external activity admission fail closed by default.
+- [x] 2.3 Inject the execution environment into `AgentRunner`, Harness tool activity, batch executor, and every external `ToolExecutor` path; make external activity admission fail closed by default.
 - [ ] 2.4 Convert Research parser/PDF compiler and other approved direct process callers to execution adapters carrying cwd, mounts, env, timeout, cancellation, and receipt mapping.
 - [ ] 2.5 Separate inbound MCP server routing from outbound `ToolRuntime` MCP adapter/sidecar execution; only outbound activity enters execution admission with explicit network, credential, timeout, and cancellation capabilities.
 - [ ] 2.6 Add startup/admission diagnostics for provider unavailable, capability unsupported, Graph identity mismatch, invalid profile, manifest drift, and durable store unavailable; verify no host-process fallback.
-- [ ] 2.7 Add a production caller scan that fails on unapproved direct subprocess, raw external tool execution, direct child launch, or executor construction without composition injection.
+- [x] 2.7 Add a production caller scan that fails on unapproved direct subprocess, raw external tool execution, direct child launch, or executor construction without composition injection.
 
 ## 3. Harness-owned child dispatch (P1)
 
