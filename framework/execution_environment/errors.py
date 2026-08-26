@@ -67,9 +67,43 @@ class ExecutionIdentityMismatchError(ExecutionEnvironmentError):
         )
 
 
+class RuntimeCompositionDriftError(ExecutionEnvironmentError):
+    """The process composition does not match its pinned manifest."""
+
+    def __init__(
+        self,
+        message: str = "runtime composition fingerprint drift detected",
+        *,
+        details: Mapping[str, Any] | None = None,
+    ) -> None:
+        super().__init__(
+            message,
+            reason_code="runtime_composition_drift",
+            details=details,
+        )
+
+
+class RuntimeCompositionProfileError(ExecutionEnvironmentError):
+    """A requested execution profile is absent or not admitted."""
+
+    def __init__(
+        self,
+        message: str = "runtime execution profile is not admitted",
+        *,
+        details: Mapping[str, Any] | None = None,
+    ) -> None:
+        super().__init__(
+            message,
+            reason_code="runtime_profile_denied",
+            details=details,
+        )
+
+
 __all__ = [
     "ExecutionEnvironmentError",
     "ExecutionEnvironmentUnavailableError",
     "ExecutionIdentityMismatchError",
     "ExecutionPolicyViolationError",
+    "RuntimeCompositionDriftError",
+    "RuntimeCompositionProfileError",
 ]

@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import hashlib
 
+from framework.shared.json import stable_json_dumps
+
 from framework.execution_environment.errors import (
     ExecutionEnvironmentUnavailableError,
     ExecutionIdentityMismatchError,
@@ -126,6 +128,21 @@ class ExecutionEnvironmentRegistry:
 
     def provider_ids(self) -> tuple[str, ...]:
         return tuple(sorted(self._providers))
+
+    @property
+    def fingerprint(self) -> str:
+        """Stable fingerprint of provider identities and advertised capabilities."""
+
+        payload = [
+            {
+                "provider_id": provider_id,
+                "capability_checksum": self._providers[provider_id].capabilities.checksum,
+            }
+            for provider_id in self.provider_ids()
+        ]
+        return "sha256:" + hashlib.sha256(
+            stable_json_dumps(payload).encode("utf-8")
+        ).hexdigest()
 
 
 __all__ = ["ExecutionEnvironmentRegistry"]

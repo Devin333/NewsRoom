@@ -23,6 +23,16 @@ from framework.execution_environment.models import (
 )
 from framework.execution_environment.ports import ExecutionEnvironmentPort
 from framework.execution_environment.registry import ExecutionEnvironmentRegistry
+from framework.execution_environment.composition import (
+    ExecutionProfileRegistry,
+    RuntimeCompositionManifest,
+    RuntimeExecutionComposition,
+    build_runtime_execution_composition,
+)
+from framework.execution_environment.errors import (
+    RuntimeCompositionDriftError,
+    RuntimeCompositionProfileError,
+)
 
 __all__ = [
     "ExecutionCapabilityProfile",
@@ -34,6 +44,7 @@ __all__ = [
     "ExecutionMode",
     "ExecutionOutcome",
     "ExecutionPolicyViolationError",
+    "ExecutionProfileRegistry",
     "ExecutionProfile",
     "ExecutionReceipt",
     "ExecutionRequest",
@@ -44,4 +55,9 @@ __all__ = [
     "NetworkPolicyMode",
     "ProcessPolicy",
     "ResourceLimits",
+    "RuntimeCompositionDriftError",
+    "RuntimeCompositionManifest",
+    "RuntimeCompositionProfileError",
+    "RuntimeExecutionComposition",
+    "build_runtime_execution_composition",
 ]
