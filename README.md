@@ -96,7 +96,7 @@ If you see `ModuleNotFoundError` for `pydantic`, `pytest`, or `qdrant_client`:
 python -c "import sys; print(sys.executable)"
 ```
 
-It should point to `F:\github\NewsRoom\.venv\Scripts\python.exe` on Windows (or the equivalent path for your clone).
+It should point to `<repo-root>\.venv\Scripts\python.exe` on Windows (or the equivalent path for your clone).
 
 2. Reinstall the intended dependency set:
 
