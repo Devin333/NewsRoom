@@ -1,6 +1,6 @@
 # OpenSpec Specs Index
 
-This folder contains the currently active capability specs for NewsRoom.
+This folder contains the currently active capability specs for Agora Hub.
 
 - Framework runtime specs cover Graph orchestration, Harness control-plane policy, AgentLoop worker execution, tool/runtime safety, storage, memory, and worker scheduler closure.
 - Business specs cover board runtime, cross-board intelligence, foundation quality loop, and business-layer pipelines.

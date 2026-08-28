@@ -1,4 +1,4 @@
-"""Python SDK for the NewsRoom HTTP API."""
+"""Python SDK for the Agora Hub HTTP API."""
 
 from interfaces.sdk.python_client import NewsApiError, NewsClient
 

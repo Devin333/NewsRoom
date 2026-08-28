@@ -57,7 +57,7 @@ def test_news_cli_api_openapi_json(capsys) -> None:
     payload = json.loads(captured.out)
 
     assert exit_code == 0
-    assert payload["info"]["title"] == "NewsRoom API"
+    assert payload["info"]["title"] == "Agora Hub API"
     assert "/api/v1/research/papers/analyze" in payload["paths"]
     assert "/api/v1/runs/daily" not in payload["paths"]
 
@@ -72,4 +72,4 @@ def test_news_cli_api_openapi_writes_output(tmp_path, capsys) -> None:
 
     assert exit_code == 0
     assert captured.out == ""
-    assert written["info"]["title"] == "NewsRoom API"
+    assert written["info"]["title"] == "Agora Hub API"

@@ -94,7 +94,7 @@ class MCPCapability:
 class MCPCapabilityManifest:
     version: str
     capabilities: list[MCPCapability]
-    server_name: str = "NewsRoom"
+    server_name: str = "Agora Hub"
     transport: str = "stdio/http"
     auth_required: bool = True
     default_permission: str = "mcp:read"

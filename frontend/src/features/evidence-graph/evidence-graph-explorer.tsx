@@ -422,7 +422,7 @@ function EvidenceInspector({
         <h2 className="mt-4 break-words text-lg font-semibold text-slate-900 dark:text-foreground">{node.title}</h2>
         {node.summary ? <p className="mt-3 text-sm leading-6 text-slate-600 dark:text-muted-foreground">{node.summary}</p> : null}
         <dl className="mt-4 grid gap-3 text-sm">
-          <InfoRow label="来源" value={node.source ?? "NewsRoom"} />
+          <InfoRow label="来源" value={node.source ?? "Agora Hub"} />
           <InfoRow label="创建" value={formatDate(node.createdAt)} />
           <InfoRow label="更新" value={formatDate(node.updatedAt)} />
           <InfoRow label="分数" value={formatScore(node.score)} />

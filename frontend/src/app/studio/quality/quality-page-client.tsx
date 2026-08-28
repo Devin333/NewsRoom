@@ -15,7 +15,7 @@ export function QualityPageClient() {
       <PageHeader
         eyebrow="治理"
         title="质量"
-        description="复核 NewsRoom 对象的质量门控结果、分数分布、失败检查和人工复核需求。"
+        description="复核 Agora Hub 对象的质量门控结果、分数分布、失败检查和人工复核需求。"
       />
       <QualityMetrics results={results} />
       <QualityToolbar filters={filters} onChange={setFilters} />

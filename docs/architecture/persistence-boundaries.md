@@ -1,6 +1,6 @@
 # Persistence Boundaries
 
-NewsRoom separates runtime artifacts from operational persistence.
+Agora Hub separates runtime artifacts from operational persistence.
 
 ## Artifact Store
 
@@ -27,4 +27,4 @@ Local JSON is the offline fallback and keeps the existing path/data format. Post
 
 ## Adapter Rule
 
-Research application services and interface services may request persistence through application services or repository factories. Framework artifact runtime remains generic and must not learn NewsRoom report, evidence, claim, or source semantics.
+Research application services and interface services may request persistence through application services or repository factories. Framework artifact runtime remains generic and must not learn Agora Hub report, evidence, claim, or source semantics.

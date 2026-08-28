@@ -158,7 +158,7 @@ test("/papers period tabs and drawer deep-link work", async ({ page, baseURL }) 
 
   await page.goto("/papers?paper=arxiv-2605.22823")
   await expect(page.getByRole("dialog", { name: /paper detail/i })).toBeVisible()
-  await expect(page.getByRole("heading", { name: "NewsRoom AI" })).toBeVisible()
+  await expect(page.getByRole("heading", { name: "Agora Hub AI" })).toBeVisible()
   await expect(page.getByRole("heading", { name: "News and sources" })).toBeVisible()
   await expect(page.getByRole("heading", { name: "Community signals" })).toBeVisible()
   await expect(page.getByRole("heading", { name: "Evidence references" })).toBeVisible()

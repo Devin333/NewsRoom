@@ -1,6 +1,6 @@
-# NewsRoom Reader Portal
+# Agora Hub Reader Portal
 
-Reader-facing NewsRoom Intelligence dashboard and news experience. This app is separate from `apps/web`, which remains the operational console.
+Reader-facing Agora Hub experience for news, research papers, and projects. This app is separate from `apps/web`, which remains the operational console.
 
 ## Getting Started
 

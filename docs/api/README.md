@@ -1,4 +1,4 @@
-# NewsRoom HTTP API
+# Agora Hub HTTP API
 
 The HTTP API is a FastAPI interface over application services. It validates requests, returns the standard envelope, maps errors, and exposes OpenAPI for SDK generation and contract checks. Graph runs use exact Graph identity; Wait and approval decisions are bounded Harness operations, not caller-supplied workflow resume patches.
 

@@ -1,7 +1,7 @@
-# NewsRoom Web Console
+# Agora Hub Web Console
 
-This is the first productized Web Console for NewsRoom. It uses Next.js, React,
-TypeScript, and Tailwind CSS, and calls only the public NewsRoom HTTP API.
+This is the first productized Web Console for Agora Hub. It uses Next.js, React,
+TypeScript, and Tailwind CSS, and calls only the public Agora Hub HTTP API.
 
 ## Environment
 

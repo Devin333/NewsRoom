@@ -66,7 +66,7 @@ describe("PaperDetailDrawer", () => {
     expect(dialog).toHaveClass("2xl:w-[56rem]")
     expect(dialog.className).not.toContain("94rem")
     expect(screen.getByRole("heading", { name: "Segment Anything" })).toBeInTheDocument()
-    expect(screen.getByText("NewsRoom AI")).toBeInTheDocument()
+    expect(screen.getByText("Agora Hub AI")).toBeInTheDocument()
     expect(screen.getByText("Abstract")).toBeInTheDocument()
     expect(screen.getByText("Tasks")).toBeInTheDocument()
     expect(screen.getByText("Methods")).toBeInTheDocument()
@@ -155,7 +155,7 @@ describe("PaperDetailDrawer", () => {
   it("renders summary loading and success states", async () => {
     render(<PaperDetailDrawer paper={paper} locale="en" open onOpenChange={vi.fn()} />)
 
-    expect(screen.getByText("Generating NewsRoom AI summary...")).toBeInTheDocument()
+    expect(screen.getByText("Generating Agora Hub AI summary...")).toBeInTheDocument()
     expect(await screen.findByText("Segment Anything introduces a promptable segmentation foundation model.")).toBeInTheDocument()
   })
 
@@ -291,6 +291,6 @@ describe("PaperDetailDrawer", () => {
     )
 
     await waitFor(() => expect(screen.queryByText("AI summary is temporarily unavailable. You can keep reading the original abstract.")).not.toBeInTheDocument())
-    expect(screen.getByText("Generating NewsRoom AI summary...")).toBeInTheDocument()
+    expect(screen.getByText("Generating Agora Hub AI summary...")).toBeInTheDocument()
   })
 })

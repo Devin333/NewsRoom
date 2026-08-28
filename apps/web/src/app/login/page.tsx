@@ -34,7 +34,7 @@ function LoginForm() {
     <div className="flex min-h-screen items-center justify-center bg-surface">
       <div className="w-full max-w-sm rounded-lg border border-line bg-white p-8 shadow-sm">
         <div className="mb-6">
-          <p className="text-xl font-semibold text-ink">NewsRoom</p>
+          <p className="text-xl font-semibold text-ink">Agora Hub</p>
           <p className="text-sm text-muted">Enter your access token to continue</p>
         </div>
         <form onSubmit={handleSubmit} className="space-y-4">

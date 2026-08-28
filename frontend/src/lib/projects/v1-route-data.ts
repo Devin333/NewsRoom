@@ -53,7 +53,7 @@ export async function proxyBackendMutation<T>(path: string, body?: unknown) {
   return failure(
     503,
     "projects_backend_unavailable",
-    "Projects mutation endpoints require the NewsRoom API service.",
+    "Projects mutation endpoints require the Agora Hub API service.",
     result
   )
 }

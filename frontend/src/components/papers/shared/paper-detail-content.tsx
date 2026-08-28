@@ -182,7 +182,7 @@ export function PaperDetailContent({
         </div>
       </header>
 
-      <DetailSection title="NewsRoom AI" meta={summary?.cached ? translate(locale, "papers.reader.cached") : translate(locale, "papers.reader.onDemand")}>
+      <DetailSection title="Agora Hub AI" meta={summary?.cached ? translate(locale, "papers.reader.cached") : translate(locale, "papers.reader.onDemand")}>
         <AISummaryBlock
           status={summaryStatus}
           summary={summary}

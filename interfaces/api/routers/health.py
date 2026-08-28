@@ -11,11 +11,11 @@ def create_router(services: ApiServices, helpers: ApiRouteHelpers) -> APIRouter:
 
     @router.get("/health")
     def health() -> dict:
-        return helpers.success({"status": "ok", "service": "newsroom-api"})
+        return helpers.success({"status": "ok", "service": "agora-hub-api"})
 
     @router.get("/health/live")
     def live_health() -> dict:
-        return helpers.success({"status": "ok", "service": "newsroom-api", "live": True})
+        return helpers.success({"status": "ok", "service": "agora-hub-api", "live": True})
 
     @router.get("/health/ready")
     def ready_health() -> dict:
@@ -38,7 +38,7 @@ def create_router(services: ApiServices, helpers: ApiRouteHelpers) -> APIRouter:
             return helpers.success(
                 {
                     "status": "ok",
-                    "service": "newsroom-api",
+                    "service": "agora-hub-api",
                     "ready": True,
                     "runtime_composition": diagnostics,
                 }

@@ -1,1 +1,1 @@
-"""Resource clients exposed by NewsRoomClient."""
+"""Resource clients exposed by the Agora Hub SDK client."""

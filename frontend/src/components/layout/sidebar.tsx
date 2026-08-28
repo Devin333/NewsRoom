@@ -57,7 +57,7 @@ export function Sidebar({ collapsed }: { collapsed: boolean }) {
         </div>
         {!collapsed ? (
           <div className="min-w-0">
-            <p className="truncate text-sm font-semibold">NewsRoom</p>
+            <p className="truncate text-sm font-semibold">Agora Hub</p>
             <p className="truncate text-xs text-muted-foreground">情报后台</p>
           </div>
         ) : null}

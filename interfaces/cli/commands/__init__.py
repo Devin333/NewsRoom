@@ -1,1 +1,1 @@
-"""Command implementation modules for the NewsRoom CLI."""
+"""Command implementation modules for the Agora Hub CLI."""

@@ -18,7 +18,7 @@ const OPENALEX_ENDPOINT = "https://api.openalex.org/works"
 const REPO_PATH_PATTERN = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/
 const REQUEST_HEADERS = {
   Accept: "application/json",
-  "User-Agent": "NewsRoomResearch/0.1"
+  "User-Agent": "AgoraHubResearch/0.1"
 }
 
 const paperCache = new Map<string, Promise<Paper | null>>()

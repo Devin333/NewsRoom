@@ -605,7 +605,12 @@ def _parse_quality(
 
 
 def _redacted_command(command: list[str]) -> list[str]:
-    return ["<repo-path>" if "NewsRoom" in part else part for part in command]
+    return [
+        "<repo-path>"
+        if any(marker in part for marker in ("NewsRoom", "Agora-Hub", "Agora Hub"))
+        else part
+        for part in command
+    ]
 
 
 __all__ = ["MinerUPdfDocumentParser"]

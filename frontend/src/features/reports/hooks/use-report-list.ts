@@ -116,7 +116,7 @@ function mapReportSummary(report: ApiReportSummary): Report {
     generatedAt,
     coveredFrom: generatedAt,
     coveredTo: generatedAt,
-    agentName: report.workflow_id ?? "NewsRoom Runtime",
+    agentName: report.workflow_id ?? "Agora Hub Runtime",
     qualityScore: typeof report.quality_score === "number" ? report.quality_score : undefined,
     topicIds: [],
     newsItemIds: [],

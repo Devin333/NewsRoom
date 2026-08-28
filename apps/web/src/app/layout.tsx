@@ -2,8 +2,8 @@ import type { Metadata } from "next"
 import "@/styles/globals.css"
 
 export const metadata: Metadata = {
-  title: "NewsRoom Console",
-  description: "Operational console for NewsRoom"
+  title: "Agora Hub Console",
+  description: "Operational console for Agora Hub"
 }
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

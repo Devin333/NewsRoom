@@ -1,6 +1,6 @@
-# NewsRoom MCP Surface
+# Agora Hub MCP Surface
 
-NewsRoom exposes MCP tools, resources, prompts, and capability metadata through
+Agora Hub exposes MCP tools, resources, prompts, and capability metadata through
 `MCPApplicationService`. MCP is an inbound interface surface: it calls
 application services and returns contract-shaped payloads rather than reaching
 into Graph executors, AgentLoop workers, storage clients, or Harness internals directly.

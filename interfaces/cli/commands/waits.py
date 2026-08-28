@@ -115,7 +115,7 @@ def _add_wait_identity_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--base-url",
         default=os.environ.get("NEWSROOM_API_URL", "http://127.0.0.1:8000"),
-        help="NewsRoom API base URL",
+        help="Agora Hub API base URL",
     )
     parser.add_argument(
         "--api-key",

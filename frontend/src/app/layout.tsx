@@ -9,8 +9,8 @@ import { Providers } from "@/components/providers"
 import { getFrontendSurface } from "@/lib/frontend-surface"
 
 export const metadata: Metadata = {
-  title: "NewsRoom 情报工作台",
-  description: "AI 技术情报、证据质量、智能体运行与新闻分析工作台。"
+  title: "Agora Hub 情报工作台",
+  description: "新闻、论文与项目的一体化情报、证据质量和智能体运行工作台。"
 }
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

@@ -381,7 +381,7 @@ def _redis_client(settings: LLMCacheSettings) -> Any:
     try:
         import redis
     except ImportError:
-        _invalid("redis", "install the newsroom redis optional dependency")
+        _invalid("redis", "install the Agora Hub Redis optional dependency")
     try:
         return redis.from_url(
             settings.redis_url,

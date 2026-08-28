@@ -5,7 +5,7 @@ gate before a provider-native structured-output mode can be selected.
 
 ## Evidence layout
 
-- `corpora/provider-schema-corpus-v1.json` is a NewsRoom-authored schema corpus.
+- `corpora/provider-schema-corpus-v1.json` is an Agora Hub-authored schema corpus.
   Its taxonomy is informed by JSONSchemaBench, but it copies no upstream rows.
 - `evaluations/recorded-reference-native-v1.json` is a deterministic recorded-
   transport observation set with capability and held-out Research cases.

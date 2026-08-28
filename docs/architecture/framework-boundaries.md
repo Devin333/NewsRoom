@@ -8,7 +8,7 @@
 - `governance`: owns safety policy, timeout policy, audit, human review, and security policy. It must not carry scoring algorithms.
 - `llm`: owns LLM client contracts, request/response models, routing, cache, structured output, and redaction.
 - `memory`: owns Memory runtime, indexing, recall/write policy, diagnostics, serialization, and tool integration.
-- `scoring`: owns feature extraction, scoring context, gate, fusion, ranking, explanation, and registry. It must not encode NewsRoom business rules.
+- `scoring`: owns feature extraction, scoring context, gate, fusion, ranking, explanation, and registry. It must not encode Agora Hub business rules.
 - `shared`: owns IDs, hashing, JSON serialization, and time helpers. It must not become a `common.py` or `utils.py` dumping ground.
 - `skills`: owns Skill Runtime, manifest/metadata, package loader, registry, scanner, schema validation, prompt builder, executor, runner, quality gates, evaluator, and trace. It must not contain business skill content.
 - `harness`: owns Graph definitions, normalized Graph compilation, preflight validation, activity bindings, runtime resolution, Graph state, Waits, and Graph control-plane contracts.
@@ -22,7 +22,7 @@
 
 ## Stability Rule
 
-Framework code defines reusable runtime behavior only. NewsRoom business concepts such as sources, reports, boards, evidence, claims, and daily intelligence profiles belong outside `framework`.
+Framework code defines reusable runtime behavior only. Agora Hub business concepts such as sources, reports, boards, evidence, claims, and daily intelligence profiles belong outside `framework`.
 
 Graph activity executors may support generic declaration-driven mechanics, but node identity, routing, gate policy, and business meaning belong to the Graph definition and Harness control plane. AgentLoop telemetry remains an inner activity result; framework code must not turn it into a second outer controller.
 

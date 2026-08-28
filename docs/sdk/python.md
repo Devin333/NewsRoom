@@ -1,4 +1,4 @@
-# NewsRoom Python SDK
+# Agora Hub Python SDK
 
 The Python SDK is an interface-layer client for the HTTP API. It calls API
 contracts and application services through the public boundary; it must not

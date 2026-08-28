@@ -73,7 +73,7 @@ def handle_jsonrpc_request(
             return _success(
                 request_id,
                 {
-                    "serverInfo": {"name": "NewsRoom", "version": "0.1.0"},
+                    "serverInfo": {"name": "Agora Hub", "version": "0.1.0"},
                     "capabilities": {
                         "tools": {},
                         "resources": {},

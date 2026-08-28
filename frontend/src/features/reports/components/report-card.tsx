@@ -9,7 +9,7 @@ export function ReportCard({ report }: { report: Report }) {
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <h2 className="text-base font-semibold text-foreground">{report.title}</h2>
-          <p className="mt-1 text-xs text-muted-foreground">由 {report.agentName ?? "NewsRoom 智能体"} 生成于 {formatDate(report.generatedAt)}</p>
+          <p className="mt-1 text-xs text-muted-foreground">由 {report.agentName ?? "Agora Hub 智能体"} 生成于 {formatDate(report.generatedAt)}</p>
         </div>
         <div className="flex flex-wrap gap-2">
           <Badge tone="accent">{titleCase(report.reportType ?? report.type ?? "report")}</Badge>

@@ -148,7 +148,7 @@ def create_app(
     trace_propagator: W3CTracePropagator | None = None,
     telemetry: EventTelemetry | None = None,
 ) -> FastAPI:
-    api = FastAPI(title="NewsRoom API", version="0.1.0")
+    api = FastAPI(title="Agora Hub API", version="0.1.0")
     if runtime_execution_composition is None:
         runtime_execution_composition = build_process_execution_composition()
     if not isinstance(runtime_execution_composition, RuntimeExecutionComposition):

@@ -116,7 +116,7 @@ function analysisFieldsFor(seed: (typeof topicSeeds)[number], index: number, var
   return {
     detailedSummary:
       variant === "release"
-        ? `${seed.name} 正从单点发布变成可衡量的平台信号。NewsRoom 将发布内容与高频实体、证据质量和后续讨论关联起来，帮助运营者区分长期采用与发布周期噪声。`
+        ? `${seed.name} 正从单点发布变成可衡量的平台信号。Agora Hub 将发布内容与高频实体、证据质量和后续讨论关联起来，帮助运营者区分长期采用与发布周期噪声。`
         : `${seed.name} 周边的社区活动显示团队正在真实试验的方向。这个信号弱于官方发布，但仓库变化和讨论速度仍适合用于早期趋势识别。`,
     whyItMatters:
       variant === "release"
@@ -134,7 +134,7 @@ function analysisFieldsFor(seed: (typeof topicSeeds)[number], index: number, var
       {
         id: `${seed.id}-${variant}-fact-2`,
         text: `最强实体重叠包括 ${seed.entities.slice(0, 2).join(" 和 ")}。`,
-        sourceName: "NewsRoom 实体匹配器",
+        sourceName: "Agora Hub 实体匹配器",
         confidence: "high",
         evidenceId: primaryEvidenceId,
       },
@@ -401,7 +401,7 @@ export const topics: Topic[] = topicSeeds.map((seed, index) => ({
   id: seed.id,
   name: seed.name,
   summary: `${seed.name} 正作为 ${seed.category} 趋势被跟踪，信号来自产品发布、开发者讨论和证据质量变化。`,
-  executiveSummary: `NewsRoom 将 ${seed.name} 识别为${seed.trend === "rising" ? "加速上升" : seed.trend === "falling" ? "热度回落" : "稳定延展"}的主题。最强证据来自来源多样性、命名实体重复出现以及工程团队的实践采用。`,
+  executiveSummary: `Agora Hub 将 ${seed.name} 识别为${seed.trend === "rising" ? "加速上升" : seed.trend === "falling" ? "热度回落" : "稳定延展"}的主题。最强证据来自来源多样性、命名实体重复出现以及工程团队的实践采用。`,
   trend: seed.trend,
   heatScore: 78 + (index % 5) * 4 - (seed.trend === "falling" ? 12 : 0),
   qualityScore: 82 + (index % 4) * 3,
@@ -536,7 +536,7 @@ type RuntimeEvidence = {
 
 ---
 
-由 NewsRoom WriterAgent 生成。`,
+由 Agora Hub WriterAgent 生成。`,
   },
   {
     id: "report-weekly-tech-radar",
@@ -816,7 +816,7 @@ export const memoryItems: MemoryItem[] = [
   memory("mem-entity-003", "entity", "Google DeepMind", "实体画像，关联多模态基准覆盖。", "2026-05-22T15:35:00Z", "high", 87, ["实体", "基准"], ["Google DeepMind"], ["multimodal-foundation-models"], "official_blog"),
   memory("mem-entity-004", "entity", "LocalLLaMA", "社区实体，显示本地模型部署讨论和来源健康风险。", "2026-05-22T20:45:00Z", "medium", 69, ["实体", "社区"], ["LocalLLaMA"], ["open-source-llm-tooling"], "reddit"),
   memory("mem-entity-005", "entity", "arXiv cs.AI", "论文来源实体，具备稳定的每日采集模式。", "2026-05-22T19:10:00Z", "high", 84, ["实体", "论文"], ["arXiv"], ["rag-evaluation"], "arxiv"),
-  memory("mem-report-001", "report", "每日 AI 基础设施报告", "生成报告，将来源健康与 Agent 运行时趋势关联起来。", "2026-05-22T23:45:00Z", "high", 90, ["报告", "每日"], ["NewsRoom"], ["agent-runtime-observability"], "custom"),
+  memory("mem-report-001", "report", "每日 AI 基础设施报告", "生成报告，将来源健康与 Agent 运行时趋势关联起来。", "2026-05-22T23:45:00Z", "high", 90, ["报告", "每日"], ["Agora Hub"], ["agent-runtime-observability"], "custom"),
   memory("mem-agent-001", "agent_note", "质量 Agent 标记引用缺口", "Agent 笔记建议为报告章节补充辅助证据。", "2026-05-22T23:50:00Z", "medium", 75, ["Agent 笔记", "质量"], ["ReviewerAgent"], ["rag-evaluation"], "custom"),
   memory("mem-agent-002", "agent_note", "来源健康 Agent 上报 Reddit 失败", "Agent 笔记标记 Reddit LocalLLaMA 需要运营复核。", "2026-05-22T20:40:00Z", "high", 86, ["Agent 笔记", "来源健康"], ["SourceHealthAgent"], ["open-source-llm-tooling"], "custom"),
   memory("mem-agent-003", "agent_note", "主题聚类 Agent 合并运行时 trace", "Agent 笔记记录 trace 与工作流证据簇的合并。", "2026-05-22T21:35:00Z", "medium", 73, ["Agent 笔记", "主题"], ["TopicClusterAgent"], ["agent-runtime-observability"], "custom"),

@@ -54,7 +54,7 @@ describe("LoginPage", () => {
 
     render(<LoginPage />)
 
-    expect(await screen.findByRole("heading", { name: "创建第一个 NewsRoom 账号" })).toBeInTheDocument()
+    expect(await screen.findByRole("heading", { name: "创建第一个 Agora Hub 账号" })).toBeInTheDocument()
     fireEvent.change(screen.getByLabelText("用户名"), { target: { value: "admin" } })
     fireEvent.change(screen.getByLabelText("密码"), { target: { value: "correct horse" } })
     fireEvent.submit(screen.getByRole("button", { name: "创建账号" }).closest("form")!)
@@ -77,7 +77,7 @@ describe("LoginPage", () => {
 
     render(<LoginPage />)
 
-    expect(await screen.findByRole("heading", { name: "登录 NewsRoom" })).toBeInTheDocument()
+    expect(await screen.findByRole("heading", { name: "登录 Agora Hub" })).toBeInTheDocument()
     fireEvent.change(screen.getByLabelText("用户名"), { target: { value: "admin" } })
     fireEvent.change(screen.getByLabelText("密码"), { target: { value: "correct horse" } })
     fireEvent.submit(screen.getByRole("button", { name: "登录" }).closest("form")!)

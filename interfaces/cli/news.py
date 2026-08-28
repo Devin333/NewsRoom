@@ -51,7 +51,7 @@ COMMAND_MODULES = (
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="news", description="NewsRoom command line interface")
+    parser = argparse.ArgumentParser(prog="news", description="Agora Hub command line interface")
     parser.set_defaults(source_runtime_provider=build_source_runtime_provider())
     parser.set_defaults(runtime_execution_composition=build_process_execution_composition())
     subparsers = parser.add_subparsers(dest="command", required=True)

@@ -11,7 +11,7 @@ def test_openapi_schema_generates_core_contract() -> None:
     schema = export_openapi_schema()
 
     assert schema["openapi"].startswith("3.")
-    assert schema["info"]["title"] == "NewsRoom API"
+    assert schema["info"]["title"] == "Agora Hub API"
     assert "/api/v2/graph-runs" in schema["paths"]
     assert "ApiResponse" in schema["components"]["schemas"]
     assert "schema_version" in schema["components"]["schemas"]["ApiResponse"]["properties"]

@@ -62,7 +62,7 @@ def enrich_openalex_citations(papers: list[dict[str, Any]], *, batch_size: int) 
         doi_to_paper = {normalize_doi(str(paper["citationDoi"])): paper for paper in batch}
         filter_value = "doi:" + "|".join(doi_to_paper)
         url = f"{OPENALEX_WORKS_API}?filter={urllib.parse.quote(filter_value)}&per-page={len(batch)}"
-        data = fetch_json(url, headers={"User-Agent": "NewsRoomResearch/0.1 (paper metrics)"})
+        data = fetch_json(url, headers={"User-Agent": "AgoraHubResearch/0.1 (paper metrics)"})
         for item in data.get("results", []):
             doi = normalize_doi(str(item.get("doi") or ""))
             paper = doi_to_paper.get(doi)
@@ -90,7 +90,7 @@ def enrich_github_stars(papers: list[dict[str, Any]], *, sleep_seconds: float) -
                 f"{GITHUB_REPO_API}/{slug}",
                 headers={
                     "Accept": "application/vnd.github+json",
-                    "User-Agent": "NewsRoomResearch/0.1 (paper metrics)",
+                    "User-Agent": "AgoraHubResearch/0.1 (paper metrics)",
                 },
             )
         except Exception as exc:  # noqa: BLE001 - batch enrichment should keep going.

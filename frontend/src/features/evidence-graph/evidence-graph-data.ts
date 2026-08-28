@@ -518,7 +518,7 @@ function reportCandidate(report: ReportRecord): GraphCandidate {
       type: "report",
       title,
       summary: report.summary ?? undefined,
-      source: "NewsRoom",
+      source: "Agora Hub",
       createdAt: date,
       updatedAt: date,
       score: isPublishedStatus(status) ? 90 : 65,

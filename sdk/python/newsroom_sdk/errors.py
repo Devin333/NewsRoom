@@ -38,4 +38,4 @@ class NewsRoomTimeoutError(NewsRoomSDKError):
 
 
 class NewsRoomResponseError(NewsRoomSDKError):
-    """Raised when the API response is not a valid NewsRoom envelope."""
+    """Raised when the API response is not a valid Agora Hub envelope."""

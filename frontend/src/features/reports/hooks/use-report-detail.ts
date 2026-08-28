@@ -132,7 +132,7 @@ function mapReportDetail(report: ApiReportDetail): Report {
     generatedAt,
     coveredFrom: generatedAt,
     coveredTo: generatedAt,
-    agentName: "NewsRoom Runtime",
+    agentName: "Agora Hub Runtime",
     qualityScore: typeof report.quality_score === "number" ? report.quality_score : undefined,
     topicIds: [],
     newsItemIds: [],

@@ -51,7 +51,7 @@ class UrllibArxivPdfPackageFetcher:
         normalized = _normalize_arxiv_id(arxiv_id)
         request = Request(
             f"https://arxiv.org/pdf/{quote(normalized, safe='/.')}",
-            headers={"User-Agent": "NewsRoom parser bakeoff ingest/1.0"},
+            headers={"User-Agent": "AgoraHubResearch/0.1 (parser bakeoff ingest)"},
         )
         with urlopen(request, timeout=self._timeout_seconds) as response:
             return ArxivPdfPackage(arxiv_id=normalized, content=response.read())

@@ -30,7 +30,7 @@ describe("AppShell", () => {
       </AppShell>
     )
 
-    expect(screen.getByRole("link", { name: "NewsRoom Research" })).toHaveAttribute("href", "/papers")
+    expect(screen.getByRole("link", { name: "Agora Hub Research" })).toHaveAttribute("href", "/papers")
     expect(screen.getByRole("button", { name: "Research" })).toBeInTheDocument()
     expect(screen.getByRole("button", { name: "Projects" })).toBeInTheDocument()
     expect(screen.getByRole("button", { name: "Today" })).toBeInTheDocument()
@@ -108,7 +108,7 @@ describe("AppShell", () => {
     )
 
     expect(screen.getByText("Management content")).toBeInTheDocument()
-    expect(screen.queryByRole("link", { name: "NewsRoom Research" })).not.toBeInTheDocument()
+    expect(screen.queryByRole("link", { name: "Agora Hub Research" })).not.toBeInTheDocument()
   })
 
   it.each(["/papers/reader-paper", "/papers/reader-paper/read"])("keeps paper reader route %s outside the portal Research header and frame", (pathname) => {
@@ -121,7 +121,7 @@ describe("AppShell", () => {
     )
 
     expect(screen.getByText("Open Reader content")).toBeInTheDocument()
-    expect(screen.queryByRole("link", { name: "NewsRoom Research" })).not.toBeInTheDocument()
+    expect(screen.queryByRole("link", { name: "Agora Hub Research" })).not.toBeInTheDocument()
     expect(container.querySelector("main")).toBeNull()
   })
 
@@ -135,6 +135,6 @@ describe("AppShell", () => {
     )
 
     expect(screen.getByText("Admin surface content")).toBeInTheDocument()
-    expect(screen.queryByRole("link", { name: "NewsRoom Research" })).not.toBeInTheDocument()
+    expect(screen.queryByRole("link", { name: "Agora Hub Research" })).not.toBeInTheDocument()
   })
 })

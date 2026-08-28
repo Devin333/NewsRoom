@@ -76,7 +76,7 @@ def fetch_arxiv_feed(query: str, start: int, max_results: int) -> ET.Element:
     )
     request = urllib.request.Request(
         f"{ARXIV_API}?{params}",
-        headers={"User-Agent": "NewsRoomResearch/0.1 (local paper collection)"},
+        headers={"User-Agent": "AgoraHubResearch/0.1 (local paper collection)"},
     )
     with urllib.request.urlopen(request, timeout=60) as response:
         return ET.fromstring(response.read())

@@ -43,7 +43,7 @@ export function buildSearchIndex(): SearchResult[] {
     id: report.id,
     objectType: "report",
     title: report.title,
-    summary: `${titleCase(report.reportType ?? report.type ?? "generated")}报告，由 ${report.agentName ?? "NewsRoom Agent"} 生成`,
+    summary: `${titleCase(report.reportType ?? report.type ?? "generated")}报告，由 ${report.agentName ?? "Agora Hub Agent"} 生成`,
     matchedSnippet: (report.markdown ?? "").slice(0, 220),
     timestamp: report.generatedAt,
     tags: [report.reportType ?? report.type ?? "report", report.status],

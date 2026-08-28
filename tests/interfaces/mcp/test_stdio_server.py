@@ -424,7 +424,7 @@ def test_stdio_loop_reads_and_writes_json_lines() -> None:
     run_stdio(input_stream=input_stream, output_stream=output_stream, service=_FakeMCPService())
 
     responses = [json.loads(line) for line in output_stream.getvalue().splitlines()]
-    assert responses[0]["result"]["serverInfo"]["name"] == "NewsRoom"
+    assert responses[0]["result"]["serverInfo"]["name"] == "Agora Hub"
     assert responses[1]["result"]["tool_name"] == "x"
 
 

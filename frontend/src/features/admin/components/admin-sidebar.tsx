@@ -48,10 +48,10 @@ export function AdminSidebar({
         <div className="border-b border-border px-4 py-4">
           <div className="flex items-center gap-3">
             <span className="flex size-9 items-center justify-center rounded-md border-2 border-foreground text-sm font-black">
-              N
+              A
             </span>
             <div>
-              <p className="text-base font-semibold text-foreground">NewsRoom</p>
+              <p className="text-base font-semibold text-foreground">Agora Hub</p>
               <p className="text-xs text-muted-foreground">{ui[lang].console}</p>
             </div>
           </div>

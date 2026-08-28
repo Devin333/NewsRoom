@@ -220,7 +220,7 @@ class ArxivSourceConnector:
         return SourceFetchPolicy(
             timeout_seconds=90,
             max_bytes=DEFAULT_ARXIV_SOURCE_MAX_BYTES,
-            user_agent="NewsRoom/0.1 arxiv-source-fetch contact: local-dev",
+            user_agent="AgoraHub/0.1 (arxiv-source-fetch; contact: local-dev)",
             respect_robots=False,
             retry_times=1,
         )

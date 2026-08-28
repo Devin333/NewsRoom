@@ -1,6 +1,6 @@
-# NewsRoom Web Console
+# Agora Hub Web Console
 
-The Web Console is the browser-facing interface for NewsRoom operators. It
+The Web Console is the browser-facing interface for Agora Hub operators. It
 consumes the same API contracts documented in `docs/09-INTERFACES_CLI_API_MCP.md`
 and must not import Graph executors, AgentLoop workers, concrete storage
 clients, or business internals directly.

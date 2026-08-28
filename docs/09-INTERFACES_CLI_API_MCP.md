@@ -1,4 +1,4 @@
-# NewsRoom Interfaces: CLI, API, SDK, MCP
+# Agora Hub Interfaces: CLI, API, SDK, MCP
 
 ## Interface Boundary
 

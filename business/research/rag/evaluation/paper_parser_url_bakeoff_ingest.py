@@ -97,7 +97,7 @@ class UrllibPdfUrlFetcher:
         request = urllib.request.Request(
             url,
             headers={
-                "User-Agent": "NewsRoom parser bakeoff/1.0",
+                "User-Agent": "AgoraHubResearch/0.1 (parser bakeoff)",
                 "Accept": "application/pdf,*/*",
             },
         )

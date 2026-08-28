@@ -1,6 +1,6 @@
-# NewsRoom Codex Instructions
+# Agora Hub Codex Instructions
 
-This repository is the NewsRoom spec-driven news intelligence runtime.
+This repository is the Agora Hub spec-driven intelligence runtime for news, research papers, and projects.
 
 ## Language and collaboration
 

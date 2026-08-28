@@ -183,7 +183,7 @@ async function fetchPdfResponse(initialUrl: URL, range: string | null, signal: A
   for (let redirectCount = 0; redirectCount <= MAX_PDF_REDIRECTS; redirectCount += 1) {
     const response = await fetch(currentUrl.toString(), {
       headers: {
-        "User-Agent": "NewsRoomResearch/0.1 (+https://localhost)",
+        "User-Agent": "AgoraHubResearch/0.1 (+https://localhost)",
         ...(range ? { Range: range } : {})
       },
       cache: "no-store",

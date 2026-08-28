@@ -30,8 +30,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       {/* Sidebar — desktop only */}
       <aside className="fixed inset-y-0 left-0 hidden w-56 flex-col border-r border-line bg-white lg:flex">
         <div className="flex h-14 items-center gap-2.5 border-b border-line px-4">
-          <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-accent text-xs font-bold text-white">N</div>
-          <span className="text-sm font-semibold text-ink">NewsRoom</span>
+          <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-accent text-xs font-bold text-white">A</div>
+          <span className="text-sm font-semibold text-ink">Agora Hub</span>
         </div>
         <nav className="flex-1 overflow-y-auto px-2 py-3">
           {navItems.map((item) => {
@@ -60,8 +60,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
       {/* Mobile top header */}
       <header className="sticky top-0 z-10 flex h-14 items-center border-b border-line bg-white px-4 lg:hidden">
-        <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-accent text-xs font-bold text-white">N</div>
-        <span className="ml-2.5 text-sm font-semibold">NewsRoom</span>
+        <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-accent text-xs font-bold text-white">A</div>
+        <span className="ml-2.5 text-sm font-semibold">Agora Hub</span>
       </header>
 
       {/* Main content */}

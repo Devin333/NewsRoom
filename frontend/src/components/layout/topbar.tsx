@@ -22,8 +22,8 @@ export function Topbar() {
     <header className="sticky top-0 z-30 border-b border-border bg-card/95 backdrop-blur">
       <div className="mx-auto flex h-14 max-w-[1480px] items-center gap-5 px-4 sm:px-6">
         <Link href="/" className="flex shrink-0 items-center gap-2">
-          <span className="flex size-6 items-center justify-center rounded-sm border-2 border-foreground text-xs font-black">N</span>
-          <span className="text-base font-semibold tracking-normal">NewsRoom</span>
+          <span className="flex size-6 items-center justify-center rounded-sm border-2 border-foreground text-xs font-black">A</span>
+          <span className="text-base font-semibold tracking-normal">Agora Hub</span>
           <span className="hidden font-serif text-sm italic text-muted-foreground sm:inline">{t("portal.topbar.withEvidence")}</span>
         </Link>
 

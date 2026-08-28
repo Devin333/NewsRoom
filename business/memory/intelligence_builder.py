@@ -197,7 +197,7 @@ class IntelligenceMemoryBuilder:
             EventMemory(
                 event_id=stable_id("event", run_id, label, summary, prefix="event"),
                 event_type="general_news",
-                title=f"NewsRoom detected update for {label}",
+                title=f"Agora Hub detected update for {label}",
                 summary=summary,
                 run_id=run_id,
                 topic=topic,

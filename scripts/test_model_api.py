@@ -1,20 +1,20 @@
 #!/usr/bin/env python3
 """
-Test an OpenAI-compatible model API for NewsRoom.
+Test an OpenAI-compatible model API for Agora Hub.
 
-Recommended usage from the NewsRoom project root:
+Recommended usage from the Agora Hub project root:
 
   python scripts/test_model_api.py
 
 Common examples:
 
-  # Use NewsRoom config route, default route is writer-primary
+  # Use Agora Hub config route, default route is writer-primary
   python scripts/test_model_api.py --route writer-primary
 
   # Use a specific config file
   python scripts/test_model_api.py --config configs/models.yaml --route writer-primary
 
-  # Raw OpenAI-compatible HTTP test without importing NewsRoom framework
+  # Raw OpenAI-compatible HTTP test without importing Agora Hub framework
   python scripts/test_model_api.py --raw \
     --base-url https://dashscope.aliyuncs.com/compatible-mode/v1 \
     --model deepseek-v4-flash \
@@ -54,7 +54,7 @@ def main() -> int:
     try:
         return run_newsroom_framework_test(args)
     except ModuleNotFoundError as exc:
-        print(f"[warn] Could not import NewsRoom framework: {exc}", file=sys.stderr)
+        print(f"[warn] Could not import Agora Hub framework: {exc}", file=sys.stderr)
         print("[warn] Falling back to raw OpenAI-compatible HTTP test.", file=sys.stderr)
         return run_raw_http_test(args)
     except Exception as exc:
@@ -66,7 +66,7 @@ def main() -> int:
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Test NewsRoom/OpenAI-compatible model API.")
+    parser = argparse.ArgumentParser(description="Test Agora Hub/OpenAI-compatible model API.")
     parser.add_argument("--config", default=None, help="Path to model config, e.g. configs/models.yaml.")
     parser.add_argument("--route", default=os.getenv("NEWS_MODEL_ROUTE", "writer-primary"), help="Model route id.")
     parser.add_argument("--prompt", default=DEFAULT_PROMPT, help="User prompt for the test request.")
@@ -90,7 +90,7 @@ def run_newsroom_framework_test(args: argparse.Namespace) -> int:
     """
     Test through the project's LLM abstraction.
 
-    This is the preferred mode inside NewsRoom because it validates:
+    This is the preferred mode inside Agora Hub because it validates:
       - config loading
       - route selection
       - env-var API key resolution

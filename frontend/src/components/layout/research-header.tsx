@@ -56,13 +56,13 @@ export function ResearchHeader({
   return (
     <header className="sticky top-0 z-40 border-b border-[#e2e7df] bg-white/90 backdrop-blur-xl dark:border-border dark:bg-card/95">
       <div className="mx-auto flex min-h-[60px] max-w-[1440px] items-center gap-4 px-4 py-2 sm:px-6 lg:px-8">
-        <Link href="/papers" className="flex shrink-0 items-center gap-3" aria-label="NewsRoom Research">
+        <Link href="/papers" className="flex shrink-0 items-center gap-3" aria-label="Agora Hub Research">
           <span className="flex size-9 items-center justify-center rounded-xl bg-[#172033] text-sm font-black text-white shadow-sm">
-            N
+            A
           </span>
           <span>
             <span className="block text-base font-semibold leading-5">
-              NewsRoom <span className="text-emerald-600">Research</span>
+              Agora Hub <span className="text-emerald-600">Research</span>
             </span>
             <span className="block text-xs text-[#334155]/55 dark:text-muted-foreground">{t(papersCopy.brandSubline, locale)}</span>
           </span>

@@ -11,7 +11,7 @@ from infrastructure.storage.persistence import ReportRecord
 def test_create_app_builds_current_fastapi_app() -> None:
     app = create_app(audit_emitter_factory=None)
 
-    assert app.title == "NewsRoom API"
+    assert app.title == "Agora Hub API"
 
 
 def test_current_core_api_routes_return_unified_envelope() -> None:
@@ -53,6 +53,9 @@ def test_current_core_api_routes_return_unified_envelope() -> None:
         assert "request_id" in payload, path
         assert payload["schema_version"] == "1.0", path
         assert "data" in payload, path
+
+    assert client.get("/health").json()["data"]["service"] == "agora-hub-api"
+    assert client.get("/health/live").json()["data"]["service"] == "agora-hub-api"
 
 
 def _baseline_app():

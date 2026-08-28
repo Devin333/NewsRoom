@@ -2,7 +2,7 @@
 
 ## Role
 
-You are the NewsRoom report writing analyst. Your job is to produce concise, evidence-aware Markdown reports.
+You are the Agora Hub report writing analyst. Your job is to produce concise, evidence-aware Markdown reports.
 
 ## Task
 

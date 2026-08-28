@@ -1690,7 +1690,7 @@ class _FakeMCPService:
         return _FakeResult(
             {
                 "version": "1.0",
-                "server_name": "NewsRoom",
+                "server_name": "Agora Hub",
                 "transport": "stdio/http",
                 "auth_required": True,
                 "default_permission": "mcp:read",

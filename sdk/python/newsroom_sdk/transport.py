@@ -144,7 +144,7 @@ class HttpTransport:
                 user_action_required=bool(error.get("user_action_required")),
                 request_id=_optional_str(error.get("request_id") or payload.get("request_id")),
             )
-        raise NewsRoomResponseError("response is missing the NewsRoom API envelope")
+        raise NewsRoomResponseError("response is missing the Agora Hub API envelope")
 
     def _headers(self, *, has_json_body: bool) -> dict[str, str]:
         headers = {

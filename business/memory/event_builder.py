@@ -207,7 +207,7 @@ def _event_title(*, topic: str | None, evidence: list[EvidenceMemory], claims: l
     if claims and claims[0].text.strip():
         text = claims[0].text.strip()
         return text[:120]
-    return f"NewsRoom update for {topic or 'run'}"
+    return f"Agora Hub update for {topic or 'run'}"
 
 
 def _event_summary(*, evidence: list[EvidenceMemory], claims: list[ClaimMemory]) -> str:

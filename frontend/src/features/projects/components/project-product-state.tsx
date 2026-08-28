@@ -5,7 +5,7 @@ import { Badge } from "@/components/ui/badge"
 import type { ProjectsApiMeta } from "@/types/projects"
 
 const EMPTY_DESCRIPTION =
-  "No real Project Radar data is available. NewsRoom will not substitute fake projects, fake cases, or fake stars."
+  "No real Project Radar data is available. Agora Hub will not substitute fake projects, fake cases, or fake stars."
 
 export function ProjectLoadingState({ title = "Loading Projects" }: { title?: string }) {
   return (

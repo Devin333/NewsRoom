@@ -219,7 +219,7 @@ private.pem
 *.p8
 *.pk8
 
-# NewsRoom local/generated files
+# Agora Hub local/generated files
 .newsroom/
 .tmp/
 .hex-skills/

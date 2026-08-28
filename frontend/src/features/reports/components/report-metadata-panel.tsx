@@ -11,7 +11,7 @@ export function ReportMetadataPanel({ report }: { report: Report }) {
         <Row label="状态" value={<Badge tone={report.status === "published" ? "good" : "info"}>{titleCase(report.status)}</Badge>} />
         <Row label="生成时间" value={formatDate(report.generatedAt)} />
         <Row label="覆盖范围" value={`${formatDate(report.coveredFrom)} - ${formatDate(report.coveredTo)}`} />
-        <Row label="智能体" value={report.agentName ?? "NewsRoom 智能体"} />
+        <Row label="智能体" value={report.agentName ?? "Agora Hub 智能体"} />
         <Row label="主题" value={String(report.topicIds?.length ?? 0)} />
         <Row label="新闻" value={String(report.newsItemIds?.length ?? 0)} />
         <Row label="证据" value={String(report.evidenceIds?.length ?? 0)} />

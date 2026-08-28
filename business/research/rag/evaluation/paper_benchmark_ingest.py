@@ -89,7 +89,7 @@ class UrllibArxivSourcePackageFetcher:
     def _fetch_bytes(self, url: str) -> bytes:
         request = Request(
             url,
-            headers={"User-Agent": "NewsRoom paper benchmark ingest/1.0"},
+            headers={"User-Agent": "AgoraHubResearch/0.1 (paper benchmark ingest)"},
         )
         with urlopen(request, timeout=self._timeout_seconds) as response:
             return response.read()

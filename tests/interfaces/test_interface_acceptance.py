@@ -15,7 +15,7 @@ def test_interface_acceptance_core_entrypoints_are_constructible() -> None:
     catalog = MCPApplicationService().catalog().to_dict()
     client = NewsRoomClient("http://localhost:8000")
 
-    assert app.title == "NewsRoom API"
+    assert app.title == "Agora Hub API"
     assert parser.prog == "news"
     assert catalog["tools"]
     assert client.runs is not None

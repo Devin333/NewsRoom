@@ -33,7 +33,7 @@ def _headers(token=None):
     return h
 
 def _get_json(url, headers=None):
-    req = urllib.request.Request(url, headers=headers or {"User-Agent": "newsroom-fetcher/1.0"})
+    req = urllib.request.Request(url, headers=headers or {"User-Agent": "AgoraHubResearch/0.1 (project fetcher)"})
     try:
         with urllib.request.urlopen(req, timeout=15) as resp:
             return json.loads(resp.read())
@@ -46,7 +46,7 @@ def _get_json(url, headers=None):
         raise
 
 def _get_text(url):
-    req = urllib.request.Request(url, headers={"User-Agent": "newsroom-fetcher/1.0"})
+    req = urllib.request.Request(url, headers={"User-Agent": "AgoraHubResearch/0.1 (project fetcher)"})
     with urllib.request.urlopen(req, timeout=15) as resp:
         return resp.read().decode("utf-8", errors="replace")
 

@@ -1,6 +1,6 @@
-# NewsRoom
+# Agora Hub
 
-NewsRoom is a spec-driven news intelligence runtime. The current backend product path is Graph Harness + Research: the Harness owns Graph outer orchestration, deterministic gates, replayable traces, Wait/approval transitions, and artifact publication, while Research owns paper-analysis domain behavior. AgentLoop is the bounded inner single-agent loop; it produces candidate work but never owns Graph routing or publication decisions.
+Agora Hub is a spec-driven intelligence hub for news, research papers, and projects. The current backend product path is Graph Harness + Research: the Harness owns Graph outer orchestration, deterministic gates, replayable traces, Wait/approval transitions, and artifact publication, while Research owns paper-analysis domain behavior. AgentLoop is the bounded inner single-agent loop; it produces candidate work but never owns Graph routing or publication decisions.
 
 ## Quick Start
 
@@ -96,7 +96,7 @@ If you see `ModuleNotFoundError` for `pydantic`, `pytest`, or `qdrant_client`:
 python -c "import sys; print(sys.executable)"
 ```
 
-It should point to `F:\github\NewsRoom\.venv\Scripts\python.exe` on Windows.
+It should point to `F:\github\NewsRoom\.venv\Scripts\python.exe` on Windows (or the equivalent path for your clone).
 
 2. Reinstall the intended dependency set:
 

@@ -1320,7 +1320,7 @@ function authors(value: unknown, sourceName: string) {
       return names
     }
   }
-  return [sourceName || "NewsRoom Extracted Source"]
+  return [sourceName || "Agora Hub Extracted Source"]
 }
 
 function cachedAuthors(value: unknown) {

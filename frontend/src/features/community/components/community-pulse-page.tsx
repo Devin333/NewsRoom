@@ -66,7 +66,7 @@ export function CommunityPulsePage({
       <section className="grid gap-8 py-8 lg:grid-cols-[minmax(0,1fr)_22rem] lg:items-end">
         <div className="min-w-0">
           <p className="mb-5 text-xs font-medium uppercase tracking-[0.18em] text-[#334155]/55 dark:text-muted-foreground">
-            NewsRoom / Community Pulse
+            Agora Hub / Community Pulse
           </p>
           <h1 className="max-w-5xl break-keep text-5xl font-black leading-none tracking-normal text-[#334155] sm:text-6xl lg:text-7xl dark:text-foreground">
             Community Pulse{" "}
