@@ -62,6 +62,12 @@ class ResearchScore(PrimitiveModel):
     value: float
     baseline_id: str | None = None
     source_refs: list[str]
+    evidence_refs: list[str] = Field(default_factory=list)
+    verification_status: Literal["candidate", "verified", "rejected", "conflicting"] = "candidate"
+    split: str | None = None
+    unit: str | None = None
+    direction: Literal["higher_is_better", "lower_is_better"] | None = None
+    evaluation_protocol: str | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
 
     @field_validator("score_id", "paper_id", "benchmark_id", "dataset_id", "metric_id")
@@ -77,6 +83,9 @@ class ResearchScore(PrimitiveModel):
         if not -1_000_000_000 <= float(self.value) <= 1_000_000_000:
             raise ValueError("benchmark score is outside supported range")
         object.__setattr__(self, "source_refs", refs)
+        object.__setattr__(self, "evidence_refs", unique_texts(self.evidence_refs))
+        if self.verification_status == "verified" and not self.evidence_refs:
+            raise ValueError("verified benchmark score requires evidence refs")
         return self
 
 

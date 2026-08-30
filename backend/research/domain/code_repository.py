@@ -40,6 +40,7 @@ class CodeRepositoryObservation(PrimitiveModel):
 
 class CodeRepositoryProfile(PrimitiveModel):
     repo_url: str
+    canonical_repo_id: str | None = None
     owner: str
     name: str
     stars: int | None = None
@@ -48,6 +49,8 @@ class CodeRepositoryProfile(PrimitiveModel):
     open_issues: int | None = None
     license: str | None = None
     default_branch: str | None = None
+    commit_sha: str | None = None
+    release: str | None = None
     last_commit_at: datetime | None = None
     release_count: int | None = None
     has_requirements: bool = False

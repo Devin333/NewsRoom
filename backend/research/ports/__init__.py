@@ -9,6 +9,12 @@ from backend.research.ports.artifact_publication import (
     ResearchGraphStorageIndexPublisherPort,
 )
 from backend.research.ports.artifact_store import ResearchArtifactStorePort
+from backend.research.ports.catalog import (
+    ResearchPaperCatalogRepository,
+    ResearchPaperIdentityRepository,
+    ResearchPaperRelationRepository,
+    ResearchSourceSnapshotRepository,
+)
 from backend.research.ports.document_compiler import DocumentCompilerPort
 from backend.research.ports.field_embedding_index import (
     FieldEmbeddingHit,
@@ -69,6 +75,10 @@ from backend.research.ports.source_provider import PaperSourceProvider
 
 __all__ = [
     "DocumentCompilerPort",
+    "ResearchPaperCatalogRepository",
+    "ResearchPaperIdentityRepository",
+    "ResearchPaperRelationRepository",
+    "ResearchSourceSnapshotRepository",
     "EvidencePackRepository",
     "FieldEmbeddingHit",
     "FieldEmbeddingIndexerPort",
