@@ -23,7 +23,7 @@ ALLOWED_BYPASS_GUARDRAIL_REFERENCES = {
 
 
 def test_skill_evolution_does_not_import_outer_layers() -> None:
-    assert forbidden_imports(SKILL_EVOLUTION_ROOT, ("business", "interfaces", "infrastructure")) == []
+    assert forbidden_imports(SKILL_EVOLUTION_ROOT, ("backend", "interfaces", "infrastructure")) == []
 
 
 def test_skill_evolution_bypass_tokens_only_appear_in_guardrails() -> None:

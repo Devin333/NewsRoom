@@ -9,20 +9,20 @@ import pytest
 from framework.events.canonical import checksum_for
 from framework.harness import ArtifactWriteRequest, InMemoryHarnessEventPort
 
-from business.research.application.run_disposition import (
+from backend.research.application.run_disposition import (
     ResearchRunDispositionReconciler,
 )
-from business.research.application.analyze_paper import AnalyzePaperUseCase
-from business.research.application.single_paper_runtime import (
+from backend.research.application.analyze_paper import AnalyzePaperUseCase
+from backend.research.application.single_paper_runtime import (
     AnalyzePaperRequest,
     ResearchAnalysisResult,
     ResearchSinglePaperRuntime,
 )
-from business.research.ports.artifact_publication import (
+from backend.research.ports.artifact_publication import (
     ResearchArtifactReadClaim,
     artifact_evidence_ref,
 )
-from business.research.ports.run_store import (
+from backend.research.ports.run_store import (
     ResearchRunDisposition,
     ResearchRunRecord,
 )
@@ -49,7 +49,7 @@ from interfaces.services.research_service import (
     ResearchApplicationService,
     ResearchServiceError,
 )
-from tests.business.research.fakes import (
+from tests.backend.research.fakes import (
     FakeGithubRepositoryPort,
     FakeResearchDocumentCompiler,
     FakeResearchLLMWorker,

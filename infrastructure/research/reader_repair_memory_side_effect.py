@@ -19,7 +19,7 @@ from framework.harness.control_plane.errors import HarnessValidationError
 from framework.harness.memory import MemoryWriteCandidate
 from framework.shared.time import utc_now
 
-from business.research.ports.repair_memory import (
+from backend.research.ports.repair_memory import (
     READER_REPAIR_MEMORY_EFFECT_KIND,
     READER_REPAIR_MEMORY_HANDLER_REF,
     READER_REPAIR_MEMORY_SCHEMA_VERSION,

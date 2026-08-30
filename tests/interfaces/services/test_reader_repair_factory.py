@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from business.research.reader_repair import ReaderRepairService
+from backend.research.reader_repair import ReaderRepairService
 from interfaces.services.reader_repair_memory import (
     PostgresReaderRepairFailureDiagnosticCommitPort,
     PostgresReaderRepairMemoryCommitPort,

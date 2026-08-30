@@ -15,7 +15,7 @@ def test_harness_port_contracts_do_not_import_concrete_infrastructure() -> None:
         Path("framework/harness/skills"),
         Path("framework/harness/workers"),
     ]
-    forbidden_prefixes = ("business", "interfaces", "infrastructure")
+    forbidden_prefixes = ("backend", "interfaces", "infrastructure")
     violations: list[str] = []
 
     for root in roots:

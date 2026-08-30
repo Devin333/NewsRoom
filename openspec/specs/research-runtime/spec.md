@@ -3,12 +3,12 @@ Define the Research runtime domain boundary, single-paper analysis loop, reader 
 ## Requirements
 ### Requirement: Research Domain Boundary
 
-Research runtime SHALL live under `business/research` and SHALL express Research domain models, ports, use cases, Graph definitions, and business rules. `business/research` MUST NOT import `business/boards/paper_radar`, `interfaces`, concrete `infrastructure` modules, `framework.workflow`, or the retired Harness Workflow namespace.
+Research runtime SHALL live under `backend/research` and SHALL express Research domain models, ports, use cases, Graph definitions, and business rules. `backend/research` MUST NOT import `backend/boards/paper_radar`, `interfaces`, concrete `infrastructure` modules, `framework.workflow`, or the retired Harness Workflow namespace.
 
 #### Scenario: Research imports stay inside allowed boundaries
 
-- **WHEN** import boundary tests scan `business/research`
-- **THEN** no import may target `business.boards.paper_radar`, `interfaces`, `infrastructure`, `framework.workflow`, or `framework.harness.workflow`
+- **WHEN** import boundary tests scan `backend/research`
+- **THEN** no import may target `backend.boards.paper_radar`, `interfaces`, `infrastructure`, `framework.workflow`, or `framework.harness.workflow`
 - **AND** Research may depend only on domain-neutral framework contracts and Research-owned Graph modules
 
 ### Requirement: Research Product Scenarios Precede Domain Modeling

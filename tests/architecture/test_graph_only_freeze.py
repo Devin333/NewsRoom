@@ -39,10 +39,10 @@ def test_history_deletion_proof_is_an_explicit_non_runtime_audit_file() -> None:
 
 
 def test_new_external_forbidden_import_fails(tmp_path: Path) -> None:
-    baseline = _capture(tmp_path, {"business/service.py": "VALUE = 1\n"})
+    baseline = _capture(tmp_path, {"backend/service.py": "VALUE = 1\n"})
     _write(
         tmp_path,
-        "business/new_service.py",
+        "backend/new_service.py",
         "from framework.workflow.runtime import WorkflowRunner\n",
     )
 
@@ -53,7 +53,7 @@ def test_new_external_forbidden_import_fails(tmp_path: Path) -> None:
 
 
 def test_new_legacy_namespace_file_fails(tmp_path: Path) -> None:
-    baseline = _capture(tmp_path, {"business/service.py": "VALUE = 1\n"})
+    baseline = _capture(tmp_path, {"backend/service.py": "VALUE = 1\n"})
     _write(tmp_path, "framework/workflow/new_runtime.py", "VALUE = 1\n")
 
     assert _has_code(
@@ -80,7 +80,7 @@ def test_symbol_added_to_existing_import_fails_as_expansion(tmp_path: Path) -> N
     baseline = _capture(
         tmp_path,
         {
-            "business/service.py": (
+            "backend/service.py": (
                 "from framework.workflow.runtime import WorkflowRunner\n"
                 "VALUE = WorkflowRunner\n"
             )
@@ -88,7 +88,7 @@ def test_symbol_added_to_existing_import_fails_as_expansion(tmp_path: Path) -> N
     )
     _write(
         tmp_path,
-        "business/service.py",
+        "backend/service.py",
         "from framework.workflow.runtime import WorkflowExecutor, WorkflowRunner\n"
         "VALUE = WorkflowRunner\n",
     )
@@ -103,7 +103,7 @@ def test_import_symbol_subtraction_can_advance_the_baseline(tmp_path: Path) -> N
     baseline = _capture(
         tmp_path,
         {
-            "business/service.py": (
+            "backend/service.py": (
                 "from framework.workflow.runtime import "
                 "WorkflowExecutor, WorkflowRunner\n"
                 "VALUE = WorkflowRunner\n"
@@ -112,7 +112,7 @@ def test_import_symbol_subtraction_can_advance_the_baseline(tmp_path: Path) -> N
     )
     _write(
         tmp_path,
-        "business/service.py",
+        "backend/service.py",
         "from framework.workflow.runtime import WorkflowRunner\n"
         "VALUE = WorkflowRunner\n",
     )
@@ -154,11 +154,11 @@ def test_harness_workflow_facade_import_can_refine_to_exact_owner(
 ) -> None:
     baseline = _capture(
         tmp_path,
-        {"business/service.py": f"from framework.harness.workflow import {symbol}\n"},
+        {"backend/service.py": f"from framework.harness.workflow import {symbol}\n"},
     )
     _write(
         tmp_path,
-        "business/service.py",
+        "backend/service.py",
         f"from {owner_module} import {symbol}\n",
     )
     current = scan_tree(tmp_path)
@@ -179,14 +179,14 @@ def test_harness_workflow_facade_import_rejects_wrong_concrete_owner(
     baseline = _capture(
         tmp_path,
         {
-            "business/service.py": (
+            "backend/service.py": (
                 "from framework.harness.workflow import HarnessWorkflowSpec\n"
             )
         },
     )
     _write(
         tmp_path,
-        "business/service.py",
+        "backend/service.py",
         (
             "from framework.harness.workflow.compiler import "
             "HarnessWorkflowSpec\n"
@@ -218,15 +218,15 @@ def test_new_definition_alias_or_reflection_fails(
     source: str,
     code: str,
 ) -> None:
-    baseline = _capture(tmp_path, {"business/service.py": "VALUE = 1\n"})
-    _write(tmp_path, "business/service.py", source)
+    baseline = _capture(tmp_path, {"backend/service.py": "VALUE = 1\n"})
+    _write(tmp_path, "backend/service.py", source)
 
     assert _has_code(verify_tree(tmp_path, baseline), code)
 
 
 def test_new_legacy_public_export_fails(tmp_path: Path) -> None:
-    baseline = _capture(tmp_path, {"business/service.py": "__all__ = []\n"})
-    _write(tmp_path, "business/service.py", "__all__ = ['RunResult']\n")
+    baseline = _capture(tmp_path, {"backend/service.py": "__all__ = []\n"})
+    _write(tmp_path, "backend/service.py", "__all__ = ['RunResult']\n")
 
     assert _has_code(
         verify_tree(tmp_path, baseline),
@@ -235,10 +235,10 @@ def test_new_legacy_public_export_fails(tmp_path: Path) -> None:
 
 
 def test_new_legacy_schema_writer_fails(tmp_path: Path) -> None:
-    baseline = _capture(tmp_path, {"business/service.py": "VALUE = 1\n"})
+    baseline = _capture(tmp_path, {"backend/service.py": "VALUE = 1\n"})
     _write(
         tmp_path,
-        "business/service.py",
+        "backend/service.py",
         "RENAMED = 'newsroom.workflow-event/v1'\n"
         "PAYLOAD = {'schema_version': RENAMED}\n",
     )
@@ -254,7 +254,7 @@ def test_legacy_schema_read_comparison_is_not_a_writer(tmp_path: Path) -> None:
         "def is_legacy(value):\n"
         "    return value == 'newsroom.workflow-event/v1'\n"
     )
-    baseline = _capture(tmp_path, {"business/service.py": source})
+    baseline = _capture(tmp_path, {"backend/service.py": source})
 
     assert verify_tree(tmp_path, baseline) == []
     assert baseline["active"]["legacy_schema_writers"] == {}
@@ -278,11 +278,11 @@ def test_baseline_update_allows_only_subtraction(tmp_path: Path) -> None:
     baseline = _capture(
         tmp_path,
         {
-            "business/a.py": "from framework.workflow.runtime import WorkflowRunner\n",
-            "business/b.py": "VALUE = 1\n",
+            "backend/a.py": "from framework.workflow.runtime import WorkflowRunner\n",
+            "backend/b.py": "VALUE = 1\n",
         },
     )
-    _write(tmp_path, "business/a.py", "VALUE = 1\n")
+    _write(tmp_path, "backend/a.py", "VALUE = 1\n")
     reduced = scan_tree(tmp_path)
     assert _has_code(
         verify_tree(tmp_path, baseline),
@@ -301,7 +301,7 @@ def test_baseline_update_allows_only_subtraction(tmp_path: Path) -> None:
 
     _write(
         tmp_path,
-        "business/b.py",
+        "backend/b.py",
         "from framework.workflow.runtime import WorkflowExecutor\n",
     )
     with pytest.raises(FreezeBaselineError, match="not subtract-only"):
@@ -314,8 +314,8 @@ def test_baseline_update_allows_only_subtraction(tmp_path: Path) -> None:
 
 
 def test_source_parse_failure_fails_closed(tmp_path: Path) -> None:
-    baseline = _capture(tmp_path, {"business/service.py": "VALUE = 1\n"})
-    _write(tmp_path, "business/service.py", "def broken(:\n")
+    baseline = _capture(tmp_path, {"backend/service.py": "VALUE = 1\n"})
+    _write(tmp_path, "backend/service.py", "def broken(:\n")
 
     assert _has_code(
         verify_tree(tmp_path, baseline),
@@ -324,7 +324,7 @@ def test_source_parse_failure_fails_closed(tmp_path: Path) -> None:
 
 
 def test_missing_or_incomplete_baseline_fields_fail_closed(tmp_path: Path) -> None:
-    baseline = _capture(tmp_path, {"business/service.py": "VALUE = 1\n"})
+    baseline = _capture(tmp_path, {"backend/service.py": "VALUE = 1\n"})
     missing = copy.deepcopy(baseline)
     del missing["active"]
     with pytest.raises(FreezeBaselineError, match="fields must be exactly"):
@@ -345,7 +345,7 @@ def test_duplicate_baseline_keys_fail_closed(tmp_path: Path) -> None:
 
 
 def _capture(project_root: Path, files: dict[str, str]) -> dict[str, object]:
-    for root in ("business", "framework", "infrastructure", "interfaces", "scripts"):
+    for root in ("backend", "framework", "infrastructure", "interfaces", "scripts"):
         (project_root / root).mkdir(parents=True, exist_ok=True)
     for relative_path, source in files.items():
         _write(project_root, relative_path, source)

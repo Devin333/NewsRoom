@@ -27,7 +27,7 @@ WORKDIR /workspace
 
 COPY docker/nougat/constraints.txt /tmp/nougat-constraints.txt
 COPY pyproject.toml README.md ./
-COPY business ./business
+COPY backend ./backend
 COPY framework ./framework
 COPY infrastructure ./infrastructure
 COPY interfaces ./interfaces

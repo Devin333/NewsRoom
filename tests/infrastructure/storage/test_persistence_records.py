@@ -5,9 +5,9 @@ from dataclasses import dataclass
 
 import pytest
 
-from business.foundation.models.report_output import BlockedReport, FinalReport
-from business.layers.relation.evidence import EvidenceBundle, EvidenceItem, VerifiedClaim, VerifiedFindings
-from business.layers.analysis.quality import QualityGateMetrics, ReportQualitySummary
+from backend.foundation.models.report_output import BlockedReport, FinalReport
+from backend.layers.relation.evidence import EvidenceBundle, EvidenceItem, VerifiedClaim, VerifiedFindings
+from backend.layers.analysis.quality import QualityGateMetrics, ReportQualitySummary
 from infrastructure.storage.records import (
     ClaimRecord,
     EvidenceItemRecord,

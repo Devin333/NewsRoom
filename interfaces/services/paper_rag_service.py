@@ -5,11 +5,11 @@ from contextlib import contextmanager
 from threading import Condition, Lock
 from typing import Any, Callable
 
-from business.research.application import AskPaperUseCase
-from business.research.domain import stable_research_id
-from business.research.rag.models import ResearchRetrievalGoal
-from business.research.rag.retrieval.paper_retriever import RetrievalRequest
-from business.research.services.tenant_visibility import chunk_visible_to_tenant, public_metrics
+from backend.research.application import AskPaperUseCase
+from backend.research.domain import stable_research_id
+from backend.research.rag.models import ResearchRetrievalGoal
+from backend.research.rag.retrieval.paper_retriever import RetrievalRequest
+from backend.research.services.tenant_visibility import chunk_visible_to_tenant, public_metrics
 from framework.harness.context.models import ContextGraphIdentity
 from framework.harness.rag.visibility import evidence_visible_to_tenant
 from interfaces.services.paper_rag_factory import PaperRagRuntimeResources

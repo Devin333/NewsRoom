@@ -40,7 +40,7 @@ MARKERS = (
     "Data" + "Buffer",
 )
 
-SOURCE_ROOTS = ("business", "framework", "infrastructure", "interfaces")
+SOURCE_ROOTS = ("backend", "framework", "infrastructure", "interfaces")
 DOC_ROOTS = (
     "README.md",
     "docs/architecture",
@@ -73,7 +73,7 @@ NEGATIVE_SPEC_PREFIXES = (
     "openspec/specs/structure-cleanup-governance/",
 )
 METADATA_ALLOWLIST = {
-    "business/research/document/chunk_storage.py": "chunk metadata field, not orchestration authority",
+    "backend/research/document/chunk_storage.py": "chunk metadata field, not orchestration authority",
     "framework/events/schema/security.py": "reserved legacy field blocked from event authority",
     "infrastructure/storage/local_json/repository.py": "legacy manifest identity is rejected before live persistence",
     "infrastructure/storage/persistence/records.py": "legacy persisted identity is rejected before live persistence",

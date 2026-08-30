@@ -8,7 +8,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Mapping
 
-from business.research.graphs import build_paper_analysis_graph_definition
+from backend.research.graphs import build_paper_analysis_graph_definition
 from framework.harness.artifacts import (
     GraphTerminalArtifact,
     GraphTerminalManifest,

@@ -4,14 +4,14 @@ from datetime import UTC, datetime
 
 import pytest
 
-from business.research.domain import ReaderIssue
-from business.research.domain.reader_repair import ReaderRepairStrategy
+from backend.research.domain import ReaderIssue
+from backend.research.domain.reader_repair import ReaderRepairStrategy
 from infrastructure.storage.postgres.repair_memory_repository import (
     PostgresReaderRepairMemoryCommitConflictError,
     PostgresReaderRepairMemoryObjectWrite,
     PostgresReaderRepairMemoryRepository,
 )
-from tests.business.research.reader_repair._fixtures import make_repair_case
+from tests.backend.research.reader_repair._fixtures import make_repair_case
 
 
 CHECKSUM_A = f"sha256:{'a' * 64}"

@@ -10,106 +10,106 @@ INFRASTRUCTURE_ROOT = PROJECT_ROOT / "infrastructure"
 # TODO(architecture-p2-memory-port-migration): remove these exceptions when
 # infrastructure memory/vector/graph adapters use storage-facing port DTOs.
 ALLOWED_BUSINESS_IMPORTS = {
-    "infrastructure/storage/graph/postgres_graph_store.py": {"business.memory.graph_models"},
+    "infrastructure/storage/graph/postgres_graph_store.py": {"backend.memory.graph_models"},
     "infrastructure/storage/memory/intelligence_vector_index.py": {
-        "business.memory.intelligence_models",
+        "backend.memory.intelligence_models",
     },
     "infrastructure/storage/postgres/memory_repository.py": {
-        "business.memory.intelligence_builder",
-        "business.memory.intelligence_models",
+        "backend.memory.intelligence_builder",
+        "backend.memory.intelligence_models",
     },
     "infrastructure/storage/postgres/repository.py": {
-        "business.foundation.models.source_error_normalization",
+        "backend.foundation.models.source_error_normalization",
     },
     "infrastructure/external/sources/url_utils.py": {
-        "business.foundation.primitives.source_ref",
+        "backend.foundation.primitives.source_ref",
     },
     "infrastructure/external/sources/errors/taxonomy.py": {
-        "business.layers.signal.source_processing.error_taxonomy",
+        "backend.layers.signal.source_processing.error_taxonomy",
     },
     "infrastructure/research/document_compiler.py": {
-        "business.research.domain.common",
-        "business.research.domain.document",
-        "business.research.domain.paper",
-        "business.research.ports.document_compiler",
-        "business.research.ports.document_parser",
+        "backend.research.domain.common",
+        "backend.research.domain.document",
+        "backend.research.domain.paper",
+        "backend.research.ports.document_compiler",
+        "backend.research.ports.document_parser",
     },
     "infrastructure/research/artifact_publication.py": {
-        "business.research.ports.artifact_publication",
+        "backend.research.ports.artifact_publication",
     },
     "infrastructure/research/artifact_port.py": {
-        "business.research.ports.artifact_publication",
+        "backend.research.ports.artifact_publication",
     },
     "infrastructure/research/filesystem_run_store.py": {
-        "business.research.domain.run_disposition",
-        "business.research.ports.run_store",
+        "backend.research.domain.run_disposition",
+        "backend.research.ports.run_store",
     },
     "infrastructure/research/github_repository.py": {
-        "business.research.domain.code_repository",
+        "backend.research.domain.code_repository",
     },
     "infrastructure/research/reader_repair_memory_side_effect.py": {
-        "business.research.ports.repair_memory",
+        "backend.research.ports.repair_memory",
     },
     "infrastructure/research/reader_repair_failure_diagnostic_side_effect.py": {
-        "business.research.domain.reader_repair",
-        "business.research.ports.reader_repair_failure_diagnostic",
+        "backend.research.domain.reader_repair",
+        "backend.research.ports.reader_repair_failure_diagnostic",
     },
     "infrastructure/research/candidate_worker.py": {
-        "business.research.ports.reader_repair_candidate",
+        "backend.research.ports.reader_repair_candidate",
     },
     "infrastructure/research/source_provider.py": {
-        "business.research.domain.paper",
+        "backend.research.domain.paper",
     },
 }
 
 SOURCE_ADAPTER_BUSINESS_IMPORTS = {
     "infrastructure/external/sources/url_utils.py": {
-        "business.foundation.primitives.source_ref",
+        "backend.foundation.primitives.source_ref",
     },
     "infrastructure/external/sources/errors/taxonomy.py": {
-        "business.layers.signal.source_processing.error_taxonomy",
+        "backend.layers.signal.source_processing.error_taxonomy",
     },
 }
 
 SOURCE_STORAGE_BUSINESS_IMPORTS = {
     "infrastructure/storage/postgres/repository.py": {
-        "business.foundation.models.source_error_normalization",
+        "backend.foundation.models.source_error_normalization",
     },
 }
 
 RESEARCH_ADAPTER_BUSINESS_IMPORTS = {
     "infrastructure/research/artifact_port.py": {
-        "business.research.ports.artifact_publication",
+        "backend.research.ports.artifact_publication",
     },
     "infrastructure/research/artifact_publication.py": {
-        "business.research.ports.artifact_publication",
+        "backend.research.ports.artifact_publication",
     },
     "infrastructure/research/document_compiler.py": {
-        "business.research.domain.common",
-        "business.research.domain.document",
-        "business.research.domain.paper",
-        "business.research.ports.document_compiler",
-        "business.research.ports.document_parser",
+        "backend.research.domain.common",
+        "backend.research.domain.document",
+        "backend.research.domain.paper",
+        "backend.research.ports.document_compiler",
+        "backend.research.ports.document_parser",
     },
     "infrastructure/research/filesystem_run_store.py": {
-        "business.research.domain.run_disposition",
-        "business.research.ports.run_store",
+        "backend.research.domain.run_disposition",
+        "backend.research.ports.run_store",
     },
     "infrastructure/research/github_repository.py": {
-        "business.research.domain.code_repository",
+        "backend.research.domain.code_repository",
     },
     "infrastructure/research/reader_repair_memory_side_effect.py": {
-        "business.research.ports.repair_memory",
+        "backend.research.ports.repair_memory",
     },
     "infrastructure/research/reader_repair_failure_diagnostic_side_effect.py": {
-        "business.research.domain.reader_repair",
-        "business.research.ports.reader_repair_failure_diagnostic",
+        "backend.research.domain.reader_repair",
+        "backend.research.ports.reader_repair_failure_diagnostic",
     },
     "infrastructure/research/candidate_worker.py": {
-        "business.research.ports.reader_repair_candidate",
+        "backend.research.ports.reader_repair_candidate",
     },
     "infrastructure/research/source_provider.py": {
-        "business.research.domain.paper",
+        "backend.research.domain.paper",
     },
 }
 
@@ -120,7 +120,7 @@ def test_infrastructure_does_not_import_business_or_interfaces() -> None:
         relative_path = path.relative_to(PROJECT_ROOT).as_posix()
         allowed_imports = ALLOWED_BUSINESS_IMPORTS.get(relative_path, set())
         for imported in _imports_for_file(path):
-            if imported in {"business", "interfaces"} or imported.startswith(("business.", "interfaces.")):
+            if imported in {"backend", "interfaces"} or imported.startswith(("backend.", "interfaces.")):
                 if imported not in allowed_imports:
                     violations.append(f"{relative_path}: {imported}")
 
@@ -154,7 +154,7 @@ def test_research_adapter_business_imports_are_exact_contract_exceptions() -> No
         business_imports = {
             imported
             for imported in _imports_for_file(path)
-            if imported == "business" or imported.startswith("business.")
+            if imported == "backend" or imported.startswith("backend.")
         }
         if business_imports:
             actual[relative_path] = business_imports
@@ -162,7 +162,7 @@ def test_research_adapter_business_imports_are_exact_contract_exceptions() -> No
     assert actual == RESEARCH_ADAPTER_BUSINESS_IMPORTS
     assert all(
         imported.startswith(
-            ("business.research.domain.", "business.research.ports.")
+            ("backend.research.domain.", "backend.research.ports.")
         )
         for imports in actual.values()
         for imported in imports

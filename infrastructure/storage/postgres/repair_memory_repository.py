@@ -118,7 +118,7 @@ class PostgresReaderRepairMemoryRepository:
 
     This infrastructure class intentionally stores and returns dictionaries. The
     business-domain mapping lives in the interface adapter so infrastructure
-    does not import `business.*`.
+    does not import `backend.*`.
     """
 
     def __init__(self, dsn: str, *, connection_factory: ConnectionFactory | None = None) -> None:

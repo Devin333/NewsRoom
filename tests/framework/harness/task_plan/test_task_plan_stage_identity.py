@@ -4,7 +4,7 @@ from dataclasses import replace
 
 import pytest
 
-from business.research.graphs import (
+from backend.research.graphs import (
     RESEARCH_DYNAMIC_INPUT_REFS,
     RESEARCH_DYNAMIC_OUTPUT_ROLES,
     RESEARCH_DYNAMIC_POLICY_REF,

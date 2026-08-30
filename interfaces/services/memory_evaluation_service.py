@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from business.memory.evaluation import MemoryEvaluationRequest, MemoryEvaluator
+from backend.memory.evaluation import MemoryEvaluationRequest, MemoryEvaluator
 
 
 @dataclass(frozen=True)

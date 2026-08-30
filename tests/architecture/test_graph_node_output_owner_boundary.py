@@ -9,19 +9,19 @@ _OWNER = _PROJECT_ROOT / "framework/harness/control_plane/node_output.py"
 _ADAPTER = _PROJECT_ROOT / "framework/harness/runtime/node_output.py"
 _EXECUTOR = _PROJECT_ROOT / "framework/harness/runtime/activity_executor.py"
 _LIVE_ROOTS = (
-    _PROJECT_ROOT / "business",
+    _PROJECT_ROOT / "backend",
     _PROJECT_ROOT / "interfaces",
     _PROJECT_ROOT / "infrastructure",
 )
 _REQUIRED_LIVE_RUNTIME_PATHS = {
-    "business/research/application/reader_repair_runtime.py",
-    "business/research/application/single_paper_runtime.py",
+    "backend/research/application/reader_repair_runtime.py",
+    "backend/research/application/single_paper_runtime.py",
     "interfaces/composition/agent_loop_graph.py",
     "interfaces/services/agent_loop_graph_service.py",
     "interfaces/services/agent_loop_smoke_service.py",
 }
 _FORBIDDEN_OWNER_ROOTS = (
-    "business",
+    "backend",
     "framework.workflow",
     "infrastructure",
     "interfaces",

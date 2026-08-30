@@ -8,7 +8,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 MEMORY_ROOT = PROJECT_ROOT / "framework" / "memory"
 FORBIDDEN_IMPORT_PREFIXES = (
     "storage",
-    "business",
+    "backend",
     "interfaces",
     "infrastructure",
     "domain",

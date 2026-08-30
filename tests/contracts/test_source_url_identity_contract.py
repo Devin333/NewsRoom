@@ -2,18 +2,18 @@ from __future__ import annotations
 
 import pytest
 
-from business.foundation.primitives.source_ref import (
+from backend.foundation.primitives.source_ref import (
     SourceRef,
     canonicalize_url,
     source_url_read_aliases,
 )
-from business.foundation.taxonomy import SourceType
-from business.layers.analysis.quality_records import (
+from backend.foundation.taxonomy import SourceType
+from backend.layers.analysis.quality_records import (
     AnalysisEvidenceBundle,
     AnalysisEvidenceItem,
     citation_check,
 )
-from business.layers.signal.tools import register_source_tools
+from backend.layers.signal.tools import register_source_tools
 from framework.tool import ToolCall, ToolExecutor, ToolPolicy, ToolRegistry, ToolStatus
 from infrastructure.external.sources.html import HtmlConnector
 from infrastructure.external.sources.models import SourceDefinition

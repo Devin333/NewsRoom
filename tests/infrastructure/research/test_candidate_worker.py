@@ -6,13 +6,13 @@ from typing import Any
 import pytest
 
 import infrastructure.research as research_adapters
-from business.research.ports.llm_worker import ResearchCandidateWorkerPort
-from business.research.graphs import build_paper_analysis_context_graph_identity
-from business.research.ports.reader_repair_candidate import (
+from backend.research.ports.llm_worker import ResearchCandidateWorkerPort
+from backend.research.graphs import build_paper_analysis_context_graph_identity
+from backend.research.ports.reader_repair_candidate import (
     READER_REPAIR_APPLICATION_OBSERVATION_TASK,
     READER_REPAIR_PATCH_CANDIDATE_TASK,
 )
-from business.research.rag.adapters.plan_worker import ResearchRAGPlanWorker
+from backend.research.rag.adapters.plan_worker import ResearchRAGPlanWorker
 from framework.harness import RAGBudget, RAGSessionSpec, RetrievalGoal, WorkerRAGPlanner
 from framework.llm import (
     LOCAL_STRUCTURED_OUTPUT_DIALECT,

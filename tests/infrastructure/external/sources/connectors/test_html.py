@@ -2,7 +2,7 @@ from datetime import UTC, datetime
 from io import BytesIO
 from urllib.error import HTTPError
 
-from business.foundation.models.source import SourceDefinition
+from backend.foundation.models.source import SourceDefinition
 from infrastructure.external.sources import HtmlConnector, SourceFetchPolicy, extract_html
 
 

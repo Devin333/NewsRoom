@@ -11,13 +11,13 @@ INFRA_STORAGE_ROOT = PROJECT_ROOT / "infrastructure" / "storage"
 # infrastructure memory/vector/graph adapters depend on port DTOs instead of
 # business memory models.
 ALLOWED_BUSINESS_MEMORY_IMPORTS = {
-    "infrastructure/storage/graph/postgres_graph_store.py": {"business.memory.graph_models"},
+    "infrastructure/storage/graph/postgres_graph_store.py": {"backend.memory.graph_models"},
     "infrastructure/storage/memory/intelligence_vector_index.py": {
-        "business.memory.intelligence_models",
+        "backend.memory.intelligence_models",
     },
     "infrastructure/storage/postgres/memory_repository.py": {
-        "business.memory.intelligence_builder",
-        "business.memory.intelligence_models",
+        "backend.memory.intelligence_builder",
+        "backend.memory.intelligence_models",
     },
 }
 
@@ -32,7 +32,7 @@ def test_infrastructure_business_memory_imports_are_explicit_debt() -> None:
         imports = {
             imported
             for imported in _imports_for_file(path)
-            if imported == "business.memory" or imported.startswith("business.memory.")
+            if imported == "backend.memory" or imported.startswith("backend.memory.")
         }
         if not imports:
             continue

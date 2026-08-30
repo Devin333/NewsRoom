@@ -3,8 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from business.memory.feedback_memory import FeedbackMemory, FeedbackMemoryService
-from business.memory.intelligence_builder import stable_id
+from backend.memory.feedback_memory import FeedbackMemory, FeedbackMemoryService
+from backend.memory.intelligence_builder import stable_id
 
 
 @dataclass(frozen=True)

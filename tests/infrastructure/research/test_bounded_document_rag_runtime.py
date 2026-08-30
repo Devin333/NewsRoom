@@ -2,15 +2,15 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from business.research.application.bounded_document_rag import (
+from backend.research.application.bounded_document_rag import (
     BoundedDocumentRAGRuntime,
 )
-from business.research.document.chunk_storage import PaperChunkStoreAdapter
-from business.research.domain.common import SourceLineage
-from business.research.domain.document import ResearchDocument, ResearchSection
-from business.research.graphs import build_paper_analysis_context_graph_identity
-from business.research.rag.models import ResearchRetrievalGoal
-from business.research.services.rag_policy import ResearchRAGPolicyBuilder
+from backend.research.document.chunk_storage import PaperChunkStoreAdapter
+from backend.research.domain.common import SourceLineage
+from backend.research.domain.document import ResearchDocument, ResearchSection
+from backend.research.graphs import build_paper_analysis_context_graph_identity
+from backend.research.rag.models import ResearchRetrievalGoal
+from backend.research.services.rag_policy import ResearchRAGPolicyBuilder
 from framework.harness.rag.models import RAGBudget
 from framework.harness.rag.replay import replay_rag_session
 from infrastructure.research.local_chunk_store import LocalChunkPayloadStore

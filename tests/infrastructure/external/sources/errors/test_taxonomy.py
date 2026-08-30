@@ -1,7 +1,7 @@
 from urllib.error import HTTPError, URLError
 
 from infrastructure.external.sources.errors import classify_source_exception
-from business.layers.signal.source_processing.error_taxonomy import (
+from backend.layers.signal.source_processing.error_taxonomy import (
     classify_source_exception as business_classify_source_exception,
 )
 

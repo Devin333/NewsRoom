@@ -7,7 +7,7 @@ from threading import RLock
 from typing import Any
 from urllib.parse import urlsplit
 
-from business.research.domain.paper import PaperSourceRecord, ResearchPaper
+from backend.research.domain.paper import PaperSourceRecord, ResearchPaper
 from framework.shared.json import stable_json_dumps
 from infrastructure.external.sources.arxiv import (
     ARXIV_API_URL,

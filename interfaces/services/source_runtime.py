@@ -6,17 +6,17 @@ from pathlib import Path
 from threading import Lock
 from typing import Any
 
-from business.foundation.models.source import (
+from backend.foundation.models.source import (
     SourceFetchPolicy as BusinessSourceFetchPolicy,
 )
-from business.foundation.registry.source_registry import SourceRegistry
-from business.layers.signal.source_config import (
+from backend.foundation.registry.source_registry import SourceRegistry
+from backend.layers.signal.source_config import (
     build_default_source_fetch_policy,
     build_default_source_registry,
 )
-from business.layers.signal.source_health import BasicSourceHealthManager, SourceHealthStore
-from business.layers.signal.source_router import SourceConnectorRouter
-from business.layers.signal.source_tool_runtime import SourceRateLimitDecision
+from backend.layers.signal.source_health import BasicSourceHealthManager, SourceHealthStore
+from backend.layers.signal.source_router import SourceConnectorRouter
+from backend.layers.signal.source_tool_runtime import SourceRateLimitDecision
 from infrastructure.external.sources import (
     ArxivSourceConnector,
     DevToConnector,

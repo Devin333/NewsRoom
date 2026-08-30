@@ -1,6 +1,6 @@
 from datetime import UTC, datetime
 
-from business.memory.intelligence_models import ClaimHistoryRecord, EventMemory, PreferenceMemory
+from backend.memory.intelligence_models import ClaimHistoryRecord, EventMemory, PreferenceMemory
 from infrastructure.storage.postgres.memory_repository import PostgresIntelligenceMemoryRepository
 from infrastructure.storage.postgres.repository import PostgresRepository
 

@@ -23,12 +23,12 @@ load_root_env()
 from infrastructure.storage.vector.qdrant_store import qdrant_store_from_env
 from infrastructure.storage.vector.paper_chunk_store import PaperChunkStore
 from infrastructure.external.reranker import CrossEncoderReranker
-from business.research.document.chunk_storage import PaperChunkStoreAdapter
-from business.research.rag.retriever import ResearchRetriever, RetrievalRequest
-from business.research.rag.generator import AnswerGenerator
-from business.research.rag.system_eval import SystemEvaluator, SystemSample
-from business.research.rag.eval import load_golden_set
-from business.research.application.llm_client import build_unity_llm_call
+from backend.research.document.chunk_storage import PaperChunkStoreAdapter
+from backend.research.rag.retriever import ResearchRetriever, RetrievalRequest
+from backend.research.rag.generator import AnswerGenerator
+from backend.research.rag.system_eval import SystemEvaluator, SystemSample
+from backend.research.rag.eval import load_golden_set
+from backend.research.application.llm_client import build_unity_llm_call
 
 GOLDEN = Path("data/eval/golden_set.json")
 PER_DOMAIN = 3

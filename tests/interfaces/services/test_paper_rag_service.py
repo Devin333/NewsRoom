@@ -15,8 +15,8 @@ from framework.harness.rag.models import (
 )
 from framework.harness.rag.metrics import RAGSessionMetrics
 from framework.harness.rag.policy import RAGDecision, RAGDecisionType
-from business.research.rag.evaluation.paper_evidence_eval import EvidenceQAPair
-from business.research.graphs import build_paper_analysis_context_graph_identity
+from backend.research.rag.evaluation.paper_evidence_eval import EvidenceQAPair
+from backend.research.graphs import build_paper_analysis_context_graph_identity
 from interfaces.services.paper_rag_service import PaperRagApplicationService
 from interfaces.services.paper_rag_transcript_store import PaperRagTranscriptArtifact, PaperRagTranscriptFileStore
 

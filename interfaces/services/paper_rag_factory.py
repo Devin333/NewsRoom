@@ -25,23 +25,23 @@ from infrastructure.storage.vector.paper_visual_chunk_store import (
 from infrastructure.storage.vector.qdrant_store import qdrant_store_from_env
 from infrastructure.storage.memory import DEFAULT_MEMORY_COLLECTION, VectorMemoryStoreAdapter
 
-from business.research.document.chunk_storage import (
+from backend.research.document.chunk_storage import (
     PaperChunkRepositoryAdapter,
     PaperChunkStoreAdapter,
 )
-from business.research.document.cascade_parser import CascadeArxivDocumentParser
-from business.research.application.chunk_paper_pipeline import ChunkPaperPipeline
-from business.research.application.visual_chunk_describer import build_visual_chunk_describer_from_env
-from business.research.application.paper_rag_session import PaperRAGSession
-from business.research.application.llm_client import build_unity_llm_call
-from business.research.rag.adapters import (
+from backend.research.document.cascade_parser import CascadeArxivDocumentParser
+from backend.research.application.chunk_paper_pipeline import ChunkPaperPipeline
+from backend.research.application.visual_chunk_describer import build_visual_chunk_describer_from_env
+from backend.research.application.paper_rag_session import PaperRAGSession
+from backend.research.application.llm_client import build_unity_llm_call
+from backend.research.rag.adapters import (
     LLMResearchRAGPlanCandidateWorker,
     PaperAnswerWorker,
     ResearchRAGMemoryPort,
     RerankerRelevanceScorer,
 )
-from business.research.rag.retrieval.paper_answer_generator import AnswerGenerator
-from business.research.rag.retrieval.paper_retriever import (
+from backend.research.rag.retrieval.paper_answer_generator import AnswerGenerator
+from backend.research.rag.retrieval.paper_retriever import (
     ResearchRetriever,
     build_retrieval_policy_from_env,
 )

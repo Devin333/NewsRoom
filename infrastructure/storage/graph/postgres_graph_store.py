@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections import deque
 from typing import Any, cast
 
-from business.memory.graph_models import GraphEdge, GraphEdgeType, GraphExpansion, GraphNode, GraphPath, GraphQuery
+from backend.memory.graph_models import GraphEdge, GraphEdgeType, GraphExpansion, GraphNode, GraphPath, GraphQuery
 from infrastructure.storage.postgres.memory_repository import PostgresIntelligenceMemoryRepository
 
 

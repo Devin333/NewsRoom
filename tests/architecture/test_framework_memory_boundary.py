@@ -7,12 +7,12 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 MEMORY_ROOT = PROJECT_ROOT / "framework" / "memory"
 FORBIDDEN_IMPORT_PREFIXES = (
-    "business",
+    "backend",
     "interfaces",
     "infrastructure",
     "storage",
     "workflows",
-    "business.boards.cross_board.workflows.daily_intelligence",
+    "backend.boards.cross_board.workflows.daily_intelligence",
     "domain",
     "evidence",
     "quality",

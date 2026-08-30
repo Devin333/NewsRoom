@@ -62,7 +62,7 @@ def test_interfaces_do_not_expose_transcript_store_inbound() -> None:
 def test_fake_transcript_store_is_constructed_only_by_explicit_fake_runtime() -> None:
     violations: list[str] = []
     roots = (
-        PROJECT_ROOT / "business",
+        PROJECT_ROOT / "backend",
         PROJECT_ROOT / "framework",
         PROJECT_ROOT / "infrastructure",
         PROJECT_ROOT / "interfaces",

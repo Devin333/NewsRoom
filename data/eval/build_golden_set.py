@@ -11,9 +11,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from business.research.document.models import PaperChunk
-from business.research.ports.chunk_store import ChunkStorePort
-from business.research.rag.evaluation.paper_evidence_eval import (
+from backend.research.document.models import PaperChunk
+from backend.research.ports.chunk_store import ChunkStorePort
+from backend.research.rag.evaluation.paper_evidence_eval import (
     EvidenceGoldenSetBuilder,
     EvidenceQAPair,
     save_evidence_golden_set,
@@ -67,7 +67,7 @@ def _load_paper_chunks(store: ChunkStorePort, paper_id: str) -> list[PaperChunk]
 
 
 def main() -> None:
-    from business.research.document.chunk_storage import PaperChunkStoreAdapter
+    from backend.research.document.chunk_storage import PaperChunkStoreAdapter
     from framework.shared.env import load_root_env
     from infrastructure.storage.vector.paper_chunk_store import PaperChunkStore
     from infrastructure.storage.vector.qdrant_store import qdrant_store_from_env

@@ -4,13 +4,13 @@ from collections.abc import Sequence
 from urllib.parse import urlsplit
 from urllib.request import Request
 
-from business.foundation.models.source import (
+from backend.foundation.models.source import (
     RawSourceItem,
     SourceDefinition,
     SourceError,
     SourceFetchPolicy as BusinessSourceFetchPolicy,
 )
-from business.layers.signal.source_tool_runtime import (
+from backend.layers.signal.source_tool_runtime import (
     FetchText,
     SourceTextFetchResult,
 )

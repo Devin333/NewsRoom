@@ -26,7 +26,7 @@ The formal reader body is a source reconstruction, not an AI article. Every body
 ## Workflow
 
 1. Read the relevant implementation:
-   - `business/boards/paper_radar/visual_compiler/`
+   - `backend/boards/paper_radar/visual_compiler/`
    - `interfaces/services/paper_visual_compiler_service.py`
    - `interfaces/api/routers/papers.py`
    - `frontend/src/lib/paper-reader/`
@@ -111,7 +111,7 @@ Open Reader must stay a full-screen reading surface for `/papers/[slug]/read`.
 Run the narrowest useful set, then broaden if shared behavior changed:
 
 ```powershell
-python -m pytest tests\business\boards\paper_radar\test_visual_compiler.py -q
+python -m pytest tests\backend\boards\paper_radar\test_visual_compiler.py -q
 openspec validate paper-visual-compiler-runtime --strict
 cd frontend; npm test -- --run paper-reader-page paper-document-reader-page
 cd frontend; npm run typecheck

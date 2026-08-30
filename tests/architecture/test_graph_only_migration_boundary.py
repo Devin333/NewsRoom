@@ -9,14 +9,14 @@ import sys
 _PROJECT_ROOT = Path(__file__).resolve().parents[2]
 _MIGRATION_ROOT = _PROJECT_ROOT / "scripts/graph_only_migration"
 _RUNTIME_ROOTS = (
-    _PROJECT_ROOT / "business",
+    _PROJECT_ROOT / "backend",
     _PROJECT_ROOT / "framework",
     _PROJECT_ROOT / "interfaces",
     _PROJECT_ROOT / "infrastructure",
     _PROJECT_ROOT / "scripts",
 )
 _FORBIDDEN_MIGRATION_IMPORTS = (
-    "business",
+    "backend",
     "framework.agent.loop",
     "framework.harness.workflow",
     "framework.llm",

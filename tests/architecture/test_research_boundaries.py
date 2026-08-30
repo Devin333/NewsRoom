@@ -9,10 +9,10 @@ from tests.architecture._helpers import (
 
 def test_research_does_not_depend_on_legacy_or_interface_layers() -> None:
     violations = forbidden_imports(
-        PROJECT_ROOT / "business" / "research",
+        PROJECT_ROOT / "backend" / "research",
         (
-            "business.boards.paper_radar",
-            "business.boards",
+            "backend.boards.paper_radar",
+            "backend.boards",
             "interfaces",
             "infrastructure",
             "frontend",
@@ -25,8 +25,8 @@ def test_research_does_not_depend_on_legacy_or_interface_layers() -> None:
 
 def test_research_rag_evaluation_does_not_import_cli_entrypoints() -> None:
     violations = forbidden_imports(
-        PROJECT_ROOT / "business" / "research" / "rag" / "evaluation",
-        ("business.research.rag.cli",),
+        PROJECT_ROOT / "backend" / "research" / "rag" / "evaluation",
+        ("backend.research.rag.cli",),
     )
 
     assert violations == []
@@ -34,9 +34,9 @@ def test_research_rag_evaluation_does_not_import_cli_entrypoints() -> None:
 
 def test_research_graphs_do_not_depend_on_legacy_orchestration() -> None:
     violations = forbidden_imports(
-        PROJECT_ROOT / "business" / "research" / "graphs",
+        PROJECT_ROOT / "backend" / "research" / "graphs",
         (
-            "business.research.workflows",
+            "backend.research.workflows",
             "framework.harness.workflow",
             "framework.workflow",
         ),
@@ -46,15 +46,15 @@ def test_research_graphs_do_not_depend_on_legacy_orchestration() -> None:
 
 
 def test_reader_repair_subagent_declarations_are_graph_owned() -> None:
-    reader_repair_root = PROJECT_ROOT / "business" / "research" / "reader_repair"
+    reader_repair_root = PROJECT_ROOT / "backend" / "research" / "reader_repair"
     graph_owner = (
         PROJECT_ROOT
-        / "business"
+        / "backend"
         / "research"
         / "graphs"
         / "reader_repair.py"
     )
-    expected_owner = "business.research.graphs.reader_repair"
+    expected_owner = "backend.research.graphs.reader_repair"
 
     assert not (reader_repair_root / "workflow.py").exists()
     assert graph_owner.exists()
@@ -79,7 +79,7 @@ def test_reader_repair_memory_side_effect_is_atomic_and_composition_owned() -> N
     )
     port_path = (
         PROJECT_ROOT
-        / "business"
+        / "backend"
         / "research"
         / "ports"
         / "repair_memory.py"
@@ -104,7 +104,7 @@ def test_reader_repair_memory_side_effect_is_atomic_and_composition_owned() -> N
     )
     failure_port_path = (
         PROJECT_ROOT
-        / "business"
+        / "backend"
         / "research"
         / "ports"
         / "reader_repair_failure_diagnostic.py"
@@ -134,7 +134,7 @@ def test_reader_repair_memory_side_effect_is_atomic_and_composition_owned() -> N
     assert ".write_strategy(" not in handler_source
     assert ".write_case(" not in failure_handler_source
     assert ".write_strategy(" not in failure_handler_source
-    assert "business.research.reader_repair.repair_memory" not in imported_modules(
+    assert "backend.research.reader_repair.repair_memory" not in imported_modules(
         handler_path
     )
 
@@ -146,7 +146,7 @@ def test_reader_repair_memory_side_effect_is_atomic_and_composition_owned() -> N
     )
     business_application_path = (
         PROJECT_ROOT
-        / "business"
+        / "backend"
         / "research"
         / "application"
         / "reader_repair_runtime.py"
@@ -154,7 +154,7 @@ def test_reader_repair_memory_side_effect_is_atomic_and_composition_owned() -> N
     composition_path = PROJECT_ROOT / "interfaces" / "composition" / "research.py"
     legacy_application_path = (
         PROJECT_ROOT
-        / "business"
+        / "backend"
         / "research"
         / "application"
         / "single_paper_runtime.py"
@@ -174,7 +174,7 @@ def test_reader_repair_memory_side_effect_is_atomic_and_composition_owned() -> N
 
 
 def test_reader_repair_execution_v2_contract_is_candidate_only_and_inactive() -> None:
-    research_root = PROJECT_ROOT / "business" / "research"
+    research_root = PROJECT_ROOT / "backend" / "research"
     contract_paths = (
         research_root / "reader_repair" / "application.py",
         research_root / "graphs" / "reader_repair_contracts.py",
@@ -182,8 +182,8 @@ def test_reader_repair_execution_v2_contract_is_candidate_only_and_inactive() ->
         research_root / "graphs" / "reader_repair_execution_workers.py",
     )
     forbidden_prefixes = (
-        "business.research.ports.artifact_publication",
-        "business.research.ports.repair_memory",
+        "backend.research.ports.artifact_publication",
+        "backend.research.ports.repair_memory",
         "framework.harness.artifacts",
         "framework.harness.memory",
         "infrastructure",

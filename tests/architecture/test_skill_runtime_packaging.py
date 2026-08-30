@@ -6,7 +6,7 @@ from pathlib import Path
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-SOURCE_ROOTS = ("framework", "business", "infrastructure", "interfaces", "scripts")
+SOURCE_ROOTS = ("framework", "backend", "infrastructure", "interfaces", "scripts")
 
 def test_pyproject_declares_skill_subpackages() -> None:
     content = (PROJECT_ROOT / "pyproject.toml").read_text(encoding="utf-8")
@@ -108,7 +108,7 @@ def test_agent_skill_call_model_does_not_import_skill_runtime() -> None:
 
 
 def test_business_foundation_skills_contains_only_skill_package_assets_and_business_wrappers() -> None:
-    root = PROJECT_ROOT / "business" / "foundation" / "skills"
+    root = PROJECT_ROOT / "backend" / "foundation" / "skills"
 
     python_files = sorted(path.relative_to(root).as_posix() for path in root.rglob("*.py"))
 

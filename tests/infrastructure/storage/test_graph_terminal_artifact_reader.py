@@ -26,7 +26,7 @@ from framework.harness.graph import (
     HarnessGraphCompiler,
 )
 from infrastructure.storage.artifacts import FilesystemGraphTerminalArtifactReader
-from business.research.graphs import build_paper_analysis_graph_definition
+from backend.research.graphs import build_paper_analysis_graph_definition
 
 
 _NOW = datetime(2026, 8, 14, 10, 30, tzinfo=UTC)

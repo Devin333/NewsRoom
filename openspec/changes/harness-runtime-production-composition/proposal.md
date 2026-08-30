@@ -34,6 +34,6 @@
 
 ## Impact
 
-- 主要代码边界：`framework/execution_environment`、`framework/tool/runtime`、`framework/agent/loop`、`interfaces/composition`、`interfaces/api`、worker/CLI 入口与 `business/research/document`。
+- 主要代码边界：`framework/execution_environment`、`framework/tool/runtime`、`framework/agent/loop`、`interfaces/composition`、`interfaces/api`、worker/CLI 入口与 `backend/research/document`。
 - API、worker、CLI、Harness 与 Research 共享 execution policy/config identity，但不共享 Python provider 对象，也不由本 change 接管 event/child/approval authority。
 - 真实 Docker qualification 仍取决于目标环境 daemon 与能力声明；本地 Docker 缺失只能证明 fail-closed blocked 行为。

@@ -7,7 +7,7 @@ from typing import Any, Callable
 
 import psycopg
 
-from business.foundation.models.source_error_normalization import (
+from backend.foundation.models.source_error_normalization import (
     normalize_source_errors,
 )
 from infrastructure.storage.postgres.dsn import normalize_dsn

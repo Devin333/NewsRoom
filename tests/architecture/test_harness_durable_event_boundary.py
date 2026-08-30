@@ -8,7 +8,7 @@ HARNESS_ROOT = Path("framework/harness")
 CONTROL_PLANE = HARNESS_ROOT / "control_plane" / "harness.py"
 DURABLE_ADAPTER = HARNESS_ROOT / "control_plane" / "durable_events.py"
 PRODUCTION_ROOTS = tuple(
-    Path(root) for root in ("business", "framework", "infrastructure", "interfaces", "scripts")
+    Path(root) for root in ("backend", "framework", "infrastructure", "interfaces", "scripts")
 )
 
 
@@ -16,7 +16,7 @@ def test_harness_framework_has_no_concrete_composition_dependency() -> None:
     violations: list[str] = []
     for path in sorted(HARNESS_ROOT.rglob("*.py")):
         for imported in _imports(path):
-            if imported.split(".", 1)[0] in {"business", "infrastructure", "interfaces"}:
+            if imported.split(".", 1)[0] in {"backend", "infrastructure", "interfaces"}:
                 violations.append(f"{path.as_posix()}: {imported}")
     assert violations == []
 
@@ -156,7 +156,7 @@ def test_control_plane_has_one_graph_execution_path() -> None:
 
 def test_research_runtime_requires_injected_harness_event_port() -> None:
     source = (
-        Path("business")
+        Path("backend")
         / "research"
         / "application"
         / "single_paper_runtime.py"

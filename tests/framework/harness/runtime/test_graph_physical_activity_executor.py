@@ -59,7 +59,7 @@ from framework.harness.runtime.activity_executor import (
 from framework.harness.runtime.graph_dispatcher import (
     HarnessGraphPhysicalActivityDispatcher,
 )
-from business.research.graphs import build_paper_analysis_graph_definition
+from backend.research.graphs import build_paper_analysis_graph_definition
 from framework.harness.graph import HarnessGraphCompiler, graph_activity_input_checksum
 from framework.harness.runtime.node_output import (
     HarnessAdmittedGraphActivityOutputAdapter,

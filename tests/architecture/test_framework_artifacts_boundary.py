@@ -7,7 +7,7 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 ARTIFACTS_ROOT = PROJECT_ROOT / "framework" / "artifacts"
 FORBIDDEN_IMPORT_PREFIXES = (
-    "business",
+    "backend",
     "interfaces",
     "infrastructure",
     "storage",

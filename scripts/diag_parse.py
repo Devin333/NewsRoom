@@ -11,9 +11,9 @@ import sys
 from framework.shared.env import load_root_env
 
 from infrastructure.external.sources.arxiv import ArxivSourceConnector
-from business.research.document.arxiv_parser import ArxivDocumentParser
-from business.research.document.chunker import PaperDocumentChunker
-from business.research.document.source_format import detect_source_format
+from backend.research.document.arxiv_parser import ArxivDocumentParser
+from backend.research.document.chunker import PaperDocumentChunker
+from backend.research.document.source_format import detect_source_format
 
 
 def diagnose(arxiv_id: str) -> None:

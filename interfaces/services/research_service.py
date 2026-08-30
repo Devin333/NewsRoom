@@ -7,7 +7,7 @@ from threading import RLock
 from typing import Any, Protocol
 from uuid import uuid4
 
-from business.research.application import (
+from backend.research.application import (
     AnalyzePaperRequest,
     AskPaperUseCase,
     ResearchActorScope,
@@ -16,11 +16,11 @@ from business.research.application import (
     classify_research_run_record,
     research_identity_scope_ref,
 )
-from business.research.domain import stable_research_id
-from business.research.ports.artifact_publication import (
+from backend.research.domain import stable_research_id
+from backend.research.ports.artifact_publication import (
     ResearchArtifactDiagnosticReader,
 )
-from business.research.ports.run_store import (
+from backend.research.ports.run_store import (
     ResearchRunDiagnosticStore,
     ResearchRunDisposition,
     ResearchRunRecord,
@@ -29,7 +29,7 @@ from business.research.ports.run_store import (
     ResearchRunStoreError,
     ResearchRunStoreReason,
 )
-from business.research.rag import ResearchRetrievalGoal
+from backend.research.rag import ResearchRetrievalGoal
 from framework.harness.context.models import ContextGraphIdentity
 from interfaces.models import ActorContext
 

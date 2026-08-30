@@ -6,7 +6,7 @@ from pathlib import Path
 def test_framework_rag_has_no_research_imports_or_paper_parser_terms():
     root = Path("framework/rag")
     forbidden = (
-        "business.research",
+        "backend.research",
         "PaperChunk",
         "arxiv",
         "Nougat",
@@ -26,7 +26,7 @@ def test_framework_rag_has_no_research_imports_or_paper_parser_terms():
 
 def test_framework_harness_rag_has_no_research_imports():
     root = Path("framework/harness/rag")
-    forbidden = ("business.research",)
+    forbidden = ("backend.research",)
 
     offenders: list[str] = []
     for path in root.rglob("*.py"):

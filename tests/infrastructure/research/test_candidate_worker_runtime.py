@@ -4,8 +4,8 @@ import json
 
 import pytest
 
-from business.research.application import AnalyzePaperRequest, AnalyzePaperUseCase
-from business.research.application.single_paper_runtime import ResearchSinglePaperRuntime
+from backend.research.application import AnalyzePaperRequest, AnalyzePaperUseCase
+from backend.research.application.single_paper_runtime import ResearchSinglePaperRuntime
 from framework.harness import FakeArtifactPort, InMemoryHarnessEventPort
 from framework.llm import (
     LOCAL_STRUCTURED_OUTPUT_DIALECT,
@@ -24,7 +24,7 @@ from infrastructure.research import (
     CANDIDATE_TASK_SCHEMAS,
     StructuredResearchCandidateWorker,
 )
-from tests.business.research.fakes import (
+from tests.backend.research.fakes import (
     FakeGithubRepositoryPort,
     FakeResearchDocumentCompiler,
     FakeResearchLLMWorker,

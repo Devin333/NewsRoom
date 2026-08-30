@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 from collections.abc import Mapping
 
-from business.research.reader_repair import ReaderRepairService
+from backend.research.reader_repair import ReaderRepairService
 from infrastructure.storage.postgres import PostgresReaderRepairMemoryRepository
 from infrastructure.storage.postgres.dsn import normalize_dsn
 from interfaces.services.reader_repair_memory import (

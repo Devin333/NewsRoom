@@ -1,5 +1,5 @@
-from business.memory.graph_models import GraphQuery
-from business.memory.intelligence_models import ClaimMemory, EntityMemory, EventMemory, EvidenceMemory
+from backend.memory.graph_models import GraphQuery
+from backend.memory.intelligence_models import ClaimMemory, EntityMemory, EventMemory, EvidenceMemory
 from infrastructure.storage.graph import PostgresGraphMemoryStore
 
 

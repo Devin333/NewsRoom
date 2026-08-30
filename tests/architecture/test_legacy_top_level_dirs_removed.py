@@ -15,7 +15,7 @@ LEGACY_TOP_LEVEL_DIRS = (
 )
 
 SCAN_ROOTS = (
-    "business",
+    "backend",
     "framework",
     "infrastructure",
     "interfaces",

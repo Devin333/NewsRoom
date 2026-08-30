@@ -4,9 +4,9 @@ from urllib.error import HTTPError
 
 import pytest
 
-from business.foundation.models.source import SourceDefinition, SourceFetchPolicy
-from business.foundation.registry.source_registry import SourceRegistry
-from business.layers.signal.source_health import (
+from backend.foundation.models.source import SourceDefinition, SourceFetchPolicy
+from backend.foundation.registry.source_registry import SourceRegistry
+from backend.layers.signal.source_health import (
     BasicSourceHealthManager,
     SourceHealthChecker,
 )

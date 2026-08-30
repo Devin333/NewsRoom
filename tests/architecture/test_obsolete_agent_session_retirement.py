@@ -20,7 +20,7 @@ RETIRED_DIRS = (
 )
 PRODUCTION_ROOTS = tuple(
     PROJECT_ROOT / name
-    for name in ("business", "framework", "infrastructure", "interfaces", "scripts")
+    for name in ("backend", "framework", "infrastructure", "interfaces", "scripts")
 )
 LEGACY_SESSION_DATABASE = ".newsroom/paper-agent-sessions.sqlite3"
 RETIREMENT_OPERATIONS_NOTE = (
@@ -119,7 +119,7 @@ def test_stale_policy_is_rejected_and_metadata_session_id_is_not_promoted() -> N
 def test_independent_session_owners_remain_present() -> None:
     retained_paths = (
         PROJECT_ROOT / "framework" / "harness" / "rag" / "session.py",
-        PROJECT_ROOT / "business" / "research" / "reading_session",
+        PROJECT_ROOT / "backend" / "research" / "reading_session",
         PROJECT_ROOT / "interfaces" / "api" / "routers" / "auth.py",
         PROJECT_ROOT / "interfaces" / "api" / "routers" / "projects.py",
         PROJECT_ROOT / "infrastructure" / "storage" / "conversation",

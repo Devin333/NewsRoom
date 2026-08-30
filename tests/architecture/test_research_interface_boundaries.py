@@ -39,8 +39,8 @@ MCP_INBOUND_IMPORT_PREFIXES = (
 # broad ``infrastructure`` or ``framework`` ban would reject harmless policy
 # and error modules and would make the boundary test unexplainable.
 FORBIDDEN_RESEARCH_IMPORT_PREFIXES = (
-    "business.research.application",
-    "business.research.ports",
+    "backend.research.application",
+    "backend.research.ports",
     "framework.harness",
     "framework.tool.runtime",
     "framework.workflow.runners",
@@ -129,11 +129,11 @@ COMPOSITION_SINGLETON_NAME = "_DEFAULT_RESEARCH_RUNTIME_PROVIDER"
 # may consume their public behavior, but may not assemble another controller.
 DESIGNATED_RAG_CONSTRUCTORS = {
     "RAGSessionSpec": (
-        "business.research.services.rag_policy",
+        "backend.research.services.rag_policy",
         "framework.harness.rag.models",
     ),
     "BoundedRAGSessionController": (
-        "business.research.application.paper_rag_session",
+        "backend.research.application.paper_rag_session",
         "framework.harness.rag.session",
     ),
 }
@@ -650,7 +650,7 @@ def test_research_has_only_designated_rag_spec_and_controller_builders() -> None
         name: [] for name in DESIGNATED_RAG_CONSTRUCTORS
     }
     violations: list[str] = []
-    for path in (PROJECT_ROOT / "business" / "research").rglob("*.py"):
+    for path in (PROJECT_ROOT / "backend" / "research").rglob("*.py"):
         (
             symbol_bindings,
             module_bindings,

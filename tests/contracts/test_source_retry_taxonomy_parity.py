@@ -4,13 +4,13 @@ from urllib.error import HTTPError
 
 import pytest
 
-from business.foundation.models.source import (
+from backend.foundation.models.source import (
     SourceDefinition,
     SourceFetchPolicy as BusinessSourceFetchPolicy,
 )
-from business.foundation.registry.source_registry import SourceRegistry
-from business.layers.signal.source_health import BasicSourceHealthManager, SourceHealthChecker
-from business.layers.signal.tools import register_source_tools
+from backend.foundation.registry.source_registry import SourceRegistry
+from backend.layers.signal.source_health import BasicSourceHealthManager, SourceHealthChecker
+from backend.layers.signal.tools import register_source_tools
 from framework.tool import ToolCall, ToolExecutor, ToolPolicy, ToolRegistry, ToolStatus
 from infrastructure.external.sources import FeedConnector
 from interfaces.services.source_mapping import (

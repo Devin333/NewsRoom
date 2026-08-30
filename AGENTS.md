@@ -41,7 +41,7 @@ This repository is the Agora Hub spec-driven intelligence runtime for news, rese
 - Every Harness phase transition must be recorded to a durable transcript or event log so runs can be replayed and reviewed.
 - Skills may evolve only through Harness-controlled candidate, validation, evaluation, promotion, versioned release, and rollback workflows. LLMs may propose skill patches, but must never directly modify active skill packages, decide promotion, skip held-out evals, disable quality gates, or publish production skill versions.
 - Business repair experiences, such as Research reader repair cases, must first be stored as memory and consolidated into procedural strategies before they can seed skill evolution; a normal business run must not directly update active skills.
-- During the Harness + Research rebuild, `business/research` must not depend on legacy `business/boards/paper_radar`, `interfaces`, or `infrastructure`.
+- During the Harness + Research rebuild, `backend/research` must not depend on legacy `backend/boards/paper_radar`, `interfaces`, or `infrastructure`.
 - Keep useful legacy framework assets; delete code and tests that no longer serve the new architecture. Do not keep compatibility layers unless explicitly required by the active OpenSpec change.
 
 ## Local checks

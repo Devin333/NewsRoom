@@ -3,11 +3,11 @@ from __future__ import annotations
 from urllib.parse import urlsplit
 from urllib.request import Request
 
-from business.foundation.models.source import (
+from backend.foundation.models.source import (
     SourceDefinition,
     SourceFetchPolicy as BusinessSourceFetchPolicy,
 )
-from business.layers.signal.source_health import ProbeObservation
+from backend.layers.signal.source_health import ProbeObservation
 from infrastructure.external.sources.fetch_policy import (
     ensure_robots_allowed,
     open_request_with_fetch_policy,

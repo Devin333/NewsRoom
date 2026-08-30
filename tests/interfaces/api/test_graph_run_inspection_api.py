@@ -7,7 +7,7 @@ from fastapi.testclient import TestClient
 from interfaces.api import create_app
 from interfaces.services.artifact_service import ArtifactInspectionService
 from interfaces.services.run_inspection_service import GraphRunInspectionService
-from business.research.graphs.contracts import RESEARCH_PAPER_ANALYSIS_GRAPH_ID
+from backend.research.graphs.contracts import RESEARCH_PAPER_ANALYSIS_GRAPH_ID
 from tests.fixtures.graph_runs import (
     graph_index_reader,
     rewrite_graph_terminal_manifest,

@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from business.tools import build_business_tool_registry
+from backend.tools import build_business_tool_registry
 from framework.tool import ToolPolicy, build_tool_catalog
 from interfaces.services.source_runtime import (
     SourceRuntimeComposition,

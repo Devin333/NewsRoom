@@ -5,15 +5,15 @@ from pathlib import Path
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-PRODUCTION_ROOTS = ("business", "framework", "interfaces", "infrastructure", "scripts")
+PRODUCTION_ROOTS = ("backend", "framework", "interfaces", "infrastructure", "scripts")
 
 
 def test_legacy_paper_radar_package_is_removed() -> None:
-    assert not (PROJECT_ROOT / "business" / "boards" / "paper_radar").exists()
+    assert not (PROJECT_ROOT / "backend" / "boards" / "paper_radar").exists()
 
 
 def test_production_code_does_not_import_legacy_paper_radar() -> None:
-    violations = _forbidden_imports(("business.boards.paper_radar",))
+    violations = _forbidden_imports(("backend.boards.paper_radar",))
 
     assert violations == []
 

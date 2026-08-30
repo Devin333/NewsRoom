@@ -39,30 +39,30 @@ Architecture tests SHALL fail when active production code imports, exports, regi
 - **THEN** the dependency-topology gate fails even if no current request calls that path
 
 ### Requirement: Skill Runtime ownership is explicit
-The system SHALL keep Skill Runtime implementation under `framework.skills` and prevent business, infrastructure, or interface imports from entering that package.
+The system SHALL keep Skill Runtime implementation under `framework.skills` and prevent backend, infrastructure, or interface imports from entering that package.
 
 #### Scenario: Skill Runtime boundary test
 - **WHEN** architecture boundary tests inspect Skill Runtime imports
 - **THEN** forbidden layer imports are reported as failures
 
 ### Requirement: Infrastructure memory dependency debt is tracked
-The system SHALL explicitly list current infrastructure modules that depend on business memory models until a port/DTO migration removes them.
+The system SHALL explicitly list current infrastructure modules that depend on backend memory models until a port/DTO migration removes them.
 
 #### Scenario: Known debt visibility
 - **WHEN** architecture tests inspect infrastructure memory and graph modules
 - **THEN** only listed legacy dependency paths are allowed
 
 ### Requirement: Business research does not depend on interface layers
-The system SHALL keep `business/research` free of direct imports from `interfaces`, including business-owned RAG evaluation CLIs.
+The system SHALL keep `backend/research` free of direct imports from `interfaces`, including backend-owned RAG evaluation CLIs.
 
-#### Scenario: Live answer eval uses business-owned assembly
+#### Scenario: Live answer eval uses backend-owned assembly
 - **WHEN** `run_evidence_eval --live-answer-eval` runs with parsed paper chunks from `--papers-dir`
-- **THEN** the live answer ask callable is assembled from business-owned RAG session components without importing `interfaces`
+- **THEN** the live answer ask callable is assembled from backend-owned RAG session components without importing `interfaces`
 - **AND** answer evaluation receives gated Harness payload semantics for conversion into `EvidenceAnswerSample`
 
 #### Scenario: Live answer eval without fixture chunks fails closed
 - **WHEN** `run_evidence_eval --live-answer-eval` is requested without parsed fixture chunks and no outer-layer ask callable is injected
-- **THEN** the command fails with a clear configuration error instead of importing `interfaces` or production stores from `business/research`
+- **THEN** the command fails with a clear configuration error instead of importing `interfaces` or production stores from `backend/research`
 
 ### Requirement: Workflow dependency freeze is subtract-only during migration
 

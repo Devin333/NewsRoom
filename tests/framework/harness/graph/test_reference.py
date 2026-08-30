@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from business.research.graphs import (
+from backend.research.graphs import (
     build_dynamic_paper_analysis_graph_definition,
 )
 from framework.harness.control_plane.errors import HarnessValidationError

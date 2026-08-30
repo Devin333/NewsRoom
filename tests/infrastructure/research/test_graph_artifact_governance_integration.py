@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from business.research.graphs import build_paper_analysis_graph_definition
+from backend.research.graphs import build_paper_analysis_graph_definition
 from framework.events.canonical import checksum_for
 from framework.harness.artifacts import (
     GraphArtifactGcOperationState,

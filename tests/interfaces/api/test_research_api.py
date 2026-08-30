@@ -14,7 +14,7 @@ from interfaces.services.research_service import (
     ResearchAnalyzeInput,
     ResearchApplicationService,
 )
-from business.research.ports.run_store import ResearchRunRecord
+from backend.research.ports.run_store import ResearchRunRecord
 from infrastructure.research.filesystem_run_store import FilesystemResearchRunStore
 from tests.interfaces.research_fixtures import (
     FakeAnalyzeUseCase,

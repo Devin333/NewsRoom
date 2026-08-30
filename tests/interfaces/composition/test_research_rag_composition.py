@@ -6,7 +6,7 @@ from typing import Any
 
 import pytest
 
-from business.research.document.models import PaperChunk
+from backend.research.document.models import PaperChunk
 from interfaces.composition import research as research_composition
 from interfaces.composition.research_errors import ResearchRuntimeUnavailableError
 from interfaces.composition.research_settings import ResearchRAGSettings

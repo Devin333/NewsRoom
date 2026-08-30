@@ -1,8 +1,8 @@
 from datetime import UTC, datetime
 
-from business.foundation.models.source import SourceDefinition, SourceError
-from business.foundation.registry.source_registry import SourceRegistry
-from business.layers.signal.source_health import BasicSourceHealthManager
+from backend.foundation.models.source import SourceDefinition, SourceError
+from backend.foundation.registry.source_registry import SourceRegistry
+from backend.layers.signal.source_health import BasicSourceHealthManager
 from interfaces.services.source_service import SourceApplicationService
 from infrastructure.external.sources.models import RawSourceItem, SourceError as InfraSourceError
 

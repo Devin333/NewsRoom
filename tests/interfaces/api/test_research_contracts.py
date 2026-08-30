@@ -38,7 +38,7 @@ def test_research_openapi_contract_uses_response_envelope_and_tags() -> None:
 
 def test_research_interface_does_not_import_old_paper_modules() -> None:
     forbidden_roots = {
-        "business.boards.paper_radar",
+        "backend.boards.paper_radar",
         "interfaces.api.routers.papers",
         "interfaces.services.paper_service",
     }

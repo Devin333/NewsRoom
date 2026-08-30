@@ -22,7 +22,7 @@ PHYSICAL_EXECUTOR_MODULE = (
     PROJECT_ROOT / "framework" / "harness" / "runtime" / "activity_executor.py"
 )
 FORBIDDEN_IMPORTS = (
-    "business",
+    "backend",
     "interfaces",
     "infrastructure",
     "storage",
@@ -69,7 +69,7 @@ def test_graph_result_lineage_has_no_control_plane_path_shim() -> None:
 
 def test_graph_result_committer_boundary_has_no_storage_or_business_imports() -> None:
     forbidden = (
-        "business",
+        "backend",
         "interfaces",
         "infrastructure",
         "storage",

@@ -1,5 +1,5 @@
-from business.memory.evaluation import MemoryEvaluationReport
-from business.memory.memory_metrics import MemoryEvaluationMetrics
+from backend.memory.evaluation import MemoryEvaluationReport
+from backend.memory.memory_metrics import MemoryEvaluationMetrics
 from interfaces.services.memory_evaluation_service import MemoryEvaluationApplicationService
 
 

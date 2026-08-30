@@ -20,7 +20,7 @@
     {
       "id": "nougat-direct-process",
       "kind": "subprocess",
-      "path": "business/research/document/pdf_compiler.py",
+      "path": "backend/research/document/pdf_compiler.py",
       "symbol": "_run_nougat",
       "classification": "blocked",
       "state": "follow-up-required",
@@ -28,7 +28,7 @@
       "rationale": "Legacy Nougat parser now requires an injected execution adapter; its default entrypoint is fail-closed until a production profile is wired.",
       "non_harness_managed_proof": "The parser no longer creates a host process; the missing adapter remains an explicit blocked capability.",
       "review_by": "2026-09-25",
-      "check": "tests/business/research/document/test_source_format_and_pdf.py"
+      "check": "tests/backend/research/document/test_source_format_and_pdf.py"
     },
     {
       "id": "agent-runner-tool-executor",

@@ -4,28 +4,28 @@
     "legacy_schema_writers": {},
     "namespace_files": {},
     "public_exports": {
-      "business/foundation/feedback/__init__.py|LEGACY_POLICY_EXPERIMENT_CHANGE_TYPES": 1,
-      "business/foundation/feedback/override_policy.py|LEGACY_POLICY_EXPERIMENT_CHANGE_TYPES": 1,
-      "business/foundation/feedback/policy_experiment.py|LEGACY_OVERRIDE_TARGET_MAP": 1,
-      "business/foundation/feedback/policy_experiment.py|LEGACY_POLICY_EXPERIMENT_CHANGE_TYPES": 1,
+      "backend/foundation/feedback/__init__.py|LEGACY_POLICY_EXPERIMENT_CHANGE_TYPES": 1,
+      "backend/foundation/feedback/override_policy.py|LEGACY_POLICY_EXPERIMENT_CHANGE_TYPES": 1,
+      "backend/foundation/feedback/policy_experiment.py|LEGACY_OVERRIDE_TARGET_MAP": 1,
+      "backend/foundation/feedback/policy_experiment.py|LEGACY_POLICY_EXPERIMENT_CHANGE_TYPES": 1,
       "framework/shared/__init__.py|LEGACY_ATTEMPT_SEMANTICS": 1,
       "framework/shared/attempt_history.py|LEGACY_ATTEMPT_SEMANTICS": 1
     },
     "retired_symbols": {
-      "business/foundation/feedback/__init__.py|<module>|import|LEGACY_POLICY_EXPERIMENT_CHANGE_TYPES": 1,
-      "business/foundation/feedback/__init__.py|<module>|string_literal|LEGACY_POLICY_EXPERIMENT_CHANGE_TYPES": 1,
-      "business/foundation/feedback/override_policy.py|<module>|import|LEGACY_POLICY_EXPERIMENT_CHANGE_TYPES": 1,
-      "business/foundation/feedback/override_policy.py|<module>|name_load|LEGACY_POLICY_EXPERIMENT_CHANGE_TYPES": 1,
-      "business/foundation/feedback/override_policy.py|<module>|string_literal|LEGACY_POLICY_EXPERIMENT_CHANGE_TYPES": 1,
-      "business/foundation/feedback/policy_experiment.py|<module>.is_legacy_policy_experiment_change_type|name_load|LEGACY_POLICY_EXPERIMENT_CHANGE_TYPES": 1,
-      "business/foundation/feedback/policy_experiment.py|<module>.policy_experiment_target_type|name_load|LEGACY_OVERRIDE_TARGET_MAP": 1,
-      "business/foundation/feedback/policy_experiment.py|<module>|name_load|LEGACY_OVERRIDE_TARGET_MAP": 1,
-      "business/foundation/feedback/policy_experiment.py|<module>|name_store|LEGACY_OVERRIDE_TARGET_MAP": 1,
-      "business/foundation/feedback/policy_experiment.py|<module>|name_store|LEGACY_POLICY_EXPERIMENT_CHANGE_TYPES": 1,
-      "business/foundation/feedback/policy_experiment.py|<module>|string_literal|LEGACY_OVERRIDE_TARGET_MAP": 1,
-      "business/foundation/feedback/policy_experiment.py|<module>|string_literal|LEGACY_POLICY_EXPERIMENT_CHANGE_TYPES": 1,
-      "business/research/domain/run_disposition.py|<module>.ResearchRunDispositionReason|name_store|LEGACY_QUARANTINED": 1,
-      "business/research/ports/run_store.py|<module>.ResearchRunRecord.artifact_reference_disposition|attribute|LEGACY_QUARANTINED": 1,
+      "backend/foundation/feedback/__init__.py|<module>|import|LEGACY_POLICY_EXPERIMENT_CHANGE_TYPES": 1,
+      "backend/foundation/feedback/__init__.py|<module>|string_literal|LEGACY_POLICY_EXPERIMENT_CHANGE_TYPES": 1,
+      "backend/foundation/feedback/override_policy.py|<module>|import|LEGACY_POLICY_EXPERIMENT_CHANGE_TYPES": 1,
+      "backend/foundation/feedback/override_policy.py|<module>|name_load|LEGACY_POLICY_EXPERIMENT_CHANGE_TYPES": 1,
+      "backend/foundation/feedback/override_policy.py|<module>|string_literal|LEGACY_POLICY_EXPERIMENT_CHANGE_TYPES": 1,
+      "backend/foundation/feedback/policy_experiment.py|<module>.is_legacy_policy_experiment_change_type|name_load|LEGACY_POLICY_EXPERIMENT_CHANGE_TYPES": 1,
+      "backend/foundation/feedback/policy_experiment.py|<module>.policy_experiment_target_type|name_load|LEGACY_OVERRIDE_TARGET_MAP": 1,
+      "backend/foundation/feedback/policy_experiment.py|<module>|name_load|LEGACY_OVERRIDE_TARGET_MAP": 1,
+      "backend/foundation/feedback/policy_experiment.py|<module>|name_store|LEGACY_OVERRIDE_TARGET_MAP": 1,
+      "backend/foundation/feedback/policy_experiment.py|<module>|name_store|LEGACY_POLICY_EXPERIMENT_CHANGE_TYPES": 1,
+      "backend/foundation/feedback/policy_experiment.py|<module>|string_literal|LEGACY_OVERRIDE_TARGET_MAP": 1,
+      "backend/foundation/feedback/policy_experiment.py|<module>|string_literal|LEGACY_POLICY_EXPERIMENT_CHANGE_TYPES": 1,
+      "backend/research/domain/run_disposition.py|<module>.ResearchRunDispositionReason|name_store|LEGACY_QUARANTINED": 1,
+      "backend/research/ports/run_store.py|<module>.ResearchRunRecord.artifact_reference_disposition|attribute|LEGACY_QUARANTINED": 1,
       "framework/shared/__init__.py|<module>|import|LEGACY_ATTEMPT_SEMANTICS": 1,
       "framework/shared/__init__.py|<module>|string_literal|LEGACY_ATTEMPT_SEMANTICS": 1,
       "framework/shared/attempt_history.py|<module>.AttemptHistoryProjection.legacy|name_load|LEGACY_ATTEMPT_SEMANTICS": 1,
@@ -57,7 +57,7 @@
   ],
   "migration_reader_exceptions": [],
   "production_roots": [
-    "business",
+    "backend",
     "framework",
     "infrastructure",
     "interfaces",
@@ -260,55 +260,55 @@
       "category": "import_edges",
       "count": 1,
       "generation": 4,
-      "key": "business/research/workflows/paper_analysis_task_plan.py|<module>|framework.harness.workflow.step|HarnessWorkerType"
+      "key": "backend/research/workflows/paper_analysis_task_plan.py|<module>|framework.harness.workflow.step|HarnessWorkerType"
     },
     {
       "category": "import_edges",
       "count": 1,
       "generation": 4,
-      "key": "business/research/workflows/paper_analysis_workflow.py|<module>|framework.harness.workflow|HarnessGraphSpec"
+      "key": "backend/research/workflows/paper_analysis_workflow.py|<module>|framework.harness.workflow|HarnessGraphSpec"
     },
     {
       "category": "import_edges",
       "count": 1,
       "generation": 4,
-      "key": "business/research/workflows/paper_analysis_workflow.py|<module>|framework.harness.workflow|HarnessStepSpec"
+      "key": "backend/research/workflows/paper_analysis_workflow.py|<module>|framework.harness.workflow|HarnessStepSpec"
     },
     {
       "category": "import_edges",
       "count": 1,
       "generation": 4,
-      "key": "business/research/workflows/paper_analysis_workflow.py|<module>|framework.harness.workflow|HarnessWorkerType"
+      "key": "backend/research/workflows/paper_analysis_workflow.py|<module>|framework.harness.workflow|HarnessWorkerType"
     },
     {
       "category": "import_edges",
       "count": 1,
       "generation": 4,
-      "key": "business/research/workflows/paper_analysis_workflow.py|<module>|framework.harness.workflow|ParallelAll"
+      "key": "backend/research/workflows/paper_analysis_workflow.py|<module>|framework.harness.workflow|ParallelAll"
     },
     {
       "category": "import_edges",
       "count": 1,
       "generation": 4,
-      "key": "business/research/workflows/paper_analysis_workflow.py|<module>|framework.harness.workflow|ParallelBranch"
+      "key": "backend/research/workflows/paper_analysis_workflow.py|<module>|framework.harness.workflow|ParallelBranch"
     },
     {
       "category": "import_edges",
       "count": 1,
       "generation": 4,
-      "key": "business/research/workflows/paper_analysis_workflow.py|<module>|framework.harness.workflow|Sequence"
+      "key": "backend/research/workflows/paper_analysis_workflow.py|<module>|framework.harness.workflow|Sequence"
     },
     {
       "category": "import_edges",
       "count": 1,
       "generation": 4,
-      "key": "business/research/workflows/paper_analysis_workflow.py|<module>|framework.harness.workflow|StepRef"
+      "key": "backend/research/workflows/paper_analysis_workflow.py|<module>|framework.harness.workflow|StepRef"
     },
     {
       "category": "import_edges",
       "count": 1,
       "generation": 4,
-      "key": "business/research/workflows/paper_analysis_workflow.py|<module>|framework.harness.workflow|VerifiedAggregation"
+      "key": "backend/research/workflows/paper_analysis_workflow.py|<module>|framework.harness.workflow|VerifiedAggregation"
     },
     {
       "category": "import_edges",
@@ -2678,19 +2678,19 @@
       "category": "import_edges",
       "count": 1,
       "generation": 5,
-      "key": "business/research/application/graph_result_committer.py|<module>|framework.harness.workflow.graph|HarnessExecutableNode"
+      "key": "backend/research/application/graph_result_committer.py|<module>|framework.harness.workflow.graph|HarnessExecutableNode"
     },
     {
       "category": "import_edges",
       "count": 1,
       "generation": 5,
-      "key": "business/research/application/graph_result_committer.py|<module>|framework.harness.workflow.graph|NormalizedHarnessGraph"
+      "key": "backend/research/application/graph_result_committer.py|<module>|framework.harness.workflow.graph|NormalizedHarnessGraph"
     },
     {
       "category": "import_edges",
       "count": 1,
       "generation": 5,
-      "key": "business/research/workflows/paper_analysis_task_plan.py|<module>|framework.harness.workflow.binding_authority|HarnessWorkerBinding"
+      "key": "backend/research/workflows/paper_analysis_task_plan.py|<module>|framework.harness.workflow.binding_authority|HarnessWorkerBinding"
     },
     {
       "category": "import_edges",
@@ -5492,7 +5492,7 @@
       "category": "import_edges",
       "count": 1,
       "generation": 12,
-      "key": "business/research/workflows/paper_analysis_workflow.py|<module>|framework.harness.workflow|HarnessWorkflowSpec"
+      "key": "backend/research/workflows/paper_analysis_workflow.py|<module>|framework.harness.workflow|HarnessWorkflowSpec"
     },
     {
       "category": "import_edges",
@@ -10718,31 +10718,31 @@
       "category": "retired_symbols",
       "count": 6,
       "generation": 12,
-      "key": "business/layers/_worker_utils.py|<module>.task_status_from_workflow_status|name_load|WorkflowStatus"
+      "key": "backend/layers/_worker_utils.py|<module>.task_status_from_workflow_status|name_load|WorkflowStatus"
     },
     {
       "category": "retired_symbols",
       "count": 1,
       "generation": 12,
-      "key": "business/layers/_worker_utils.py|<module>|import|WorkflowStatus"
+      "key": "backend/layers/_worker_utils.py|<module>|import|WorkflowStatus"
     },
     {
       "category": "retired_symbols",
       "count": 1,
       "generation": 12,
-      "key": "business/research/workflows/paper_analysis_workflow.py|<module>.build_dynamic_paper_analysis_workflow_spec|name_load|HarnessWorkflowSpec"
+      "key": "backend/research/workflows/paper_analysis_workflow.py|<module>.build_dynamic_paper_analysis_workflow_spec|name_load|HarnessWorkflowSpec"
     },
     {
       "category": "retired_symbols",
       "count": 2,
       "generation": 12,
-      "key": "business/research/workflows/paper_analysis_workflow.py|<module>.build_paper_analysis_workflow_spec|name_load|HarnessWorkflowSpec"
+      "key": "backend/research/workflows/paper_analysis_workflow.py|<module>.build_paper_analysis_workflow_spec|name_load|HarnessWorkflowSpec"
     },
     {
       "category": "retired_symbols",
       "count": 1,
       "generation": 12,
-      "key": "business/research/workflows/paper_analysis_workflow.py|<module>|import|HarnessWorkflowSpec"
+      "key": "backend/research/workflows/paper_analysis_workflow.py|<module>|import|HarnessWorkflowSpec"
     },
     {
       "category": "retired_symbols",

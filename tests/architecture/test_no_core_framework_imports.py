@@ -7,7 +7,7 @@ from tests.architecture._helpers import PROJECT_ROOT
 
 
 SCAN_ROOTS = (
-    "business",
+    "backend",
     "framework",
     "infrastructure",
     "interfaces",

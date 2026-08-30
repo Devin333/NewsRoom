@@ -5,7 +5,7 @@ from pathlib import Path
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-BUSINESS_ROOT = PROJECT_ROOT / "business"
+BUSINESS_ROOT = PROJECT_ROOT / "backend"
 
 _BUFFER_RECEIVER_NAMES = {"buffer", "data_buffer", "workflow_buffer"}
 _MUTATING_METHODS = {

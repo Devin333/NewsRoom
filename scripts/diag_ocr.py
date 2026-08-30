@@ -18,8 +18,8 @@ def ocr_paper(arxiv_id: str, max_pages: int | None, out) -> None:
     import fitz
     import urllib.request
     from infrastructure.external.sources.arxiv import ArxivSourceConnector
-    from business.research.document.source_format import detect_source_format, SourceFormat
-    from business.research.document.pdf_compiler import _ocr_page
+    from backend.research.document.source_format import detect_source_format, SourceFormat
+    from backend.research.document.pdf_compiler import _ocr_page
 
     base_url = os.environ.get("SURYA_INFERENCE_URL", "").strip()
     model = os.environ.get("SURYA_INFERENCE_MODEL", "datalab-to/surya-ocr-2")

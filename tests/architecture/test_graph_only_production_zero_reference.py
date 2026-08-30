@@ -22,7 +22,7 @@ def test_live_production_roots_have_zero_retired_workflow_references() -> None:
         "scripts/dev.py",
         "interfaces/services",
         "infrastructure/research",
-        "business/research",
+        "backend/research",
     ]
 
 
@@ -30,7 +30,7 @@ def test_scanner_reports_import_export_schema_and_fallback(tmp_path: Path) -> No
     (tmp_path / "scripts").mkdir()
     (tmp_path / "interfaces" / "services").mkdir(parents=True)
     (tmp_path / "infrastructure" / "research").mkdir(parents=True)
-    (tmp_path / "business" / "research").mkdir(parents=True)
+    (tmp_path / "backend" / "research").mkdir(parents=True)
     (tmp_path / "scripts" / "dev.py").write_text(
         "from framework.workflow.runtime import WorkflowRunner\n",
         encoding="utf-8",
@@ -43,7 +43,7 @@ def test_scanner_reports_import_export_schema_and_fallback(tmp_path: Path) -> No
         "SCHEMA = 'newsroom.workflow-event/v1'\n",
         encoding="utf-8",
     )
-    (tmp_path / "business" / "research" / "service.py").write_text(
+    (tmp_path / "backend" / "research" / "service.py").write_text(
         "try:\n    import optional\nexcept ImportError:\n    optional = None\n",
         encoding="utf-8",
     )

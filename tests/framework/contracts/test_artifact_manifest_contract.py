@@ -5,7 +5,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from business.research.graphs import build_paper_analysis_graph_definition
+from backend.research.graphs import build_paper_analysis_graph_definition
 from framework.agent.artifacts import ArtifactStoreMetadataError
 from framework.events.canonical import checksum_for
 from framework.harness.artifacts import (

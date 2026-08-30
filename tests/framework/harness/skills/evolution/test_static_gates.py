@@ -62,7 +62,7 @@ def test_static_gates_reject_secret_like_candidate_content() -> None:
 
 
 def test_static_gates_reject_legacy_paper_radar_leakage() -> None:
-    candidate = _candidate(operations=({"op": "replace_section", "path": "SKILL.md#legacy", "value": "import business.boards.paper_radar"},))
+    candidate = _candidate(operations=({"op": "replace_section", "path": "SKILL.md#legacy", "value": "import backend.boards.paper_radar"},))
 
     result = SkillStaticGateSuite().domain_boundary.evaluate(candidate)
 

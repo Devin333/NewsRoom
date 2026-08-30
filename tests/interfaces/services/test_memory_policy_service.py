@@ -1,6 +1,6 @@
-from business.memory.evaluation import MemoryEvaluationReport, MemoryEvaluationRequest
-from business.memory.memory_metrics import MemoryEvaluationMetrics
-from business.memory.policy_learning import MemoryPolicyLearningService
+from backend.memory.evaluation import MemoryEvaluationReport, MemoryEvaluationRequest
+from backend.memory.memory_metrics import MemoryEvaluationMetrics
+from backend.memory.policy_learning import MemoryPolicyLearningService
 from interfaces.services.memory_policy_service import MemoryPolicyApplicationService
 
 

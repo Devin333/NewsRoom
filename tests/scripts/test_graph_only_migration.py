@@ -528,7 +528,7 @@ def test_existing_target_exact_body_is_idempotent_and_conflict_is_quarantined() 
 
 def test_planner_calls_no_live_worker_or_side_effect_module() -> None:
     forbidden_prefixes = (
-        "business.",
+        "backend.",
         "framework.agent.loop",
         "framework.llm",
         "framework.memory",

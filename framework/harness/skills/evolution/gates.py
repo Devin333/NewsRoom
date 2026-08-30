@@ -157,9 +157,9 @@ class SkillDomainBoundaryGate:
     def evaluate(self, candidate: SkillCandidate) -> SkillEvolutionGateResult:
         text = " ".join(_string_values(candidate.to_dict()))
         violations = []
-        if candidate.base_version.skill_name.startswith("framework.") and "business/research" in text:
+        if candidate.base_version.skill_name.startswith("framework.") and "backend/research" in text:
             violations.append("framework_skill_contains_research_rule")
-        if "business.boards.paper_radar" in text or "paper_radar" in text:
+        if "backend.boards.paper_radar" in text or "paper_radar" in text:
             violations.append("candidate_leaks_legacy_paper_radar")
         return SkillEvolutionGateResult(
             self.gate_name,

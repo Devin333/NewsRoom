@@ -682,7 +682,7 @@ def test_history_module_has_no_live_runtime_capability_imports() -> None:
         for alias in node.names
     )
     forbidden = (
-        "business",
+        "backend",
         "infrastructure",
         "interfaces",
         "framework.events.bus",

@@ -8,7 +8,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 FRAMEWORK_ROOT = PROJECT_ROOT / "framework"
 SKILLS_ROOT = FRAMEWORK_ROOT / "skills"
 
-FORBIDDEN_SKILL_IMPORT_PREFIXES = ("business", "infrastructure", "interfaces")
+FORBIDDEN_SKILL_IMPORT_PREFIXES = ("backend", "infrastructure", "interfaces")
 ALLOWED_SKILL_RUNTIME_BRIDGES = {
     "framework/agent/skill_context.py",
     "framework/workflow/runners/skill/context.py",

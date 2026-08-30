@@ -7,13 +7,13 @@ from pathlib import Path
 _PROJECT_ROOT = Path(__file__).resolve().parents[2]
 _OWNER_ROOT = _PROJECT_ROOT / "infrastructure/storage/indexing"
 _PRODUCTION_ROOTS = (
-    _PROJECT_ROOT / "business",
+    _PROJECT_ROOT / "backend",
     _PROJECT_ROOT / "framework",
     _PROJECT_ROOT / "interfaces",
     _PROJECT_ROOT / "infrastructure",
 )
 _FORBIDDEN_IMPORT_ROOTS = (
-    "business",
+    "backend",
     "framework.workflow",
     "interfaces",
 )

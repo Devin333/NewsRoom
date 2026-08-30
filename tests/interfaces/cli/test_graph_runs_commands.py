@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 
 import interfaces.cli.news as news_cli
-from business.research.graphs.contracts import RESEARCH_PAPER_ANALYSIS_GRAPH_ID
+from backend.research.graphs.contracts import RESEARCH_PAPER_ANALYSIS_GRAPH_ID
 from interfaces.services.run_inspection_service import GraphRunInspectionService
 from tests.fixtures.graph_runs import graph_index_reader
 from tests.fixtures.graph_runs import write_graph_terminal_run

@@ -11,7 +11,7 @@ from infrastructure.storage.subscriptions import (
     SubscriptionCadence,
     TopicSubscription,
 )
-from business.foundation.subscription import DeliveryPlan, DeliveryPlanBuilder, SubscriptionPayload, SubscriptionTarget
+from backend.foundation.subscription import DeliveryPlan, DeliveryPlanBuilder, SubscriptionPayload, SubscriptionTarget
 
 
 DEFAULT_SUBSCRIPTION_STORE_PATH = ".newsroom/subscriptions/subscriptions.json"

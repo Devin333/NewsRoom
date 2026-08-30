@@ -5,7 +5,7 @@ from xml.etree.ElementTree import ParseError
 
 import pytest
 
-from business.layers.signal.source_processing.error_taxonomy import (
+from backend.layers.signal.source_processing.error_taxonomy import (
     SourceErrorClassification,
     SourceTaxonomyExtension,
     classify_source_exception as classify_business_source_exception,

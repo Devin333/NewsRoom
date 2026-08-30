@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from business.foundation.subscription import SubscriptionPayloadBuilder, aggregate_payloads
+from backend.foundation.subscription import SubscriptionPayloadBuilder, aggregate_payloads
 from interfaces.services.subscription_service import SubscriptionApplicationService
 
 

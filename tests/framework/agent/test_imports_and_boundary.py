@@ -19,7 +19,7 @@ def test_framework_agent_public_imports() -> None:
 def test_framework_agent_does_not_import_core_or_business_boundaries() -> None:
     forbidden = (
         "storage",
-        "business",
+        "backend",
         "interfaces",
         "workflows",
         "domain",

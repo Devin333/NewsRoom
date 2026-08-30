@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import json
 
-from business.projects.bridge import ProjectRadarBridge
-from business.projects.repository import ProjectArtifactRepository, ProjectStateRepository
-from business.projects.service import ProjectDomainService
+from backend.projects.bridge import ProjectRadarBridge
+from backend.projects.repository import ProjectArtifactRepository, ProjectStateRepository
+from backend.projects.service import ProjectDomainService
 from interfaces.services.project_service import ProjectApplicationService
 
 
@@ -175,42 +175,42 @@ def _board_output_payload() -> dict:
 
 
 def _query(**kwargs):
-    from business.projects.dto import ProjectListQuery
+    from backend.projects.dto import ProjectListQuery
 
     return ProjectListQuery(**kwargs)
 
 
 def _tool_query(**kwargs):
-    from business.projects.dto import ToolSearchQuery
+    from backend.projects.dto import ToolSearchQuery
 
     return ToolSearchQuery(**kwargs)
 
 
 def _case_query(**kwargs):
-    from business.projects.dto import CaseSearchQuery
+    from backend.projects.dto import CaseSearchQuery
 
     return CaseSearchQuery(**kwargs)
 
 
 def _watch_request(**kwargs):
-    from business.projects.dto import WatchlistCreateRequest
+    from backend.projects.dto import WatchlistCreateRequest
 
     return WatchlistCreateRequest(**kwargs)
 
 
 def _lab_request(**kwargs):
-    from business.projects.dto import LabSessionRequest
+    from backend.projects.dto import LabSessionRequest
 
     return LabSessionRequest(**kwargs)
 
 
 def _lab_answer(question_id, answer):
-    from business.projects.dto import LabAnswerRequest
+    from backend.projects.dto import LabAnswerRequest
 
     return LabAnswerRequest(question_id=question_id, answer=answer)
 
 
 def _interaction(**kwargs):
-    from business.projects.dto import InteractionRequest
+    from backend.projects.dto import InteractionRequest
 
     return InteractionRequest(**kwargs)

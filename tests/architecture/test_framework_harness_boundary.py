@@ -7,7 +7,7 @@ def test_framework_harness_does_not_import_outer_layers() -> None:
     violations = forbidden_imports(
         PROJECT_ROOT / "framework" / "harness",
         (
-            "business",
+            "backend",
             "interfaces",
             "infrastructure",
             "frontend",

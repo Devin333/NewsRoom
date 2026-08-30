@@ -10,7 +10,7 @@ def test_harness_artifact_catalog_has_no_outer_or_vendor_storage_dependencies() 
     assert forbidden_imports(
         CATALOG_ROOT,
         (
-            "business",
+            "backend",
             "interfaces",
             "infrastructure",
             "storage",

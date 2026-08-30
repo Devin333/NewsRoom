@@ -1,5 +1,5 @@
-from business.memory.graph_memory import GraphMemoryService
-from business.memory.graph_models import GraphEdge, GraphExpansion, GraphNode, GraphPath
+from backend.memory.graph_memory import GraphMemoryService
+from backend.memory.graph_models import GraphEdge, GraphExpansion, GraphNode, GraphPath
 from interfaces.services import graph_memory_service as graph_memory_service_module
 from interfaces.services.graph_memory_service import GraphMemoryApplicationService, graph_memory_service_from_env
 import pytest

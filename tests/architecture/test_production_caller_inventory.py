@@ -15,7 +15,7 @@ INVENTORY_PATH = (
     / "harness-runtime-production-composition"
     / "caller-inventory.json"
 )
-PRODUCTION_ROOTS = ("business", "framework", "infrastructure", "interfaces")
+PRODUCTION_ROOTS = ("backend", "framework", "infrastructure", "interfaces")
 INVENTORY_SCHEMA = "newsroom.production-caller-inventory/v1"
 CLASSIFICATIONS = {"migrate", "trusted_exemption", "blocked"}
 CLASSIFICATION_STATES = {

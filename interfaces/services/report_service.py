@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from business.layers.output.report_quality_projection import (
+from backend.layers.output.report_quality_projection import (
     normalize_quality_result_records,
     project_report_quality_payload,
 )

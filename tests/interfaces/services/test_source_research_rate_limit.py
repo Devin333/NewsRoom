@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import pytest
 
-from business.foundation.models.source import SourceFetchPolicy as BusinessSourceFetchPolicy
-from business.foundation.registry.source_registry import SourceRegistry
-from business.layers.signal.source_health import BasicSourceHealthManager
+from backend.foundation.models.source import SourceFetchPolicy as BusinessSourceFetchPolicy
+from backend.foundation.registry.source_registry import SourceRegistry
+from backend.layers.signal.source_health import BasicSourceHealthManager
 from infrastructure.external.sources import SourceRateLimitExceededError
 from infrastructure.external.sources.fetch_policy import SourceFetchPolicy
 from interfaces.services.source_runtime import build_source_runtime_composition

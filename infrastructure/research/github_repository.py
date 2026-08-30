@@ -5,7 +5,7 @@ from hashlib import sha256
 from typing import Any, Callable
 from urllib.parse import urlsplit
 
-from business.research.domain.code_repository import (
+from backend.research.domain.code_repository import (
     CodeRepositoryObservation,
     CodeRepositoryProfile,
 )

@@ -1,30 +1,30 @@
 # Business Boundaries
 
-This document describes the current `business/` boundary after the Harness + Research cleanup.
+This document describes the current `backend/` boundary after the Harness + Research cleanup.
 
 ## Current Ownership
 
-- `business/research/` owns Research domain models, ports, use cases, paper analysis Graph definitions, reader payload construction, reader repair memory, taxonomy, benchmark, code repository, method graph, agent intelligence, and RAG policy rules.
-- `business/layers/` owns reusable domain processing primitives for signal, extraction, relation, analysis, output, and memory. These modules may depend on foundation primitives, but must not depend on old board packages.
-- `business/foundation/` owns shared enums, registries, evidence primitives, source definitions, policy models, subscription primitives, and skill package metadata. It must remain free of layer or interface dependencies.
-- `business/workers/` owns domain-neutral worker task handlers that call application-safe services or reusable business layers.
-- `business/tools.py` and `business/layers/signal/connector_tools.py` expose real connector-backed tools that can be registered through Harness or MCP-facing tool catalogs.
+- `backend/research/` owns Research domain models, ports, use cases, paper analysis Graph definitions, reader payload construction, reader repair memory, taxonomy, benchmark, code repository, method graph, agent intelligence, and RAG policy rules.
+- `backend/layers/` owns reusable domain processing primitives for signal, extraction, relation, analysis, output, and memory. These modules may depend on foundation primitives, but must not depend on old board packages.
+- `backend/foundation/` owns shared enums, registries, evidence primitives, source definitions, policy models, subscription primitives, and skill package metadata. It must remain free of layer or interface dependencies.
+- `backend/workers/` owns domain-neutral worker task handlers that call application-safe services or reusable business layers.
+- `backend/tools.py` and `backend/layers/signal/connector_tools.py` expose real connector-backed tools that can be registered through Harness or MCP-facing tool catalogs.
 
 ## Removed Legacy Surface
 
 The old board runtime packages were deleted from the production business surface:
 
 ```text
-business/boards
-business/scoring
-business/evaluation
+backend/boards
+backend/scoring
+backend/evaluation
 ```
 
-Production code must not keep compatibility adapters for old board orchestration, old `paper_radar` payloads, old daily or weekly report runners, or old paper reader APIs. Useful business rules must be migrated into `business/research`, `business/layers`, or framework-level Harness primitives before the old module is removed.
+Production code must not keep compatibility adapters for old board orchestration, old `paper_radar` payloads, old daily or weekly report runners, or old paper reader APIs. Useful business rules must be migrated into `backend/research`, `backend/layers`, or framework-level Harness primitives before the old module is removed.
 
 ## Research Boundary Rules
 
-- `business/research` must not import `business.boards`, `interfaces`, or concrete `infrastructure` adapters.
+- `backend/research` must not import `backend.boards`, `interfaces`, or concrete `infrastructure` adapters.
 - Research use cases define domain inputs and outputs; interface services translate HTTP, SDK, CLI, or MCP requests into those use cases.
 - Harness controls Graph routing, quality decisions, retries, replans, memory writes, artifact publication, trace, checkpoint, and replay. AgentLoop remains an inner single-agent worker loop and cannot make those decisions.
 - LLMs and subagents may generate candidate content, but they must not decide routing, quality pass/fail, tool authorization, memory writes, or publication.
@@ -40,9 +40,9 @@ Production code must not keep compatibility adapters for old board orchestration
 
 Architecture tests must enforce:
 
-- No production import of `business.boards`.
+- No production import of `backend.boards`.
 - No production import of removed paper services or old paper routers.
-- No `business/research` import of `interfaces` or concrete `infrastructure`.
+- No `backend/research` import of `interfaces` or concrete `infrastructure`.
 - No framework import of business, interfaces, or concrete infrastructure.
 
 Focused tests should cover migrated Research rules instead of preserving old board-specific behavior.

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from business.layers.memory.ingestion import MemoryIngestionService
+from backend.layers.memory.ingestion import MemoryIngestionService
 from interfaces.services.memory_service import memory_ingestion_service_from_env
 
 

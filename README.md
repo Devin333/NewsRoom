@@ -120,7 +120,7 @@ python -m scripts.dev smoke
 The aggregate smoke runs the fixed command set below:
 
 ```bash
-python -m compileall -q framework business interfaces infrastructure scripts tests
+python -m compileall -q framework backend interfaces infrastructure scripts tests
 python -m interfaces.cli.news api openapi --json
 python -m interfaces.cli.news sources validate
 python -m interfaces.cli.news mcp catalog --json

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from business.research.document.models import PaperChunk
+from backend.research.document.models import PaperChunk
 from infrastructure.storage.vector.fake_store import InMemoryVectorStore
 from infrastructure.storage.vector.paper_field_chunk_store import PaperFieldChunkStore
 

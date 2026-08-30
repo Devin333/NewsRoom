@@ -7,7 +7,7 @@ from urllib.error import HTTPError, URLError
 
 import pytest
 
-from business.foundation.models.source import SourceDefinition
+from backend.foundation.models.source import SourceDefinition
 from infrastructure.external.sources import DomainRateLimiter, FeedConnector, SourceFetchPolicy, TooManyRedirectsError
 
 

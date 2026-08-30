@@ -3,8 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from business.memory.evaluation import MemoryEvaluationReport
-from business.memory.policy_learning import MemoryPolicyLearningService
+from backend.memory.evaluation import MemoryEvaluationReport
+from backend.memory.policy_learning import MemoryPolicyLearningService
 
 
 @dataclass(frozen=True)

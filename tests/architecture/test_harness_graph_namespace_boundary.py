@@ -54,7 +54,7 @@ def test_graph_versioning_has_no_legacy_writer_window() -> None:
 
 def test_production_and_tests_do_not_import_retired_workflow_modules() -> None:
     violations: list[str] = []
-    for root_name in ("business", "framework", "infrastructure", "interfaces", "scripts", "tests"):
+    for root_name in ("backend", "framework", "infrastructure", "interfaces", "scripts", "tests"):
         for path in (PROJECT_ROOT / root_name).rglob("*.py"):
             if path.is_relative_to(PROJECT_ROOT / "tests" / "fixtures"):
                 continue
@@ -141,7 +141,7 @@ def test_graph_definition_is_the_only_runtime_declaration() -> None:
     paths = (
         PROJECT_ROOT / "framework/harness/control_plane/state.py",
         PROJECT_ROOT / "interfaces/composition/research.py",
-        PROJECT_ROOT / "business/research/application/single_paper_runtime.py",
+        PROJECT_ROOT / "backend/research/application/single_paper_runtime.py",
     )
     source = "\n".join(path.read_text(encoding="utf-8") for path in paths)
     assert "HarnessGraphDefinition" in source

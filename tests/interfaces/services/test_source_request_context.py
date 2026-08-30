@@ -5,8 +5,8 @@ from concurrent.futures import ThreadPoolExecutor
 from itertools import count
 from threading import Lock
 
-from business.foundation.models.source import SourceDefinition, SourceFetchRequest
-from business.foundation.registry.source_registry import SourceRegistry
+from backend.foundation.models.source import SourceDefinition, SourceFetchRequest
+from backend.foundation.registry.source_registry import SourceRegistry
 from infrastructure.external.sources.models import SourceError, SourceType
 from infrastructure.external.sources.protocol import (
     SourceFetchContext,

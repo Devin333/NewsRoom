@@ -3,7 +3,7 @@ from urllib.error import HTTPError
 
 import pytest
 
-from business.foundation.models.source import SourceDefinition
+from backend.foundation.models.source import SourceDefinition
 from infrastructure.external.sources import (
     ARXIV_API_URL,
     ArxivConnector,

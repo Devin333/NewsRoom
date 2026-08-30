@@ -1,0 +1,125 @@
+from __future__ import annotations
+
+from backend.research.code_repository.ports import GithubRepositoryPort
+from backend.research.ports.artifact_publication import (
+    ResearchArtifactDiagnosticClaim,
+    ResearchArtifactDiagnosticReader,
+    ResearchArtifactReadClaim,
+    ResearchArtifactReadResolution,
+    ResearchGraphStorageIndexPublisherPort,
+)
+from backend.research.ports.artifact_store import ResearchArtifactStorePort
+from backend.research.ports.document_compiler import DocumentCompilerPort
+from backend.research.ports.field_embedding_index import (
+    FieldEmbeddingHit,
+    FieldEmbeddingIndexerPort,
+    FieldEmbeddingIndexPort,
+    FieldEmbeddingSearchPort,
+)
+from backend.research.ports.llm_worker import ResearchCandidateWorkerPort
+from backend.research.ports.memory import ResearchMemoryPort
+from backend.research.ports.reader_repair_failure_diagnostic import (
+    READER_REPAIR_FAILURE_DIAGNOSTIC_EFFECT_KIND,
+    READER_REPAIR_FAILURE_DIAGNOSTIC_HANDLER_ID,
+    READER_REPAIR_FAILURE_DIAGNOSTIC_HANDLER_REF,
+    READER_REPAIR_FAILURE_DIAGNOSTIC_HANDLER_VERSION,
+    READER_REPAIR_FAILURE_DIAGNOSTIC_SCHEMA_VERSION,
+    READER_REPAIR_FAILURE_DIAGNOSTIC_TERMINAL_ACTION,
+    ReaderRepairFailureDiagnosticCandidate,
+    ReaderRepairFailureDiagnosticCommitPort,
+    ReaderRepairFailureDiagnosticCommitReceipt,
+    ReaderRepairFailureDiagnosticCommitRequest,
+)
+from backend.research.ports.repair_memory import (
+    READER_REPAIR_MEMORY_EFFECT_KIND,
+    READER_REPAIR_MEMORY_HANDLER_ID,
+    READER_REPAIR_MEMORY_HANDLER_REF,
+    READER_REPAIR_MEMORY_HANDLER_VERSION,
+    READER_REPAIR_MEMORY_SCHEMA_VERSION,
+    READER_REPAIR_MEMORY_STEP_ID,
+    ReaderRepairMemoryCandidateProjection,
+    ReaderRepairMemoryCommitPort,
+    ReaderRepairMemoryCommitReceipt,
+    ReaderRepairMemoryCommitRequest,
+    ReaderRepairMemoryPort,
+    ReaderRepairMemoryRecallPort,
+    ReaderRepairMemoryVersion,
+)
+from backend.research.ports.repositories import (
+    EvidencePackRepository,
+    PaperCardRepository,
+    ReadingSessionRepository,
+    ResearchPaperRepository,
+)
+from backend.research.ports.retrieval import ResearchRetrievalProjectionPort
+from backend.research.ports.run_store import (
+    ResearchRunDiagnosticStore,
+    ResearchRunDisposition,
+    ResearchRunDispositionReason,
+    ResearchRunRecord,
+    ResearchRunStore,
+    ResearchRunStoreConflictError,
+    ResearchRunStoreCorruptionError,
+    ResearchRunStoreError,
+    ResearchRunStoreReason,
+    ResearchRunStoreUnavailableError,
+    ResearchRunStoreValidationError,
+)
+from backend.research.ports.source_provider import PaperSourceProvider
+
+__all__ = [
+    "DocumentCompilerPort",
+    "EvidencePackRepository",
+    "FieldEmbeddingHit",
+    "FieldEmbeddingIndexerPort",
+    "FieldEmbeddingIndexPort",
+    "FieldEmbeddingSearchPort",
+    "GithubRepositoryPort",
+    "PaperCardRepository",
+    "PaperSourceProvider",
+    "READER_REPAIR_FAILURE_DIAGNOSTIC_EFFECT_KIND",
+    "READER_REPAIR_FAILURE_DIAGNOSTIC_HANDLER_ID",
+    "READER_REPAIR_FAILURE_DIAGNOSTIC_HANDLER_REF",
+    "READER_REPAIR_FAILURE_DIAGNOSTIC_HANDLER_VERSION",
+    "READER_REPAIR_FAILURE_DIAGNOSTIC_SCHEMA_VERSION",
+    "READER_REPAIR_FAILURE_DIAGNOSTIC_TERMINAL_ACTION",
+    "READER_REPAIR_MEMORY_EFFECT_KIND",
+    "READER_REPAIR_MEMORY_HANDLER_ID",
+    "READER_REPAIR_MEMORY_HANDLER_REF",
+    "READER_REPAIR_MEMORY_HANDLER_VERSION",
+    "READER_REPAIR_MEMORY_SCHEMA_VERSION",
+    "READER_REPAIR_MEMORY_STEP_ID",
+    "ReaderRepairFailureDiagnosticCandidate",
+    "ReaderRepairFailureDiagnosticCommitPort",
+    "ReaderRepairFailureDiagnosticCommitReceipt",
+    "ReaderRepairFailureDiagnosticCommitRequest",
+    "ReaderRepairMemoryCandidateProjection",
+    "ReaderRepairMemoryCommitPort",
+    "ReaderRepairMemoryCommitReceipt",
+    "ReaderRepairMemoryCommitRequest",
+    "ReaderRepairMemoryPort",
+    "ReaderRepairMemoryRecallPort",
+    "ReaderRepairMemoryVersion",
+    "ReadingSessionRepository",
+    "ResearchArtifactStorePort",
+    "ResearchArtifactDiagnosticClaim",
+    "ResearchArtifactDiagnosticReader",
+    "ResearchArtifactReadClaim",
+    "ResearchArtifactReadResolution",
+    "ResearchGraphStorageIndexPublisherPort",
+    "ResearchCandidateWorkerPort",
+    "ResearchMemoryPort",
+    "ResearchPaperRepository",
+    "ResearchRetrievalProjectionPort",
+    "ResearchRunDiagnosticStore",
+    "ResearchRunDisposition",
+    "ResearchRunDispositionReason",
+    "ResearchRunRecord",
+    "ResearchRunStore",
+    "ResearchRunStoreConflictError",
+    "ResearchRunStoreCorruptionError",
+    "ResearchRunStoreError",
+    "ResearchRunStoreReason",
+    "ResearchRunStoreUnavailableError",
+    "ResearchRunStoreValidationError",
+]

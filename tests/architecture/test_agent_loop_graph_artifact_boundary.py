@@ -8,7 +8,7 @@ _PROJECT_ROOT = Path(__file__).resolve().parents[2]
 _AGENT_ROOT = _PROJECT_ROOT / "framework/agent"
 _INTEGRATION_ROOT = _PROJECT_ROOT / "framework/harness/agent_loop"
 _LIVE_ROOTS = (
-    _PROJECT_ROOT / "business",
+    _PROJECT_ROOT / "backend",
     _PROJECT_ROOT / "interfaces",
     _PROJECT_ROOT / "infrastructure",
 )

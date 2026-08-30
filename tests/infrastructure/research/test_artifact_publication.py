@@ -20,8 +20,8 @@ from framework.harness.graph import HarnessGraphCompiler
 from framework.harness.graph.execution_versions import GraphExecutionVersionManifest
 from framework.shared.time import utc_now
 
-from business.research.graphs import build_paper_analysis_graph_definition
-from business.research.ports.artifact_publication import (
+from backend.research.graphs import build_paper_analysis_graph_definition
+from backend.research.ports.artifact_publication import (
     RESEARCH_ARTIFACT_EFFECT_KIND,
     RESEARCH_ARTIFACT_HANDLER_REF,
     RESEARCH_ARTIFACT_SCHEMA_VERSION,

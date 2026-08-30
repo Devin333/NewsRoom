@@ -45,11 +45,11 @@ does not waive the open integration, migration, audit, or release gates.
 
 | PRD requirement | OpenSpec requirements | Accountable tasks | Replayable evidence | Current status |
 | --- | --- | --- | --- | --- |
-| `SRC-001` canonical Source URL identity | `source-canonical-url-default-port`, `source-canonical-url-relative-resolution`, `source-html-canonical-url-normalize` | `1.1`, `2.1`-`2.5` | `tests/contracts/test_source_url_identity_contract.py::test_source_url_golden_contract_is_shared_by_business_and_infrastructure`; malformed URL, `SourceRef`, HTML/tool parity, and historical alias cases in the same file; `tests/contracts/test_source_url_persistence_compatibility.py`; `tests/business/research/test_source_url_identity_compatibility.py` | Core evidenced. Historical readers and deletion audit are working-tree evidence, not yet committed. External package consumers are unconfirmed. |
+| `SRC-001` canonical Source URL identity | `source-canonical-url-default-port`, `source-canonical-url-relative-resolution`, `source-html-canonical-url-normalize` | `1.1`, `2.1`-`2.5` | `tests/contracts/test_source_url_identity_contract.py::test_source_url_golden_contract_is_shared_by_business_and_infrastructure`; malformed URL, `SourceRef`, HTML/tool parity, and historical alias cases in the same file; `tests/contracts/test_source_url_persistence_compatibility.py`; `tests/backend/research/test_source_url_identity_compatibility.py` | Core evidenced. Historical readers and deletion audit are working-tree evidence, not yet committed. External package consumers are unconfirmed. |
 | `SRC-002` one shared limiter/composition | `source-fetch-rate-limit-policy`, all three `source-pipeline` requirements | `1.3`, `3.2`, `3.5`-`3.10` | `tests/infrastructure/external/sources/connectors/test_fetch_policy.py::test_domain_rate_limiter_reservations_are_atomic_under_concurrency`; logical-reservation, denial, robots, and `export.arxiv.org -> arxiv.org` provider-bucket cases in that file; `tests/interfaces/services/test_source_runtime_composition.py`; `tests/interfaces/services/test_source_health_probe.py`; `tests/interfaces/services/test_source_research_rate_limit.py`; business Source-tool limiter tests | Passing composition and entry-surface evidence. Harness Source capability is explicitly unsupported pending a canonical Harness-owned Source `ToolPort`. |
-| `SRC-003` one retry decision owner | `source-fetch-retry-policy` | `1.2`, `3.1`, `3.3`, `3.4`, `3.8`, `3.9` | `tests/infrastructure/external/sources/connectors/test_fetch_policy.py::test_source_fetch_retry_decision_matrix`; configured 404, disabled 503, exhausted/zero budget, validation, parse-boundary, robots, and one-reservation cases; `tests/contracts/test_source_retry_taxonomy_parity.py`; `tests/business/layers/signal/test_source_tools.py` retry cases | Core evidenced. Final full-suite and release gates remain open. |
+| `SRC-003` one retry decision owner | `source-fetch-retry-policy` | `1.2`, `3.1`, `3.3`, `3.4`, `3.8`, `3.9` | `tests/infrastructure/external/sources/connectors/test_fetch_policy.py::test_source_fetch_retry_decision_matrix`; configured 404, disabled 503, exhausted/zero budget, validation, parse-boundary, robots, and one-reservation cases; `tests/contracts/test_source_retry_taxonomy_parity.py`; `tests/backend/layers/signal/test_source_tools.py` retry cases | Core evidenced. Final full-suite and release gates remain open. |
 | `SRC-004` one business taxonomy owner | `source-error-taxonomy` classification and extension requirements | `1.4`, `4.1`, `4.2` | `tests/contracts/test_source_error_taxonomy_parity.py::test_source_taxonomy_golden_matrix_and_adapter_parity`; behavior-free adapter identity test; business and infrastructure taxonomy unit suites | Core evidenced. Legacy keyword signature remains a registered compatibility surface. |
-| `SRC-005` explicit live mapper and persisted codec | `source-error-top-level-policy-fields`, `source-error-artifact-refs` | `1.5`, `4.6`, `5.1`-`5.4`, `6.2`, `6.3` | `tests/interfaces/services/test_source_mapping.py` definition/policy, 17-field item, and lossless error tests; `tests/interfaces/services/test_source_request_context.py`; forced-interleaving request metadata and one-shot pending-request tests in `test_feed.py` and `test_protocol.py`; `tests/contracts/test_source_error_persistence_compatibility.py`; `tests/contracts/test_source_url_persistence_compatibility.py`; `business/foundation/models/source_error_normalization.py` is exercised by the persisted tests | Live mapper, request-local connector state, and current persistence corpus are evidenced. The PRD's connector/application/API/MCP/worker/CLI/Source-tool/connector-tool public-payload matrix is not yet fully represented by one cross-surface test, so the PRD-level requirement is not complete. |
+| `SRC-005` explicit live mapper and persisted codec | `source-error-top-level-policy-fields`, `source-error-artifact-refs` | `1.5`, `4.6`, `5.1`-`5.4`, `6.2`, `6.3` | `tests/interfaces/services/test_source_mapping.py` definition/policy, 17-field item, and lossless error tests; `tests/interfaces/services/test_source_request_context.py`; forced-interleaving request metadata and one-shot pending-request tests in `test_feed.py` and `test_protocol.py`; `tests/contracts/test_source_error_persistence_compatibility.py`; `tests/contracts/test_source_url_persistence_compatibility.py`; `backend/foundation/models/source_error_normalization.py` is exercised by the persisted tests | Live mapper, request-local connector state, and current persistence corpus are evidenced. The PRD's connector/application/API/MCP/worker/CLI/Source-tool/connector-tool public-payload matrix is not yet fully represented by one cross-surface test, so the PRD-level requirement is not complete. |
 | `SRC-006` one connector error factory | shared-construction requirement in `source-error-taxonomy` | `4.3`-`4.6` | `tests/infrastructure/external/sources/errors/test_connector_error_factory_contract.py` covers connector envelope parity, rate-limit envelope, absence of local constructors, and the single infrastructure constructor owner; `tests/infrastructure/external/sources/errors/test_factory.py` covers immutable context/diagnostics and reserved-field rejection | Core evidenced. Final production/export audit and release gates remain open. |
 
 Scenario-level traceability:
@@ -88,8 +88,8 @@ addition to explicit injected-object tests.
 Replay the ownership probe with:
 
 ```powershell
-rg -n "SourceRuntimeProvider|build_source_runtime_composition|source_tool_runtime|research_arxiv_connector" interfaces business/research infrastructure/research framework -g '*.py'
-rg -n "build_business_tool_registry|source\.fetch|SourceRuntimeProvider|source_runtime" framework/harness framework/tool business/research interfaces -g '*.py'
+rg -n "SourceRuntimeProvider|build_source_runtime_composition|source_tool_runtime|research_arxiv_connector" interfaces backend/research infrastructure/research framework -g '*.py'
+rg -n "build_business_tool_registry|source\.fetch|SourceRuntimeProvider|source_runtime" framework/harness framework/tool backend/research interfaces -g '*.py'
 ```
 
 The first command locates the interface-owned composition and the explicit
@@ -104,11 +104,11 @@ recorded unsupported-capability decision above.
 The exact Source architecture permissions are:
 
 - `infrastructure/external/sources/url_utils.py` may import only
-  `business.foundation.primitives.source_ref`.
+  `backend.foundation.primitives.source_ref`.
 - `infrastructure/external/sources/errors/taxonomy.py` may import only
-  `business.layers.signal.source_processing.error_taxonomy`.
+  `backend.layers.signal.source_processing.error_taxonomy`.
 - `infrastructure/storage/postgres/repository.py` may import only the persisted
-  codec contract `business.foundation.models.source_error_normalization` for
+  codec contract `backend.foundation.models.source_error_normalization` for
   this Source concern.
 
 These are asserted by `tests/architecture/test_infrastructure_boundary.py`.
@@ -133,7 +133,7 @@ Replay:
 ```powershell
 rg -n "(^|\s)def _?source_error\b|SourceError\s*\(" infrastructure/external/sources -g '*.py'
 rg -n "class .*RateLimiter|DomainRateLimiter\(|SourceRateLimit" business infrastructure interfaces -g '*.py'
-rg -n "run_with_fetch_retries|decide_source_fetch_retry|is_retryable_fetch_exception" business/layers/signal infrastructure/external/sources interfaces/services -g '*.py'
+rg -n "run_with_fetch_retries|decide_source_fetch_retry|is_retryable_fetch_exception" backend/layers/signal infrastructure/external/sources interfaces/services -g '*.py'
 ```
 
 Current findings:
@@ -154,7 +154,7 @@ Current findings:
 ### 4.3 URL import/export and dynamic-entry audit
 
 The deleted signal algorithm was never exported from
-`business/layers/signal/source_processing/__init__.py`. The current live tree
+`backend/layers/signal/source_processing/__init__.py`. The current live tree
 contains no production import or dynamic-entry string for that module. The only
 remaining historical algorithms are private functions reached by
 `source_url_read_aliases`.
@@ -162,7 +162,7 @@ remaining historical algorithms are private functions reached by
 Replay from the repository root (exit code `1` means no match):
 
 ```powershell
-rg -n "business\.layers\.signal\.source_processing\.url_normalization|source_processing\.url_normalization" business infrastructure interfaces framework scripts configs pyproject.toml -g '*.py' -g '*.toml' -g '*.yaml' -g '*.yml'
+rg -n "backend\.layers\.signal\.source_processing\.url_normalization|source_processing\.url_normalization" business infrastructure interfaces framework scripts configs pyproject.toml -g '*.py' -g '*.toml' -g '*.yaml' -g '*.yml'
 rg -n "infrastructure\.external\.source_adapters|from infrastructure\.external import|import infrastructure\.external(\s|$)" business infrastructure interfaces framework scripts configs pyproject.toml -g '*.py' -g '*.toml' -g '*.yaml' -g '*.yml'
 rg -n "entry_points|console_scripts|import_module|module:|callable:" pyproject.toml configs scripts -g '*.py' -g '*.toml' -g '*.yaml' -g '*.yml'
 ```
@@ -217,7 +217,7 @@ Primary replay command:
 .venv\Scripts\python.exe -m pytest -q `
   tests/contracts/test_source_url_identity_contract.py `
   tests/contracts/test_source_url_persistence_compatibility.py `
-  tests/business/research/test_source_url_identity_compatibility.py `
+  tests/backend/research/test_source_url_identity_compatibility.py `
   tests/contracts/test_source_error_persistence_compatibility.py
 ```
 
@@ -257,7 +257,7 @@ Missing telemetry blocks early deletion; it does not extend expiry implicitly.
 
 | Surface | Owner | `introduced_release` / commit | `expires_release` | Removal condition | Telemetry | Evidence | `kill_switch_retirement` |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| `business.foundation.primitives.source_ref.source_url_read_aliases` plus private `_canonicalize_url_foundation_v1` and `_canonicalize_url_signal_v1` | Source identity owner (`business/foundation/primitives/source_ref.py`) | `0.1.0` target; introduced by the Source core commit containing this evidence file | `0.2.0` | One full compatibility window; committed Source/Research/artifact/event/checkpoint corpus proves no historical values require either alias; package/external consumer audit is complete; exact new writes remain golden | No runtime alias-hit telemetry is implemented; fixture coverage only, so removal is blocked | URL identity/persistence and Research persistence tests; `rg source_url_read_aliases` enumerates current readers | No runtime switch exists. Remove the alias reader and both private algorithms together after the removal conditions pass. |
+| `backend.foundation.primitives.source_ref.source_url_read_aliases` plus private `_canonicalize_url_foundation_v1` and `_canonicalize_url_signal_v1` | Source identity owner (`backend/foundation/primitives/source_ref.py`) | `0.1.0` target; introduced by the Source core commit containing this evidence file | `0.2.0` | One full compatibility window; committed Source/Research/artifact/event/checkpoint corpus proves no historical values require either alias; package/external consumer audit is complete; exact new writes remain golden | No runtime alias-hit telemetry is implemented; fixture coverage only, so removal is blocked | URL identity/persistence and Research persistence tests; `rg source_url_read_aliases` enumerates current readers | No runtime switch exists. Remove the alias reader and both private algorithms together after the removal conditions pass. |
 | `infrastructure/external/source_adapters.py` public facade | Infrastructure Source adapter owner | pre-`0.1.0`; migration commit `b9adf598` (`git log --follow`) | `0.2.0` | Repository, documentation, dynamic-entry, and package-consumer audits show zero users for one release; consumers use `infrastructure.external.sources` or narrower modules | No invocation telemetry is implemented; repository `rg` currently returns no consumers, which is insufficient for package-external deletion | `git log --follow -- infrastructure/external/source_adapters.py`; live-tree import search in section 4.3 | No switch exists. Retire the facade export file after the compatibility window; do not add a fallback route. |
 | `infrastructure/external/__init__.py` top-level Source re-exports | Infrastructure Source adapter owner | pre-`0.1.0`; introduced/migrated by commit `b9adf598` | `0.2.0` | Same five-way consumer audit succeeds and all supported imports use the owning subpackage; one deprecation release has elapsed | No invocation telemetry is implemented; repository `rg` currently returns no consumers | `git log --follow -- infrastructure/external/__init__.py`; current `__all__`; live-tree import search in section 4.3 | No switch exists. Remove only the compatibility re-exports after consumers migrate; do not duplicate implementation. |
 | `classify_source_exception(..., invalid_config_keywords=...)` legacy keyword | Business Source taxonomy owner | pre-`0.1.0`; introduced by commit `f7e9f146` | `0.2.0` | Internal callers and tests use `SourceTaxonomyExtension`; package-consumer audit/deprecation window completes; passing parity matrix proves identical supported behavior | No keyword-use telemetry is implemented; one repository test intentionally remains a consumer | `git log -S invalid_config_keywords`; searches in section 4.4; taxonomy parity tests | No switch exists. Remove the keyword and its conflict branch after the last compatibility consumer migrates. |
@@ -330,18 +330,18 @@ openspec validate --all --strict
 Executed with the repository virtual environment on `2026-07-19`:
 
 ```powershell
-# Complete Source-focused aggregate across business/foundation/signal,
+# Complete Source-focused aggregate across backend/foundation/signal,
 # connectors/errors, artifact/local/Postgres persistence, interface services,
 # HTTP/MCP/worker/CLI/tool entry surfaces, and Source contracts.
 $paths = @(
-  'tests/business/foundation/test_source_models.py',
-  'tests/business/foundation/test_source_error_normalization_contract.py',
-  'tests/business/foundation/test_source_registry.py',
-  'tests/business/foundation/registry/test_source_registry_ai_community_validation.py',
-  'tests/business/layers/signal',
-  'tests/business/research/test_source_url_identity_compatibility.py',
-  'tests/business/research/code_repository/test_code_repo_models.py',
-  'tests/business/test_tool_registry.py',
+  'tests/backend/foundation/test_source_models.py',
+  'tests/backend/foundation/test_source_error_normalization_contract.py',
+  'tests/backend/foundation/test_source_registry.py',
+  'tests/backend/foundation/registry/test_source_registry_ai_community_validation.py',
+  'tests/backend/layers/signal',
+  'tests/backend/research/test_source_url_identity_compatibility.py',
+  'tests/backend/research/code_repository/test_code_repo_models.py',
+  'tests/backend/test_tool_registry.py',
   'tests/infrastructure/external/sources',
   'tests/infrastructure/storage/test_artifact_index_factory.py',
   'tests/infrastructure/storage/test_artifact_store.py',
@@ -431,14 +431,14 @@ claimed.
 .venv\Scripts\python.exe -m pytest -q tests/contracts/test_source_url_persistence_compatibility.py tests/contracts/test_source_error_persistence_compatibility.py
 # 12 passed
 
-.venv\Scripts\python.exe -m pytest -q tests/contracts/test_source_url_identity_contract.py tests/contracts/test_source_url_persistence_compatibility.py tests/business/research/test_source_url_identity_compatibility.py tests/contracts/test_source_error_persistence_compatibility.py
+.venv\Scripts\python.exe -m pytest -q tests/contracts/test_source_url_identity_contract.py tests/contracts/test_source_url_persistence_compatibility.py tests/backend/research/test_source_url_identity_compatibility.py tests/contracts/test_source_error_persistence_compatibility.py
 # 42 passed
 
 .venv\Scripts\python.exe -m pytest -q -p no:cacheprovider --tb=short `
   tests/infrastructure/external/sources/connectors `
   tests/interfaces/services/test_source_research_rate_limit.py `
   tests/interfaces/services/test_source_runtime_composition.py `
-  tests/business/layers/signal/source_health/test_health_manager.py
+  tests/backend/layers/signal/source_health/test_health_manager.py
 # 151 passed after request-local connector metadata, bounded protocol pending
 # state, serialized health transitions, canonical arXiv provider bucketing, and
 # real metadata-fetch then package/PDF no-network denial coverage

@@ -40,7 +40,7 @@ def _print_json(payload: dict) -> None:
 
 def ingest_papers(args: argparse.Namespace) -> int:
     load_root_env()
-    from business.research.application.batch_ingest import BatchIngestService
+    from backend.research.application.batch_ingest import BatchIngestService
     from interfaces.services.paper_rag_factory import (
         build_chunk_pipeline,
         build_chunk_repository,

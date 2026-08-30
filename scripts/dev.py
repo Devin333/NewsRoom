@@ -11,7 +11,7 @@ from framework.shared.env import env_values_from_root
 
 
 COMPILE_PATHS = [
-    "business",
+    "backend",
     "framework",
     "infrastructure",
     "interfaces",
@@ -51,7 +51,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _run(
             _pytest_command(
                 "tests/framework/harness",
-                "tests/business/research",
+                "tests/backend/research",
                 "-q",
             ),
             env=env,
@@ -137,7 +137,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             _compile_command(),
             _pytest_command(
                 "tests/framework/harness",
-                "tests/business/research",
+                "tests/backend/research",
                 "tests/interfaces/api/test_research_api.py",
                 "tests/interfaces/services/test_research_service.py",
                 "tests/interfaces/composition/test_research_recorded_transport.py",
@@ -294,11 +294,11 @@ def _agent_loop_smoke_command(
 
 
 def _rag_eval_gate_command() -> list[str]:
-    return [sys.executable, "-m", "business.research.rag.cli.run_ci_eval_gate"]
+    return [sys.executable, "-m", "backend.research.rag.cli.run_ci_eval_gate"]
 
 
 def _rag_live_answer_eval_command(args: argparse.Namespace | None = None) -> list[str]:
-    command = [sys.executable, "-m", "business.research.rag.cli.run_live_answer_eval"]
+    command = [sys.executable, "-m", "backend.research.rag.cli.run_live_answer_eval"]
     if args is None:
         return command
     if args.output_dir:
@@ -319,7 +319,7 @@ def _rag_live_answer_eval_command(args: argparse.Namespace | None = None) -> lis
 
 
 def _rag_live_answer_readiness_command(args: argparse.Namespace | None = None) -> list[str]:
-    command = [sys.executable, "-m", "business.research.rag.cli.check_live_answer_readiness"]
+    command = [sys.executable, "-m", "backend.research.rag.cli.check_live_answer_readiness"]
     if args is None:
         return command
     if args.output_dir:
@@ -336,7 +336,7 @@ def _rag_live_answer_readiness_command(args: argparse.Namespace | None = None) -
 
 
 def _rag_ingest_golden_set_papers_command(args: argparse.Namespace | None = None) -> list[str]:
-    command = [sys.executable, "-m", "business.research.rag.cli.ingest_golden_set_papers"]
+    command = [sys.executable, "-m", "backend.research.rag.cli.ingest_golden_set_papers"]
     if args is None:
         return command
     if args.golden_set:
@@ -362,8 +362,8 @@ def _rag_ingest_golden_set_papers_command(args: argparse.Namespace | None = None
 
 def _rag_live_e2e_command() -> list[str]:
     return _pytest_command(
-        "tests/business/research/document/test_arxiv_latex_integration.py",
-        "tests/business/research/integration/test_chunk_paper_e2e.py",
+        "tests/backend/research/document/test_arxiv_latex_integration.py",
+        "tests/backend/research/integration/test_chunk_paper_e2e.py",
         "tests/interfaces/composition/test_research_live_e2e.py",
         "-m",
         "live_research_e2e",
@@ -374,14 +374,14 @@ def _rag_live_e2e_command() -> list[str]:
 def _prd_research_regression_command() -> list[str]:
     return _pytest_command(
         "tests/framework/harness",
-        "tests/business/research",
+        "tests/backend/research",
         "tests/interfaces/api/test_research_api.py",
         "tests/interfaces/services/test_research_service.py",
         "tests/interfaces/services/test_report_service.py",
         "tests/interfaces/services/test_mcp_application_service.py",
-        "tests/business/layers/relation/evidence/test_claim_verifier.py",
-        "tests/business/layers/analysis/quality/test_citation_editor.py",
-        "tests/business/layers/analysis/quality/test_support_scoring.py",
+        "tests/backend/layers/relation/evidence/test_claim_verifier.py",
+        "tests/backend/layers/analysis/quality/test_citation_editor.py",
+        "tests/backend/layers/analysis/quality/test_support_scoring.py",
         "tests/infrastructure/storage/test_artifact_store.py",
         "tests/infrastructure/storage/test_backup_restore.py",
         "-q",

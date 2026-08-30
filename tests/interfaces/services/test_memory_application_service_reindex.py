@@ -1,4 +1,4 @@
-from business.layers.memory.ingestion import MemoryIngestionResult
+from backend.layers.memory.ingestion import MemoryIngestionResult
 from interfaces.services.memory_service import MemoryReindexResult
 
 

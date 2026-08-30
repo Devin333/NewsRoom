@@ -8,7 +8,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 LLM_ROOT = PROJECT_ROOT / "framework" / "llm"
 FORBIDDEN_FRAMEWORK_LLM_IMPORTS = (
     "storage",
-    "business",
+    "backend",
     "interfaces",
     "infrastructure",
     "workflows",

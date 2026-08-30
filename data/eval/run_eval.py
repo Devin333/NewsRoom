@@ -18,9 +18,9 @@ load_root_env()
 
 from infrastructure.storage.vector.qdrant_store import qdrant_store_from_env
 from infrastructure.storage.vector.paper_chunk_store import PaperChunkStore
-from business.research.document.chunk_storage import PaperChunkStoreAdapter
-from business.research.rag.retriever import ResearchRetriever
-from business.research.rag.eval import RetrievalEvaluator, load_golden_set
+from backend.research.document.chunk_storage import PaperChunkStoreAdapter
+from backend.research.rag.retriever import ResearchRetriever
+from backend.research.rag.eval import RetrievalEvaluator, load_golden_set
 
 GOLDEN = Path("data/eval/golden_set.json")
 

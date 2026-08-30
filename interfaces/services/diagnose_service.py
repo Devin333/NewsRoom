@@ -11,7 +11,7 @@ from framework.llm import DEFAULT_MODELS_CONFIG_PATH, load_openai_compatible_dep
 from framework.llm.clients.openai_compatible import LLMConfigurationError
 from framework.execution_environment.composition import RuntimeExecutionComposition
 from framework.execution_environment.errors import ExecutionEnvironmentError
-from business.layers.signal.source_config import SourceConfigError, build_default_source_registry
+from backend.layers.signal.source_config import SourceConfigError, build_default_source_registry
 
 _LLM_ENV_OVERRIDE_KEYS = (
     "NEWS_LLM_API_KEY",

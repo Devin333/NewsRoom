@@ -1,6 +1,6 @@
 """Behavior-free adapter to the business-owned Source error taxonomy."""
 
-from business.layers.signal.source_processing.error_taxonomy import (
+from backend.layers.signal.source_processing.error_taxonomy import (
     SourceErrorClassification,
     SourceTaxonomyExtension,
     classify_source_exception,

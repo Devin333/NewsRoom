@@ -2,7 +2,7 @@ from datetime import UTC, datetime
 
 import pytest
 
-from business.foundation.models.source import SourceError, SourceHealth, SourceHealthStatus
+from backend.foundation.models.source import SourceError, SourceHealth, SourceHealthStatus
 from infrastructure.storage.postgres import PostgresRepository
 from infrastructure.storage.records import ClaimRecord, EvidenceItemRecord, QualityResultRecord, SourceItemRecord
 from infrastructure.storage.persistence import GraphRunRecord, ReportRecord, RunPersistenceBatch

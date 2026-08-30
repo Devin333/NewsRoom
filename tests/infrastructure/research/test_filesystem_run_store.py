@@ -14,13 +14,13 @@ import pytest
 
 import infrastructure.research.diagnostics as diagnostics_module
 import infrastructure.research.filesystem_run_store as run_store_module
-from business.research.application import AnalyzePaperRequest, AnalyzePaperUseCase
-from business.research.application.run_disposition import research_identity_scope_ref
-from business.research.application.single_paper_runtime import (
+from backend.research.application import AnalyzePaperRequest, AnalyzePaperUseCase
+from backend.research.application.run_disposition import research_identity_scope_ref
+from backend.research.application.single_paper_runtime import (
     ResearchAnalysisResult,
     ResearchSinglePaperRuntime,
 )
-from business.research.ports.run_store import (
+from backend.research.ports.run_store import (
     ResearchRunDisposition,
     ResearchRunDispositionReason,
     ResearchRunRecord,
@@ -47,7 +47,7 @@ from infrastructure.research.diagnostics import (
     emit_research_persistence_diagnostic,
 )
 from framework.harness import FakeArtifactPort, InMemoryHarnessEventPort
-from tests.business.research.fakes import (
+from tests.backend.research.fakes import (
     FakeGithubRepositoryPort,
     FakeResearchDocumentCompiler,
     FakeResearchLLMWorker,

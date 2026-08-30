@@ -9,8 +9,8 @@ UTC = _tz.utc
 from pathlib import Path
 from typing import Any, Callable
 
-from business.layers.output.worker_handlers import MemoryReindexTaskHandler
-from business.layers.signal.worker_handlers import SourceHealthCheckTaskHandler
+from backend.layers.output.worker_handlers import MemoryReindexTaskHandler
+from backend.layers.signal.worker_handlers import SourceHealthCheckTaskHandler
 from framework.events import (
     EventTelemetry,
     TelemetryInstrumentationScope,

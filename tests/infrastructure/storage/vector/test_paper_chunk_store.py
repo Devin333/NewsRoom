@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from business.research.document.chunk_storage import PaperChunkStoreAdapter, _chunk_to_payload
-from business.research.document.models import PaperChunk
+from backend.research.document.chunk_storage import PaperChunkStoreAdapter, _chunk_to_payload
+from backend.research.document.models import PaperChunk
 from infrastructure.storage.vector.fake_store import InMemoryVectorStore
 from infrastructure.storage.vector.paper_chunk_store import PaperChunkStore
 

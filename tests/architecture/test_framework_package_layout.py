@@ -5,8 +5,8 @@ from tests.architecture._helpers import PROJECT_ROOT
 
 REQUIRED_PACKAGES = (
     "framework/shared",
-    "framework/specs",
-    "framework/workflow",
+    "framework/harness",
+    "framework/harness/graph",
     "framework/agent",
     "framework/tool",
     "framework/llm",

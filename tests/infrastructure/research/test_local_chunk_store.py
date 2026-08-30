@@ -8,7 +8,7 @@ from typing import Any
 
 import pytest
 
-from business.research.ports.chunk_payload_store import ChunkPayloadStorePort
+from backend.research.ports.chunk_payload_store import ChunkPayloadStorePort
 from infrastructure.research import local_chunk_store as local_store_module
 from infrastructure.research.local_chunk_store import (
     LOCAL_CHUNK_STORE_SCHEMA_VERSION,

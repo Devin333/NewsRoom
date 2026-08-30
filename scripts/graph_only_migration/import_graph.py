@@ -20,7 +20,7 @@ GRAPH_SCHEMA = "newsroom.graph-only-history-import-graph/v1"
 HISTORY_PREFIX = "scripts.graph_only_migration"
 PRODUCTION_ROOTS = (
     "framework",
-    "business",
+    "backend",
     "interfaces",
     "infrastructure",
     "scripts",
@@ -45,7 +45,7 @@ FORBIDDEN_RUNTIME_PREFIXES = (
     "framework.events.runtime",
     "framework.memory",
     "framework.tool",
-    "business",
+    "backend",
     "interfaces",
     "infrastructure",
 )

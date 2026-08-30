@@ -5,11 +5,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping, Protocol
 
-from business.layers.memory.ingestion import (
+from backend.layers.memory.ingestion import (
     MemoryIngestionResult,
     MemoryIngestionService,
 )
-from business.memory.intelligence_repository import IntelligenceMemoryRepository, IntelligenceMemoryVectorIndex
+from backend.memory.intelligence_repository import IntelligenceMemoryRepository, IntelligenceMemoryVectorIndex
 from interfaces.services.artifact_service import ArtifactInspectionService
 from infrastructure.storage.memory import IntelligenceVectorIndexAdapter
 from infrastructure.storage.vector import VectorCollectionStatus, VectorSearchQuery, VectorSearchResult

@@ -34,7 +34,7 @@ from framework.harness.graph.validation import HarnessGraphPreflightPolicy
 from framework.harness.control_plane.state import run_spec_checksum
 from framework.shared.graph_identity import GraphRunIdentity, GraphStageIdentity
 from infrastructure.storage.events import SQLiteEventStore
-from business.research.graphs import build_paper_analysis_graph_definition
+from backend.research.graphs import build_paper_analysis_graph_definition
 from framework.harness.control_plane.state import HarnessRunSpec
 
 

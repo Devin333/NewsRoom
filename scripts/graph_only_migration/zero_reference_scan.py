@@ -24,7 +24,7 @@ PRODUCTION_ROOTS = (
     "scripts/dev.py",
     "interfaces/services",
     "infrastructure/research",
-    "business/research",
+    "backend/research",
 )
 FORBIDDEN_IMPORT_PREFIXES = (
     "framework.workflow",
@@ -53,10 +53,10 @@ FALLBACK_EXCEPTION_NAMES = frozenset({"ImportError", "ModuleNotFoundError"})
 # These are data/configuration details, not runtime authority.  They remain
 # visible in evidence so a future scan cannot silently expand this exception.
 ALLOWLISTED_REFERENCES = {
-    "business/research/document/chunk_storage.py": {
+    "backend/research/document/chunk_storage.py": {
         "workflow_id": "chunk metadata field; not a workflow runtime identity",
     },
-    "business/research/rag/retrieval/policy_config.py": {
+    "backend/research/rag/retrieval/policy_config.py": {
         "ModuleNotFoundError": "optional PyYAML dependency configuration guard",
     },
 }

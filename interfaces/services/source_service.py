@@ -7,19 +7,19 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
-from business.foundation.models.source import (
+from backend.foundation.models.source import (
     SourceDefinition,
     SourceError as BusinessSourceError,
     SourceFetchPolicy as BusinessSourceFetchPolicy,
     SourceReliability as BusinessSourceReliability,
     SourceType as BusinessSourceType,
 )
-from business.foundation.registry.source_registry import SourceRegistry
-from business.layers.signal.source_config import (
+from backend.foundation.registry.source_registry import SourceRegistry
+from backend.layers.signal.source_config import (
     build_default_source_fetch_policy,
     build_default_source_registry,
 )
-from business.layers.signal.source_health import (
+from backend.layers.signal.source_health import (
     BasicSourceHealthManager,
     SourceHealthChecker,
     SourceHealthCheckResult,
@@ -33,9 +33,9 @@ from interfaces.services.source_mapping import (
     to_infrastructure_fetch_policy as _infra_fetch_policy,
     to_infrastructure_source_definition as _infra_source,
 )
-from business.layers.signal.source_router import SourceConnectorRouter
-from business.layers.signal.source_catalog import SOURCE_CATEGORIES, SOURCE_PRIORITIES
-from business.foundation.models.source import SourceHealth
+from backend.layers.signal.source_router import SourceConnectorRouter
+from backend.layers.signal.source_catalog import SOURCE_CATEGORIES, SOURCE_PRIORITIES
+from backend.foundation.models.source import SourceHealth
 from infrastructure.external.sources import (
     ARXIV_API_URL,
     GITHUB_API_URL,

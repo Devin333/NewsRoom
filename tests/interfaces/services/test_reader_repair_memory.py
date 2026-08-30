@@ -8,18 +8,18 @@ import pytest
 from framework.events.canonical import checksum_for
 from framework.harness.memory import MemoryWriteCandidate
 
-from business.research.domain import (
+from backend.research.domain import (
     ReaderIssue,
     ReaderRepairCase,
     ReaderRepairSkillCandidateSeed,
     ReaderRepairStrategy,
 )
-from business.research.graphs import (
+from backend.research.graphs import (
     READER_REPAIR_MEMORY_STEP_ID,
     build_reader_repair_context_graph_identity,
     build_reader_repair_memory_worker_result,
 )
-from business.research.ports import (
+from backend.research.ports import (
     ReaderRepairMemoryCommitPort,
     ReaderRepairMemoryCommitRequest,
 )
@@ -30,7 +30,7 @@ from interfaces.services.reader_repair_memory import (
     PostgresReaderRepairMemoryCommitPort,
     PostgresReaderRepairMemoryPort,
 )
-from tests.business.research.reader_repair._fixtures import make_repair_case
+from tests.backend.research.reader_repair._fixtures import make_repair_case
 
 
 COMMITTED_AT = datetime(2026, 8, 16, 9, 30, tzinfo=UTC)
@@ -317,6 +317,6 @@ def _issue() -> ReaderIssue:
 
 
 def port_query(issue: ReaderIssue):
-    from business.research.domain.reader_repair import ReaderRepairMemoryQuery
+    from backend.research.domain.reader_repair import ReaderRepairMemoryQuery
 
     return ReaderRepairMemoryQuery.from_issue(issue, source_format="pdf")

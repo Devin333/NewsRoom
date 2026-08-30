@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from business.projects import (
+from backend.projects import (
     CaseExplainRequest,
     CaseMapRequest,
     CaseSearchQuery,
@@ -25,7 +25,7 @@ from business.projects import (
     WatchlistCreateRequest,
     WatchlistPatchRequest,
 )
-from business.projects.bridge import ProjectRadarBridge
+from backend.projects.bridge import ProjectRadarBridge
 
 
 class ProjectNotFoundError(LookupError):

@@ -27,7 +27,7 @@ def test_legacy_paper_and_board_interface_files_are_removed() -> None:
 
 def test_interfaces_do_not_import_legacy_board_or_paper_services() -> None:
     forbidden_prefixes = (
-        "business.boards",
+        "backend.boards",
         "interfaces.services.paper",
         "interfaces.services.board_service",
         "interfaces.services.daily_run_service",

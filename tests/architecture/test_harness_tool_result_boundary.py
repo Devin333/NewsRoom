@@ -48,7 +48,7 @@ def test_tool_owner_does_not_import_harness_and_adapter_does_not_import_outer_la
     assert all(
         not matches_prefix(
             module,
-            ("business", "interfaces", "infrastructure", "storage"),
+            ("backend", "interfaces", "infrastructure", "storage"),
         )
         for module in imported_modules(TOOL_ADAPTER)
     )

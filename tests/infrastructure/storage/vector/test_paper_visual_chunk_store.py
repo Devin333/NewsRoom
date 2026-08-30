@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from business.research.document.models import PaperChunk
+from backend.research.document.models import PaperChunk
 from infrastructure.storage.vector.fake_store import InMemoryVectorStore
 from infrastructure.storage.vector.paper_visual_chunk_store import PaperVisualChunkStore
 

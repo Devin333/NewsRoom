@@ -3,7 +3,7 @@
 Agora Hub is organized as a spec-driven intelligence hub with four primary layers:
 
 - `framework/`: domain-neutral runtime capabilities for Graph Harness control, bounded AgentLoop execution, tools, memory, scoring, governance, workers, events, artifacts, LLM integration, and shared primitives.
-- `business/`: Agora Hub intelligence concepts, source/evidence/report models, ranking policies, business skill packages, and application-specific Graph definitions.
+- `backend/`: Agora Hub intelligence concepts, source/evidence/report models, ranking policies, business skill packages, and application-specific Graph definitions.
 - `infrastructure/`: concrete adapters for storage, source connectors, external APIs, checkpoints, metrics, and operational persistence.
 - `interfaces/`: user and integration surfaces such as CLI, HTTP API, MCP, SDK, webhooks, and application services.
 

@@ -24,12 +24,12 @@ from infrastructure.external.sources.arxiv import ArxivSourceConnector
 from infrastructure.storage.vector.qdrant_store import qdrant_store_from_env
 from infrastructure.storage.vector.paper_chunk_store import PaperChunkStore
 from infrastructure.storage.postgres.paper_chunk_repository import PaperChunkRepository
-from business.research.document.chunk_storage import (
+from backend.research.document.chunk_storage import (
     PaperChunkRepositoryAdapter,
     PaperChunkStoreAdapter,
 )
-from business.research.document.latex_compiler import LatexSourceParser
-from business.research.application.chunk_paper_pipeline import ChunkPaperPipeline
+from backend.research.document.latex_compiler import LatexSourceParser
+from backend.research.application.chunk_paper_pipeline import ChunkPaperPipeline
 
 CORPUS: dict[str, list[str]] = {
     "nlp_transformer": ["1706.03762", "1810.04805", "1907.11692", "1910.10683", "2005.14165"],

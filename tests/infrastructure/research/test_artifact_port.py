@@ -31,7 +31,7 @@ from framework.harness.artifacts import (
 )
 from framework.harness.graph import HarnessGraphCompiler
 from framework.harness.graph.execution_versions import GraphExecutionVersionManifest
-from business.research.graphs import build_paper_analysis_graph_definition
+from backend.research.graphs import build_paper_analysis_graph_definition
 from framework.shared.json import stable_json_dumps
 from infrastructure.research.artifact_port import (
     ArtifactPublicationVisibilityError,

@@ -17,14 +17,14 @@ from framework.harness import (
 )
 from framework.harness.control_plane.errors import HarnessValidationError
 
-from business.research.domain import (
+from backend.research.domain import (
     ReaderIssue,
     ReaderRepairCase,
     ReaderRepairSkillCandidateSeed,
     ReaderRepairStrategy,
 )
-from business.research.graphs import build_reader_repair_memory_worker_result
-from business.research.ports.repair_memory import (
+from backend.research.graphs import build_reader_repair_memory_worker_result
+from backend.research.ports.repair_memory import (
     READER_REPAIR_MEMORY_EFFECT_KIND,
     READER_REPAIR_MEMORY_HANDLER_REF,
     READER_REPAIR_MEMORY_SCHEMA_VERSION,

@@ -10,30 +10,30 @@ import pytest
 from cryptography.fernet import Fernet
 
 import interfaces.composition.research as research_composition
-from business.research.application.analyze_paper import AnalyzePaperUseCase
-from business.research.application.ask_paper import AskPaperUseCase
-from business.research.application.bounded_document_rag import (
+from backend.research.application.analyze_paper import AnalyzePaperUseCase
+from backend.research.application.ask_paper import AskPaperUseCase
+from backend.research.application.bounded_document_rag import (
     BoundedDocumentRAGRuntime,
 )
-from business.research.application.graph_result_committer import (
+from backend.research.application.graph_result_committer import (
     ResearchGraphResultCommitter,
     ResearchTaskPlanResultMaterializer,
 )
-from business.research.application.reader_repair_runtime import (
+from backend.research.application.reader_repair_runtime import (
     ReaderRepairGraphApplicationService,
 )
-from business.research.application.artifact_context import (
+from backend.research.application.artifact_context import (
     ResearchGraphArtifactContextProvider,
 )
-from business.research.application.single_paper_runtime import (
+from backend.research.application.single_paper_runtime import (
     AnalyzePaperRequest,
     ResearchSinglePaperRuntime,
     _ResearchRunWorkspace,
 )
-from business.research.document.cascade_parser import CascadeDocumentParser
-from business.research.domain.paper import PaperSourceRecord
-from business.research.document.chunk_storage import PaperChunkStoreAdapter
-from business.research.document.latex_compiler import ArxivLatexDocumentCompiler
+from backend.research.document.cascade_parser import CascadeDocumentParser
+from backend.research.domain.paper import PaperSourceRecord
+from backend.research.document.chunk_storage import PaperChunkStoreAdapter
+from backend.research.document.latex_compiler import ArxivLatexDocumentCompiler
 from framework.execution_environment import (
     ExecutionCapabilityProfile,
     ExecutionEnvironmentRegistry,

@@ -47,7 +47,7 @@ from infrastructure.storage.indexing import (
     GraphArtifactBindingEvidenceSource,
     GraphArtifactBindingProjection,
 )
-from business.research.ports.artifact_publication import (
+from backend.research.ports.artifact_publication import (
     RESEARCH_ARTIFACT_MANIFEST_VERSION,
     ResearchArtifactDiagnosticClaim,
     ResearchArtifactReadClaim,

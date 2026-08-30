@@ -1,0 +1,91 @@
+from __future__ import annotations
+
+from backend.foundation.feedback import (
+    ImprovementApplier,
+    ImprovementProposal,
+    LEGACY_POLICY_EXPERIMENT_CHANGE_TYPES,
+    PolicyExperimentProfile,
+    PolicyExperimentApplicationContext,
+    is_legacy_policy_experiment_change_type,
+)
+from backend.foundation.feedback.override_policy import SUPPORTED_OVERRIDE_TYPES
+
+
+def test_improvement_applier_only_applies_approved_supported_proposals() -> None:
+    proposals = [
+        ImprovementProposal(
+            proposal_id="approved",
+            recommendation_id="rec-1",
+            board_type="ai_news",
+            change_type="ranking_weight_override",
+            target_type="ranking_weight_override",
+            target_id="freshness",
+            policy_experiment_parameters={"weight": 1.1},
+            risk_level="medium",
+            requires_approval=True,
+            status="approved",
+        ),
+        ImprovementProposal(
+            proposal_id="proposed",
+            recommendation_id="rec-2",
+            board_type="ai_news",
+            change_type="ranking_weight_override",
+            target_type="ranking_weight_override",
+            target_id="novelty",
+            policy_experiment_parameters={"weight": 1.1},
+            risk_level="medium",
+            requires_approval=True,
+            status="proposed",
+        ),
+    ]
+
+    context = ImprovementApplier().apply(proposals, run_id="run-1", board_type="ai_news")
+
+    assert isinstance(context, PolicyExperimentApplicationContext)
+    assert [item["proposal_id"] for item in context.applied_overrides] == ["approved"]
+    assert context.applied_overrides[0]["target_type"] == "ranking_weight"
+    assert context.applied_policy_experiments == context.applied_overrides
+    assert context.skipped_policy_experiments == context.skipped_overrides
+    assert context.skipped_overrides[0]["proposal_id"] == "proposed"
+    assert context.measurement_plan["compare_metrics"]
+    assert "applied_overrides" not in context.to_application_dict()
+    assert "skipped_overrides" not in context.to_application_dict()
+    assert context.to_dict()["applied_overrides"] == context.applied_policy_experiments
+
+
+def test_improvement_applier_applies_policy_experiment_profiles() -> None:
+    proposal = ImprovementProposal(
+        proposal_id="experiment",
+        recommendation_id="rec-3",
+        board_type="ai_news",
+        change_type="policy_experiment",
+        target_type="ranking_weight",
+        target_id="freshness",
+        policy_experiment_parameters={},
+        risk_level="medium",
+        requires_approval=True,
+        status="approved",
+        experiment_profile=PolicyExperimentProfile(
+            profile_id="policy-exp-1",
+            board_type="ai_news",
+            target_type="ranking_weight",
+            target_id="freshness",
+            parameters={"severity": "warning"},
+            rationale="Freshness underperformed.",
+            suggested_action="rebalance ranking freshness",
+        ),
+    )
+
+    context = ImprovementApplier().apply([proposal], run_id="run-2", board_type="ai_news")
+
+    applied = context.applied_overrides[0]
+    assert applied["profile_id"] == "policy-exp-1"
+    assert applied["parameters"] == {"severity": "warning"}
+    assert "patch" not in applied
+    assert context.applied_policy_experiments == context.applied_overrides
+
+
+def test_legacy_override_type_name_is_compatibility_alias() -> None:
+    assert SUPPORTED_OVERRIDE_TYPES is LEGACY_POLICY_EXPERIMENT_CHANGE_TYPES
+    assert is_legacy_policy_experiment_change_type("ranking_weight_override") is True
+    assert is_legacy_policy_experiment_change_type("policy_experiment") is False

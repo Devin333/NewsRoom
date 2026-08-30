@@ -9,7 +9,7 @@
 
 ## 2. Canonical Source URL Identity
 
-- [x] 2.1 Implement the golden URL write contract in `business/foundation/primitives/source_ref.py` and make SourceRef identity construction consume it.
+- [x] 2.1 Implement the golden URL write contract in `backend/foundation/primitives/source_ref.py` and make SourceRef identity construction consume it.
 - [x] 2.2 Add private read-side aliases for both historical URL forms, exact-value-first lookup, and no-rewrite behavior for persisted ids, hashes, and artifact refs.
 - [x] 2.3 Move business normalization, tools, projections, citation/quality checks, and tests to the canonical business implementation; add persisted compatibility fixtures for Research paper, repository, and paper-card Source URLs.
 - [x] 2.4 Convert `infrastructure/external/sources/url_utils.py` to a behavior-free adapter and prove HTML connector parity with business and tool entry points.

@@ -3,7 +3,7 @@
   "captured_at": "2026-08-17",
   "task": "harness-workflow-graph-runtime:1.2",
   "search_roots": [
-    "business",
+    "backend",
     "framework",
     "infrastructure",
     "interfaces",
@@ -122,13 +122,13 @@
       "tests/infrastructure/storage/events/test_harness_durable_event_integration.py"
     ],
     "D_research_adoption": [
-      "business/research/application/single_paper_runtime.py",
-      "business/research/workflows/paper_analysis_workflow.py",
+      "backend/research/application/single_paper_runtime.py",
+      "backend/research/workflows/paper_analysis_workflow.py",
       "interfaces/composition/research.py",
-      "tests/business/research/application/test_graph_result_committer.py",
-      "tests/business/research/graphs/test_paper_analysis_graph.py",
-      "tests/business/research/integration/test_dynamic_paper_analysis_task_plan.py",
-      "tests/business/research/workflows/test_paper_analysis_workflow.py",
+      "tests/backend/research/application/test_graph_result_committer.py",
+      "tests/backend/research/graphs/test_paper_analysis_graph.py",
+      "tests/backend/research/integration/test_dynamic_paper_analysis_task_plan.py",
+      "tests/backend/research/workflows/test_paper_analysis_workflow.py",
       "tests/framework/harness/workflow/test_graph_migration_goldens.py",
       "tests/infrastructure/research/test_reader_repair_failure_diagnostic_side_effect.py",
       "tests/interfaces/composition/test_research_recorded_transport.py"
@@ -190,7 +190,7 @@
     "tests/architecture/_graph_only_freeze.py",
     "tests/architecture/test_agent_loop_graph_artifact_boundary.py",
     "tests/architecture/test_graph_only_freeze.py",
-    "business/layers/_worker_utils.py",
+    "backend/layers/_worker_utils.py",
     "tests/interfaces/api/test_graph_run_inspection_api.py",
     "tests/interfaces/services/test_graph_run_inspection_index_authority.py",
     "tests/interfaces/cli/test_graph_runs_commands.py"

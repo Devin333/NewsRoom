@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
-from business.research.domain import (
+from backend.research.domain import (
     EvidenceRef,
     GateResult,
     ResearchAnalysis,
@@ -15,9 +15,9 @@ from business.research.domain import (
     SourceLineage,
     ThreeMinuteRead,
 )
-from business.research.reader import ReaderPayloadBuilder
-from business.research.services import ResearchEvidenceBuilder
-from tests.business.research.helpers import FIXED_NOW
+from backend.research.reader import ReaderPayloadBuilder
+from backend.research.services import ResearchEvidenceBuilder
+from tests.backend.research.helpers import FIXED_NOW
 
 
 @dataclass(frozen=True)

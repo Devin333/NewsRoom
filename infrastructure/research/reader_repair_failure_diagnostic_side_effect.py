@@ -21,7 +21,7 @@ from framework.harness.side_effects.models import (
     HarnessSideEffectOutcome,
 )
 
-from business.research.domain.reader_repair import (
+from backend.research.domain.reader_repair import (
     ReaderIssue,
     ReaderRepairApplicationCandidate,
     ReaderRepairApplicationObservationCandidate,
@@ -32,7 +32,7 @@ from business.research.domain.reader_repair import (
     stable_research_id,
 )
 
-from business.research.ports.reader_repair_failure_diagnostic import (
+from backend.research.ports.reader_repair_failure_diagnostic import (
     READER_REPAIR_FAILURE_DIAGNOSTIC_EFFECT_KIND,
     READER_REPAIR_FAILURE_DIAGNOSTIC_HANDLER_REF,
     READER_REPAIR_FAILURE_DIAGNOSTIC_TERMINAL_ACTION,

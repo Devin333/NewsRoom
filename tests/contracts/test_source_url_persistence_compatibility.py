@@ -6,11 +6,11 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from business.foundation.models.source import RawSourceItem
-from business.foundation.primitives.source_ref import source_url_read_aliases
-from business.layers.signal.artifact_refs import SignalArtifactRef
-from business.layers.signal.artifacts import SourceArtifactWriter
-from business.layers.signal.source_processing.normalize import normalize_item
+from backend.foundation.models.source import RawSourceItem
+from backend.foundation.primitives.source_ref import source_url_read_aliases
+from backend.layers.signal.artifact_refs import SignalArtifactRef
+from backend.layers.signal.artifacts import SourceArtifactWriter
+from backend.layers.signal.source_processing.normalize import normalize_item
 from framework.agent.artifacts import ArtifactManager
 from framework.events.canonical import StoredEvent
 from framework.events.runtime.replay_engine import ReplayCheckpoint
@@ -248,11 +248,11 @@ def test_infrastructure_url_adapter_has_no_algorithm_and_signal_copy_is_removed(
         if isinstance(node, ast.ImportFrom) and node.module is not None
     }
 
-    assert imports == {"__future__", "business.foundation.primitives.source_ref"}
+    assert imports == {"__future__", "backend.foundation.primitives.source_ref"}
     assert not any(isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) for node in ast.walk(tree))
     assert not (
         PROJECT_ROOT
-        / "business"
+        / "backend"
         / "layers"
         / "signal"
         / "source_processing"

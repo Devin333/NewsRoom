@@ -62,7 +62,7 @@ def test_subagent_adapter_does_not_import_outer_layers_or_legacy_runner() -> Non
         not matches_prefix(
             module,
             (
-                "business",
+                "backend",
                 "interfaces",
                 "infrastructure",
                 "storage",

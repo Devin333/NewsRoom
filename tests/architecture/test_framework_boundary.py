@@ -5,7 +5,7 @@ from tests.architecture._helpers import PROJECT_ROOT, forbidden_imports
 
 FRAMEWORK_ROOT = PROJECT_ROOT / "framework"
 FORBIDDEN_IMPORT_PREFIXES = (
-    "business",
+    "backend",
     "interfaces",
     "infrastructure",
     "storage",

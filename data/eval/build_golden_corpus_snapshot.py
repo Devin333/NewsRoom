@@ -8,7 +8,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from business.research.rag.evaluation.golden_corpus_snapshot import (
+from backend.research.rag.evaluation.golden_corpus_snapshot import (
     DEFAULT_GOLDEN_CORPUS_SNAPSHOT_PATH,
     build_golden_corpus_snapshot,
     load_golden_corpus_snapshot,

@@ -10,7 +10,7 @@ _LEGACY_PROJECTION_SERVICE = (
     _PROJECT_ROOT / "interfaces/services/event_projection_service.py"
 )
 _LIVE_ROOTS = (
-    _PROJECT_ROOT / "business",
+    _PROJECT_ROOT / "backend",
     _PROJECT_ROOT / "infrastructure",
     _PROJECT_ROOT / "scripts",
     _PROJECT_ROOT / "interfaces/api",

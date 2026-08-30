@@ -8,58 +8,58 @@ from pathlib import Path
 from threading import Condition, Lock
 from typing import Any
 
-from business.research.application.analyze_paper import AnalyzePaperUseCase
-from business.research.application.ask_paper import AskPaperUseCase
-from business.research.application.bounded_document_rag import (
+from backend.research.application.analyze_paper import AnalyzePaperUseCase
+from backend.research.application.ask_paper import AskPaperUseCase
+from backend.research.application.bounded_document_rag import (
     BoundedDocumentRAGRuntime,
 )
-from business.research.application.paper_rag_session import PaperRAGSession
-from business.research.application.run_disposition import (
+from backend.research.application.paper_rag_session import PaperRAGSession
+from backend.research.application.run_disposition import (
     ResearchRunDispositionReconciler,
     classify_research_run_record,
 )
-from business.research.application.single_paper_runtime import (
+from backend.research.application.single_paper_runtime import (
     AnalyzePaperRequest,
     ResearchAnalysisResult,
     ResearchSinglePaperRuntime,
     build_research_harness_run_spec,
 )
-from business.research.graphs import (
+from backend.research.graphs import (
     build_dynamic_paper_analysis_graph_definition,
 )
-from business.research.application.graph_result_committer import (
+from backend.research.application.graph_result_committer import (
     ResearchGraphResultCommitter,
     ResearchTaskPlanResultMaterializer,
 )
-from business.research.application.artifact_context import (
+from backend.research.application.artifact_context import (
     ResearchGraphArtifactContextProvider,
 )
-from business.research.application.graph_artifact_governance import (
+from backend.research.application.graph_artifact_governance import (
     ResearchGraphArtifactGovernanceService,
 )
-from business.research.application.reader_repair_runtime import (
+from backend.research.application.reader_repair_runtime import (
     ReaderRepairGraphApplicationService,
 )
-from business.research.document.chunk_storage import PaperChunkStoreAdapter
-from business.research.domain import (
+from backend.research.document.chunk_storage import PaperChunkStoreAdapter
+from backend.research.domain import (
     research_event_tenant_id,
     research_identity_scope_ref,
     research_subject_scope_ref,
 )
-from business.research.document.cascade_parser import (
+from backend.research.document.cascade_parser import (
     CascadeDocumentParser,
     PyMuPDFTextDocumentParser,
 )
-from business.research.document.latex_compiler import ArxivLatexDocumentCompiler
-from business.research.document.marker_pdf_parser import MarkerPdfDocumentParser
-from business.research.document.mineru_pdf_parser import MinerUPdfDocumentParser
-from business.research.ports.artifact_publication import (
+from backend.research.document.latex_compiler import ArxivLatexDocumentCompiler
+from backend.research.document.marker_pdf_parser import MarkerPdfDocumentParser
+from backend.research.document.mineru_pdf_parser import MinerUPdfDocumentParser
+from backend.research.ports.artifact_publication import (
     RESEARCH_ARTIFACT_MANIFEST_VERSION,
     ResearchArtifactDiagnosticClaim,
     ResearchArtifactReadClaim,
     ResearchArtifactReadResolution,
 )
-from business.research.ports.chunk_store import ChunkStorePort
+from backend.research.ports.chunk_store import ChunkStorePort
 from framework.llm.clients.openai_compatible import (
     LLMConfigurationError,
     LLMRetryPolicy,
@@ -167,7 +167,7 @@ from infrastructure.storage.harness import (
     SQLiteHarnessNodeOutputResource,
     SQLiteHarnessSideEffectStore,
 )
-from business.research.graphs import (
+from backend.research.graphs import (
     RESEARCH_DYNAMIC_CAPABILITIES,
     RESEARCH_DYNAMIC_STAGE_ID,
     RESEARCH_DYNAMIC_SUBAGENT_IDS,

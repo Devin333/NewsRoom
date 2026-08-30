@@ -4,7 +4,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from os import PathLike
 
-from business.research.application.graph_artifact_governance import (
+from backend.research.application.graph_artifact_governance import (
     ResearchGraphArtifactGovernanceService,
 )
 from framework.harness.artifacts import GraphArtifactGovernanceRuntime

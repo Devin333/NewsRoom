@@ -8,7 +8,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 EVENTS_ROOT = PROJECT_ROOT / "framework" / "events"
 PRODUCTION_ROOTS = tuple(
     PROJECT_ROOT / name
-    for name in ("business", "framework", "infrastructure", "interfaces", "scripts")
+    for name in ("backend", "framework", "infrastructure", "interfaces", "scripts")
 )
 EVENT_CANDIDATE_CONSTRUCTION_BOUNDARIES = frozenset(
     {
@@ -16,7 +16,7 @@ EVENT_CANDIDATE_CONSTRUCTION_BOUNDARIES = frozenset(
     }
 )
 FORBIDDEN_IMPORT_PREFIXES = (
-    "business",
+    "backend",
     "framework.workflow",
     "interfaces",
     "infrastructure",

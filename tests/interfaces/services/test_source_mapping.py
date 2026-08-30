@@ -4,14 +4,14 @@ from dataclasses import dataclass, fields
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
-from business.foundation.models.source import (
+from backend.foundation.models.source import (
     SourceDefinition,
     SourceFetchPolicy,
 )
-from business.layers.signal.connector_tools import (
+from backend.layers.signal.connector_tools import (
     register_arxiv_tools,
 )
-from business.layers.signal.tools import (
+from backend.layers.signal.tools import (
     register_source_tools,
 )
 from framework.tool import ToolRegistry

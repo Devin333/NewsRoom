@@ -14,11 +14,11 @@ from fastapi.testclient import TestClient
 
 import framework.llm.clients.openai_compatible as openai_transport
 import infrastructure.external.sources.arxiv as arxiv_transport
-from business.research.application.single_paper_runtime import (
+from backend.research.application.single_paper_runtime import (
     ResearchAnalysisResult,
     ResearchSinglePaperRuntime,
 )
-from business.research.graphs import PAPER_ANALYSIS_GATE_REFERENCES
+from backend.research.graphs import PAPER_ANALYSIS_GATE_REFERENCES
 from framework.harness import HarnessEventType
 from framework.llm import (
     LOCAL_STRUCTURED_OUTPUT_DIALECT,

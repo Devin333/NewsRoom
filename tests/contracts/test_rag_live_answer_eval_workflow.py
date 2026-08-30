@@ -14,7 +14,7 @@ def test_run_live_answer_eval_dev_command_is_registered() -> None:
     assert dev._rag_live_answer_eval_command() == [
         dev.sys.executable,
         "-m",
-        "business.research.rag.cli.run_live_answer_eval",
+        "backend.research.rag.cli.run_live_answer_eval",
     ]
 
 
@@ -36,7 +36,7 @@ def test_run_live_answer_eval_dev_command_passes_real_corpus_options() -> None:
     assert dev._rag_live_answer_eval_command(args) == [
         dev.sys.executable,
         "-m",
-        "business.research.rag.cli.run_live_answer_eval",
+        "backend.research.rag.cli.run_live_answer_eval",
         "--output-dir",
         ".newsroom/eval/live-answer-real",
         "--golden-set",
@@ -66,7 +66,7 @@ def test_check_live_answer_readiness_dev_command_is_registered() -> None:
     assert dev._rag_live_answer_readiness_command(args) == [
         dev.sys.executable,
         "-m",
-        "business.research.rag.cli.check_live_answer_readiness",
+        "backend.research.rag.cli.check_live_answer_readiness",
         "--output-dir",
         ".newsroom/eval/live-answer-readiness",
         "--golden-set",
@@ -100,7 +100,7 @@ def test_ingest_golden_set_papers_dev_command_is_registered() -> None:
     assert dev._rag_ingest_golden_set_papers_command(args) == [
         dev.sys.executable,
         "-m",
-        "business.research.rag.cli.ingest_golden_set_papers",
+        "backend.research.rag.cli.ingest_golden_set_papers",
         "--golden-set",
         "data/eval/golden_set.json",
         "--papers-dir",

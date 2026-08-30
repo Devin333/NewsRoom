@@ -9,9 +9,9 @@ load_root_env()
 from infrastructure.storage.vector.qdrant_store import qdrant_store_from_env
 from infrastructure.storage.vector.paper_chunk_store import PaperChunkStore
 from infrastructure.external.reranker import CrossEncoderReranker
-from business.research.document.chunk_storage import PaperChunkStoreAdapter
-from business.research.rag.routing import build_retrieval_route
-from business.research.rag.eval import load_golden_set
+from backend.research.document.chunk_storage import PaperChunkStoreAdapter
+from backend.research.rag.routing import build_retrieval_route
+from backend.research.rag.eval import load_golden_set
 
 store = PaperChunkStoreAdapter(PaperChunkStore(qdrant_store_from_env()))
 reranker = CrossEncoderReranker()

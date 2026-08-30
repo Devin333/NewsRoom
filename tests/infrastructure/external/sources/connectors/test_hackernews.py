@@ -1,7 +1,7 @@
 import json
 from datetime import UTC, datetime
 
-from business.foundation.models.source import SourceDefinition
+from backend.foundation.models.source import SourceDefinition
 from infrastructure.external.sources.hackernews import (
     HACKERNEWS_API_URL,
     HackerNewsConnector,

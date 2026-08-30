@@ -3,11 +3,11 @@ from __future__ import annotations
 import inspect
 from typing import Any
 
-from business.research.domain.common import SourceLineage, stable_research_id
-from business.research.domain.document import ResearchDocument, ResearchSection
-from business.research.domain.paper import PaperSourceRecord
-from business.research.ports.document_compiler import DocumentCompilerPort
-from business.research.ports.document_parser import DocumentParserPort
+from backend.research.domain.common import SourceLineage, stable_research_id
+from backend.research.domain.document import ResearchDocument, ResearchSection
+from backend.research.domain.paper import PaperSourceRecord
+from backend.research.ports.document_compiler import DocumentCompilerPort
+from backend.research.ports.document_parser import DocumentParserPort
 from framework.execution_environment.errors import ExecutionEnvironmentError
 from framework.shared.graph_identity import GraphExecutionIdentity
 from infrastructure.external.sources.arxiv import ArxivSourceConnector

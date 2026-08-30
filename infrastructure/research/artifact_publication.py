@@ -50,7 +50,7 @@ from framework.shared.hashing import hash_text
 from framework.shared.json import stable_json_dumps
 from framework.shared.time import utc_now
 
-from business.research.ports.artifact_publication import (
+from backend.research.ports.artifact_publication import (
     RESEARCH_ARTIFACT_EFFECT_KIND,
     RESEARCH_ARTIFACT_HANDLER_ID,
     RESEARCH_ARTIFACT_HANDLER_REF,
@@ -71,7 +71,7 @@ from infrastructure.storage.indexing import (
     GraphArtifactBindingKind,
     GraphArtifactBindingProjection,
 )
-from business.research.ports.artifact_publication import (
+from backend.research.ports.artifact_publication import (
     ResearchGraphStorageIndexPublisherPort,
 )
 

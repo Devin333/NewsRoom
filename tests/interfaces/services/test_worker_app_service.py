@@ -1,4 +1,4 @@
-from business.layers.signal.worker_handlers import SourceHealthCheckTaskHandler
+from backend.layers.signal.worker_handlers import SourceHealthCheckTaskHandler
 from framework.shared.attempts import (
     AdmissionResult,
     AttemptContext,

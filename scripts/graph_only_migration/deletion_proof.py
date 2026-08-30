@@ -36,7 +36,7 @@ DELETED_PATH_GROUPS = {
     ),
 }
 PRODUCTION_ROOTS = (
-    "business",
+    "backend",
     "framework",
     "infrastructure",
     "interfaces",
@@ -86,8 +86,8 @@ NON_WORKFLOW_MIGRATION_BOUNDARIES = {
     "research_run_disposition_schema_compatibility": {
         "scope": "Research run-disposition record schema compatibility",
         "paths": (
-            "business/research/application/run_disposition.py",
-            "business/research/ports/run_store.py",
+            "backend/research/application/run_disposition.py",
+            "backend/research/ports/run_store.py",
             "infrastructure/research/filesystem_run_store.py",
             "interfaces/composition/research.py",
             "interfaces/composition/research_settings.py",

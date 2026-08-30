@@ -1,7 +1,7 @@
 from datetime import UTC, datetime
 
-from business.foundation.models.source import SourceDefinition
-from business.foundation.registry.source_registry import SourceRegistry
+from backend.foundation.models.source import SourceDefinition
+from backend.foundation.registry.source_registry import SourceRegistry
 from interfaces.services.source_service import SourceApplicationService
 from infrastructure.external.sources.models import RawSourceItem
 

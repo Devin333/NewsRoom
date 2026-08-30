@@ -14,7 +14,7 @@ from typing import Any, Iterable, Mapping, Sequence
 
 BASELINE_SCHEMA = "newsroom.graph-only-freeze-baseline/v1"
 DEFAULT_PRODUCTION_ROOTS = (
-    "business",
+    "backend",
     "framework",
     "infrastructure",
     "interfaces",

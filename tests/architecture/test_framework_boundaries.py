@@ -7,7 +7,7 @@ FRAMEWORK_ROOT = PROJECT_ROOT / "framework"
 
 
 def test_framework_does_not_import_business() -> None:
-    assert forbidden_imports(FRAMEWORK_ROOT, ("business",)) == []
+    assert forbidden_imports(FRAMEWORK_ROOT, ("backend",)) == []
 
 
 def test_framework_does_not_import_interfaces() -> None:

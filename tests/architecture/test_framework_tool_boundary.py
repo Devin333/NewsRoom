@@ -8,7 +8,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 TOOL_ROOT = PROJECT_ROOT / "framework" / "tool"
 FORBIDDEN_FRAMEWORK_TOOL_IMPORTS = (
     "storage",
-    "business",
+    "backend",
     "interfaces",
     "infrastructure",
     "workflows",

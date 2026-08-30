@@ -1524,7 +1524,7 @@ def test_replay_core_has_no_bus_infrastructure_or_side_effect_adapter_imports() 
     )
 
     forbidden_roots = (
-        "business",
+        "backend",
         "infrastructure",
         "interfaces",
         "framework.events.bus",

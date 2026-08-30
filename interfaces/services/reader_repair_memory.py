@@ -2,24 +2,24 @@ from __future__ import annotations
 
 from framework.harness.memory import MemoryWriteCandidate
 
-from business.research.domain.reader_repair import (
+from backend.research.domain.reader_repair import (
     READER_REPAIR_NAMESPACE,
     ReaderRepairCase,
     ReaderRepairMemoryQuery,
     ReaderRepairStrategy,
 )
-from business.research.ports import (
+from backend.research.ports import (
     ReaderRepairFailureDiagnosticCommitReceipt,
     ReaderRepairFailureDiagnosticCommitRequest,
     ReaderRepairMemoryCommitReceipt,
     ReaderRepairMemoryCommitRequest,
     ReaderRepairMemoryVersion,
 )
-from business.research.ports.repair_memory import (
+from backend.research.ports.repair_memory import (
     reader_repair_case_memory_ref,
     reader_repair_strategy_memory_ref,
 )
-from business.research.ports.reader_repair_failure_diagnostic import (
+from backend.research.ports.reader_repair_failure_diagnostic import (
     diagnostic_case_memory_ref,
 )
 from infrastructure.storage.postgres import PostgresReaderRepairMemoryRepository

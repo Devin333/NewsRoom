@@ -5,12 +5,12 @@ from datetime import datetime, timezone
 
 import pytest
 
-from business.research.domain import (
+from backend.research.domain import (
     PaperSourceRecord,
     ResearchDocument,
     ResearchSection,
 )
-from business.research.domain.common import SourceLineage
+from backend.research.domain.common import SourceLineage
 from infrastructure.external.sources.models import RawSourceItem, SourceType
 from infrastructure.external.sources.fetch_policy import (
     RateLimitDecision,

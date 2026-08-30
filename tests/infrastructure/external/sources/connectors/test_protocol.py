@@ -3,7 +3,7 @@ from datetime import UTC, datetime
 
 import pytest
 
-from business.foundation.models.source import RawSourceItem, SourceDefinition, SourceFetchRequest
+from backend.foundation.models.source import RawSourceItem, SourceDefinition, SourceFetchRequest
 from infrastructure.external.sources import SourceFetchContext, SyncSourceConnectorAdapter
 
 

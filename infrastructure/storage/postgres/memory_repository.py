@@ -6,7 +6,7 @@ from datetime import datetime, timezone as _tz
 UTC = _tz.utc
 from typing import Any
 
-from business.memory.intelligence_models import (
+from backend.memory.intelligence_models import (
     ClaimHistoryRecord,
     ClaimMemory,
     DecisionMemory,
@@ -15,7 +15,7 @@ from business.memory.intelligence_models import (
     EvidenceMemory,
     PreferenceMemory,
 )
-from business.memory.intelligence_builder import stable_id
+from backend.memory.intelligence_builder import stable_id
 from infrastructure.storage.postgres.repository import PostgresRepository
 from infrastructure.storage.records import ClaimRecord, EvidenceItemRecord
 

@@ -4,11 +4,11 @@ import ast
 from dataclasses import fields
 from pathlib import Path
 
-from business.research.graphs import build_paper_analysis_graph_definition
+from backend.research.graphs import build_paper_analysis_graph_definition
 from framework.harness.graph.model import HarnessControlNode, HarnessExecutableNode
 
 
-_FORBIDDEN_FRAMEWORK_IMPORTS = ("business", "interfaces", "infrastructure")
+_FORBIDDEN_FRAMEWORK_IMPORTS = ("backend", "interfaces", "infrastructure")
 _FORBIDDEN_BUSINESS_AUTHORITY_MODULES = frozenset(
     {
         "framework.harness.graph.decision",
@@ -97,8 +97,8 @@ def test_control_node_contract_cannot_carry_executable_bindings() -> None:
 
 def test_research_workers_and_gates_do_not_own_harness_routing() -> None:
     worker_and_gate_sources = (
-        Path("business/research/application/single_paper_runtime.py"),
-        Path("business/research/graphs/gates.py"),
+        Path("backend/research/application/single_paper_runtime.py"),
+        Path("backend/research/graphs/gates.py"),
     )
     violations: list[str] = []
 
@@ -121,7 +121,7 @@ def test_research_workers_and_gates_do_not_own_harness_routing() -> None:
 
 def test_research_business_does_not_import_graph_decision_authority() -> None:
     violations: list[str] = []
-    for path in Path("business/research").rglob("*.py"):
+    for path in Path("backend/research").rglob("*.py"):
         tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
         for node in ast.walk(tree):
             if isinstance(node, ast.Import):
@@ -148,7 +148,7 @@ def test_production_callers_do_not_read_legacy_harness_cursor_or_phase_status() 
     None
 ):
     roots = (
-        Path("business/research"),
+        Path("backend/research"),
         Path("interfaces"),
         Path("infrastructure/storage/harness"),
     )

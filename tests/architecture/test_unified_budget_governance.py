@@ -14,10 +14,10 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 CANONICAL_ROOT = PROJECT_ROOT / "framework" / "governance" / "budget"
 PRODUCTION_ROOTS = tuple(
     PROJECT_ROOT / name
-    for name in ("business", "framework", "infrastructure", "interfaces")
+    for name in ("backend", "framework", "infrastructure", "interfaces")
 )
 FORBIDDEN_CANONICAL_IMPORTS = (
-    "business",
+    "backend",
     "framework.agent",
     "framework.workflow",
     "infrastructure",

@@ -21,7 +21,7 @@ def test_pyproject_uses_setuptools_package_auto_discovery() -> None:
 
     assert isinstance(packages_find, dict)
     assert packages_find.get("where") == ["."]
-    assert {"framework*", "business*", "interfaces*", "infrastructure*"}.issubset(
+    assert {"framework*", "backend*", "interfaces*", "infrastructure*"}.issubset(
         set(packages_find.get("include") or [])
     )
 
@@ -30,7 +30,7 @@ def test_run_service_facade_does_not_import_business_workflows_directly() -> Non
     violations = [
         imported
         for imported in imported_modules(RUN_SERVICE)
-        if matches_prefix(imported, ("business",))
+        if matches_prefix(imported, ("backend",))
     ]
 
     assert violations == []

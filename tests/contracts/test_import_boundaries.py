@@ -6,12 +6,12 @@ from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 FRAMEWORK_ROOT = PROJECT_ROOT / "framework"
-BUSINESS_ROOT = PROJECT_ROOT / "business"
+BUSINESS_ROOT = PROJECT_ROOT / "backend"
 INTERFACES_ROOT = PROJECT_ROOT / "interfaces"
 FRAMEWORK_AGENT_SESSION_ROOT = FRAMEWORK_ROOT / "agent" / "session"
 
 FRAMEWORK_FORBIDDEN_PREFIXES = (
-    "business",
+    "backend",
     "domain",
     "evidence",
     "interfaces",
@@ -38,7 +38,7 @@ INTERFACE_FORBIDDEN_FLOW_PREFIXES = (
     "quality",
     "sources",
     "storage",
-    "business.boards",
+    "backend.boards",
 )
 
 
@@ -65,13 +65,13 @@ def test_business_memory_ingestion_boundary_does_not_depend_on_legacy_report_or_
 
     assert _matching_forbidden(
         imports,
-        ("business.foundation.models.report_output", "evidence", "infrastructure.storage.vector"),
+        ("backend.foundation.models.report_output", "evidence", "infrastructure.storage.vector"),
     ) == []
 
 
 def test_graph_memory_port_has_single_canonical_definition() -> None:
-    from business.memory.graph_memory import GraphMemoryPort as BusinessGraphMemoryPort
-    from business.memory.graph_memory import GraphMemoryPort as InfrastructureGraphMemoryPort
+    from backend.memory.graph_memory import GraphMemoryPort as BusinessGraphMemoryPort
+    from backend.memory.graph_memory import GraphMemoryPort as InfrastructureGraphMemoryPort
 
     assert InfrastructureGraphMemoryPort is BusinessGraphMemoryPort
 
@@ -89,21 +89,21 @@ def test_source_application_service_uses_source_policy_boundary() -> None:
     imports = _imports_for_file(INTERFACES_ROOT / "services" / "source_service.py")
 
     assert "infrastructure.external.sources" in imports
-    assert "business.foundation.registry.source_registry" in imports
-    assert "business.layers.signal.source_config" in imports
+    assert "backend.foundation.registry.source_registry" in imports
+    assert "backend.layers.signal.source_config" in imports
     assert _matching_forbidden(
         imports,
-        ("domain.sources", "sources", "infrastructure.storage.postgres", "business.boards"),
+        ("domain.sources", "sources", "infrastructure.storage.postgres", "backend.boards"),
     ) == []
 
 
 def test_worker_application_service_uses_research_neutral_handlers() -> None:
     imports = _imports_for_file(INTERFACES_ROOT / "services" / "worker_service.py")
 
-    assert "business.layers.output.worker_handlers" in imports
-    assert "business.layers.signal.worker_handlers" in imports
-    assert "business.boards" not in imports
-    assert "business.workers" not in imports
+    assert "backend.layers.output.worker_handlers" in imports
+    assert "backend.layers.signal.worker_handlers" in imports
+    assert "backend.boards" not in imports
+    assert "backend.workers" not in imports
 
 
 def test_api_app_uses_run_report_projection_boundary() -> None:
@@ -119,14 +119,14 @@ def test_api_app_uses_run_report_projection_boundary() -> None:
 def test_diagnostic_service_uses_business_source_config_boundary() -> None:
     imports = _imports_for_file(INTERFACES_ROOT / "services" / "diagnose_service.py")
 
-    assert "business.layers.signal.source_config" in imports
+    assert "backend.layers.signal.source_config" in imports
     assert _matching_forbidden(imports, ("domain.sources", "sources")) == []
 
 
 def test_framework_agent_session_has_no_paper_business_terms_or_imports() -> None:
     violations = _forbidden_imports(
         FRAMEWORK_AGENT_SESSION_ROOT,
-        forbidden_prefixes=("business", "interfaces", "paper_radar"),
+        forbidden_prefixes=("backend", "interfaces", "paper_radar"),
     )
     forbidden_terms = ("PublicPaper", "taskRefs", "methodRefs", "PaperRadar")
     term_violations = []

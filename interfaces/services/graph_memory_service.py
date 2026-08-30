@@ -3,8 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Mapping, cast
 
-from business.memory.graph_memory import GraphMemoryService
-from business.memory.graph_models import GraphNodeType, GraphQuery
+from backend.memory.graph_memory import GraphMemoryService
+from backend.memory.graph_models import GraphNodeType, GraphQuery
 from interfaces.services.memory_service import _build_intelligence_repository_from_env
 from infrastructure.storage.graph import PostgresGraphMemoryStore
 

@@ -5,7 +5,7 @@ from tests.architecture._helpers import PROJECT_ROOT, imported_modules, matches_
 
 NEWS_ENTRYPOINT = PROJECT_ROOT / "interfaces" / "cli" / "news.py"
 FORBIDDEN_DIRECT_IMPORTS = (
-    "business",
+    "backend",
     "framework",
     "infrastructure",
     "interfaces.services",

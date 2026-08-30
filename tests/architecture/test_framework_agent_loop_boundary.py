@@ -7,7 +7,7 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 AGENT_LOOP_ROOT = PROJECT_ROOT / "framework" / "agent"
 FORBIDDEN_IMPORT_PREFIXES = (
-    "business",
+    "backend",
     "interfaces",
     "workflows",
     "domain",

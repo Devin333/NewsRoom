@@ -1,6 +1,6 @@
 from datetime import UTC, datetime
 
-from business.memory.intelligence_models import (
+from backend.memory.intelligence_models import (
     ClaimMemory,
     DecisionMemory,
     EntityMemory,

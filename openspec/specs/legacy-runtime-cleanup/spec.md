@@ -1,9 +1,8 @@
 ## Purpose
 Define cleanup requirements for retiring obsolete board, paper, scoring, interface, and legacy test assets after Harness + Research replacements are accepted.
-
 ## Requirements
 ### Requirement: Stage Zero Audit Inventory
-Stage 0 SHALL produce `docs/prd/harness-research-runtime/audit-inventory.md` with keep, adapt, and delete classifications for `framework`, `business`, `interfaces`, `tests`, `openspec/specs`, and `docs/architecture`.
+Stage 0 SHALL produce `docs/prd/harness-research-runtime/audit-inventory.md` with keep, adapt, and delete classifications for `framework`, `backend`, `interfaces`, `tests`, `openspec/specs`, and `docs/architecture`.
 
 #### Scenario: Delete candidate has cleanup metadata
 - **WHEN** an inventory row is categorized as `delete`
@@ -15,7 +14,7 @@ Legacy cleanup SHALL preserve or adapt useful domain-neutral assets for LLM, too
 
 #### Scenario: Neutral framework asset is kept or adapted
 
-- **WHEN** a framework capability has reusable runtime value and no business dependency
+- **WHEN** a framework capability has reusable runtime value and no backend dependency
 - **THEN** the inventory MUST classify its behavior as `keep` or `adapt` with a target owner
 - **AND** cleanup MUST remove the retired Workflow container after all callers use that owner
 
@@ -43,7 +42,7 @@ Tests for old behavior SHALL be replaced with Harness + Research tests or delete
 - **AND** the replacement Research test MUST cover the new accepted behavior
 
 ### Requirement: Cleanup Maintains Architecture Boundaries
-Cleanup SHALL enforce that framework does not import business, interfaces, or concrete infrastructure; `business/research` does not import old paper_radar, interfaces, or concrete infrastructure; and interface services remain entry-layer coordinators.
+Cleanup SHALL enforce that framework does not import backend, interfaces, or concrete infrastructure; `backend/research` does not import old paper_radar, interfaces, or concrete infrastructure; and interface services remain entry-layer coordinators.
 
 #### Scenario: Boundary test blocks compatibility leak
 - **WHEN** a compatibility adapter introduces a forbidden dependency across these boundaries

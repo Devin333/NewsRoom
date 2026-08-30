@@ -368,7 +368,7 @@ def test_graph_structured_output_event_carries_exact_execution_identity() -> Non
 
 def test_production_has_no_unmanaged_structured_output_parser_or_validator() -> None:
     root = Path(__file__).resolve().parents[3]
-    production_roots = [root / name for name in ("business", "framework", "infrastructure", "interfaces")]
+    production_roots = [root / name for name in ("backend", "framework", "infrastructure", "interfaces")]
     approved_validator_owner = (
         root / "framework" / "llm" / "structured_output" / "validator.py"
     ).resolve()

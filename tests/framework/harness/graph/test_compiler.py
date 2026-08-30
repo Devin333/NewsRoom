@@ -4,7 +4,7 @@ from dataclasses import replace
 
 import pytest
 
-from business.research.graphs import (
+from backend.research.graphs import (
     RESEARCH_DYNAMIC_STAGE_ID,
     build_dynamic_paper_analysis_graph_definition,
     build_paper_analysis_graph_definition,

@@ -7,9 +7,9 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 def test_reader_repair_runtime_binding_bundle_has_one_application_owner() -> None:
-    application_path = ROOT / "business/research/application/reader_repair_runtime.py"
+    application_path = ROOT / "backend/research/application/reader_repair_runtime.py"
     composition_path = ROOT / "interfaces/composition/research.py"
-    legacy_path = ROOT / "business/research/application/single_paper_runtime.py"
+    legacy_path = ROOT / "backend/research/application/single_paper_runtime.py"
 
     application_source = application_path.read_text(encoding="utf-8")
     composition_source = composition_path.read_text(encoding="utf-8")
@@ -21,7 +21,7 @@ def test_reader_repair_runtime_binding_bundle_has_one_application_owner() -> Non
 
 def test_reader_repair_runtime_registration_does_not_import_artifact_owners() -> None:
     source = (
-        ROOT / "business/research/graphs/reader_repair_runtime.py"
+        ROOT / "backend/research/graphs/reader_repair_runtime.py"
     ).read_text(encoding="utf-8")
 
     assert "framework.harness.artifacts" not in source
