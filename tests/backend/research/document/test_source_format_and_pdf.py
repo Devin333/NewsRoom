@@ -232,6 +232,12 @@ def test_detect_raw_bytes_treated_as_latex():
     assert fmt is SourceFormat.LATEX
 
 
+def test_detect_html_with_leading_whitespace():
+    fmt, canonical = detect_source_format(b" \n\t<html><body>paper</body></html>")
+    assert fmt is SourceFormat.HTML
+    assert canonical.lstrip().startswith(b"<html>")
+
+
 # ── _parse_mmd (unit, no nougat needed) ──────────────────────────────────────
 
 

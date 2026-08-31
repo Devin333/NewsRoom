@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
+from datetime import UTC, datetime
 from typing import Any, Literal
 
 from pydantic import Field, field_validator, model_validator
@@ -13,6 +15,7 @@ class ResearchBenchmark(PrimitiveModel):
     name: str
     task: str
     dataset_ids: list[str] = Field(default_factory=list)
+    actor_scope: dict[str, str] = Field(default_factory=dict)
     metadata: dict[str, Any] = Field(default_factory=dict)
 
     @field_validator("benchmark_id", "name", "task")
@@ -24,6 +27,11 @@ class ResearchBenchmark(PrimitiveModel):
     def _normalize_dataset_ids(self) -> "ResearchBenchmark":
         object.__setattr__(self, "benchmark_id", normalize_key(self.benchmark_id))
         object.__setattr__(self, "dataset_ids", unique_texts(self.dataset_ids))
+        scope = _normalized_scope(self.metadata)
+        scope.update(_normalized_scope(self.actor_scope))
+        object.__setattr__(self, "actor_scope", scope)
+        if scope:
+            object.__setattr__(self, "metadata", {**dict(self.metadata), "actor_scope": scope})
         return self
 
 
@@ -32,6 +40,7 @@ class ResearchDataset(PrimitiveModel):
     name: str
     version: str | None = None
     source_refs: list[str] = Field(default_factory=list)
+    actor_scope: dict[str, str] = Field(default_factory=dict)
     metadata: dict[str, Any] = Field(default_factory=dict)
 
     @field_validator("dataset_id", "name")
@@ -39,18 +48,37 @@ class ResearchDataset(PrimitiveModel):
     def _required_text(cls, value: str) -> str:
         return require_text(value, "dataset fields")
 
+    @model_validator(mode="after")
+    def _normalize_scope(self) -> "ResearchDataset":
+        scope = _normalized_scope(self.metadata)
+        scope.update(_normalized_scope(self.actor_scope))
+        object.__setattr__(self, "actor_scope", scope)
+        if scope:
+            object.__setattr__(self, "metadata", {**dict(self.metadata), "actor_scope": scope})
+        return self
+
 
 class ResearchMetric(PrimitiveModel):
     metric_id: str
     name: str
     direction: Literal["higher_is_better", "lower_is_better"] = "higher_is_better"
     unit: str | None = None
+    actor_scope: dict[str, str] = Field(default_factory=dict)
     metadata: dict[str, Any] = Field(default_factory=dict)
 
     @field_validator("metric_id", "name")
     @classmethod
     def _required_text(cls, value: str) -> str:
         return require_text(value, "metric fields")
+
+    @model_validator(mode="after")
+    def _normalize_scope(self) -> "ResearchMetric":
+        scope = _normalized_scope(self.metadata)
+        scope.update(_normalized_scope(self.actor_scope))
+        object.__setattr__(self, "actor_scope", scope)
+        if scope:
+            object.__setattr__(self, "metadata", {**dict(self.metadata), "actor_scope": scope})
+        return self
 
 
 class ResearchScore(PrimitiveModel):
@@ -61,13 +89,19 @@ class ResearchScore(PrimitiveModel):
     metric_id: str
     value: float
     baseline_id: str | None = None
-    source_refs: list[str]
+    baseline_ref: str | None = None
+    source_refs: list[str] = Field(default_factory=list)
+    source_snapshot_refs: list[str] = Field(default_factory=list)
     evidence_refs: list[str] = Field(default_factory=list)
     verification_status: Literal["candidate", "verified", "rejected", "conflicting"] = "candidate"
+    status: Literal["candidate", "verified", "rejected", "conflicting"] | None = None
     split: str | None = None
     unit: str | None = None
     direction: Literal["higher_is_better", "lower_is_better"] | None = None
+    dataset_version: str | None = None
     evaluation_protocol: str | None = None
+    observed_at: datetime | None = None
+    actor_scope: dict[str, str] = Field(default_factory=dict)
     metadata: dict[str, Any] = Field(default_factory=dict)
 
     @field_validator("score_id", "paper_id", "benchmark_id", "dataset_id", "metric_id")
@@ -78,12 +112,50 @@ class ResearchScore(PrimitiveModel):
     @model_validator(mode="after")
     def _require_refs_and_range(self) -> "ResearchScore":
         refs = unique_texts(self.source_refs)
+        snapshot_refs = unique_texts(self.source_snapshot_refs)
+        metadata_snapshot_refs = self.metadata.get("source_snapshot_refs")
+        if not snapshot_refs and isinstance(metadata_snapshot_refs, (list, tuple)):
+            snapshot_refs = unique_texts([str(item) for item in metadata_snapshot_refs])
+        # ``source_refs`` predates the v1 typed contract. Keep it as the
+        # compatibility locator while exposing the canonical snapshot field.
+        if not refs and snapshot_refs:
+            refs = list(snapshot_refs)
+        if not snapshot_refs and refs:
+            snapshot_refs = list(refs)
         if not refs:
             raise ValueError("benchmark score requires source refs")
         if not -1_000_000_000 <= float(self.value) <= 1_000_000_000:
             raise ValueError("benchmark score is outside supported range")
         object.__setattr__(self, "source_refs", refs)
+        object.__setattr__(self, "source_snapshot_refs", snapshot_refs)
         object.__setattr__(self, "evidence_refs", unique_texts(self.evidence_refs))
+        baseline = self.baseline_ref or self.baseline_id
+        object.__setattr__(self, "baseline_ref", baseline)
+        object.__setattr__(self, "baseline_id", self.baseline_id or baseline)
+        status = self.status or self.verification_status
+        object.__setattr__(self, "verification_status", status)
+        object.__setattr__(self, "status", status)
+        if self.dataset_version is None:
+            metadata_version = self.metadata.get("dataset_version")
+            if metadata_version is not None and str(metadata_version).strip():
+                object.__setattr__(self, "dataset_version", str(metadata_version).strip())
+        elif self.dataset_version.strip():
+            object.__setattr__(
+                self,
+                "metadata",
+                {**dict(self.metadata), "dataset_version": self.dataset_version.strip()},
+            )
+        else:
+            object.__setattr__(self, "dataset_version", None)
+        scope = _normalized_scope(self.metadata)
+        scope.update(_normalized_scope(self.actor_scope))
+        object.__setattr__(self, "actor_scope", scope)
+        if scope:
+            object.__setattr__(self, "metadata", {**dict(self.metadata), "actor_scope": scope})
+        if self.observed_at is None:
+            object.__setattr__(self, "observed_at", datetime.now(UTC))
+        else:
+            object.__setattr__(self, "observed_at", _ensure_utc(self.observed_at))
         if self.verification_status == "verified" and not self.evidence_refs:
             raise ValueError("verified benchmark score requires evidence refs")
         return self
@@ -109,27 +181,124 @@ class ResearchBaseline(PrimitiveModel):
 class ResearchSOTAClaim(PrimitiveModel):
     claim_id: str
     paper_id: str
-    benchmark_id: str
-    dataset_id: str
-    metric_id: str
+    # Candidate extraction may discover an assertion before it can resolve
+    # the benchmark taxonomy. Keep the claim queryable with explicit missing
+    # fields; verified claims still require all three typed references.
+    benchmark_id: str = ""
+    dataset_id: str = ""
+    metric_id: str = ""
     score_id: str | None = None
     claim_text: str
     verification_status: Literal["candidate", "verified", "rejected", "conflicting"] = "candidate"
-    source_refs: list[str]
+    status: Literal["candidate", "verified", "rejected", "conflicting"] | None = None
+    source_refs: list[str] = Field(default_factory=list)
+    source_snapshot_refs: list[str] = Field(default_factory=list)
+    evidence_refs: list[str] = Field(default_factory=list)
+    dataset_version: str | None = None
+    split: str | None = None
+    unit: str | None = None
+    direction: Literal["higher_is_better", "lower_is_better"] | None = None
+    evaluation_protocol: str | None = None
+    observed_at: datetime | None = None
+    actor_scope: dict[str, str] = Field(default_factory=dict)
     metadata: dict[str, Any] = Field(default_factory=dict)
 
-    @field_validator("claim_id", "paper_id", "benchmark_id", "dataset_id", "metric_id", "claim_text")
+    @field_validator("claim_id", "paper_id", "claim_text")
     @classmethod
     def _required_text(cls, value: str) -> str:
         return require_text(value, "SOTA claim fields")
 
-    @field_validator("source_refs")
+    @field_validator("benchmark_id", "dataset_id", "metric_id")
     @classmethod
-    def _require_source_refs(cls, value: list[str]) -> list[str]:
-        refs = unique_texts(value)
+    def _normalize_reference_id(cls, value: str | None) -> str:
+        return str(value or "").strip()
+
+    @model_validator(mode="after")
+    def _normalize(self) -> "ResearchSOTAClaim":
+        refs = unique_texts(self.source_refs)
+        snapshot_refs = unique_texts(self.source_snapshot_refs)
+        metadata_snapshot_refs = self.metadata.get("source_snapshot_refs")
+        if not snapshot_refs and isinstance(metadata_snapshot_refs, (list, tuple)):
+            snapshot_refs = unique_texts([str(item) for item in metadata_snapshot_refs])
+        if not refs and snapshot_refs:
+            refs = list(snapshot_refs)
+        if not snapshot_refs and refs:
+            snapshot_refs = list(refs)
         if not refs:
             raise ValueError("SOTA claim requires source refs")
-        return refs
+        object.__setattr__(self, "source_refs", refs)
+        object.__setattr__(self, "source_snapshot_refs", snapshot_refs)
+        object.__setattr__(self, "evidence_refs", unique_texts(self.evidence_refs))
+        status = self.status or self.verification_status
+        object.__setattr__(self, "verification_status", status)
+        object.__setattr__(self, "status", status)
+        unresolved = [
+            name
+            for name, value in (
+                ("benchmark_id", self.benchmark_id),
+                ("dataset_id", self.dataset_id),
+                ("metric_id", self.metric_id),
+            )
+            if not str(value or "").strip()
+        ]
+        if unresolved and status != "verified":
+            object.__setattr__(
+                self,
+                "metadata",
+                {**dict(self.metadata), "unresolved_fields": unresolved},
+            )
+        scope = _normalized_scope(self.metadata)
+        scope.update(_normalized_scope(self.actor_scope))
+        object.__setattr__(self, "actor_scope", scope)
+        if scope:
+            object.__setattr__(self, "metadata", {**dict(self.metadata), "actor_scope": scope})
+        if self.observed_at is None:
+            object.__setattr__(self, "observed_at", datetime.now(UTC))
+        else:
+            object.__setattr__(self, "observed_at", _ensure_utc(self.observed_at))
+        if self.verification_status == "verified":
+            missing = [
+                name
+                for name, value in (
+                    ("score_id", self.score_id),
+                    ("benchmark_id", self.benchmark_id),
+                    ("dataset_id", self.dataset_id),
+                    ("metric_id", self.metric_id),
+                    ("source_snapshot_refs", self.source_snapshot_refs),
+                    ("evidence_refs", self.evidence_refs),
+                    ("dataset_version", self.dataset_version),
+                    ("split", self.split),
+                    ("unit", self.unit),
+                    ("direction", self.direction),
+                    ("evaluation_protocol", self.evaluation_protocol),
+                )
+                if value is None or (isinstance(value, (list, tuple, set)) and not value) or not str(value).strip()
+            ]
+            if missing:
+                raise ValueError(
+                    "verified SOTA claim requires " + ", ".join(missing)
+                )
+        return self
+
+
+def _normalized_scope(value: Mapping[str, Any] | None) -> dict[str, str]:
+    if not isinstance(value, Mapping):
+        return {}
+    source: dict[str, Any] = dict(value)
+    nested = source.get("actor_scope")
+    if isinstance(nested, Mapping):
+        source.update(dict(nested))
+    allowed = {"tenant_id", "user_id", "memory_namespace"}
+    return {
+        str(key): str(raw).strip()
+        for key, raw in source.items()
+        if str(key) in allowed and str(raw).strip()
+    }
+
+
+def _ensure_utc(value: datetime) -> datetime:
+    return value.replace(tzinfo=UTC) if value.tzinfo is None else value.astimezone(UTC)
+
 
 
 __all__ = [

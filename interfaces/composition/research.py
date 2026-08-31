@@ -10,6 +10,8 @@ from typing import Any
 
 from backend.research.application.analyze_paper import AnalyzePaperUseCase
 from backend.research.application.ask_paper import AskPaperUseCase
+from backend.research.application.catalog import ResearchPaperCatalogService
+from backend.research.application.parse_paper import ParsePaperUseCase
 from backend.research.application.bounded_document_rag import (
     BoundedDocumentRAGRuntime,
 )
@@ -47,9 +49,13 @@ from backend.research.domain import (
     research_subject_scope_ref,
 )
 from backend.research.document.cascade_parser import (
+    CascadeArxivDocumentParser,
     CascadeDocumentParser,
     PyMuPDFTextDocumentParser,
 )
+from backend.research.document.format_router import MultiFormatDocumentParser
+from backend.research.document.chunk_manifest import ChunkManifestManager
+from backend.research.document.chunker import PaperDocumentChunker
 from backend.research.document.latex_compiler import ArxivLatexDocumentCompiler
 from backend.research.document.marker_pdf_parser import MarkerPdfDocumentParser
 from backend.research.document.mineru_pdf_parser import MinerUPdfDocumentParser
@@ -149,6 +155,11 @@ from infrastructure.research.filesystem_run_store import (
 from infrastructure.research.github_repository import (
     GithubResearchRepositoryAdapter,
 )
+from infrastructure.research.catalog_store import (
+    FilesystemResearchCatalogStore,
+    FilesystemResearchEventSink,
+)
+from infrastructure.research.source_resolver import ResearchSourceResolverAdapter
 from infrastructure.research.local_chunk_store import LocalChunkPayloadStore
 from infrastructure.research.source_provider import ArxivResearchSourceProvider
 from infrastructure.research.reader_repair_failure_diagnostic_side_effect import (
@@ -1409,6 +1420,53 @@ def _build_configured_composition(
                 rate_limiter=source_runtime.reservation_ledger,
             )
         )
+        catalog_store = FilesystemResearchCatalogStore(
+            settings.research_root / "paper-catalog"
+        )
+        catalog_service = ResearchPaperCatalogService(
+            catalog_repository=catalog_store,
+            identity_repository=catalog_store,
+            relation_repository=catalog_store,
+            source_snapshot_repository=catalog_store,
+            paper_repository=catalog_store,
+            document_repository=catalog_store,
+            evidence_repository=catalog_store,
+            code_profile_repository=catalog_store,
+            sota_claim_repository=catalog_store,
+            github_repository=github_repository,
+        )
+        source_resolver = ResearchSourceResolverAdapter(
+            arxiv_provider=source_provider,
+            arxiv_fetcher=package_connector,
+            github_repository=github_repository,
+            fetch_policy=package_policy,
+            rate_limiter=source_runtime.reservation_ledger,
+            local_root=settings.research_root,
+        )
+        parse_use_case = ParsePaperUseCase(
+            source_resolver=source_resolver,
+            paper_repository=catalog_store,
+            identity_repository=catalog_store,
+            source_snapshot_repository=catalog_store,
+            document_repository=catalog_store,
+            evidence_repository=catalog_store,
+            document_parser=MultiFormatDocumentParser(
+                arxiv_parser=_build_research_multi_format_parser(
+                    settings.parser,
+                    execution_composition=execution_composition,
+                )
+            ),
+            document_compiler=document_compiler,
+            artifact_store=catalog_store,
+            event_sink=FilesystemResearchEventSink(
+                settings.research_root / "paper-catalog"
+            ),
+            catalog_projection=catalog_service,
+            chunker=PaperDocumentChunker(),
+            chunk_manifest=ChunkManifestManager(
+                settings.research_root / "paper-catalog" / "chunk-manifests"
+            ),
+        )
 
         chunk_store, chunk_resources = _build_research_chunk_store(settings.rag)
         owned_resources.extend(chunk_resources)
@@ -1957,6 +2015,8 @@ def _build_configured_composition(
             run_store=run_store,
             run_reconciler=run_reconciler,
             diagnostic_artifact_reader=artifact_port,
+            parse_use_case=parse_use_case,
+            catalog_service=catalog_service,
         )
         return ResearchRuntimeComposition(
             settings=settings,
@@ -2332,6 +2392,19 @@ def _build_research_pdf_parser(
     return CascadeDocumentParser(
         backends,
         fallback=PyMuPDFTextDocumentParser(),
+    )
+
+
+def _build_research_multi_format_parser(
+    settings: ResearchParserSettings,
+    *,
+    execution_composition: Any | None = None,
+) -> CascadeArxivDocumentParser:
+    return CascadeArxivDocumentParser(
+        pdf_parser=_build_research_pdf_parser(
+            settings,
+            execution_composition=execution_composition,
+        )
     )
 
 

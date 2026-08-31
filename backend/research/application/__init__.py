@@ -6,6 +6,25 @@ from backend.research.application.analyze_paper import (
     ResearchAnalysisResult,
     ResearchDynamicTaskPlanUnavailableError,
 )
+from backend.research.application.catalog import (
+    CatalogError,
+    CatalogLeaderboardResult,
+    InMemoryResearchCatalogRepository,
+    ResearchPaperCatalogService,
+)
+from backend.research.application.parse_paper import (
+    InMemoryResearchEventSink,
+    MetadataOnlySourceResolver,
+    ParsePaperError,
+    ParsePaperRequest,
+    ParsePaperResult,
+    ParsePaperUseCase,
+    ResolvedPaperSource,
+    ResearchCatalogProjection,
+    ResearchSourceResolver,
+    identity_from_paper,
+    infer_source_type,
+)
 from backend.research.application.ask_paper import AskPaperUseCase, ResearchActorScope
 from backend.research.application.build_paper_card import BuildPaperCardUseCase
 from backend.research.application.build_reader import BuildReaderUseCase
@@ -42,15 +61,20 @@ from backend.research.application.reader_repair_runtime import (
 )
 
 __all__ = [
+    "CatalogError",
+    "CatalogLeaderboardResult",
     "AnalyzePaperUseCase",
     "AnalyzePaperRequest",
     "AskPaperUseCase",
+    "InMemoryResearchCatalogRepository",
+    "InMemoryResearchEventSink",
     "BuildPaperCardUseCase",
     "BuildReaderUseCase",
     "GenerateReadingNoteUseCase",
     "RESEARCH_NODE_RESULT_POLICIES",
     "RESEARCH_WORKER_CANDIDATE_SCHEMA",
     "ResearchAnalysisResult",
+    "ResearchPaperCatalogService",
     "ResearchDynamicTaskPlanUnavailableError",
     "ResearchGraphResultCommitter",
     "ResearchGraphArtifactAlertList",
@@ -60,6 +84,16 @@ __all__ = [
     "ResearchGraphArtifactReconciliation",
     "ResearchNodeResultPolicy",
     "ResearchTaskPlanResultMaterializer",
+    "MetadataOnlySourceResolver",
+    "ParsePaperError",
+    "ParsePaperRequest",
+    "ParsePaperResult",
+    "ParsePaperUseCase",
+    "ResolvedPaperSource",
+    "ResearchCatalogProjection",
+    "ResearchSourceResolver",
+    "identity_from_paper",
+    "infer_source_type",
     "ResearchActorScope",
     "ResearchRunDispositionDecision",
     "ResearchRunDispositionReconciler",

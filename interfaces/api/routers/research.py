@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from fastapi import APIRouter, Request
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from interfaces.api.deps import ApiRouteHelpers, ApiServices
 from interfaces.models import ActorContext
@@ -11,6 +11,7 @@ from interfaces.services.research_service import (
     ResearchActorInput,
     ResearchAnalyzeInput,
     ResearchAskInput,
+    ResearchParseInput,
     ResearchServiceError,
     bind_research_actor_input,
 )
@@ -49,8 +50,71 @@ class ResearchRagAskRequest(BaseModel):
     memoryNamespace: str | None = None
 
 
+class ResearchParseRequest(BaseModel):
+    source: str | None = Field(default=None, min_length=1)
+    sourceUrl: str | None = Field(default=None, min_length=1)
+    sourceType: str | None = Field(default=None, min_length=1)
+    contentRef: str | None = Field(default=None, min_length=1)
+    runId: str | None = None
+    options: dict[str, Any] = Field(default_factory=dict)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    tenantId: str | None = None
+    userId: str | None = None
+    memoryNamespace: str | None = None
+
+    @field_validator("source", "sourceUrl", "contentRef", "runId", "tenantId", "userId", "memoryNamespace")
+    @classmethod
+    def _normalize_text(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = str(value).strip()
+        return normalized or None
+
+    @model_validator(mode="after")
+    def _require_source(self) -> "ResearchParseRequest":
+        if not (self.source or self.sourceUrl or self.contentRef):
+            raise ValueError("source, sourceUrl, or contentRef is required")
+        return self
+
+
+class ResearchCatalogRefreshRequest(BaseModel):
+    paperId: str | None = None
+    tenantId: str | None = None
+    userId: str | None = None
+    memoryNamespace: str | None = None
+
+
 def create_router(services: ApiServices, helpers: ApiRouteHelpers) -> APIRouter:
     router = APIRouter()
+
+    @router.post("/api/v1/research/papers/parse")
+    def parse_paper(request: Request, payload: ResearchParseRequest):
+        def call():
+            actor = _bound_research_actor(
+                request,
+                tenant_id=payload.tenantId,
+                user_id=payload.userId,
+                memory_namespace=payload.memoryNamespace,
+                require_trusted_actor=True,
+            )
+            source = payload.source or payload.sourceUrl or payload.contentRef
+            if not source:
+                raise ValueError("source, sourceUrl, or contentRef is required")
+            return services.research_service_factory().parse_paper(
+                ResearchParseInput(
+                    source=source,
+                    source_type=payload.sourceType,
+                    content_ref=payload.contentRef,
+                    run_id=payload.runId,
+                    options=payload.options,
+                    metadata=payload.metadata,
+                    tenant_id=actor.tenant_id,
+                    user_id=actor.user_id,
+                    memory_namespace=actor.memory_namespace,
+                )
+            )
+
+        return _service_response(helpers, call)
 
     @router.post("/api/v1/research/papers/analyze")
     def analyze_paper(request: Request, payload: ResearchAnalyzeRequest):
@@ -104,6 +168,141 @@ def create_router(services: ApiServices, helpers: ApiRouteHelpers) -> APIRouter:
             helpers,
             call,
         )
+
+    @router.get("/api/v1/research/papers/{paper_id}/sources")
+    def get_sources(
+        request: Request,
+        paper_id: str,
+        tenantId: str | None = None,
+        userId: str | None = None,
+        memoryNamespace: str | None = None,
+    ):
+        def call():
+            actor = _bound_research_actor(request, tenant_id=tenantId, user_id=userId, memory_namespace=memoryNamespace, require_trusted_actor=True)
+            return services.research_service_factory().get_sources(paper_id, actor=actor)
+
+        return _service_response(helpers, call)
+
+    @router.get("/api/v1/research/papers/{paper_id}/document")
+    def get_document(
+        request: Request,
+        paper_id: str,
+        tenantId: str | None = None,
+        userId: str | None = None,
+        memoryNamespace: str | None = None,
+    ):
+        def call():
+            actor = _bound_research_actor(request, tenant_id=tenantId, user_id=userId, memory_namespace=memoryNamespace, require_trusted_actor=True)
+            return services.research_service_factory().get_document(paper_id, actor=actor)
+
+        return _service_response(helpers, call)
+
+    @router.get("/api/v1/research/papers/{paper_id}/catalog")
+    def get_catalog(
+        request: Request,
+        paper_id: str,
+        tenantId: str | None = None,
+        userId: str | None = None,
+        memoryNamespace: str | None = None,
+    ):
+        def call():
+            actor = _bound_research_actor(request, tenant_id=tenantId, user_id=userId, memory_namespace=memoryNamespace, require_trusted_actor=True)
+            return services.research_service_factory().get_catalog(paper_id, actor=actor)
+
+        return _service_response(helpers, call)
+
+    @router.get("/api/v1/research/papers/{paper_id}/code")
+    def get_code(
+        request: Request,
+        paper_id: str,
+        tenantId: str | None = None,
+        userId: str | None = None,
+        memoryNamespace: str | None = None,
+    ):
+        def call():
+            actor = _bound_research_actor(request, tenant_id=tenantId, user_id=userId, memory_namespace=memoryNamespace, require_trusted_actor=True)
+            return services.research_service_factory().get_code(paper_id, actor=actor)
+
+        return _service_response(helpers, call)
+
+    @router.get("/api/v1/research/papers/{paper_id}/benchmarks")
+    def get_benchmarks(
+        request: Request,
+        paper_id: str,
+        benchmarkId: str | None = None,
+        metricId: str | None = None,
+        datasetId: str | None = None,
+        datasetVersion: str | None = None,
+        split: str | None = None,
+        evaluationProtocol: str | None = None,
+        tenantId: str | None = None,
+        userId: str | None = None,
+        memoryNamespace: str | None = None,
+    ):
+        def call():
+            actor = _bound_research_actor(request, tenant_id=tenantId, user_id=userId, memory_namespace=memoryNamespace, require_trusted_actor=True)
+            return services.research_service_factory().get_benchmarks(
+                paper_id,
+                benchmark_id=benchmarkId,
+                metric_id=metricId,
+                dataset_id=datasetId,
+                dataset_version=datasetVersion,
+                split=split,
+                evaluation_protocol=evaluationProtocol,
+                actor=actor,
+            )
+
+        return _service_response(helpers, call)
+
+    @router.get("/api/v1/research/catalog/papers")
+    def list_catalog_papers(
+        request: Request,
+        query: str = "",
+        limit: int = 50,
+        tenantId: str | None = None,
+        userId: str | None = None,
+        memoryNamespace: str | None = None,
+    ):
+        def call():
+            actor = _bound_research_actor(request, tenant_id=tenantId, user_id=userId, memory_namespace=memoryNamespace, require_trusted_actor=True)
+            return services.research_service_factory().list_catalog_papers(query=query, limit=limit, actor=actor)
+
+        return _service_response(helpers, call)
+
+    @router.get("/api/v1/research/catalog/leaderboards")
+    def get_leaderboards(
+        request: Request,
+        benchmarkId: str | None = None,
+        metricId: str | None = None,
+        datasetId: str | None = None,
+        datasetVersion: str | None = None,
+        split: str | None = None,
+        evaluationProtocol: str | None = None,
+        tenantId: str | None = None,
+        userId: str | None = None,
+        memoryNamespace: str | None = None,
+    ):
+        def call():
+            actor = _bound_research_actor(request, tenant_id=tenantId, user_id=userId, memory_namespace=memoryNamespace, require_trusted_actor=True)
+            return services.research_service_factory().get_leaderboards(
+                benchmark_id=benchmarkId,
+                metric_id=metricId,
+                dataset_id=datasetId,
+                dataset_version=datasetVersion,
+                split=split,
+                evaluation_protocol=evaluationProtocol,
+                actor=actor,
+            )
+
+        return _service_response(helpers, call)
+
+    @router.post("/api/v1/research/catalog/refresh")
+    def refresh_catalog(request: Request, payload: ResearchCatalogRefreshRequest):
+        def call():
+            actor = _bound_research_actor(request, tenant_id=payload.tenantId, user_id=payload.userId, memory_namespace=payload.memoryNamespace, require_trusted_actor=True)
+            return services.research_service_factory().refresh_catalog(payload.paperId, actor=actor)
+
+        return _service_response(helpers, call)
 
     @router.get("/api/v1/research/papers/{paper_id}/reader")
     def get_reader(
@@ -225,13 +424,26 @@ def _service_response(helpers: ApiRouteHelpers, call):
         return helpers.error(
             status_code=exc.status_code,
             code=exc.code,
-            message=exc.message,
+            message=exc.public_message,
             details=exc.details,
             retryable=exc.retryable,
             user_action_required=exc.user_action_required,
         )
-    except ValueError as exc:
-        return helpers.error(status_code=400, code="invalid_request", message=str(exc), user_action_required=True)
+    except ValueError:
+        return helpers.error(
+            status_code=400,
+            code="invalid_request",
+            message="Research request is invalid",
+            user_action_required=True,
+        )
+    except Exception as exc:  # noqa: BLE001 - public boundary must not leak adapter text
+        return helpers.error(
+            status_code=500,
+            code="research_operation_failed",
+            message="Research paper operation failed",
+            details={"error_type": type(exc).__name__},
+            retryable=True,
+        )
 
 
 def _bound_research_actor(
@@ -240,8 +452,17 @@ def _bound_research_actor(
     tenant_id: str | None,
     user_id: str | None,
     memory_namespace: str | None,
+    require_trusted_actor: bool = False,
 ) -> ResearchActorInput:
     actor = getattr(request.state, "actor_context", None)
+    if require_trusted_actor and not isinstance(actor, ActorContext):
+        if any(value for value in (tenant_id, user_id, memory_namespace)):
+            raise ResearchServiceError(
+                "forbidden",
+                "authenticated actor context is required for scoped Research Catalog access",
+                status_code=403,
+                user_action_required=True,
+            )
     return bind_research_actor_input(
         ResearchActorInput(
             tenant_id=tenant_id,
@@ -252,4 +473,11 @@ def _bound_research_actor(
     )
 
 
-__all__ = ["ResearchAnalyzeRequest", "ResearchAskRequest", "ResearchRagAskRequest", "create_router"]
+__all__ = [
+    "ResearchAnalyzeRequest",
+    "ResearchAskRequest",
+    "ResearchRagAskRequest",
+    "ResearchParseRequest",
+    "ResearchCatalogRefreshRequest",
+    "create_router",
+]

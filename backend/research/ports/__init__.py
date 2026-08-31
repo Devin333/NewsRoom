@@ -10,12 +10,25 @@ from backend.research.ports.artifact_publication import (
 )
 from backend.research.ports.artifact_store import ResearchArtifactStorePort
 from backend.research.ports.catalog import (
+    CatalogRepository,
+    PaperIdentityRepository,
     ResearchPaperCatalogRepository,
+    ResearchPaperCatalogQueryPort,
+    ResearchCodeRepositoryProfileRepository,
+    ResearchSOTAClaimRepository,
     ResearchPaperIdentityRepository,
     ResearchPaperRelationRepository,
     ResearchSourceSnapshotRepository,
+    SourceSnapshotRepository,
 )
 from backend.research.ports.document_compiler import DocumentCompilerPort
+from backend.research.ports.paper_ingest import (
+    ResearchDocumentRepository,
+    ResearchEvidencePackRepository,
+    ResearchEventSink,
+    ResearchPaperReadRepository,
+)
+from backend.research.ports.source_resolver import ResolvedPaperSource, ResearchSourceResolver
 from backend.research.ports.field_embedding_index import (
     FieldEmbeddingHit,
     FieldEmbeddingIndexerPort,
@@ -75,10 +88,22 @@ from backend.research.ports.source_provider import PaperSourceProvider
 
 __all__ = [
     "DocumentCompilerPort",
+    "ResearchDocumentRepository",
+    "ResearchEvidencePackRepository",
+    "ResearchEventSink",
+    "ResearchPaperReadRepository",
+    "ResolvedPaperSource",
+    "ResearchSourceResolver",
+    "CatalogRepository",
+    "PaperIdentityRepository",
     "ResearchPaperCatalogRepository",
+    "ResearchPaperCatalogQueryPort",
+    "ResearchCodeRepositoryProfileRepository",
+    "ResearchSOTAClaimRepository",
     "ResearchPaperIdentityRepository",
     "ResearchPaperRelationRepository",
     "ResearchSourceSnapshotRepository",
+    "SourceSnapshotRepository",
     "EvidencePackRepository",
     "FieldEmbeddingHit",
     "FieldEmbeddingIndexerPort",

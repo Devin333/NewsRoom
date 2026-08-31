@@ -9,6 +9,10 @@ from backend.research.domain.common import require_text
 
 ParseSource = Literal[
     "latex",
+    "html",
+    "publisher",
+    "openreview",
+    "pdf",
     "marker",
     "pymupdf",
     "nougat",

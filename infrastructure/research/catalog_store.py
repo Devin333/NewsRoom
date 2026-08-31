@@ -1,0 +1,480 @@
+from __future__ import annotations
+
+import hashlib
+import json
+from pathlib import Path
+from typing import Any, Mapping
+
+from backend.research.ports.catalog_models import ResearchScore, ResearchSOTAClaim
+from backend.research.domain.catalog import (
+    ResearchPaperCatalogEntry,
+    ResearchPaperIdentity,
+    ResearchPaperRelation,
+    ResearchSourceSnapshot,
+    actor_scope_matches,
+    actor_scope_ref,
+)
+from backend.research.domain.code_repository import CodeRepositoryProfile
+from backend.research.domain.document import ResearchDocument
+from backend.research.domain.evidence import ResearchEvidencePack
+from backend.research.domain.paper import ResearchPaper
+from infrastructure.storage.json_file_store import (
+    locked_json_file,
+    read_json_object_unlocked,
+    write_json_object_unlocked,
+)
+
+
+CATALOG_STORE_SCHEMA_VERSION = 2
+_LEGACY_CATALOG_STORE_SCHEMA_VERSIONS = frozenset({1})
+
+
+class ResearchCatalogStoreError(RuntimeError):
+    pass
+
+
+class ResearchCatalogStoreCorruptionError(ResearchCatalogStoreError):
+    pass
+
+
+class FilesystemResearchCatalogStore:
+    """Atomic actor-scoped JSON persistence for Research paper intelligence."""
+
+    def __init__(
+        self,
+        root: str | Path = ".newsroom/research_catalog",
+        *,
+        tenant_id: str | None = None,
+        user_id: str | None = None,
+        memory_namespace: str | None = None,
+    ) -> None:
+        self.root = Path(root).expanduser()
+        self.tenant_id = _optional_text(tenant_id) or "public"
+        self.user_id = _optional_text(user_id) or "public"
+        self.memory_namespace = _optional_text(memory_namespace) or f"research:tenant:{self.tenant_id}:user:{self.user_id}"
+        scope_key = hashlib.sha256(self.scope_ref.encode("utf-8")).hexdigest()[:32]
+        self.path = self.root / f"{scope_key}.json"
+        self.artifact_root = self.root / "artifacts"
+        self.event_root = self.root / "events"
+
+    @property
+    def scope_ref(self) -> str:
+        return f"tenant={self.tenant_id}|user={self.user_id}|memory={self.memory_namespace}"
+
+    def get(self, paper_id: str, *, actor_scope: Mapping[str, str] | None = None) -> ResearchPaperCatalogEntry | None:
+        state = self._read()
+        raw = state["catalog"].get(_scoped_key(paper_id, actor_scope))
+        if raw is None and actor_scope is None:
+            raw = state["catalog"].get(str(paper_id))
+        entry = _model(ResearchPaperCatalogEntry, raw)
+        return entry if entry is None or actor_scope_matches(_value_scope(entry), actor_scope) else None
+
+    def save(self, value: Any) -> None:
+        if isinstance(value, ResearchPaperCatalogEntry):
+            self._mutate(lambda state: state["catalog"].__setitem__(_scoped_key(value.paper_id, value.metadata.get("actor_scope")), _dump(value)))
+            return
+        if isinstance(value, ResearchPaperIdentity):
+            self._mutate(lambda state: state["identities"].__setitem__(_scoped_key(value.paper_id, value.metadata.get("actor_scope")), _dump(value)))
+            return
+        if isinstance(value, ResearchPaperRelation):
+            self._mutate(lambda state: state["relations"].__setitem__(_scoped_key(value.relation_id, value.metadata.get("actor_scope")), _dump(value)))
+            return
+        if isinstance(value, ResearchSourceSnapshot):
+            key = _scoped_key(value.snapshot_id, _snapshot_scope(value))
+            self._mutate(lambda state: _put_immutable_snapshot(state, key, value))
+            return
+        if isinstance(value, ResearchPaper):
+            self._mutate(lambda state: state["papers"].__setitem__(_scoped_key(value.paper_id, value.metadata), _dump(value)))
+            return
+        if isinstance(value, ResearchDocument):
+            self._mutate(lambda state: state["documents"].__setitem__(_scoped_key(value.paper_id, value.lineage.metadata), _dump(value)))
+            return
+        if isinstance(value, ResearchEvidencePack):
+            self._mutate(lambda state: state["evidence"].__setitem__(_scoped_key(value.paper_id, value.metadata), _dump(value)))
+            return
+        if isinstance(value, CodeRepositoryProfile):
+            key = str(value.canonical_repo_id or value.repo_url)
+            self._mutate(lambda state: state["code_profiles"].__setitem__(_scoped_key(key, value.metadata), _dump(value)))
+            return
+        if isinstance(value, ResearchScore):
+            self.save_score(value)
+            return
+        if isinstance(value, ResearchSOTAClaim):
+            self.save_sota_claim(value)
+            return
+        raise TypeError(f"unsupported catalog value: {type(value).__name__}")
+
+    def search(self, query: str = "", *, limit: int = 50, actor_scope: Mapping[str, str] | None = None) -> list[ResearchPaperCatalogEntry]:
+        needle = str(query or "").strip().casefold()
+        values = [_model(ResearchPaperCatalogEntry, raw) for raw in self._read()["catalog"].values()]
+        values = [value for value in values if value is not None and actor_scope_matches(_value_scope(value), actor_scope)]
+        if needle:
+            values = [value for value in values if needle in value.paper_id.casefold() or needle in value.identity.title.casefold()]
+        return values[: int(limit)]
+
+    def find_by_external_id(self, external_id: str, *, actor_scope: Mapping[str, str] | None = None) -> ResearchPaperIdentity | None:
+        needle = str(external_id or "").strip().casefold()
+        for raw in self._read()["identities"].values():
+            identity = _model(ResearchPaperIdentity, raw)
+            if identity is None:
+                continue
+            values = (identity.arxiv_id, identity.doi, identity.openreview_id, identity.canonical_url)
+            if actor_scope_matches(_value_scope(identity), actor_scope) and any(value and str(value).strip().casefold() == needle for value in values):
+                return identity
+        return None
+
+    def find_by_fingerprint(self, fingerprint: str, *, actor_scope: Mapping[str, str] | None = None) -> ResearchPaperIdentity | None:
+        needle = str(fingerprint or "").strip().casefold()
+        if not needle:
+            return None
+        for raw in self._read()["identities"].values():
+            identity = _model(ResearchPaperIdentity, raw)
+            if identity is not None and identity.fingerprint and identity.fingerprint.casefold() == needle and actor_scope_matches(_value_scope(identity), actor_scope):
+                return identity
+        return None
+
+    def get_identity(self, paper_id: str, *, actor_scope: Mapping[str, str] | None = None) -> ResearchPaperIdentity | None:
+        state = self._read()
+        raw = state["identities"].get(_scoped_key(paper_id, actor_scope))
+        if raw is None and actor_scope is None:
+            raw = state["identities"].get(str(paper_id))
+        value = _model(ResearchPaperIdentity, raw)
+        return value if value is None or actor_scope_matches(_value_scope(value), actor_scope) else None
+
+    def get_paper(self, paper_id: str, *, actor_scope: Mapping[str, str] | None = None) -> ResearchPaper | None:
+        state = self._read()
+        raw = state["papers"].get(_scoped_key(paper_id, actor_scope))
+        if raw is None and actor_scope is None:
+            raw = state["papers"].get(str(paper_id))
+        value = _model(ResearchPaper, raw)
+        return value if value is None or actor_scope_matches(_value_scope(value), actor_scope) else None
+
+    def get_snapshot(self, snapshot_id: str, *, actor_scope: Mapping[str, str] | None = None) -> ResearchSourceSnapshot | None:
+        state = self._read()
+        raw = state["snapshots"].get(_scoped_key(snapshot_id, actor_scope))
+        if raw is None and actor_scope is None:
+            raw = state["snapshots"].get(str(snapshot_id))
+        value = _model(ResearchSourceSnapshot, raw)
+        return value if value is None or actor_scope_matches(_value_scope(value), actor_scope) else None
+
+    def list_for_paper(self, paper_id: str, *, actor_scope: Mapping[str, str] | None = None) -> list[ResearchSourceSnapshot]:
+        return [
+            snapshot
+            for raw in self._read()["snapshots"].values()
+            if (snapshot := _model(ResearchSourceSnapshot, raw)) is not None and snapshot.paper_id == paper_id and actor_scope_matches(_value_scope(snapshot), actor_scope)
+        ]
+
+    def list_relations(self, paper_id: str, *, actor_scope: Mapping[str, str] | None = None) -> list[ResearchPaperRelation]:
+        return [
+            relation
+            for raw in self._read()["relations"].values()
+            if (relation := _model(ResearchPaperRelation, raw)) is not None and relation.paper_id == paper_id and actor_scope_matches(_value_scope(relation), actor_scope)
+        ]
+
+    def get_document(self, paper_id: str, *, actor_scope: Mapping[str, str] | None = None) -> ResearchDocument | None:
+        state = self._read()
+        raw = state["documents"].get(_scoped_key(paper_id, actor_scope))
+        if raw is None and actor_scope is None:
+            raw = state["documents"].get(str(paper_id))
+        value = _model(ResearchDocument, raw)
+        return value if value is None or actor_scope_matches(_value_scope(value), actor_scope) else None
+
+    def get_evidence(self, paper_id: str, *, actor_scope: Mapping[str, str] | None = None) -> ResearchEvidencePack | None:
+        state = self._read()
+        raw = state["evidence"].get(_scoped_key(paper_id, actor_scope))
+        if raw is None and actor_scope is None:
+            raw = state["evidence"].get(str(paper_id))
+        value = _model(ResearchEvidencePack, raw)
+        return value if value is None or actor_scope_matches(_value_scope(value), actor_scope) else None
+
+    def save_score(self, score: ResearchScore) -> None:
+        self._mutate(lambda state: state["scores"].__setitem__(_scoped_key(score.score_id, score.metadata.get("actor_scope")), _dump(score)))
+
+    def list_scores(self, paper_id: str, *, actor_scope: Mapping[str, str] | None = None) -> list[ResearchScore]:
+        return [
+            score
+            for raw in self._read()["scores"].values()
+            if (score := _model(ResearchScore, raw)) is not None and score.paper_id == paper_id and actor_scope_matches(_value_scope(score), actor_scope)
+        ]
+
+    def list_all_scores(self, *, actor_scope: Mapping[str, str] | None = None) -> list[ResearchScore]:
+        return [score for raw in self._read()["scores"].values() if (score := _model(ResearchScore, raw)) is not None and actor_scope_matches(_value_scope(score), actor_scope)]
+
+    def save_sota_claim(self, claim: ResearchSOTAClaim) -> None:
+        self._mutate(
+            lambda state: state["sota_claims"].__setitem__(
+                _scoped_key(claim.claim_id, claim.metadata.get("actor_scope")),
+                _dump(claim),
+            )
+        )
+
+    def list_sota_claims(
+        self,
+        paper_id: str,
+        *,
+        actor_scope: Mapping[str, str] | None = None,
+    ) -> list[ResearchSOTAClaim]:
+        return [
+            claim
+            for raw in self._read()["sota_claims"].values()
+            if (claim := _model(ResearchSOTAClaim, raw)) is not None
+            and claim.paper_id == paper_id
+            and actor_scope_matches(_value_scope(claim), actor_scope)
+        ]
+
+    def save_code_profile(self, profile: CodeRepositoryProfile) -> None:
+        self.save(profile)
+
+    def list_code_profiles(
+        self,
+        paper_id: str | None = None,
+        *,
+        actor_scope: Mapping[str, str] | None = None,
+    ) -> list[CodeRepositoryProfile]:
+        # Profiles are related to papers through relation metadata. A caller
+        # with no paper filter gets all observations in this actor scope.
+        return [
+            profile
+            for raw in self._read()["code_profiles"].values()
+            if (profile := _model(CodeRepositoryProfile, raw)) is not None
+            and (paper_id is None or profile.metadata.get("paper_id") == paper_id)
+            and actor_scope_matches(_value_scope(profile), actor_scope)
+        ]
+
+    def _read(self) -> dict[str, Any]:
+        with locked_json_file(self.path) as resolved:
+            return self._read_unlocked(resolved)
+
+    def _read_unlocked(self, path: Path) -> dict[str, Any]:
+        default = _empty_state(self.scope_ref)
+        payload = read_json_object_unlocked(path, default=default, strict=False)
+        if payload == default and not path.exists():
+            return payload
+        schema_version = payload.get("schema_version")
+        if (
+            isinstance(schema_version, bool)
+            or not isinstance(schema_version, int)
+            or schema_version not in ({CATALOG_STORE_SCHEMA_VERSION} | _LEGACY_CATALOG_STORE_SCHEMA_VERSIONS)
+            or payload.get("scope_ref") != self.scope_ref
+        ):
+            raise ResearchCatalogStoreCorruptionError("research catalog store identity or schema is invalid")
+        checksum = payload.get("checksum")
+        unsigned = {key: value for key, value in payload.items() if key != "checksum"}
+        if not isinstance(checksum, str) or checksum != _checksum(unsigned):
+            raise ResearchCatalogStoreCorruptionError("research catalog store checksum mismatch")
+        # Files written before durable SOTA claims were introduced do not have
+        # that collection. Validate their original checksum first, then add an
+        # empty collection, bump the schema, and persist the migrated shape
+        # atomically while the file lock is held.
+        missing = [key for key in _STATE_COLLECTIONS if key not in payload]
+        migrated = False
+        if schema_version in _LEGACY_CATALOG_STORE_SCHEMA_VERSIONS and missing in ([], ["sota_claims"]):
+            payload.setdefault("sota_claims", {})
+            payload["schema_version"] = CATALOG_STORE_SCHEMA_VERSION
+            migrated = True
+        elif schema_version == CATALOG_STORE_SCHEMA_VERSION and missing == ["sota_claims"]:
+            # Be tolerant of an interrupted v2 migration that wrote the
+            # version before the collection, while still rejecting all other
+            # missing collections.
+            payload["sota_claims"] = {}
+            migrated = True
+        elif missing:
+            raise ResearchCatalogStoreCorruptionError(
+                f"research catalog collection is missing: {missing[0]}"
+            )
+        for key in _STATE_COLLECTIONS:
+            if not isinstance(payload.get(key), dict):
+                raise ResearchCatalogStoreCorruptionError(f"research catalog collection is invalid: {key}")
+        if migrated:
+            unsigned = {key: value for key, value in payload.items() if key != "checksum"}
+            payload["checksum"] = _checksum(unsigned)
+            write_json_object_unlocked(path, payload)
+        return payload
+
+    def _mutate(self, callback) -> None:
+        with locked_json_file(self.path) as resolved:
+            state = self._read_unlocked(resolved)
+            callback(state)
+            unsigned = {key: state[key] for key in state if key != "checksum"}
+            write_json_object_unlocked(resolved, {**unsigned, "checksum": _checksum(unsigned)})
+
+    def publish(
+        self,
+        *,
+        artifact_type: str,
+        payload: dict[str, Any],
+        metadata: dict[str, Any] | None = None,
+    ) -> str:
+        """Publish an immutable JSON artifact and return a stable ref."""
+
+        artifact_type = _safe_segment(artifact_type, "artifact_type")
+        artifact_metadata = dict(metadata or {})
+        # The store owns its scope identity; callers may add diagnostics but
+        # cannot spoof the durable store namespace.
+        artifact_metadata["scope_ref"] = self.scope_ref
+        envelope = {
+            "artifact_type": artifact_type,
+            "metadata": artifact_metadata,
+            "payload": dict(payload),
+        }
+        encoded = json.dumps(envelope, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        digest = hashlib.sha256(encoded).hexdigest()
+        target = self.artifact_root / f"{artifact_type}-{digest[:32]}.json"
+        with locked_json_file(target) as resolved:
+            if resolved.exists():
+                existing = read_json_object_unlocked(resolved, default={}, strict=True)
+                if existing != envelope:
+                    raise ResearchCatalogStoreError("immutable research artifact ref conflicts with existing content")
+            else:
+                write_json_object_unlocked(resolved, envelope)
+        return f"artifact://research/{artifact_type}/{digest}"
+
+
+class FilesystemResearchEventSink:
+    """Append-only JSON event transcript for parse phase transitions."""
+
+    def __init__(self, root: str | Path = ".newsroom/research_catalog") -> None:
+        self.root = Path(root).expanduser()
+
+    def append(self, run_id: str, event: dict[str, Any]) -> None:
+        run = _safe_segment(run_id, "run_id")
+        scope = event.get("actor_scope")
+        scope_values = {
+            str(key): str(value).strip()
+            for key, value in (scope.items() if isinstance(scope, Mapping) else [])
+            if str(key) in {"tenant_id", "user_id", "memory_namespace"} and str(value).strip()
+        }
+        # Keep public transcripts at the historical location. Scoped runs use
+        # a digest directory so identical run IDs cannot share a transcript.
+        if scope_values:
+            digest = hashlib.sha256(actor_scope_ref(scope_values).encode("utf-8")).hexdigest()[:32]
+            target = self.root / "events" / digest / f"{run}.jsonl"
+        else:
+            target = self.root / "events" / f"{run}.jsonl"
+        with locked_json_file(target) as resolved:
+            line = json.dumps({"run_id": run_id, **dict(event)}, ensure_ascii=False, sort_keys=True)
+            with resolved.open("a", encoding="utf-8") as handle:
+                handle.write(line + "\n")
+
+_STATE_COLLECTIONS = (
+    "catalog",
+    "identities",
+    "relations",
+    "snapshots",
+    "papers",
+    "documents",
+    "evidence",
+    "scores",
+    "sota_claims",
+    "code_profiles",
+)
+
+
+def _empty_state(scope_ref: str) -> dict[str, Any]:
+    return {
+        "schema_version": CATALOG_STORE_SCHEMA_VERSION,
+        "scope_ref": scope_ref,
+        **{key: {} for key in _STATE_COLLECTIONS},
+    }
+
+
+def _checksum(payload: Mapping[str, Any]) -> str:
+    encoded = json.dumps(dict(payload), ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return "sha256:" + hashlib.sha256(encoded).hexdigest()
+
+
+def _dump(value: Any) -> dict[str, Any]:
+    if hasattr(value, "model_dump"):
+        return value.model_dump(mode="json", exclude_none=True)
+    raise TypeError(f"value does not support model_dump: {type(value).__name__}")
+
+
+def _put_immutable_snapshot(state: dict[str, Any], key: str, snapshot: ResearchSourceSnapshot) -> None:
+    value = _dump(snapshot)
+    existing = state["snapshots"].get(key)
+    if existing is not None and existing != value:
+        raise ResearchCatalogStoreError(
+            "source snapshot is immutable and conflicts with an existing snapshot_id"
+        )
+    state["snapshots"][key] = value
+
+
+def _model(model_type, raw: Any):
+    if raw is None:
+        return None
+    try:
+        return model_type.model_validate(raw)
+    except Exception as exc:
+        raise ResearchCatalogStoreCorruptionError(f"stored {model_type.__name__} is invalid") from exc
+
+
+def _optional_text(value: Any) -> str | None:
+    text = str(value or "").strip()
+    return text or None
+
+
+def _scoped_key(identifier: str, scope: Mapping[str, Any] | None) -> str:
+    raw_scope: Mapping[str, Any] = scope or {}
+    nested_scope = raw_scope.get("actor_scope") if isinstance(raw_scope, Mapping) else None
+    if isinstance(nested_scope, Mapping):
+        raw_scope = {**dict(raw_scope), **dict(nested_scope)}
+    values = {
+        str(key): str(value).strip()
+        for key, value in raw_scope.items()
+        if str(key) in {"tenant_id", "user_id", "memory_namespace"} and str(value).strip()
+    }
+    return str(identifier) if not values else f"{actor_scope_ref(values)}::{identifier}"
+
+
+def _snapshot_scope(snapshot: ResearchSourceSnapshot) -> Mapping[str, Any]:
+    scope: dict[str, Any] = {}
+    typed = getattr(snapshot, "actor_scope", None)
+    if isinstance(typed, Mapping):
+        scope.update(typed)
+    for source in (snapshot.metadata, snapshot.lineage.metadata):
+        if not isinstance(source, Mapping):
+            continue
+        nested = source.get("actor_scope")
+        if isinstance(nested, Mapping):
+            scope.update(nested)
+        for key in ("tenant_id", "user_id", "memory_namespace"):
+            if source.get(key) is not None and str(source.get(key)).strip():
+                scope[key] = str(source[key]).strip()
+    return scope
+
+
+def _value_scope(value: Any) -> Mapping[str, Any]:
+    typed = getattr(value, "actor_scope", None)
+    if isinstance(typed, Mapping) and typed:
+        return typed
+    metadata = getattr(value, "metadata", None)
+    if isinstance(metadata, Mapping):
+        nested = metadata.get("actor_scope")
+        if isinstance(nested, Mapping):
+            return nested
+        dimensions = {
+            key: metadata.get(key)
+            for key in ("tenant_id", "user_id", "memory_namespace")
+            if metadata.get(key) is not None
+        }
+        if dimensions:
+            return dimensions
+    lineage = getattr(value, "lineage", None)
+    lineage_metadata = getattr(lineage, "metadata", None)
+    return lineage_metadata if isinstance(lineage_metadata, Mapping) else {}
+
+
+def _safe_segment(value: str, label: str) -> str:
+    text = str(value or "").strip()
+    if not text or text in {".", ".."} or any(char in text for char in "\\/:\x00"):
+        raise ValueError(f"{label} contains an unsafe path segment")
+    return text
+
+
+__all__ = [
+    "CATALOG_STORE_SCHEMA_VERSION",
+    "FilesystemResearchCatalogStore",
+    "FilesystemResearchEventSink",
+    "ResearchCatalogStoreCorruptionError",
+    "ResearchCatalogStoreError",
+]

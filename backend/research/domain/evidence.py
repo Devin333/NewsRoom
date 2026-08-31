@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Any, Literal
 
 from pydantic import Field, field_validator, model_validator
@@ -77,6 +78,7 @@ class ResearchEvidencePack(PrimitiveModel):
     coverage: dict[str, float] = Field(default_factory=dict)
     missing_information: list[str] = Field(default_factory=list)
     lineage: SourceLineage
+    actor_scope: dict[str, str] = Field(default_factory=dict)
     metadata: dict[str, Any] = Field(default_factory=dict)
 
     @field_validator("pack_id", "paper_id")
@@ -95,11 +97,41 @@ class ResearchEvidencePack(PrimitiveModel):
                 raise ValueError("coverage values must be between 0 and 1")
             normalized_coverage[str(key)] = numeric
         object.__setattr__(self, "coverage", normalized_coverage)
+        # Prefer an explicitly typed scope, then merge metadata and lineage
+        # envelopes so a harmless metadata field cannot hide lineage scope.
+        scope = _normalized_scope(self.lineage.metadata)
+        scope.update(_normalized_scope(self.metadata))
+        scope.update(_normalized_scope(self.actor_scope))
+        object.__setattr__(self, "actor_scope", scope)
+        if scope:
+            object.__setattr__(self, "metadata", {**dict(self.metadata), "actor_scope": scope})
+            object.__setattr__(
+                self,
+                "lineage",
+                self.lineage.model_copy(
+                    update={"metadata": {**dict(self.lineage.metadata), "actor_scope": scope}}
+                ),
+            )
         return self
 
     @property
     def evidence_ids(self) -> list[str]:
         return [item.evidence_id for item in self.items]
+
+
+def _normalized_scope(value: Mapping[str, Any] | None) -> dict[str, str]:
+    if not isinstance(value, Mapping):
+        return {}
+    source: dict[str, Any] = dict(value)
+    nested = source.get("actor_scope")
+    if isinstance(nested, Mapping):
+        source.update(dict(nested))
+    allowed = {"tenant_id", "user_id", "memory_namespace"}
+    return {
+        str(key): str(raw).strip()
+        for key, raw in source.items()
+        if str(key) in allowed and str(raw).strip()
+    }
 
 
 __all__ = ["ResearchClaim", "ResearchEvidenceItem", "ResearchEvidencePack"]
