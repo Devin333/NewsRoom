@@ -183,6 +183,58 @@ def test_catalog_code_relation_uses_canonical_repository_id_and_url_ref() -> Non
     assert relations[0].metadata["canonical_repo_id"] == "github:example/research"
 
 
+def test_catalog_include_code_false_skips_github_enrichment() -> None:
+    class RecordingGithub:
+        def __init__(self) -> None:
+            self.calls: list[str] = []
+
+        def fetch_profile(self, url: str) -> CodeRepositoryProfile:
+            self.calls.append(url)
+            return CodeRepositoryProfile(
+                repo_url=url,
+                canonical_repo_id="github:example/research",
+                owner="example",
+                name="research",
+            )
+
+    github = RecordingGithub()
+    repository = InMemoryResearchCatalogRepository()
+    service = ResearchPaperCatalogService(
+        catalog_repository=repository,
+        github_repository=github,
+    )
+    paper = ResearchPaper(
+        paper_id="paper-no-code-enrichment",
+        title="No code enrichment",
+        metadata={"code_urls": ["https://github.com/example/research"]},
+    )
+    snapshot = ResearchSourceSnapshot(
+        snapshot_id="snapshot-no-code-enrichment",
+        paper_id=paper.paper_id,
+        canonical_url="https://example.test/paper",
+        lineage=SourceLineage(source_refs=["https://example.test/paper"]),
+    )
+
+    entry = service.refresh_from_parse(
+        paper=paper,
+        identity=ResearchPaperIdentity(paper_id=paper.paper_id, title=paper.title),
+        snapshot=snapshot,
+        document=None,
+        evidence_pack=None,
+        actor_scope={"tenant_id": "tenant-a"},
+        include_code=False,
+    )
+
+    assert github.calls == []
+    assert entry.metadata["diagnostics"] == [
+        {"code": "github_enrichment_skipped", "reason": "include_code_false"}
+    ]
+    assert repository.list_code_profiles(
+        paper.paper_id,
+        actor_scope={"tenant_id": "tenant-a"},
+    ) == []
+
+
 def test_sota_verification_persists_and_rejects_scope_widening() -> None:
     repository = InMemoryResearchCatalogRepository()
     service = ResearchPaperCatalogService(catalog_repository=repository)

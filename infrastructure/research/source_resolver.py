@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import ipaddress
 import mimetypes
 import os
 from datetime import UTC, datetime
@@ -329,6 +330,7 @@ class ResearchSourceResolverAdapter:
             return self._metadata_only(source, source_type, request, "remote_source_denied_or_failed", exc)
 
     def _fetch_bytes(self, url: str) -> tuple[bytes, str | None, str]:
+        _ensure_remote_target_allowed(url)
         if self._fetch_bytes_impl is not None:
             # Test/deployment transports are still subject to the same
             # resolver contract as urllib: never accept an unbounded or
@@ -354,6 +356,7 @@ class ResearchSourceResolverAdapter:
             normalized_final_url = str(final_url or url).strip()
             if not normalized_final_url:
                 raise ValueError("fetch_bytes final_url is required")
+            _ensure_remote_target_allowed(normalized_final_url)
             return body, normalized_content_type, normalized_final_url
         policy = self._fetch_policy
         decision = self._rate_limiter.reserve(url, limit_per_minute=policy.rate_limit_per_domain_per_minute)
@@ -365,6 +368,7 @@ class ResearchSourceResolverAdapter:
             request = Request(url, headers={"User-Agent": policy.user_agent, "Accept": "application/pdf,text/html,application/xhtml+xml,application/json,*/*"})
             with open_request_with_fetch_policy(request, policy) as response:
                 final_url = str(getattr(response, "url", None) or url)
+                _ensure_remote_target_allowed(final_url)
                 content_type = str(response.headers.get("Content-Type") or "") if response.headers is not None else None
                 ensure_supported_content_type(content_type, _SUPPORTED_REMOTE_CONTENT_TYPES)
                 content_length = response.headers.get("Content-Length") if response.headers is not None else None
@@ -560,6 +564,20 @@ def _remote_fetch_url(source: str, source_type: str) -> str | None:
         doi = _doi_from_source(value)
         return f"https://doi.org/{quote(doi, safe='10./():;-._')}" if doi else None
     return None
+
+
+def _ensure_remote_target_allowed(url: str) -> None:
+    """Reject literal private targets before any transport is invoked."""
+
+    parsed = urlsplit(str(url or "").strip())
+    if parsed.scheme.casefold() not in {"http", "https"} or not parsed.hostname:
+        return
+    try:
+        address = ipaddress.ip_address(parsed.hostname)
+    except ValueError:
+        return
+    if address.is_private or address.is_loopback or address.is_link_local or address.is_unspecified or address.is_reserved or address.is_multicast:
+        raise ResearchSourceError("remote source target is not publicly routable")
 
 
 def _is_descendant(path: Path, root: Path) -> bool:

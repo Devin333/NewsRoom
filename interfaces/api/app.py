@@ -34,6 +34,7 @@ from interfaces.models import (
     actor_context_from_headers,
 )
 from interfaces.models.actor import (
+    RESEARCH_ARTIFACT_READ_PERMISSION,
     RESEARCH_CATALOG_READ_PERMISSION,
     RESEARCH_PAPER_INGEST_PERMISSION,
     RESEARCH_PAPER_PARSE_PERMISSION,
@@ -906,6 +907,8 @@ def _required_api_permission(method: str, path: str) -> str | None:
         return "read:reports" if method == "GET" else "write:runs"
     if resource == "research":
         if method == "GET":
+            if "/artifacts/" in path:
+                return RESEARCH_ARTIFACT_READ_PERMISSION
             return RESEARCH_CATALOG_READ_PERMISSION
         if path.endswith("/catalog/refresh"):
             return RESEARCH_PAPER_REFRESH_PERMISSION

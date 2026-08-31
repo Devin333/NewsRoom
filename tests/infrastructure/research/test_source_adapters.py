@@ -95,6 +95,22 @@ def test_remote_injected_fetcher_obeys_size_and_content_type_policy() -> None:
     assert unsupported.diagnostics[0]["error_type"] == "UnsupportedContentTypeError"
 
 
+def test_remote_injected_fetcher_rejects_private_target_before_transport() -> None:
+    calls: list[str] = []
+
+    def fetch(url, _policy):
+        calls.append(url)
+        return b"body", "text/plain", url
+
+    result = ResearchSourceResolverAdapter(fetch_bytes=fetch).resolve(
+        ParsePaperRequest(source="http://127.0.0.1/paper", source_type="publisher")
+    )
+
+    assert result.access_status == "failed"
+    assert calls == []
+    assert result.diagnostics[0]["error_type"] == "ResearchSourceError"
+
+
 def test_openreview_query_id_is_used_as_external_identity() -> None:
     source = "https://openreview.net/forum?id=paper-note-123"
     resolver = ResearchSourceResolverAdapter(

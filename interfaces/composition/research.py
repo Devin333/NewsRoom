@@ -2015,6 +2015,7 @@ def _build_configured_composition(
             run_store=run_store,
             run_reconciler=run_reconciler,
             diagnostic_artifact_reader=artifact_port,
+            artifact_reader=catalog_store,
             parse_use_case=parse_use_case,
             catalog_service=catalog_service,
         )

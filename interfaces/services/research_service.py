@@ -32,6 +32,7 @@ from backend.research.domain import stable_research_id
 from backend.research.ports.artifact_publication import (
     ResearchArtifactDiagnosticReader,
 )
+from backend.research.ports.artifact_store import ResearchArtifactReadPort
 from backend.research.ports.run_store import (
     ResearchRunDiagnosticStore,
     ResearchRunDisposition,
@@ -130,6 +131,9 @@ class ResearchServiceError(Exception):
             "source_fetch_failed": "Paper source is unavailable",
             "document_not_found": "Research document was not found",
             "catalog_not_found": "Research catalog entry was not found",
+            "artifact_not_found": "Research artifact was not found",
+            "artifact_forbidden": "Research artifact is not authorized",
+            "artifact_corrupt": "Research artifact integrity could not be verified",
         }
         return messages.get(self.code, "Research paper operation failed")
 
@@ -256,6 +260,7 @@ class ResearchApplicationService:
         run_store: ResearchRunStore | None = None,
         run_reconciler: ResearchRunDispositionReconciler | None = None,
         diagnostic_artifact_reader: ResearchArtifactDiagnosticReader | None = None,
+        artifact_reader: ResearchArtifactReadPort | None = None,
         parse_use_case: ParsePaperUseCase | None = None,
         catalog_service: ResearchPaperCatalogService | None = None,
     ) -> None:
@@ -273,6 +278,9 @@ class ResearchApplicationService:
                 "ResearchArtifactDiagnosticReader"
             )
         self._diagnostic_artifact_reader = diagnostic_artifact_reader
+        if artifact_reader is not None and not isinstance(artifact_reader, ResearchArtifactReadPort):
+            raise TypeError("artifact_reader must implement ResearchArtifactReadPort")
+        self._artifact_reader = artifact_reader
         self._parse_use_case = parse_use_case
         self._catalog_service = catalog_service
         if self._run_reconciler is not None:
@@ -414,6 +422,75 @@ class ResearchApplicationService:
             raise ResearchServiceError(exc.code, exc.message, status_code=exc.status_code, details=exc.details, user_action_required=exc.status_code < 500) from exc
         payload["provenance"] = {"actorScope": actor_scope.to_metadata()}
         return payload
+
+    def get_artifact(
+        self,
+        artifact_ref: str,
+        *,
+        include_payload: bool = False,
+        max_chars: int = 200_000,
+        actor: ResearchActorInput | None = None,
+    ) -> dict[str, Any]:
+        """Read a Research Catalog artifact through the scoped read port."""
+
+        ref = _require_text(artifact_ref, "artifactRef")
+        if not isinstance(include_payload, bool):
+            raise ResearchServiceError(
+                "invalid_request",
+                "includePayload must be boolean",
+                status_code=400,
+                user_action_required=True,
+            )
+        if isinstance(max_chars, bool) or not isinstance(max_chars, int) or not 1 <= max_chars <= 1_000_000:
+            raise ResearchServiceError(
+                "invalid_request",
+                "maxChars must be between 1 and 1000000",
+                status_code=400,
+                user_action_required=True,
+            )
+        reader = self._artifact_reader
+        if reader is None:
+            raise ResearchServiceError(
+                "research_artifact_unavailable",
+                "Research artifact reader is not configured",
+                status_code=503,
+                retryable=False,
+                user_action_required=True,
+            )
+        actor_scope = _resolve_actor_input(self._ask_use_case, actor)
+        try:
+            payload = reader.read(
+                ref,
+                actor_scope=actor_scope.to_metadata(),
+                include_payload=include_payload,
+                max_chars=max_chars,
+            )
+        except FileNotFoundError as exc:
+            raise ResearchServiceError(
+                "artifact_not_found",
+                "research artifact was not found",
+                status_code=404,
+                user_action_required=True,
+            ) from exc
+        except PermissionError as exc:
+            raise ResearchServiceError(
+                "artifact_forbidden",
+                "research artifact is not authorized",
+                status_code=403,
+                user_action_required=True,
+            ) from exc
+        except Exception as exc:
+            raise ResearchServiceError(
+                "artifact_corrupt",
+                "research artifact integrity could not be verified",
+                status_code=409,
+                details={"error_type": type(exc).__name__},
+                user_action_required=True,
+            ) from exc
+        return {
+            **dict(payload),
+            "provenance": {"actorScope": actor_scope.to_metadata()},
+        }
 
     def list_catalog_papers(
         self,

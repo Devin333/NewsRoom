@@ -143,6 +143,7 @@ class ResearchCatalogProjection(Protocol):
         evidence_pack: ResearchEvidencePack | None,
         actor_scope: Mapping[str, str],
         run_id: str | None = None,
+        include_code: bool = True,
     ) -> Any: ...
 
 
@@ -438,11 +439,12 @@ class ParsePaperUseCase:
                             paper=paper,
                             identity=identity,
                             snapshot=snapshot,
-                            document=None,
-                            evidence_pack=None,
-                            actor_scope=actor_scope,
-                            run_id=run_id,
-                        )
+                        document=None,
+                        evidence_pack=None,
+                        actor_scope=actor_scope,
+                        run_id=run_id,
+                        include_code=bool(request.options.get("include_code", True)),
+                    )
                         catalog_status = _catalog_status(catalog_entry)
                     except Exception as exc:  # catalog failure must be visible, not hide source status
                         diagnostics.append({
@@ -623,6 +625,7 @@ class ParsePaperUseCase:
                         evidence_pack=evidence_pack,
                         actor_scope=actor_scope,
                         run_id=run_id,
+                        include_code=bool(request.options.get("include_code", True)),
                     )
                     catalog_status = _catalog_status(catalog_entry)
                     if catalog_status:
@@ -679,10 +682,34 @@ class ParsePaperUseCase:
                     emit("failed", {"diagnostics": diagnostics})
                 except ParsePaperError:
                     LOGGER.warning("research parse failed event could not be appended", exc_info=True)
+            _finalize_run(
+                self._event_sink,
+                run_id,
+                {
+                    "status": "failed",
+                    "paper_id": event_context.get("paper_id"),
+                    "source_snapshot_refs": [item.snapshot_id for item in snapshots],
+                    "diagnostics": diagnostics,
+                    "actor_scope": actor_scope,
+                },
+            )
             raise
         except Exception as exc:  # noqa: BLE001 - application boundary normalizes diagnostics
             diagnostics.append({"code": "parse_failed", "error_type": type(exc).__name__})
-            emit("failed", {"diagnostics": diagnostics})
+            try:
+                emit("failed", {"diagnostics": diagnostics})
+            finally:
+                _finalize_run(
+                    self._event_sink,
+                    run_id,
+                    {
+                        "status": "failed",
+                        "paper_id": event_context.get("paper_id"),
+                        "source_snapshot_refs": [item.snapshot_id for item in snapshots],
+                        "diagnostics": diagnostics,
+                        "actor_scope": actor_scope,
+                    },
+                )
             raise ParsePaperError(
                 "parse_failed",
                 "paper parsing failed",

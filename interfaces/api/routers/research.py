@@ -307,6 +307,34 @@ def create_router(services: ApiServices, helpers: ApiRouteHelpers) -> APIRouter:
 
         return _service_response(helpers, call)
 
+    @router.get("/api/v1/research/artifacts/{artifact_type}/{digest}")
+    def get_artifact(
+        request: Request,
+        artifact_type: str,
+        digest: str,
+        includePayload: bool = False,
+        maxChars: int = 200_000,
+        tenantId: str | None = None,
+        userId: str | None = None,
+        memoryNamespace: str | None = None,
+    ):
+        def call():
+            actor = _bound_research_actor(
+                request,
+                tenant_id=tenantId,
+                user_id=userId,
+                memory_namespace=memoryNamespace,
+                require_trusted_actor=True,
+            )
+            return services.research_service_factory().get_artifact(
+                f"artifact://research/{artifact_type}/{digest}",
+                include_payload=includePayload,
+                max_chars=maxChars,
+                actor=actor,
+            )
+
+        return _service_response(helpers, call)
+
     @router.post("/api/v1/research/catalog/refresh")
     def refresh_catalog(request: Request, payload: ResearchCatalogRefreshRequest):
         def call():

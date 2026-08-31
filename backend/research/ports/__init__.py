@@ -8,7 +8,10 @@ from backend.research.ports.artifact_publication import (
     ResearchArtifactReadResolution,
     ResearchGraphStorageIndexPublisherPort,
 )
-from backend.research.ports.artifact_store import ResearchArtifactStorePort
+from backend.research.ports.artifact_store import (
+    ResearchArtifactReadPort,
+    ResearchArtifactStorePort,
+)
 from backend.research.ports.catalog import (
     CatalogRepository,
     PaperIdentityRepository,
@@ -137,6 +140,7 @@ __all__ = [
     "ReaderRepairMemoryVersion",
     "ReadingSessionRepository",
     "ResearchArtifactStorePort",
+    "ResearchArtifactReadPort",
     "ResearchArtifactDiagnosticClaim",
     "ResearchArtifactDiagnosticReader",
     "ResearchArtifactReadClaim",

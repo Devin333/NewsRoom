@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Mapping
+from urllib.parse import urlsplit
 
 from backend.research.ports.catalog_models import ResearchScore, ResearchSOTAClaim
 from backend.research.domain.catalog import (
@@ -35,6 +37,14 @@ class ResearchCatalogStoreError(RuntimeError):
 
 
 class ResearchCatalogStoreCorruptionError(ResearchCatalogStoreError):
+    pass
+
+
+class ResearchCatalogArtifactNotFoundError(ResearchCatalogStoreError, FileNotFoundError):
+    pass
+
+
+class ResearchCatalogArtifactScopeError(ResearchCatalogStoreError, PermissionError):
     pass
 
 
@@ -311,8 +321,13 @@ class FilesystemResearchCatalogStore:
         artifact_type = _safe_segment(artifact_type, "artifact_type")
         artifact_metadata = dict(metadata or {})
         # The store owns its scope identity; callers may add diagnostics but
-        # cannot spoof the durable store namespace.
-        artifact_metadata["scope_ref"] = self.scope_ref
+        # cannot spoof the durable store namespace. For the shared production
+        # store, the actor scope is the artifact namespace; a store-level
+        # scope remains the fallback for legacy/public callers.
+        artifact_scope = _normalized_scope(artifact_metadata.get("actor_scope"))
+        artifact_metadata["scope_ref"] = (
+            actor_scope_ref(artifact_scope) if artifact_scope else self.scope_ref
+        )
         envelope = {
             "artifact_type": artifact_type,
             "metadata": artifact_metadata,
@@ -348,6 +363,79 @@ class FilesystemResearchCatalogStore:
             else:
                 write_json_object_unlocked(resolved, marker)
         return f"artifact://research/{artifact_type}/{digest}"
+
+    def read(
+        self,
+        ref: str,
+        *,
+        actor_scope: Mapping[str, str],
+        include_payload: bool = False,
+        max_chars: int = 200_000,
+    ) -> dict[str, Any]:
+        """Read one committed artifact with a fresh scope and integrity check."""
+
+        if isinstance(include_payload, bool) is False:
+            raise ValueError("include_payload must be boolean")
+        if isinstance(max_chars, bool) or not isinstance(max_chars, int) or not 1 <= max_chars <= 1_000_000:
+            raise ValueError("max_chars must be between 1 and 1000000")
+        parsed = urlsplit(str(ref or "").strip())
+        if parsed.scheme != "artifact" or parsed.netloc != "research":
+            raise ResearchCatalogArtifactNotFoundError("research artifact reference is invalid")
+        parts = [part for part in parsed.path.split("/") if part]
+        if len(parts) != 2:
+            raise ResearchCatalogArtifactNotFoundError("research artifact reference is invalid")
+        artifact_type = _safe_segment(parts[0], "artifact_type")
+        digest = parts[1]
+        if len(digest) != 64 or any(char not in "0123456789abcdef" for char in digest.casefold()):
+            raise ResearchCatalogArtifactNotFoundError("research artifact reference is invalid")
+        target = self.artifact_root / f"{artifact_type}-{digest[:32]}.json"
+        marker_path = target.with_suffix(".commit.json")
+        with locked_json_file(target) as resolved:
+            if not resolved.exists():
+                raise ResearchCatalogArtifactNotFoundError("research artifact was not found")
+            envelope = read_json_object_unlocked(resolved, default={}, strict=True)
+        if not isinstance(envelope, dict):
+            raise ResearchCatalogStoreCorruptionError("research artifact envelope is invalid")
+        encoded = json.dumps(envelope, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        if hashlib.sha256(encoded).hexdigest() != digest:
+            raise ResearchCatalogStoreCorruptionError("research artifact checksum mismatch")
+        if envelope.get("artifact_type") != artifact_type:
+            raise ResearchCatalogStoreCorruptionError("research artifact type mismatch")
+        metadata = envelope.get("metadata")
+        if not isinstance(metadata, Mapping):
+            raise ResearchCatalogStoreCorruptionError("research artifact metadata is invalid")
+        requested_scope = _normalized_scope(actor_scope)
+        persisted_scope = _normalized_scope(metadata.get("actor_scope"))
+        expected_scope_ref = actor_scope_ref(persisted_scope) if persisted_scope else self.scope_ref
+        if str(metadata.get("scope_ref") or "") != expected_scope_ref:
+            raise ResearchCatalogStoreCorruptionError("research artifact scope metadata is invalid")
+        if requested_scope and not actor_scope_matches(persisted_scope, requested_scope):
+            raise ResearchCatalogArtifactScopeError("research artifact is not visible to actor scope")
+        with locked_json_file(marker_path) as resolved:
+            if not resolved.exists():
+                raise ResearchCatalogStoreCorruptionError("research artifact commit marker is missing")
+            marker = read_json_object_unlocked(resolved, default={}, strict=True)
+        if (
+            marker.get("status") != "committed"
+            or marker.get("artifact_ref") != f"artifact://research/{artifact_type}/{digest}"
+            or marker.get("content_checksum") != digest
+        ):
+            raise ResearchCatalogStoreCorruptionError("research artifact commit marker is invalid")
+        result: dict[str, Any] = {
+            "artifactRef": f"artifact://research/{artifact_type}/{digest}",
+            "artifactType": artifact_type,
+            "contentChecksum": f"sha256:{digest}",
+            "metadata": dict(metadata),
+            "committedAt": marker.get("created_at"),
+        }
+        if include_payload:
+            payload = envelope.get("payload")
+            encoded_payload = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+            if len(encoded_payload) > max_chars:
+                result["diagnostics"] = [{"code": "payload_truncated", "max_chars": max_chars}]
+            else:
+                result["payload"] = payload
+        return result
 
 
 class FilesystemResearchEventSink:
@@ -418,9 +506,95 @@ class FilesystemResearchEventSink:
         else:
             target = self.root / "events" / f"{run}.jsonl"
         with locked_json_file(target) as resolved:
-            line = json.dumps({"run_id": run_id, **dict(event)}, ensure_ascii=False, sort_keys=True)
+            sequence = 1
+            if resolved.exists():
+                with resolved.open("r", encoding="utf-8") as existing:
+                    for raw in existing:
+                        if not raw.strip():
+                            continue
+                        try:
+                            record = json.loads(raw)
+                        except json.JSONDecodeError as exc:
+                            raise ResearchCatalogStoreCorruptionError(
+                                "research event transcript contains invalid JSON"
+                            ) from exc
+                        if isinstance(record, Mapping) and isinstance(record.get("sequence"), int):
+                            sequence = max(sequence, int(record["sequence"]) + 1)
+            line = json.dumps(
+                {**dict(event), "run_id": run_id, "sequence": sequence},
+                ensure_ascii=False,
+                sort_keys=True,
+            )
             with resolved.open("a", encoding="utf-8") as handle:
                 handle.write(line + "\n")
+                handle.flush()
+                os.fsync(handle.fileno())
+
+    def read_history(
+        self,
+        run_id: str,
+        *,
+        actor_scope: Mapping[str, str] | None = None,
+    ) -> tuple[dict[str, Any], ...]:
+        """Read and validate a run transcript, rejecting sequence gaps."""
+
+        run = _safe_segment(run_id, "run_id")
+        scope_values = _normalized_scope(actor_scope)
+        if scope_values:
+            digest = hashlib.sha256(actor_scope_ref(scope_values).encode("utf-8")).hexdigest()[:32]
+            target = self.root / "events" / digest / f"{run}.jsonl"
+        else:
+            target = self.root / "events" / f"{run}.jsonl"
+        if not target.exists():
+            return ()
+        records: list[dict[str, Any]] = []
+        expected = 1
+        with locked_json_file(target) as resolved:
+            with resolved.open("r", encoding="utf-8") as handle:
+                for raw in handle:
+                    if not raw.strip():
+                        continue
+                    try:
+                        record = json.loads(raw)
+                    except json.JSONDecodeError as exc:
+                        raise ResearchCatalogStoreCorruptionError(
+                            "research event transcript contains invalid JSON"
+                        ) from exc
+                    if not isinstance(record, dict) or record.get("run_id") != run:
+                        raise ResearchCatalogStoreCorruptionError(
+                            "research event transcript has invalid run identity"
+                        )
+                    if record.get("sequence") != expected:
+                        raise ResearchCatalogStoreCorruptionError(
+                            "research event transcript sequence gap"
+                        )
+                    records.append(record)
+                    expected += 1
+        return tuple(records)
+
+    def scan_incomplete_runs(self) -> tuple[dict[str, Any], ...]:
+        """Find durable run intents without a matching final result."""
+
+        if not (self.root / "runs").exists():
+            return ()
+        results: list[dict[str, Any]] = []
+        for intent_path in sorted((self.root / "runs").glob("*/*.intent.json")):
+            try:
+                intent = read_json_object_unlocked(intent_path, default={}, strict=True)
+            except Exception as exc:
+                raise ResearchCatalogStoreCorruptionError(
+                    "research run intent is invalid"
+                ) from exc
+            if not isinstance(intent, Mapping):
+                raise ResearchCatalogStoreCorruptionError("research run intent is invalid")
+            run_id = str(intent.get("run_id") or "").strip()
+            if not run_id:
+                raise ResearchCatalogStoreCorruptionError("research run intent has no run_id")
+            final_path = intent_path.with_name(f"{run_id}.final.json")
+            if final_path.exists():
+                continue
+            results.append(dict(intent))
+        return tuple(results)
 
     def _run_record_path(
         self,
@@ -552,10 +726,24 @@ def _safe_segment(value: str, label: str) -> str:
     return text
 
 
+def _normalized_scope(value: Mapping[str, Any] | None) -> dict[str, str]:
+    if not isinstance(value, Mapping):
+        return {}
+    nested = value.get("actor_scope")
+    source = {**dict(value), **(dict(nested) if isinstance(nested, Mapping) else {})}
+    return {
+        key: str(source[key]).strip()
+        for key in ("tenant_id", "user_id", "memory_namespace")
+        if source.get(key) is not None and str(source[key]).strip()
+    }
+
+
 __all__ = [
     "CATALOG_STORE_SCHEMA_VERSION",
     "FilesystemResearchCatalogStore",
     "FilesystemResearchEventSink",
+    "ResearchCatalogArtifactNotFoundError",
+    "ResearchCatalogArtifactScopeError",
     "ResearchCatalogStoreCorruptionError",
     "ResearchCatalogStoreError",
 ]

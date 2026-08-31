@@ -114,10 +114,15 @@ class ResearchPaperCatalogService:
         evidence_pack: ResearchEvidencePack | None,
         actor_scope: Mapping[str, str],
         run_id: str | None = None,
+        include_code: bool = True,
     ) -> ResearchPaperCatalogEntry:
         scope = dict(actor_scope)
         existing = _scoped_call(self._catalog.get, paper.paper_id, actor_scope=scope)
-        paper, code_diagnostics = self._enrich_code_profiles(paper, actor_scope=scope)
+        paper, code_diagnostics = (
+            self._enrich_code_profiles(paper, actor_scope=scope)
+            if include_code
+            else (paper, [{"code": "github_enrichment_skipped", "reason": "include_code_false"}])
+        )
         evidence_refs = evidence_pack.evidence_ids if evidence_pack is not None else []
         self._persist_code_profiles(paper, actor_scope=scope)
         score_candidates = self._candidate_scores(

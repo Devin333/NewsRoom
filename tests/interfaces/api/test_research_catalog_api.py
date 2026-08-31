@@ -47,6 +47,10 @@ class _CatalogService:
         self.calls.append(("get_leaderboards", (), kwargs))
         return {"leaderboards": [], "provenance": {}}
 
+    def get_artifact(self, artifact_ref, **kwargs):
+        self.calls.append(("get_artifact", (artifact_ref,), kwargs))
+        return {"artifactRef": artifact_ref, "metadata": {}, "provenance": {}}
+
     def refresh_catalog(self, paper_id=None, *, actor):
         self.calls.append(("refresh_catalog", (paper_id,), {"actor": actor}))
         return {"status": "catalog_ready", "refreshed": True, "provenance": {}}
@@ -77,6 +81,10 @@ def test_research_catalog_routes_use_application_service_and_shared_envelope() -
         client.get("/api/v1/research/papers/paper-1/benchmarks", params={"split": "test"}),
         client.get("/api/v1/research/catalog/papers", params={"query": "method", "limit": 3}),
         client.get("/api/v1/research/catalog/leaderboards", params={"metricId": "accuracy"}),
+        client.get(
+            "/api/v1/research/artifacts/research-document/" + "a" * 64,
+            params={"includePayload": "false"},
+        ),
         client.post("/api/v1/research/catalog/refresh", json={"paperId": "paper-1"}),
     ]
 
@@ -92,6 +100,7 @@ def test_research_catalog_routes_use_application_service_and_shared_envelope() -
         "get_benchmarks",
         "list_catalog_papers",
         "get_leaderboards",
+        "get_artifact",
         "refresh_catalog",
     }
     benchmark_call = next(call for call in service.calls if call[0] == "get_benchmarks")
