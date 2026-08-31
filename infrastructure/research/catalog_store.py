@@ -450,6 +450,7 @@ class FilesystemResearchEventSink:
         *,
         request_fingerprint: str,
         actor_scope: Mapping[str, str],
+        budget: Mapping[str, Any] | None = None,
     ) -> None:
         target = self._run_record_path(run_id, actor_scope, "intent")
         payload = {
@@ -459,6 +460,7 @@ class FilesystemResearchEventSink:
             "run_id": run_id,
             "request_fingerprint": request_fingerprint,
             "actor_scope": dict(actor_scope),
+            "budget": dict(budget or {}),
             "status": "pending",
         }
         with locked_json_file(target) as resolved:

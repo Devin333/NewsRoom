@@ -612,6 +612,41 @@ def test_parse_options_are_allowlisted_and_bounded() -> None:
     with pytest.raises(ParsePaperError):
         validate_parse_options({"timeout_seconds": 601})
 
+    with pytest.raises(ParsePaperError) as parsed:
+        ParsePaperUseCase().parse(
+            ParsePaperRequest(
+                source="https://publisher.example/invalid-options",
+                options={"with_propositions": True},
+            )
+        )
+    assert parsed.value.code == "invalid_request"
+
+
+def test_parse_budget_exhaustion_is_explicit_and_durable() -> None:
+    import time
+
+    class _SlowResolver:
+        def resolve(self, request: ParsePaperRequest) -> ResolvedPaperSource:
+            time.sleep(0.01)
+            return MetadataOnlySourceResolver().resolve(request)
+
+    events: list[dict] = []
+
+    class _Events:
+        def append(self, run_id: str, event: dict) -> None:
+            events.append({"run_id": run_id, **event})
+
+    with pytest.raises(ParsePaperError) as error:
+        ParsePaperUseCase(source_resolver=_SlowResolver(), event_sink=_Events()).parse(
+            ParsePaperRequest(
+                source="https://publisher.example/budget",
+                options={"timeout_seconds": 0.001},
+            )
+        )
+
+    assert error.value.code == "budget_exhausted"
+    assert any(item.get("to_status") == "failed" for item in events)
+
 
 def test_refresh_appends_an_immutable_snapshot_for_unchanged_source() -> None:
     repository = InMemoryResearchCatalogRepository()

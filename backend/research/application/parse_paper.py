@@ -3,6 +3,7 @@ from __future__ import annotations
 import inspect
 import logging
 import mimetypes
+from time import monotonic
 from hashlib import sha256
 from datetime import UTC, datetime
 from typing import Any, Mapping, Protocol, runtime_checkable
@@ -219,7 +220,7 @@ class InMemoryResearchEventSink:
     def append(self, run_id: str, event: dict[str, Any]) -> None:
         self.events.append({"run_id": run_id, **dict(event)})
 
-    def create_run_intent(self, run_id: str, *, request_fingerprint: str, actor_scope: Mapping[str, str]) -> None:
+    def create_run_intent(self, run_id: str, *, request_fingerprint: str, actor_scope: Mapping[str, str], budget: Mapping[str, Any] | None = None) -> None:
         self.events.append(
             {
                 "run_id": run_id,
@@ -228,6 +229,7 @@ class InMemoryResearchEventSink:
                 "status": "received",
                 "request_fingerprint": request_fingerprint,
                 "actor_scope": dict(actor_scope),
+                "budget": dict(budget or {}),
             }
         )
 
@@ -285,8 +287,13 @@ class ParsePaperUseCase:
     def parse(self, request: ParsePaperRequest) -> "ParsePaperResult":
         if not isinstance(request, ParsePaperRequest):
             raise TypeError("request must be ParsePaperRequest")
+        request = request.model_copy(
+            update={"options": validate_parse_options(request.options)}
+        )
         run_id = request.run_id or f"research-parse-{uuid4().hex}"
         actor_scope = _actor_scope(request)
+        budget = _parse_budget(request.options)
+        budget_started = monotonic()
         diagnostics: list[dict[str, Any]] = []
         artifact_refs: list[str] = []
         chunk_manifest_ref: str | None = None
@@ -302,6 +309,7 @@ class ParsePaperUseCase:
             run_id,
             request_fingerprint=_request_fingerprint(request, actor_scope),
             actor_scope=actor_scope,
+            budget=budget,
         )
 
         def emit(status: str, payload: Mapping[str, Any]) -> None:
@@ -318,6 +326,7 @@ class ParsePaperUseCase:
         emit("received", {"source": request.source, "actor_scope": actor_scope})
         try:
             emit("resolving", {})
+            _ensure_budget(budget_started, budget, diagnostics, phase="resolving")
             source_type = request.source_type or infer_source_type(request.source)
             if source_type == "github" and not _has_paper_context(request):
                 raise ParsePaperError(
@@ -334,6 +343,7 @@ class ParsePaperUseCase:
                 emit=emit,
                 max_retries=effective_max_retries(request.options, self._max_retries),
             )
+            _ensure_budget(budget_started, budget, diagnostics, phase="resolving")
             diagnostics.extend(dict(item) for item in resolved.diagnostics)
             snapshot = _snapshot_for_scope(resolved.snapshot, actor_scope, resolved.content)
             if request.options:
@@ -500,6 +510,7 @@ class ParsePaperUseCase:
                 published_artifacts = _published_artifacts(document)
             else:
                 emit("parsing", {"paper_id": paper.paper_id, "content_type": resolved.content_type})
+                _ensure_budget(budget_started, budget, diagnostics, phase="parsing")
                 document = self._parse_document_with_retries(
                     paper,
                     snapshot,
@@ -510,6 +521,7 @@ class ParsePaperUseCase:
                     emit=emit,
                     max_retries=effective_max_retries(request.options, self._max_retries),
                 )
+                _ensure_budget(budget_started, budget, diagnostics, phase="parsing")
                 idempotent = False
             parser_attempts = _parser_attempts(document)
             quality_report = _quality_report(
@@ -579,6 +591,7 @@ class ParsePaperUseCase:
                         "paper_id": paper.paper_id,
                         "source_hash": document.source_hash,
                         "actor_scope": actor_scope,
+                        "budget": budget,
                     },
                 )
             if document_ref:
@@ -611,6 +624,7 @@ class ParsePaperUseCase:
                     "source_snapshot_id": snapshot.snapshot_id,
                     "artifact_refs": list(artifact_refs),
                     "actor_scope": actor_scope,
+                    "budget": budget,
                 }
             )
             emit(status, {"paper_id": paper.paper_id, "parser_attempts": parser_attempts})
@@ -647,6 +661,7 @@ class ParsePaperUseCase:
                     "source_snapshot_refs": [item.snapshot_id for item in snapshots],
                     "document_id": document.document_id,
                     "actor_scope": actor_scope,
+                    "budget": budget,
                 },
             )
             return ParsePaperResult(
@@ -708,6 +723,7 @@ class ParsePaperUseCase:
                         "source_snapshot_refs": [item.snapshot_id for item in snapshots],
                         "diagnostics": diagnostics,
                         "actor_scope": actor_scope,
+                        "budget": budget,
                     },
                 )
             raise ParsePaperError(
@@ -1822,18 +1838,70 @@ def _request_fingerprint(request: ParsePaperRequest, actor_scope: Mapping[str, s
     return sha256(encoded).hexdigest()
 
 
+def _parse_budget(options: Mapping[str, Any]) -> dict[str, Any]:
+    timeout_seconds = float(options.get("timeout_seconds", 300.0))
+    max_attempts = int(options.get("max_attempts", 2))
+    return {
+        "timeout_seconds": timeout_seconds,
+        "max_attempts": max_attempts,
+        "retry_budget": max(0, max_attempts - 1),
+    }
+
+
+def _ensure_budget(
+    started: float,
+    budget: Mapping[str, Any],
+    diagnostics: list[dict[str, Any]],
+    *,
+    phase: str,
+) -> None:
+    elapsed = monotonic() - started
+    timeout_seconds = float(budget.get("timeout_seconds", 300.0))
+    if elapsed <= timeout_seconds:
+        return
+    diagnostic = {
+        "code": "budget_exhausted",
+        "phase": phase,
+        "elapsed_seconds": round(elapsed, 6),
+        "timeout_seconds": timeout_seconds,
+    }
+    diagnostics.append(diagnostic)
+    raise ParsePaperError(
+        "budget_exhausted",
+        "research parse execution budget was exhausted",
+        status_code=408,
+        retryable=False,
+        details=diagnostic,
+    )
+
+
 def _create_run_intent(
     sink: ResearchEventSink | None,
     run_id: str,
     *,
     request_fingerprint: str,
     actor_scope: Mapping[str, str],
+    budget: Mapping[str, Any] | None = None,
 ) -> None:
     method = getattr(sink, "create_run_intent", None)
     if not callable(method):
         return
     try:
-        method(run_id, request_fingerprint=request_fingerprint, actor_scope=dict(actor_scope))
+        try:
+            method(
+                run_id,
+                request_fingerprint=request_fingerprint,
+                actor_scope=dict(actor_scope),
+                budget=dict(budget or {}),
+            )
+        except TypeError as exc:
+            if "budget" not in str(exc):
+                raise
+            method(
+                run_id,
+                request_fingerprint=request_fingerprint,
+                actor_scope=dict(actor_scope),
+            )
     except Exception:  # pragma: no cover - optional diagnostics must not hide parse errors
         LOGGER.warning("research parse run intent could not be persisted", exc_info=True)
 
