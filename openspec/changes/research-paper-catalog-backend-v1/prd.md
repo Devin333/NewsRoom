@@ -1559,3 +1559,293 @@ audit event 不包含 secret、prompt、完整 source body 或未脱敏 token；
 8. OpenAPI、CLI help、JSON schema、artifact schema、migration manifest 和 fixture 字段一致。
 9. 使用项目 `.venv` 运行 compile、test、smoke 和 strict OpenSpec validation，并记录耗时、结果、跳过项和残余风险。
 10. 未验证的 candidate、conflicting score、LLM 生成内容、GitHub observation 和 source metadata 不会被公开 API 误报为 verified fact。
+
+## 41. 输入 Descriptor、字段所有权与规范化细则
+
+本节把第 9、10 和 37 节的原则收敛为可直接实现和测试的输入契约。HTTP、CLI、SDK 和 future scheduler 都必须先映射为同一个 `ParsePaperRequest`；不得分别维护不一致的 URL、source type 或 actor scope 解释。
+
+### 41.1 Canonical source descriptor
+
+`source` 是论文来源的主描述符。v1 接受字符串形式，SDK/内部调用可先使用对象形式，最终必须规范化成以下逻辑字段：
+
+| 字段 | 是否必填 | 规则 | 归属 |
+| --- | --- | --- | --- |
+| `source` | 是 | 非空；URL、外部 id 或受控 local descriptor | 调用方提供，resolver 规范化 |
+| `source_type` | 否 | 只能是 `arxiv`、`openreview`、`doi`、`crossref`、`publisher`、`local`、`github`、`manual`、`other` | 调用方可提示，resolver 记录最终判断 |
+| `source_url` | 否 | 仅兼容字段；与 `source` 同时存在时规范化后必须等价 | 调用方提供，application 校验 |
+| `content_ref` | 否 | 已授权正文 artifact 或受控 local 文件；不可作为公网任意下载 URL | 调用方提供，artifact/local adapter 授权 |
+| `run_id` | 否 | 安全的 opaque id；同 scope 内不可映射到不同 request fingerprint | 调用方提供或 application 生成 |
+| `options` | 否 | 仅接受第 37.5 节 allowlist；未知键为 `invalid_request` | application 校验 |
+| `metadata` | 否 | 提示性字段，不得覆盖 adapter 的权威事实 | 调用方提供，必须标记 lineage |
+
+规范化顺序固定如下：
+
+1. 去除首尾空白，拒绝空值、控制字符、用户名密码嵌入 URL 和不合法端口。
+2. 对 HTTPS URL 做 scheme/host 小写化、默认端口消除、fragment 移除和稳定 query 规范化；不得移除承载 OpenReview note id 的 query。
+3. 对 DOI、arXiv、OpenReview 先抽取标准 external id，再保留原输入为 lineage。`arxiv:2606.00001v2`、`https://arxiv.org/abs/2606.00001v2` 和受支持的 PDF URL 必须解析出同一个版本 id。
+4. 对 local path 和 `file://` URI 解析真实路径后检查 allowed root、符号链接和大小；持久化记录不得泄露绝对路径。
+5. 对 `content_ref` 执行独立 scope、expiry、checksum、content type 和最大大小校验。它用于正文时，source descriptor 仍作为 metadata/source lineage 保留。
+6. source adapter 返回的 canonical URL、external id、content type、checksum 和 access result 是权威观察；caller metadata 同名字段只可作为 `caller_hint` 保存，不能静默覆盖。
+
+以下组合必须返回稳定错误，而不是猜测用户意图：
+
+| 输入组合 | 结果 |
+| --- | --- |
+| `source` 与 `source_url` 规范化后不同 | `400 invalid_request`，返回字段名但不回显敏感 query |
+| 远程 `http://` 来源 | `400 invalid_request` 或 `source_denied`，v1 不降级为明文 fetch |
+| `github` 且没有 paper context | `422 github_paper_context_required` |
+| `content_ref` 指向 scope 外、过期或 tombstoned artifact | `404 artifact_missing`，不泄露存在性 |
+| local path 在 allowed root 外或符号链接逃逸 | `403 source_denied`，不回显真实路径 |
+| 同时给出 source metadata 与正文 contentRef | 合法；contentRef 作为 parsing body，source 仍生成独立 snapshot 和 lineage |
+
+### 41.2 Caller metadata 的可信度分层
+
+`metadata` 不等于论文事实。每个进入持久化的字段必须有以下之一的 `value_origin`：
+
+| `value_origin` | 含义 | 是否能作为 identity/verified 依据 |
+| --- | --- | --- |
+| `source_adapter` | arXiv、DOI、OpenReview、publisher 或 GitHub adapter 的受控观察 | 可以，仍需 provenance gate |
+| `document_parser` | 已保存 document 中带 locator 的确定性提取 | 可以，仍需 evidence/protocol gate |
+| `manual_review` | 授权人工确认，带 reviewer 和 evidence | 可以，按 review policy |
+| `caller_hint` | 用户提交的 title、authors、code URL 等提示 | 不可以单独作为 verified 依据 |
+| `llm_candidate` | LLM 生成的实体映射、taxonomy 或 claim | 不可以单独作为 verified 依据 |
+| `migration` | 历史数据 deterministic transform | 仅在原事实来源与 checksum 可追溯时可用 |
+
+同一个逻辑字段出现多个值时，identity 和 document projection 必须保留全部 `FieldObservation`，至少包含：`field_name`、`normalized_value`、`raw_value_ref`、`value_origin`、`source_snapshot_ref`、`observed_at`、`confidence`、`conflict_group_id`。对外默认展示 canonical 值和冲突摘要；具备 `research.diagnostics.read` 权限的用户可查看各候选值和 provenance。
+
+### 41.3 Content type、大小和正文选择
+
+source adapter 必须区分 HTTP 声明类型、magic bytes、文件扩展名和实际 parser 输入格式：
+
+| 情况 | 处理 |
+| --- | --- |
+| header 与 magic bytes 一致 | 使用受支持的格式路由 |
+| header 错误但 magic bytes 可识别且 policy 允许 | 记录 `content_type_mismatch`，按 magic bytes 路由 |
+| HTML 冒充 PDF、PDF 冒充 LaTeX 或无法识别二进制 | 不得交给任意 parser 猜测；返回 `unsupported_format` 或 `metadata_only` |
+| 响应超过 source budget | 停止读取，保留 metadata snapshot，返回 `artifact_too_large`/`metadata_only` |
+| `content_ref` 与 remote source checksum 不同 | 两者生成独立 observation；不得覆盖 remote snapshot |
+| remote source 重定向到不同 host | 对每一跳执行 HTTPS、public-address、robots、size 和 allowlist 校验，并记录 redirect lineage |
+
+当同一 request 同时拥有 LaTeX、PDF 和 HTML 时，正文选择必须写入 `selected_content_ref`、`selection_rule_version` 和所有候选 snapshot refs。默认优先级为：安全且完整的 LaTeX source、质量合格的 PDF、可定位的 HTML、metadata-only。这个顺序不是质量成功的保证，最终 document status 仍由第 33 节的 deterministic quality profile 决定。
+
+## 42. 事实、证据与人工复核的闭包规则
+
+Catalog 的核心不是“能抽取到多少关系”，而是任一对外可见事实都能回答四个问题：它来自哪里、指向正文的哪一处、谁/什么规则决定其状态、该决定在何时基于哪个版本成立。本节定义最小闭包。
+
+### 42.1 Evidence locator contract
+
+任意 `evidence_ref` 指向的可验证对象至少要能解析出以下字段：
+
+| 字段 | 说明 |
+| --- | --- |
+| `evidence_id` | 稳定 id，不能随展示文本变化 |
+| `source_snapshot_ref` | 产生该证据的不可变 source observation |
+| `document_id` 或 `repository_observation_ref` | 论文正文或 GitHub observation 的父对象 |
+| `element_ref` | section、table、figure、equation、reference、metadata field 或 repository path |
+| `locator` | page/bbox、LaTeX file+line、HTML anchor、表格 cell、GitHub path+commit 等可定位信息 |
+| `content_hash` | 所定位内容或规范化片段的 checksum |
+| `quote_or_span` | 受版权和输出策略限制的短引用或字符范围；不要求公开全文 |
+| `extraction_rule` | deterministic parser/rule 或候选 worker 的版本 |
+| `observed_at` | 该证据被观察或解析的时间 |
+| `actor_scope` | 读取该证据时必须再次执行的隔离边界 |
+
+evidence 失效不是删除历史。source refresh 后，旧 evidence 保留其旧 snapshot，新的 evidence 通过 `supersedes`/`stale_of` 关联。若 artifact checksum 不再匹配或 parent ref 丢失，evidence 进入 `quarantined`，所有依赖它的 verified relation/score/claim 必须在查询时降为不可验证，且 leaderboard 从当前快照排除。
+
+### 42.2 各类事实的最低闭包
+
+| 事实类型 | Candidate 最低要求 | Verified 额外要求 | 禁止的自动推断 |
+| --- | --- | --- | --- |
+| `paper_task` | paper、标准化 task 文本、source context | task taxonomy identity、evidence、scope/lineage gate | 只根据 title keyword 确认 task |
+| `paper_method` | method 名称或候选描述、document/source context | method identity、evidence、method graph edge gate | 将 LLM 命名直接写成 verified method |
+| `paper_dataset` | dataset 原文名、source context | dataset identity/version、evidence | 同名数据集自动视为同版本 |
+| `paper_benchmark` | benchmark 名称或表格上下文 | benchmark/dataset/split/evidence | 把数据集名自动等同 benchmark |
+| `paper_metric` | metric 原文名、表头/正文 context | metric definition/direction/unit/evidence | `accuracy` 自动等同任意 Accuracy 定义 |
+| `paper_score` | raw display value、表格或正文 context | 第 34 节 protocol fingerprint、数值/单位、evidence、compatibility gate | `best`、粗体或最大值自动变为 SOTA |
+| `paper_code_repository` | 规范化 repo URL 或 repository observation | canonical repo id、paper alignment evidence、scope gate | README 相似或同 owner 自动证明代码对应论文 |
+| `sota_claim` | 原文 claim 和 source context | score、benchmark、dataset、metric、protocol、evidence 和 verified decision | 论文自称 SOTA 自动成为榜首 |
+
+被拒绝的 candidate 必须保留 `rejection_reason_code`；相互冲突的候选必须保留 `conflict_set_id` 和各 observation，不得只保留最近一条。查询 API 的 `counts` 必须分别计数 `candidate`、`verified`、`rejected`、`conflicting` 和 `quarantined`，避免客户端把“未列出”误解为“不存在”。
+
+### 42.3 人工 verify、reject、revoke 工作流
+
+人工操作是受控事实决策，不是修改任意 metadata。v1 的 application contract 必须为 future HTTP/CLI verify 操作保留如下命令语义，即使初始界面尚未开放：
+
+```text
+CatalogReviewCommand
+  target_type: relation | score | sota_claim | method_graph_edge
+  target_id: stable target id
+  decision: verify | reject | mark_conflicting | revoke_verification
+  expected_revision: optimistic concurrency revision
+  evidence_refs: non-empty for verify
+  reason_code: controlled taxonomy value
+  note_ref: optional redacted operator note artifact
+  actor_scope: authentication-derived only
+```
+
+决策规则：
+
+1. `verify` 必须具有 `research.catalog.verify` 权限、非空 evidence refs、当前 scope 可见的父对象和通过 schema/protocol gate 的目标。
+2. `reject` 和 `mark_conflicting` 必须保留候选及原 evidence，只追加 decision event；不能删除不利证据。
+3. `revoke_verification` 生成新 revision，记录撤销人、撤销时间、原因和替代 evidence（若有）；历史 leaderboard snapshot 不重写，但新的 snapshot 不再纳入该 score。
+4. `expected_revision` 不匹配返回 `409 catalog_relation_conflict`，避免两位 reviewer 静默覆盖决策。
+5. 用户提交的自由文本 note 只能进入受控、可脱敏 artifact；它不构成 evidence，除非同时附有可解析的 evidence ref。
+
+每个 decision 产生独立 audit event 和业务 event，字段至少为：`review_id`、`target_id`、`decision`、`previous_status`、`new_status`、`reviewer_actor_id`、`permission`、`evidence_refs`、`reason_code`、`occurred_at`、`run_id`/`correlation_id` 和 `actor_scope`。LLM 只能建议 review queue priority，不能写入 decision。
+
+### 42.4 Freshness、历史与查询时降级
+
+`observed_at`、`published_at`、`fetched_at`、`parsed_at`、`verified_at` 和 `leaderboard_snapshot_at` 不能互相替代：
+
+| 时间字段 | 语义 |
+| --- | --- |
+| `published_at` | 论文/版本的外部发表时间 |
+| `fetched_at` | source adapter 获取该 snapshot 的时间 |
+| `observed_at` | GitHub、网页或其他 observation 被观察的时间 |
+| `parsed_at` | document parser 完成该 document 的时间 |
+| `verified_at` | deterministic/manual gate 作出 verified 决定的时间 |
+| `leaderboard_snapshot_at` | 某次固定筛选和排名产物生成的时间 |
+
+当用户查询“当前” Catalog 时，服务返回最新满足 scope、integrity 和 verification 条件的 revision；当用户以 snapshot/revision 参数查询时，服务返回当时事实和当前 integrity 状态。历史记录损坏时不能伪造历史 payload，应返回可读取的 metadata、`quarantined` 状态和 `store_corrupt` diagnostic。
+
+## 43. 接口行为、诊断分级与批量语义
+
+### 43.1 HTTP envelope 的字段语义
+
+所有 v1 endpoint 的成功和失败响应使用同一顶层骨架。字段不存在和字段值为 `null` 必须有稳定语义：
+
+| 字段 | 成功响应 | 失败响应 | 说明 |
+| --- | --- | --- | --- |
+| `success` | `true`，包括 `metadata_only`/`degraded`/`catalog_partial` | `false` | 只表示 application call 是否交付业务结果 |
+| `status` | 论文/Catalog 业务状态 | `failed` 或适用状态 | 不是 HTTP status 的别名 |
+| `data` | 已授权的 typed projection | `null` 或最小可安全交付 projection | 不应回显未授权内容 |
+| `error` | `null` | 稳定 error envelope | `message` 不含 stack trace/secret/path |
+| `run_id` | 产生或复用 durable run 时必填 | 若在收到 request 后已分配则必填 | client 用于查询/retry，而不是作为权限凭据 |
+| `provenance` | source/artifact/evidence 的受控摘要 | 仅可安全披露的 refs/diagnostics | 不默认展开原文 |
+| `diagnostics` | 默认摘要 | 默认摘要 | 详细条目需权限和 `include_diagnostics=true` |
+
+`metadata_only`、`degraded` 和 `catalog_partial` 均是成功 envelope，因为用户仍可获得可追溯的部分结果。`failed` 仅表示本次 call 没有可交付结果、需要重试，或最终持久化失败。`200`、`202`、`409`、`422` 等 HTTP code 由接口层按第 37.6 节映射，不得改变 application 的 `status` 语义。
+
+### 43.2 Diagnostic taxonomy
+
+每条 diagnostic 使用以下最小结构：
+
+```json
+{
+  "code": "source_rate_limited",
+  "severity": "warning",
+  "phase": "resolving",
+  "cause": "remote_policy",
+  "impact": "full_text_unavailable",
+  "retryable": true,
+  "retry_after_seconds": 60,
+  "user_action": "retry_later",
+  "provenance_refs": ["snapshot://..."],
+  "safe_details": {"source_type": "publisher"}
+}
+```
+
+`severity` 只允许 `info`、`warning`、`error`、`critical`；`user_action` 只允许 `none`、`retry_later`、`supply_alternate_source`、`request_access`、`review_identity`、`review_protocol`、`operator_recovery`。原始异常文本、token、cookie、repository source body、内部绝对路径和 prompt 永远不能进入 `safe_details`。
+
+相同 `code` 在不同 phase 可以有不同 impact，但不得改变其安全语义。例如 `source_denied` 只能说明访问被 policy/authorization 拒绝，不能暴露 publisher 的账号、订阅或 robots 具体规则；`artifact_missing` 对无权限 caller 仍表现为 `404`。
+
+### 43.3 Batch ingest
+
+`paper ingest <source>...` 和对应批量 API 不是一个大事务。每个 source 有自己的 `run_id`、request fingerprint、artifact refs 和结果条目；一个来源失败不得回滚其他来源已提交的 snapshot/document/catalog。
+
+批量结果至少包含：
+
+```json
+{
+  "request_id": "batch_01",
+  "items": [
+    {"ordinal": 0, "source": "...", "run_id": "...", "success": true, "status": "catalog_partial"},
+    {"ordinal": 1, "source": "...", "run_id": "...", "success": false, "error": {"code": "source_denied"}}
+  ],
+  "summary": {"total": 2, "succeeded": 1, "degraded": 1, "failed": 1}
+}
+```
+
+CLI 的退出码以最高严重度为准，但 `--json` 必须完整返回所有 item。建议固定映射：`0` 为全部成功或可交付降级、`2` 为参数错误、`3` 为 scope/permission、`4` 为 source 暂时不可用、`5` 为解析/质量失败、`6` 为 Catalog gate 失败、`7` 为持久化或 recovery 故障。该映射不得让自动化系统把 `metadata_only` 误判为已解析全文。
+
+### 43.4 Pagination、过滤与稳定顺序
+
+Catalog 搜索、source snapshot、relation、score 和 leaderboard 都必须使用同一分页纪律：
+
+1. `limit` 在 `[1, 200]`，默认 `50`；超过范围为 `invalid_request`。
+2. cursor 编码 query fingerprint、actor scope fingerprint、schema version、last sort key 和 direction；任何一个不匹配都返回 `invalid_cursor`。
+3. 默认稳定顺序为 `observed_at desc, stable_id asc`。leaderboard 先按 rank，再按 `observed_at desc, score_id asc`；稳定排序不改变并列名次。
+4. 过滤参数在 application service 解析，白名单之外的字段不得透传到 repository query。
+5. scope gate 发生在查询、cursor 解码和 artifact 展开三个阶段，不能只在第一个列表查询时执行。
+
+## 44. 发布、运行配置与运维操作
+
+### 44.1 默认离线运行承诺
+
+本 PRD 的基础闭环必须在 `unit_contract`/`local_parse` profile 下运行，不需要 Docker、PostgreSQL、Redis、Qdrant、LLM key 或公网访问。默认 durable filesystem store 和本地 fixture 足以验证 source normalization、identity、document、quality、Catalog candidate、score gate、actor isolation、artifact checksum 与 event replay。
+
+| 运行目标 | Docker | PostgreSQL | Redis | Qdrant | 网络 | 说明 |
+| --- | --- | --- | --- | --- | --- |
+| `compile`/`test`/`smoke` | 不需要 | 不需要 | 不需要 | 不需要 | 不需要 | CI 与本地默认门禁 |
+| local PDF/LaTeX fixture parse | 可选 | 不需要 | 不需要 | 不需要 | 不需要 | 使用安全 in-process parser/fallback |
+| MinerU/Marker 等容器 parser | 需要 | 不需要 | 不需要 | 不需要 | 镜像下载时需要 | 仅 `docker_pdf` profile 显式启用 |
+| PostgreSQL durability integration | 不需要 | 需要 | 不需要 | 不需要 | 不需要 | 未来 adapter 验证，不能替代 filesystem contract |
+| vector RAG retrieval | 不需要 | 不需要 | 不需要 | 需要 | embedding provider 视配置而定 | 不改变 Catalog truth 状态 |
+| async worker/cache | 不需要 | 不需要 | 需要时显式提供 | 不需要 | 按任务 | v1 parse 不隐式依赖 |
+| real source E2E | 不需要 | 可选 | 不需要 | 可选 | 需要 | marker/env opt-in，遵循 SSRF/robots policy |
+
+配置缺失的预期是 typed capability error 或 `metadata_only`/`degraded`，绝不应悄悄连接默认 localhost Redis、PostgreSQL 或 Qdrant。Docker parser 未配置时不允许回退到 host shell/subprocess 执行未知命令。
+
+### 44.2 Operator recovery playbook
+
+operator 只通过 application/operator contract 执行下列动作；不得手工编辑 JSON、删除 artifact 或伪造 final event：
+
+| 情况 | 检查 | 允许动作 | 禁止动作 |
+| --- | --- | --- | --- |
+| owner 尚在运行 | intent、lease、最新 phase event | 返回 `in_progress` 和 retry-after | 抢占 lease、重复 fetch/parser |
+| terminal event 存在、final result 缺失 | transcript sequence、artifact marker、scope/checksum | event replay 重建 final projection，记录 recovery correlation | 从 source 重新跑以“修复”final |
+| document 已写、artifact marker 缺失 | document/artifact checksum、parent refs | 标记 orphan/quarantine，等待受控重建或人工恢复 | 让 Catalog 引用该 document |
+| artifact checksum mismatch | marker 与 payload 的 checksum/scope | `quarantine`、只读诊断、从合法 backup restore | 自动改写历史 checksum |
+| schema 不支持 | schema manifest、migration path | 执行版本化 deterministic migration 或返回 unsupported | 丢弃未知字段后继续运行 |
+| 已过 retention 的 orphan | active run 引用、grace period、tombstone policy | operator 生成 tombstone/audit | 物理删除 event lineage |
+
+recovery 每次都产生新的 `recovery_run_id`，但原始 events 不可修改。恢复结果应包含 `recovered`、`quarantined` 或 `manual_action_required`，以及 reason code、受影响的 refs、检查时间和 operator identity。只有 final result、terminal event、Catalog projection 和相关 artifact markers 均一致时，恢复操作才能报告 `catalog_ready`。
+
+### 44.3 发布门禁与回滚
+
+发布按 feature flag/capability 分层：
+
+1. 先发布 domain/application contract 和 filesystem adapter，但不让 public API 默认启用 live remote fetch。
+2. 在 fixture 和 authorized staging sources 上启用 parse/catalog candidate；验证 event、artifact、scope、idempotency 和 recovery。
+3. 单独启用 GitHub observation；确认读取 allowlist、bytes budget 和 redaction 不泄露脚本或 secret。
+4. 最后启用对外 API/CLI；verified leaderboard 只有在 deterministic gate 与 review audit 已可用时展示。
+
+回滚只能关闭新 capability 或切回兼容读取器，不能删除 source snapshot、event、artifact marker、candidate 或历史 leaderboard snapshot。若写入 schema 已升级，旧读取器至少能识别并安全拒绝新版本；无法读取时返回 `schema_version_unsupported`，不能把数据当空 Catalog。
+
+## 45. 场景级验收用例
+
+本节把第 40 节的测试矩阵补充为业务可读的 Given/When/Then oracle。每条用例都必须有非网络 fixture 或 fake adapter 版本；live E2E 只能作为补充。
+
+| 编号 | Given | When | Then |
+| --- | --- | --- | --- |
+| `SRC-01` | 相同论文的 arXiv id、DOI 和 publisher URL，三者 metadata 一致 | 依次 parse | 一个 scope 内只有一个 canonical identity，至少三个 immutable snapshots，identity 的字段 provenance 能列出各 snapshot |
+| `SRC-02` | publisher 被 robots/login 拒绝，但 DOI metadata 可读取 | parse publisher | 返回成功 envelope 的 `metadata_only`，document 为 `null`，diagnostic 有 sanitized reason，Catalog 仅可有 candidate |
+| `SRC-03` | redirect 指向 loopback/private/link-local 地址 | parse remote source | transport 不发送正文请求，不产生 artifact，返回 source denial/failure diagnostic |
+| `ID-01` | 标题相同、年份相近、作者明显不同的两篇论文 | ingest | 不因 title 单独 merge；保留可解释的 identity ambiguity diagnostic |
+| `ID-02` | 同一 arXiv paper 的 v1 与 v2 source package | refresh/ingest | identity 关联两个 version/snapshot，旧 source hash/document/chunks 仍可查询 |
+| `PARSE-01` | 含 section、figure、table、equation、reference 的 LaTeX fixture | parse | document 含上述 typed elements、locator、source hash 和 parser attempts；artifact 可经 scope/checksum 读取 |
+| `PARSE-02` | PDF 第一个 cascade backend 质量失败，第二个合格 | parse | attempt list 保留两个 backend、失败原因和 selected backend；最终状态由 quality profile 决定 |
+| `PARSE-03` | 正文不足 3000 字符、locator 覆盖率低 | `quality_profile=reading` | 不返回普通 `parsed`；返回 `degraded` 和每个硬失败的 observed/expected |
+| `CAT-01` | 表格中有百分比 score 但缺 split/protocol | catalog refresh | score 保存为 candidate，缺口 diagnostic 可查询，leaderboard `excluded_scores` 含原因 |
+| `CAT-02` | 两个 verified score metric 名同但 micro/macro 定义不同 | leaderboard query | 生成不同 protocol fingerprint，不横向 dense rank |
+| `CAT-03` | verified SOTA 在 evidence artifact checksum 损坏后不可读取 | leaderboard query | score/claim 保留历史但当前快照排除，返回 integrity diagnostic；不重新宣称 SOTA |
+| `CODE-01` | repo 含 README、requirements、examples 目录、training/inference 目录 | code inspect | 返回 typed observed signals、branch/commit/observed_at、path hash/ref；没有 `runnable`/`reproduced` true 字段 |
+| `CODE-02` | repo 仅有 `train.py`/`inference.py` 脚本正文 | code inspect | 默认不读取脚本内容；只能根据允许目录或 metadata 产生 `not_observed`/`unsupported`，不泄露脚本文本 |
+| `IDEMP-01` | 同 scope、同 run id、同 request fingerprint 的两个并发请求 | 同时 parse | 一个 owner 执行；另一个收到 `in_progress`，owner 完成后重试获得 `idempotent=true` 原结果 |
+| `IDEMP-02` | 同 run id、不同 request fingerprint | parse | 返回 `409 idempotency_conflict`，不触发 source/parser |
+| `REC-01` | terminal phase event 已写、final result 写入前进程中断 | operator recovery | 只从 event/artifact marker replay final result，不重新 fetch/parser，产生新的 recovery correlation |
+| `REC-02` | run 只有 intent/resolving event，未有 terminal evidence | operator recovery | 标为 `quarantined`/`manual_action_required`；相同 run id 后续请求不自动重跑 |
+| `SCOPE-01` | tenant A 与 tenant B 提交同一 DOI | parse/query | 可各自保留事实，但 identity/store/artifact/event 不可跨 scope 读取或 merge |
+| `API-01` | 未认证或无 scope 的 paper id | GET document/catalog/artifact | 返回 `404` 或授权策略规定的 `403`，不暴露是否存在、checksum 或 source URL |
+| `CLI-01` | API 与 CLI 对同一 fixture/source/options 调用 | compare JSON output | `status`、run/paper id、provenance、artifact refs 和 diagnostics 的语义一致，差异只允许 CLI presentation/exit code |
+
+除表中案例外，发布前必须保留第 40.2 节的所有负例测试。任何新增 source adapter、parser backend、metric normalizer 或 repository signal，都要在其 merge request 中新增至少一个成功 fixture、一个降级 fixture 和一个安全/权限负例。
