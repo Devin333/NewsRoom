@@ -63,10 +63,29 @@ def test_parse_command_sanitizes_application_errors(monkeypatch, capsys) -> None
         "--json",
     ])
 
-    assert args.handler(args) == 1
+    assert args.handler(args) == 4
     output = capsys.readouterr().out
     payload = json.loads(output)
     assert payload["status"] == "failed"
     assert payload["error"]["code"] == "source_denied"
     assert "secret upstream" not in output
     assert payload["provenance"]["actorScope"] == {}
+
+
+def test_command_exit_code_uses_highest_batch_severity() -> None:
+    assert paper._command_exit_code({"status": "metadata_only"}) == 0
+    assert paper._command_exit_code({"status": "degraded"}) == 0
+    assert paper._command_exit_code({"status": "failed", "error": {"code": "source_timeout", "retryable": True}}) == 4
+    assert paper._command_exit_code({"status": "failed", "error": {"code": "quality_failed"}}) == 5
+    assert paper._command_exit_code({"status": "catalog_partial"}) == 6
+    assert paper._command_exit_code({"status": "failed", "error": {"code": "run_final_persist_failed"}}) == 7
+    assert paper._command_exit_code(
+        {
+            "status": "failed",
+            "outcomes": [
+                {"status": "metadata_only"},
+                {"status": "failed", "error": {"code": "source_denied", "statusCode": 403}},
+                {"status": "failed", "error": {"code": "run_final_persist_failed"}},
+            ],
+        }
+    ) == 7

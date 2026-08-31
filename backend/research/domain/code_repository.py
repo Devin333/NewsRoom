@@ -69,20 +69,49 @@ class CodeRepositorySignal(PrimitiveModel):
         "inference",
         "checkpoint",
     ]
-    present: bool
+    present: bool = False
+    status: Literal["observed", "not_observed", "unavailable", "denied", "unsupported"] | None = None
+    detection_rule: str = "github_contents_allowlist@v1"
+    matched_refs: list[str] = Field(default_factory=list)
     observed_at: datetime
     ref: str | None = None
     branch: str | None = None
     commit_sha: str | None = None
+    source_snapshot_id: str | None = None
     source_snapshot_refs: list[str] = Field(default_factory=list)
+    read_paths: list[str] = Field(default_factory=list)
+    response_bytes: int | None = None
+    content_hashes: dict[str, str] = Field(default_factory=dict)
+    redaction_version: str = "github-observation-redaction-v1"
+    github_request_id: str | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
 
     @model_validator(mode="after")
     def _normalize(self) -> "CodeRepositorySignal":
         object.__setattr__(self, "observed_at", ensure_utc(self.observed_at))
         object.__setattr__(self, "source_snapshot_refs", _unique_texts(self.source_snapshot_refs))
+        object.__setattr__(self, "matched_refs", _unique_texts(self.matched_refs))
+        object.__setattr__(self, "read_paths", _unique_texts(self.read_paths))
         if self.ref is not None:
             object.__setattr__(self, "ref", canonicalize_url(self.ref))
+        status = self.status or ("observed" if self.present else "not_observed")
+        if status == "observed" and not self.present:
+            object.__setattr__(self, "present", True)
+        elif status != "observed" and self.present:
+            raise ValueError("non-observed repository signal cannot be present")
+        object.__setattr__(self, "status", status)
+        if self.source_snapshot_id and self.source_snapshot_id not in self.source_snapshot_refs:
+            object.__setattr__(
+                self,
+                "source_snapshot_refs",
+                _unique_texts([*self.source_snapshot_refs, self.source_snapshot_id]),
+            )
+        if self.response_bytes is not None and (
+            isinstance(self.response_bytes, bool) or self.response_bytes < 0
+        ):
+            raise ValueError("repository signal response_bytes must be non-negative")
+        if not str(self.detection_rule).strip():
+            raise ValueError("repository signal detection_rule is required")
         return self
 
 
@@ -180,6 +209,16 @@ class CodeRepositoryProfile(PrimitiveModel):
         for observation in self.observations:
             if observation.repo_url != repo_url:
                 raise ValueError("repository observations must match profile repo_url")
+        for signal in self.signals:
+            if signal.status == "observed" and not signal.source_snapshot_refs:
+                raise ValueError("observed repository signal requires source snapshot refs")
+        forbidden = {
+            key
+            for key in ("runnable", "reproduced", "training_succeeded", "inference_succeeded")
+            if key in self.metadata
+        }
+        if forbidden:
+            raise ValueError("repository profile cannot claim execution outcomes")
         limits = {
             str(key): int(value)
             for key, value in self.observation_limits.items()

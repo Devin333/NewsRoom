@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
 from backend.research.domain import ResearchPaper
 from infrastructure.research.catalog_store import (
     CATALOG_STORE_SCHEMA_VERSION,
@@ -9,6 +11,7 @@ from infrastructure.research.catalog_store import (
     FilesystemResearchEventSink,
     ResearchCatalogArtifactNotFoundError,
     ResearchCatalogArtifactScopeError,
+    ResearchCatalogStoreError,
     _checksum,
 )
 
@@ -113,3 +116,100 @@ def test_research_event_sink_assigns_sequences_and_scans_incomplete_runs(tmp_pat
 
     sink.finalize("run-1", {"status": "parsed", "actor_scope": scope})
     assert sink.scan_incomplete_runs() == ()
+
+
+def test_research_event_sink_lease_replays_completion_without_new_owner(tmp_path) -> None:
+    sink = FilesystemResearchEventSink(tmp_path)
+    scope = {"tenant_id": "tenant-a"}
+
+    assert sink.acquire_run_lease("run-lease", request_fingerprint="fp-a", actor_scope=scope)["state"] == "owner"
+    assert sink.acquire_run_lease("run-lease", request_fingerprint="fp-a", actor_scope=scope)["state"] == "in_progress"
+    with pytest.raises(ResearchCatalogStoreError, match="conflicts"):
+        sink.acquire_run_lease("run-lease", request_fingerprint="fp-b", actor_scope=scope)
+
+    sink.finalize(
+        "run-lease",
+        {
+            "status": "metadata_only",
+            "paper_id": "paper-lease",
+            "actor_scope": scope,
+            "request_fingerprint": "fp-a",
+        },
+    )
+
+    replay = sink.acquire_run_lease("run-lease", request_fingerprint="fp-a", actor_scope=scope)
+    assert replay["state"] == "completed"
+    assert replay["final"]["paper_id"] == "paper-lease"
+
+
+def test_research_event_sink_replays_terminal_event_without_reexecuting_run(tmp_path) -> None:
+    sink = FilesystemResearchEventSink(tmp_path)
+    scope = {"tenant_id": "tenant-a"}
+    sink.acquire_run_lease("run-recovery", request_fingerprint="fp", actor_scope=scope)
+    sink.append(
+        "run-recovery",
+        {
+            "event_id": "run-recovery:parsed",
+            "event_type": "research_parse_phase",
+            "status": "parsed",
+            "to_status": "parsed",
+            "paper_id": "paper-recovery",
+            "source_snapshot_id": "snapshot-recovery",
+            "artifact_refs": ["artifact://research/research-document/" + "a" * 64],
+            "terminal": True,
+            "actor_scope": scope,
+        },
+    )
+
+    outcomes = sink.recover_incomplete_runs()
+
+    assert outcomes[0]["status"] == "recovered"
+    final = sink.load_final("run-recovery", actor_scope=scope)
+    assert final is not None
+    assert final["paper_id"] == "paper-recovery"
+    assert sink.acquire_run_lease("run-recovery", request_fingerprint="fp", actor_scope=scope)["state"] == "completed"
+
+
+def test_research_event_sink_quarantines_run_without_terminal_event(tmp_path) -> None:
+    sink = FilesystemResearchEventSink(tmp_path)
+    scope = {"tenant_id": "tenant-a"}
+    sink.acquire_run_lease("run-orphan", request_fingerprint="fp", actor_scope=scope)
+    sink.append(
+        "run-orphan",
+        {
+            "event_id": "run-orphan:resolving",
+            "event_type": "research_parse_phase",
+            "status": "resolving",
+            "to_status": "resolving",
+            "actor_scope": scope,
+        },
+    )
+
+    outcomes = sink.recover_incomplete_runs()
+
+    assert outcomes[0]["status"] == "quarantined"
+    lease = sink.acquire_run_lease("run-orphan", request_fingerprint="fp", actor_scope=scope)
+    assert lease["state"] == "recovery_required"
+
+
+def test_research_event_sink_does_not_treat_intermediate_parsed_event_as_terminal(tmp_path) -> None:
+    sink = FilesystemResearchEventSink(tmp_path)
+    scope = {"tenant_id": "tenant-a"}
+    sink.acquire_run_lease("run-intermediate", request_fingerprint="fp", actor_scope=scope)
+    sink.append(
+        "run-intermediate",
+        {
+            "event_id": "run-intermediate:parsed",
+            "event_type": "research_parse_phase",
+            "status": "parsed",
+            "to_status": "parsed",
+            "paper_id": "paper-intermediate",
+            "source_snapshot_id": "snapshot-intermediate",
+            "actor_scope": scope,
+        },
+    )
+
+    outcomes = sink.recover_incomplete_runs()
+
+    assert outcomes[0]["status"] == "quarantined"
+    assert outcomes[0]["reason_code"] == "terminal_event_missing"

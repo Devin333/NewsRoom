@@ -28,4 +28,4 @@
 
 - [x] 5.1 Add unit and integration tests for identity merge, metadata-only denial, parser fallback, idempotency, actor isolation and trust gates.
 - [x] 5.2 Verify API/CLI call only application services and that `frontend` and legacy `paper_radar` remain untouched.
-- [ ] 5.3 Run compile, tests, smoke and strict OpenSpec validation; commit the completed change.
+- [x] 5.3 Run compile, tests, smoke and strict OpenSpec validation; commit the completed change.

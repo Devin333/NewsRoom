@@ -452,29 +452,77 @@ class FilesystemResearchEventSink:
         actor_scope: Mapping[str, str],
         budget: Mapping[str, Any] | None = None,
     ) -> None:
+        self.acquire_run_lease(
+            run_id,
+            request_fingerprint=request_fingerprint,
+            actor_scope=actor_scope,
+            budget=budget,
+        )
+
+    def acquire_run_lease(
+        self,
+        run_id: str,
+        *,
+        request_fingerprint: str,
+        actor_scope: Mapping[str, str],
+        budget: Mapping[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Atomically assign one run owner or return its durable state."""
+
         target = self._run_record_path(run_id, actor_scope, "intent")
+        scope = _normalized_scope(actor_scope)
         payload = {
             "schema_version": 1,
             "record_type": "research_parse_run_intent",
             "record_id": f"{run_id}:intent",
             "run_id": run_id,
             "request_fingerprint": request_fingerprint,
-            "actor_scope": dict(actor_scope),
+            "actor_scope": scope,
             "budget": dict(budget or {}),
             "status": "pending",
+            "created_at": datetime.now(UTC).isoformat(),
         }
         with locked_json_file(target) as resolved:
             if resolved.exists():
                 existing = read_json_object_unlocked(resolved, default={}, strict=True)
-                if existing != payload:
+                if not isinstance(existing, Mapping):
+                    raise ResearchCatalogStoreCorruptionError("research run intent is invalid")
+                if (
+                    existing.get("run_id") != run_id
+                    or existing.get("request_fingerprint") != request_fingerprint
+                    or _normalized_scope(existing.get("actor_scope")) != scope
+                ):
                     raise ResearchCatalogStoreError("research run intent conflicts with existing run")
-            else:
-                write_json_object_unlocked(resolved, payload)
+                final = self._read_final_record(run_id, scope)
+                if final is not None:
+                    return {"state": "completed", "final": final}
+                recovery = self._read_recovery_record(run_id, scope)
+                if recovery is not None and recovery.get("status") in {"quarantined", "orphaned"}:
+                    return {"state": "recovery_required", "recovery": recovery}
+                history = self.read_history(run_id, actor_scope=scope)
+                return {
+                    "state": "in_progress",
+                    "last_committed_phase": history[-1].get("to_status") if history else "received",
+                    "retry_after_seconds": 5,
+                }
+            write_json_object_unlocked(resolved, payload)
+        return {"state": "owner", "run_id": run_id}
 
     def finalize(self, run_id: str, payload: Mapping[str, Any]) -> None:
         actor_scope = payload.get("actor_scope")
         scope = actor_scope if isinstance(actor_scope, Mapping) else {}
-        target = self._run_record_path(run_id, scope, "final")
+        normalized_scope = _normalized_scope(scope)
+        intent_path = self._run_record_path(run_id, normalized_scope, "intent")
+        with locked_json_file(intent_path) as resolved:
+            if not resolved.exists():
+                raise ResearchCatalogStoreError("research final result has no run intent")
+            intent = read_json_object_unlocked(resolved, default={}, strict=True)
+        if not isinstance(intent, Mapping):
+            raise ResearchCatalogStoreCorruptionError("research run intent is invalid")
+        request_fingerprint = str(payload.get("request_fingerprint") or "").strip()
+        if request_fingerprint and request_fingerprint != intent.get("request_fingerprint"):
+            raise ResearchCatalogStoreError("research final result conflicts with run intent")
+        target = self._run_record_path(run_id, normalized_scope, "final")
         record = {
             "schema_version": 1,
             "record_type": "research_parse_final_result",
@@ -482,15 +530,33 @@ class FilesystemResearchEventSink:
             "run_id": run_id,
             **dict(payload),
             "status": str(payload.get("status") or "failed"),
-            "actor_scope": dict(scope),
+            "actor_scope": normalized_scope,
+            "request_fingerprint": intent.get("request_fingerprint"),
+            "committed_at": datetime.now(UTC).isoformat(),
         }
         with locked_json_file(target) as resolved:
             if resolved.exists():
                 existing = read_json_object_unlocked(resolved, default={}, strict=True)
-                if existing != record:
+                existing_comparable = {
+                    key: value for key, value in existing.items()
+                    if key != "committed_at"
+                } if isinstance(existing, Mapping) else existing
+                record_comparable = {
+                    key: value for key, value in record.items()
+                    if key != "committed_at"
+                }
+                if existing_comparable != record_comparable:
                     raise ResearchCatalogStoreError("research final result conflicts with existing run")
             else:
                 write_json_object_unlocked(resolved, record)
+
+    def load_final(
+        self,
+        run_id: str,
+        *,
+        actor_scope: Mapping[str, str],
+    ) -> dict[str, Any] | None:
+        return self._read_final_record(run_id, _normalized_scope(actor_scope))
 
     def append(self, run_id: str, event: dict[str, Any]) -> None:
         run = _safe_segment(run_id, "run_id")
@@ -597,6 +663,188 @@ class FilesystemResearchEventSink:
                 continue
             results.append(dict(intent))
         return tuple(results)
+
+    def recover_incomplete_runs(self, *, limit: int = 100) -> tuple[dict[str, Any], ...]:
+        """Replay terminal event evidence without rerunning a source or parser."""
+
+        if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 1_000:
+            raise ValueError("recovery limit must be between 1 and 1000")
+        results: list[dict[str, Any]] = []
+        terminal_statuses = {
+            "metadata_only",
+            "parsed",
+            "degraded",
+            "catalog_partial",
+            "catalog_ready",
+            "failed",
+        }
+        for intent in self.scan_incomplete_runs()[:limit]:
+            run_id = str(intent["run_id"])
+            scope = _normalized_scope(intent.get("actor_scope"))
+            recovery_run_id = "recovery-" + hashlib.sha256(
+                f"{run_id}|{datetime.now(UTC).isoformat()}".encode("utf-8")
+            ).hexdigest()[:20]
+            try:
+                history = self.read_history(run_id, actor_scope=scope)
+            except ResearchCatalogStoreCorruptionError as exc:
+                results.append(
+                    self._write_recovery_record(
+                        run_id,
+                        scope,
+                        status="quarantined",
+                        recovery_run_id=recovery_run_id,
+                        reason_code="event_transcript_corrupt",
+                        details={"error_type": type(exc).__name__},
+                    )
+                )
+                continue
+            terminal = next(
+                (
+                    event
+                    for event in reversed(history)
+                    if event.get("terminal") is True
+                    and str(event.get("to_status") or event.get("status") or "") in terminal_statuses
+                ),
+                None,
+            )
+            paper_id = str((terminal or {}).get("paper_id") or "").strip()
+            if terminal is None or not paper_id:
+                results.append(
+                    self._write_recovery_record(
+                        run_id,
+                        scope,
+                        status="quarantined",
+                        recovery_run_id=recovery_run_id,
+                        reason_code="terminal_event_missing",
+                        details={"history_events": len(history)},
+                    )
+                )
+                continue
+            status = str(terminal.get("to_status") or terminal.get("status"))
+            snapshot_id = str(terminal.get("source_snapshot_id") or "").strip()
+            final_payload = {
+                "status": status,
+                "paper_id": paper_id,
+                "catalog_status": terminal.get("catalog_status"),
+                "artifact_refs": list(terminal.get("artifact_refs") or []),
+                "source_snapshot_refs": list(terminal.get("source_snapshot_refs") or ([snapshot_id] if snapshot_id else [])),
+                "diagnostics": list(terminal.get("diagnostics") or []),
+                "actor_scope": scope,
+                "request_fingerprint": intent.get("request_fingerprint"),
+                "recovered_from_event_id": terminal.get("event_id"),
+                "recovery_run_id": recovery_run_id,
+            }
+            try:
+                self.finalize(run_id, final_payload)
+            except Exception as exc:
+                results.append(
+                    self._write_recovery_record(
+                        run_id,
+                        scope,
+                        status="quarantined",
+                        recovery_run_id=recovery_run_id,
+                        reason_code="final_replay_failed",
+                        details={"error_type": type(exc).__name__},
+                    )
+                )
+                continue
+            self.append(
+                run_id,
+                {
+                    "event_id": f"{recovery_run_id}:final-replayed",
+                    "event_type": "research_parse_recovery",
+                    "status": "recovered",
+                    "actor_scope": scope,
+                    "recovery_run_id": recovery_run_id,
+                    "recovered_from_event_id": terminal.get("event_id"),
+                    "reason_code": "final_result_replayed",
+                },
+            )
+            results.append(
+                {
+                    "run_id": run_id,
+                    "status": "recovered",
+                    "recovery_run_id": recovery_run_id,
+                    "paper_id": paper_id,
+                }
+            )
+        return tuple(results)
+
+    def _read_final_record(
+        self,
+        run_id: str,
+        actor_scope: Mapping[str, str],
+    ) -> dict[str, Any] | None:
+        target = self._run_record_path(run_id, actor_scope, "final")
+        with locked_json_file(target) as resolved:
+            if not resolved.exists():
+                return None
+            record = read_json_object_unlocked(resolved, default={}, strict=True)
+        if not isinstance(record, Mapping):
+            raise ResearchCatalogStoreCorruptionError("research final result is invalid")
+        if record.get("run_id") != run_id or _normalized_scope(record.get("actor_scope")) != _normalized_scope(actor_scope):
+            raise ResearchCatalogStoreCorruptionError("research final result has invalid identity")
+        return dict(record)
+
+    def _read_recovery_record(
+        self,
+        run_id: str,
+        actor_scope: Mapping[str, str],
+    ) -> dict[str, Any] | None:
+        target = self._run_record_path(run_id, actor_scope, "recovery")
+        with locked_json_file(target) as resolved:
+            if not resolved.exists():
+                return None
+            record = read_json_object_unlocked(resolved, default={}, strict=True)
+        if not isinstance(record, Mapping):
+            raise ResearchCatalogStoreCorruptionError("research run recovery record is invalid")
+        if record.get("run_id") != run_id or _normalized_scope(record.get("actor_scope")) != _normalized_scope(actor_scope):
+            raise ResearchCatalogStoreCorruptionError("research run recovery record has invalid identity")
+        return dict(record)
+
+    def _write_recovery_record(
+        self,
+        run_id: str,
+        actor_scope: Mapping[str, str],
+        *,
+        status: str,
+        recovery_run_id: str,
+        reason_code: str,
+        details: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        scope = _normalized_scope(actor_scope)
+        record = {
+            "schema_version": 1,
+            "record_type": "research_parse_recovery",
+            "record_id": f"{run_id}:recovery",
+            "run_id": run_id,
+            "status": status,
+            "recovery_run_id": recovery_run_id,
+            "reason_code": reason_code,
+            "details": dict(details),
+            "actor_scope": scope,
+            "created_at": datetime.now(UTC).isoformat(),
+        }
+        target = self._run_record_path(run_id, scope, "recovery")
+        with locked_json_file(target) as resolved:
+            if resolved.exists():
+                existing = read_json_object_unlocked(resolved, default={}, strict=True)
+                if not isinstance(existing, Mapping):
+                    raise ResearchCatalogStoreCorruptionError("research run recovery record is invalid")
+                return dict(existing)
+            write_json_object_unlocked(resolved, record)
+        self.append(
+            run_id,
+            {
+                "event_id": f"{recovery_run_id}:quarantined",
+                "event_type": "research_parse_recovery",
+                "status": status,
+                "actor_scope": scope,
+                "recovery_run_id": recovery_run_id,
+                "reason_code": reason_code,
+            },
+        )
+        return record
 
     def _run_record_path(
         self,

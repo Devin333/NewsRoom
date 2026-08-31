@@ -452,17 +452,10 @@ class ResearchSourceResolverAdapter:
     def _metadata_only(self, source: str, source_type: str, request: Any, reason: str, exc: Exception | None = None, *, metadata: dict[str, Any] | None = None) -> ResolvedPaperSource:
         canonical = canonicalize_url(source) if source.startswith(("http://", "https://")) else ""
         combined_metadata = {**dict(request.metadata), **dict(metadata or {})}
-        external_id = _metadata_external_id(
-            source,
-            source_type,
-            metadata=combined_metadata,
-        )
+        external_id = _metadata_external_id(source, source_type, metadata=combined_metadata)
         explicit_paper_id = _explicit_paper_id(combined_metadata)
         paper = _paper_from_metadata(
-            paper_id=(
-                explicit_paper_id
-                or stable_research_id("paper", source_type, external_id or canonical or source)
-            ),
+            paper_id=(explicit_paper_id or stable_research_id("paper", source_type, external_id or canonical or source)),
             source_type=source_type,
             canonical_url=canonical,
             external_id=external_id,
@@ -472,6 +465,12 @@ class ResearchSourceResolverAdapter:
         diagnostic = {"code": reason, "source_type": source_type, "access_status": access_status}
         if exc is not None:
             diagnostic.update({"error_type": type(exc).__name__, "retryable": bool(getattr(exc, "retryable", False))})
+            retry_after = getattr(exc, "retry_after_seconds", None)
+            if retry_after is not None:
+                diagnostic["retry_after_seconds"] = int(retry_after)
+        retryable = bool(diagnostic.get("retryable", access_status == "rate_limited"))
+        user_action_required = access_status in {"denied", "unsupported", "not_found"}
+        retry_after_seconds = diagnostic.get("retry_after_seconds")
         snapshot = _snapshot(
             paper=paper,
             source_type=source_type,
@@ -480,7 +479,23 @@ class ResearchSourceResolverAdapter:
             content_type=str((metadata or {}).get("content_type") or "text/html"),
             source_hash=None,
             access_status=access_status,
-            metadata={"reason": reason, **diagnostic},
+            metadata={
+                "reason": reason,
+                **diagnostic,
+                "retryable": retryable,
+                "user_action_required": user_action_required,
+                **({"retry_after_seconds": retry_after_seconds} if retry_after_seconds is not None else {}),
+                "diagnostics": [diagnostic],
+                "source_policy": {
+                    "timeout_seconds": self._fetch_policy.timeout_seconds,
+                    "max_bytes": self._fetch_policy.max_bytes,
+                    "max_redirects": self._fetch_policy.max_redirects,
+                    "respect_robots": self._fetch_policy.respect_robots,
+                    "rate_limit_per_domain_per_minute": self._fetch_policy.rate_limit_per_domain_per_minute,
+                    "retry_times": self._fetch_policy.retry_times,
+                    "https_only": True,
+                },
+            },
         )
         return ResolvedPaperSource(paper=paper, snapshot=snapshot, content=None, content_type=snapshot.content_type, access_status=access_status, diagnostics=(diagnostic,))
 
@@ -489,6 +504,14 @@ def _snapshot(*, paper: ResearchPaper, source_type: str, canonical_url: str, ext
     source_ref = canonical_url or f"source://{source_type}/{external_id or paper.paper_id}"
     metadata = dict(metadata)
     reason_code = str(metadata.get("reason_code") or metadata.get("reason") or "").strip() or None
+    raw_diagnostics = metadata.get("diagnostics")
+    diagnostics = [dict(item) for item in raw_diagnostics if isinstance(item, Mapping)] if isinstance(raw_diagnostics, list) else []
+    retry_after = metadata.get("retry_after_seconds")
+    try:
+        retry_after = max(0, int(retry_after)) if retry_after is not None else None
+    except (TypeError, ValueError):
+        retry_after = None
+    policy = metadata.get("source_policy")
     return ResearchSourceSnapshot(
         snapshot_id=stable_research_id("source_snapshot", paper.paper_id, source_ref, source_hash or ""),
         paper_id=paper.paper_id,
@@ -501,6 +524,11 @@ def _snapshot(*, paper: ResearchPaper, source_type: str, canonical_url: str, ext
         fetched_at=datetime.now(UTC),
         access_status=access_status,
         reason_code=reason_code,
+        retryable=metadata.get("retryable") if isinstance(metadata.get("retryable"), bool) else None,
+        user_action_required=metadata.get("user_action_required") if isinstance(metadata.get("user_action_required"), bool) else None,
+        retry_after_seconds=retry_after,
+        source_policy={str(key): value for key, value in policy.items()} if isinstance(policy, Mapping) else {},
+        diagnostics=diagnostics,
         version_id=str(metadata.get("version_id") or metadata.get("version") or "").strip() or None,
         resolver_version=str(metadata.get("resolver_version") or "research-source-resolver-v1").strip() or None,
         lineage=SourceLineage(source_refs=[source_ref], source_hash=source_hash),
@@ -638,11 +666,11 @@ def _remote_fetch_url(source: str, source_type: str) -> str | None:
 
 
 def _ensure_remote_target_allowed(url: str) -> None:
-    """Reject literal private targets before any transport is invoked."""
+    """Reject non-HTTPS and non-public targets before any transport is invoked."""
 
     parsed = urlsplit(str(url or "").strip())
-    if parsed.scheme.casefold() not in {"http", "https"} or not parsed.hostname:
-        return
+    if parsed.scheme.casefold() != "https" or not parsed.hostname:
+        raise ResearchSourceError("remote source must use HTTPS with a hostname")
     addresses: set[str] = {parsed.hostname}
     try:
         address = ipaddress.ip_address(parsed.hostname)

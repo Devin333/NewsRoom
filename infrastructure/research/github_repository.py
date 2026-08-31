@@ -28,6 +28,10 @@ from infrastructure.research.errors import (
 
 UTC = timezone.utc
 _GITHUB_HOSTS = {"github.com", "www.github.com"}
+_MAX_OBSERVED_FILES = 64
+_MAX_OBSERVED_FILE_BYTES = 256 * 1024
+_MAX_OBSERVED_TOTAL_BYTES = 4 * 1024 * 1024
+_MAX_OBSERVED_DIRECTORY_DEPTH = 3
 
 
 class GithubResearchRepositoryAdapter:
@@ -104,15 +108,35 @@ class GithubResearchRepositoryAdapter:
             },
         )
         signal_snapshot_ref = str(reproducibility["source_snapshot_ref"])
+        signal_refs = dict(reproducibility.get("refs") or {})
+        if reproducibility.get("install_instructions_ref"):
+            signal_refs["install"] = str(reproducibility["install_instructions_ref"])
         signals = [
             CodeRepositorySignal(
                 signal=signal_name,
                 present=bool(reproducibility.get(presence_key)),
+                status=("observed" if reproducibility.get(presence_key) else "not_observed"),
+                detection_rule=f"github_contents_allowlist@v1/{signal_name}",
+                matched_refs=(
+                    [str(signal_refs.get(signal_name))]
+                    if signal_refs.get(signal_name)
+                    else []
+                ),
                 observed_at=observed_at,
-                ref=(reproducibility.get("refs") or {}).get(signal_name),
+                ref=signal_refs.get(signal_name),
                 branch=metadata.default_branch,
                 commit_sha=commit_sha,
+                source_snapshot_id=signal_snapshot_ref,
                 source_snapshot_refs=[signal_snapshot_ref],
+                read_paths=list(reproducibility.get("checked_paths") or []),
+                response_bytes=int(reproducibility.get("response_bytes") or 0),
+                content_hashes=dict(reproducibility.get("content_hashes") or {}),
+                redaction_version="github-observation-redaction-v1",
+                github_request_id=(
+                    str(reproducibility.get("github_request_id"))
+                    if reproducibility.get("github_request_id")
+                    else None
+                ),
                 metadata={
                     "detection": "github_contents_api",
                     "checked_paths": list(reproducibility.get("checked_paths") or []),
@@ -120,6 +144,7 @@ class GithubResearchRepositoryAdapter:
             )
             for signal_name, presence_key in (
                 ("readme", "has_readme"),
+                ("license", "has_license"),
                 ("install", "install_instructions_ref"),
                 ("requirements", "has_requirements"),
                 ("examples", "has_examples"),
@@ -172,8 +197,10 @@ class GithubResearchRepositoryAdapter:
             observations=[observation],
             signals=signals,
             observation_limits={
-                "max_files_checked": len(reproducibility.get("checked_paths") or []),
-                "max_file_bytes": 256 * 1024,
+                "max_files_checked": _MAX_OBSERVED_FILES,
+                "max_file_bytes": _MAX_OBSERVED_FILE_BYTES,
+                "max_total_bytes": _MAX_OBSERVED_TOTAL_BYTES,
+                "max_directory_depth": _MAX_OBSERVED_DIRECTORY_DEPTH,
             },
             metadata={
                 "metrics_source": "github_repository_api",
@@ -207,22 +234,37 @@ class GithubResearchRepositoryAdapter:
     ) -> dict[str, Any]:
         probes = {
             "readme": ("README.md", "README.rst", "README.txt"),
-            "requirements": ("requirements.txt", "pyproject.toml", "environment.yml", "setup.py"),
-            "examples": ("examples", "example.py", "examples/README.md"),
-            "training": ("train.py", "training", "scripts/train.py", "finetune.py"),
-            "inference": ("inference.py", "predict.py", "demo.py", "app.py"),
+            "license": ("LICENSE", "LICENSE.md", "COPYING"),
+            "requirements": ("requirements.txt", "pyproject.toml", "environment.yml"),
+            "examples": ("examples",),
+            "training": ("training", "scripts"),
+            "inference": ("inference", "demo"),
             "checkpoint": ("checkpoints", "weights", "models", "MODEL_CARD.md"),
         }
         matched: dict[str, str] = {}
+        content_hashes: dict[str, str] = {}
+        response_bytes = 0
         readme_text: str | None = None
         checked: list[str] = []
         for signal, paths in probes.items():
             for path in paths:
+                if len(checked) >= _MAX_OBSERVED_FILES:
+                    break
                 checked.append(path)
                 content = self._fetch_repository_file(source, repository, path, branch)
                 if content is None:
                     continue
                 matched[signal] = path
+                if content != "__directory__":
+                    encoded = content.encode("utf-8")
+                    if len(encoded) > _MAX_OBSERVED_FILE_BYTES:
+                        matched.pop(signal, None)
+                        continue
+                    if response_bytes + len(encoded) > _MAX_OBSERVED_TOTAL_BYTES:
+                        matched.pop(signal, None)
+                        break
+                    response_bytes += len(encoded)
+                    content_hashes[path] = sha256(encoded).hexdigest()
                 if signal == "readme" and content != "__directory__":
                     readme_text = content
                 break
@@ -240,17 +282,23 @@ class GithubResearchRepositoryAdapter:
             "source": "github_contents_api",
             "branch": branch,
             "checked_paths": checked,
+            "max_files": _MAX_OBSERVED_FILES,
+            "max_file_bytes": _MAX_OBSERVED_FILE_BYTES,
+            "max_total_bytes": _MAX_OBSERVED_TOTAL_BYTES,
+            "response_bytes": response_bytes,
+            "redaction_version": "github-observation-redaction-v1",
             "matched_paths": matched,
             "refs": refs,
             "source_snapshot_ref": observation_ref,
             "has_readme": "readme" in matched,
+            "has_license": "license" in matched,
             "has_requirements": "requirements" in matched,
             "has_examples": "examples" in matched,
             "has_training_script": "training" in matched,
             "has_inference_demo": "inference" in matched,
             "has_model_checkpoint": "checkpoint" in matched,
             "install_instructions_ref": install_ref,
-            "runnable": None,
+            "content_hashes": content_hashes,
         }
 
     def _fetch_repository_file(

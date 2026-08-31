@@ -85,6 +85,8 @@ def test_remote_injected_fetcher_obeys_size_and_content_type_policy() -> None:
     assert oversized.access_status == "failed"
     assert oversized.diagnostics[0]["code"] == "remote_source_denied_or_failed"
     assert oversized.diagnostics[0]["error_type"] == "ValueError"
+    assert oversized.snapshot.diagnostics[0]["code"] == "remote_source_denied_or_failed"
+    assert oversized.snapshot.source_policy["https_only"] is True
 
     unsupported = ResearchSourceResolverAdapter(
         fetch_bytes=lambda _url, _policy: (b"body", "application/zip", "https://example.test/paper.zip"),
@@ -109,6 +111,24 @@ def test_remote_injected_fetcher_rejects_private_target_before_transport() -> No
     assert result.access_status == "failed"
     assert calls == []
     assert result.diagnostics[0]["error_type"] == "ResearchSourceError"
+    assert result.snapshot.user_action_required is False
+
+
+def test_remote_injected_fetcher_rejects_plain_http_before_transport() -> None:
+    calls: list[str] = []
+
+    def fetch(url, _policy):
+        calls.append(url)
+        return b"body", "text/plain", url
+
+    result = ResearchSourceResolverAdapter(fetch_bytes=fetch).resolve(
+        ParsePaperRequest(source="http://example.test/paper", source_type="publisher")
+    )
+
+    assert result.access_status == "failed"
+    assert calls == []
+    assert result.diagnostics[0]["error_type"] == "ResearchSourceError"
+    assert result.snapshot.user_action_required is False
 
 
 def test_openreview_query_id_is_used_as_external_identity() -> None:

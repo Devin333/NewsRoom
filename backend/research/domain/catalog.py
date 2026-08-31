@@ -92,6 +92,11 @@ class ResearchSourceSnapshot(PrimitiveModel):
     observed_at: datetime | None = None
     access_status: SourceAccessStatus = "available"
     reason_code: str | None = None
+    retryable: bool | None = None
+    user_action_required: bool | None = None
+    retry_after_seconds: int | None = None
+    source_policy: dict[str, Any] = Field(default_factory=dict)
+    diagnostics: list[dict[str, Any]] = Field(default_factory=list)
     parent_snapshot_id: str | None = None
     version_id: str | None = None
     request_fingerprint: str | None = None
@@ -136,6 +141,20 @@ class ResearchSourceSnapshot(PrimitiveModel):
     def _normalize_actor_scope(cls, value: Mapping[str, Any]) -> dict[str, str]:
         return _normalized_actor_scope(value)
 
+    @field_validator("diagnostics")
+    @classmethod
+    def _normalize_diagnostics(cls, value: list[Mapping[str, Any]]) -> list[dict[str, Any]]:
+        return [dict(item) for item in value if isinstance(item, Mapping)]
+
+    @field_validator("retry_after_seconds")
+    @classmethod
+    def _normalize_retry_after(cls, value: int | None) -> int | None:
+        if value is None:
+            return None
+        if isinstance(value, bool) or int(value) < 0:
+            raise ValueError("source snapshot retry_after_seconds must be non-negative")
+        return int(value)
+
     @field_validator("schema_version")
     @classmethod
     def _valid_schema_version(cls, value: int) -> int:
@@ -176,6 +195,28 @@ class ResearchSourceSnapshot(PrimitiveModel):
             value = getattr(self, field_name)
             if value is not None:
                 metadata[field_name] = value
+        if self.retryable is None and isinstance(metadata.get("retryable"), bool):
+            object.__setattr__(self, "retryable", metadata["retryable"])
+        if self.user_action_required is None and isinstance(metadata.get("user_action_required"), bool):
+            object.__setattr__(self, "user_action_required", metadata["user_action_required"])
+        if self.retry_after_seconds is None and metadata.get("retry_after_seconds") is not None:
+            try:
+                object.__setattr__(self, "retry_after_seconds", max(0, int(metadata["retry_after_seconds"])))
+            except (TypeError, ValueError):
+                pass
+        policy = metadata.get("source_policy")
+        if isinstance(policy, Mapping):
+            object.__setattr__(self, "source_policy", {str(key): value for key, value in policy.items()})
+        if self.retryable is not None:
+            metadata["retryable"] = bool(self.retryable)
+        if self.user_action_required is not None:
+            metadata["user_action_required"] = bool(self.user_action_required)
+        if self.retry_after_seconds is not None:
+            metadata["retry_after_seconds"] = int(self.retry_after_seconds)
+        if self.source_policy:
+            metadata["source_policy"] = dict(self.source_policy)
+        if self.diagnostics:
+            metadata["diagnostics"] = [dict(item) for item in self.diagnostics]
         object.__setattr__(self, "metadata", metadata)
         # Scope may arrive through different adapter generations. Merge all
         # envelopes so unrelated metadata cannot hide lineage isolation.

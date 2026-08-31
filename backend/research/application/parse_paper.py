@@ -217,11 +217,45 @@ class InMemoryResearchEventSink:
 
     def __init__(self) -> None:
         self.events: list[dict[str, Any]] = []
+        self._intents: dict[tuple[str, str], dict[str, Any]] = {}
+        self._finals: dict[tuple[str, str], dict[str, Any]] = {}
 
     def append(self, run_id: str, event: dict[str, Any]) -> None:
         self.events.append({"run_id": run_id, **dict(event)})
 
     def create_run_intent(self, run_id: str, *, request_fingerprint: str, actor_scope: Mapping[str, str], budget: Mapping[str, Any] | None = None) -> None:
+        self.acquire_run_lease(
+            run_id,
+            request_fingerprint=request_fingerprint,
+            actor_scope=actor_scope,
+            budget=budget,
+        )
+
+    def acquire_run_lease(
+        self,
+        run_id: str,
+        *,
+        request_fingerprint: str,
+        actor_scope: Mapping[str, str],
+        budget: Mapping[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        scope = _scope_key(actor_scope)
+        key = (run_id, scope)
+        existing = self._intents.get(key)
+        if existing is not None:
+            if existing["request_fingerprint"] != request_fingerprint:
+                raise RuntimeError("research run intent conflicts with existing run")
+            final = self._finals.get(key)
+            if final is not None:
+                return {"state": "completed", "final": dict(final)}
+            return {"state": "in_progress", "last_committed_phase": "received", "retry_after_seconds": 5}
+        intent = {
+            "run_id": run_id,
+            "request_fingerprint": request_fingerprint,
+            "actor_scope": dict(actor_scope),
+            "budget": dict(budget or {}),
+        }
+        self._intents[key] = intent
         self.events.append(
             {
                 "run_id": run_id,
@@ -233,8 +267,17 @@ class InMemoryResearchEventSink:
                 "budget": dict(budget or {}),
             }
         )
+        return {"state": "owner", "run_id": run_id}
 
     def finalize(self, run_id: str, payload: Mapping[str, Any]) -> None:
+        key = (run_id, _scope_key(payload.get("actor_scope") if isinstance(payload.get("actor_scope"), Mapping) else {}))
+        existing = self._finals.get(key)
+        record = {"run_id": run_id, **dict(payload)}
+        if existing is not None:
+            if existing != record:
+                raise RuntimeError("research final result conflicts with existing run")
+            return
+        self._finals[key] = record
         self.events.append(
             {
                 "run_id": run_id,
@@ -294,6 +337,7 @@ class ParsePaperUseCase:
         run_id = request.run_id or f"research-parse-{uuid4().hex}"
         actor_scope = _actor_scope(request)
         budget = _parse_budget(request.options)
+        request_fingerprint = _request_fingerprint(request, actor_scope)
         budget_started = monotonic()
         diagnostics: list[dict[str, Any]] = []
         artifact_refs: list[str] = []
@@ -305,13 +349,44 @@ class ParsePaperUseCase:
         catalog_entry: ResearchPaperCatalogEntry | None = None
         catalog_status: str | None = None
         event_context: dict[str, Any] = {"actor_scope": actor_scope}
-        _create_run_intent(
+        lease = _create_run_intent(
             self._event_sink,
             run_id,
-            request_fingerprint=_request_fingerprint(request, actor_scope),
+            request_fingerprint=request_fingerprint,
             actor_scope=actor_scope,
             budget=budget,
         )
+        if lease is not None:
+            state = str(lease.get("state") or "owner")
+            if state == "completed":
+                return self._replay_completed_run(
+                    run_id=run_id,
+                    final=lease.get("final"),
+                    actor_scope=actor_scope,
+                )
+            if state == "recovery_required":
+                raise ParsePaperError(
+                    "run_recovery_required",
+                    "research parse run requires operator recovery before it can continue",
+                    status_code=409,
+                    retryable=False,
+                    details={
+                        "run_id": run_id,
+                        "recovery": dict(lease.get("recovery") or {}),
+                    },
+                )
+            if state == "in_progress":
+                raise ParsePaperError(
+                    "parse_in_progress",
+                    "an identical paper parse is already in progress",
+                    status_code=409,
+                    retryable=True,
+                    details={
+                        "run_id": run_id,
+                        "last_committed_phase": lease.get("last_committed_phase"),
+                        "retry_after_seconds": lease.get("retry_after_seconds", 5),
+                    },
+                )
 
         def emit(status: str, payload: Mapping[str, Any]) -> None:
             nonlocal current_status
@@ -347,7 +422,6 @@ class ParsePaperUseCase:
             _ensure_budget(budget_started, budget, diagnostics, phase="resolving")
             diagnostics.extend(dict(item) for item in resolved.diagnostics)
             snapshot = _snapshot_for_scope(resolved.snapshot, actor_scope, resolved.content)
-            request_fingerprint = _request_fingerprint(request, actor_scope)
             snapshot = snapshot.model_copy(
                 update={
                     "request_fingerprint": request_fingerprint,
@@ -483,6 +557,7 @@ class ParsePaperUseCase:
                         "paper_id": paper.paper_id,
                         "catalog_status": catalog_status,
                         "diagnostics": diagnostics,
+                        "terminal": True,
                     },
                 )
                 _finalize_run(
@@ -495,6 +570,7 @@ class ParsePaperUseCase:
                         "artifact_refs": artifact_refs,
                         "source_snapshot_refs": [item.snapshot_id for item in snapshots],
                         "actor_scope": actor_scope,
+                        "request_fingerprint": request_fingerprint,
                     },
                 )
                 return ParsePaperResult(
@@ -650,7 +726,16 @@ class ParsePaperUseCase:
                     "budget": budget,
                 }
             )
-            emit(status, {"paper_id": paper.paper_id, "parser_attempts": parser_attempts})
+            emit(
+                status,
+                {
+                    "paper_id": paper.paper_id,
+                    "source_snapshot_id": snapshot.snapshot_id,
+                    "source_snapshot_refs": [item.snapshot_id for item in snapshots],
+                    "artifact_refs": artifact_refs,
+                    "parser_attempts": parser_attempts,
+                },
+            )
             if self._catalog_projection is not None and request.options.get("include_catalog", True):
                 try:
                     catalog_entry = _refresh_catalog_projection(
@@ -674,6 +759,18 @@ class ParsePaperUseCase:
                     diagnostics.append({"code": "catalog_projection_failed", "error_type": type(exc).__name__})
                     status = "catalog_partial"
                     emit("catalog_partial", {"paper_id": paper.paper_id, "error_type": type(exc).__name__})
+            emit(
+                status,
+                {
+                    "paper_id": paper.paper_id,
+                    "source_snapshot_id": snapshot.snapshot_id,
+                    "source_snapshot_refs": [item.snapshot_id for item in snapshots],
+                    "artifact_refs": artifact_refs,
+                    "parser_attempts": parser_attempts,
+                    "catalog_status": catalog_status,
+                    "terminal": True,
+                },
+            )
             _finalize_run(
                 self._event_sink,
                 run_id,
@@ -686,6 +783,7 @@ class ParsePaperUseCase:
                     "document_id": document.document_id,
                     "actor_scope": actor_scope,
                     "budget": budget,
+                    "request_fingerprint": request_fingerprint,
                 },
             )
             return ParsePaperResult(
@@ -718,7 +816,7 @@ class ParsePaperUseCase:
                     "error_type": type(exc).__name__,
                 })
                 try:
-                    emit("failed", {"diagnostics": diagnostics})
+                    emit("failed", {"diagnostics": diagnostics, "terminal": True})
                 except ParsePaperError:
                     LOGGER.warning("research parse failed event could not be appended", exc_info=True)
             _finalize_run(
@@ -730,13 +828,14 @@ class ParsePaperUseCase:
                     "source_snapshot_refs": [item.snapshot_id for item in snapshots],
                     "diagnostics": diagnostics,
                     "actor_scope": actor_scope,
+                    "request_fingerprint": request_fingerprint,
                 },
             )
             raise
         except Exception as exc:  # noqa: BLE001 - application boundary normalizes diagnostics
             diagnostics.append({"code": "parse_failed", "error_type": type(exc).__name__})
             try:
-                emit("failed", {"diagnostics": diagnostics})
+                emit("failed", {"diagnostics": diagnostics, "terminal": True})
             finally:
                 _finalize_run(
                     self._event_sink,
@@ -748,6 +847,7 @@ class ParsePaperUseCase:
                         "diagnostics": diagnostics,
                         "actor_scope": actor_scope,
                         "budget": budget,
+                        "request_fingerprint": request_fingerprint,
                     },
                 )
             raise ParsePaperError(
@@ -759,6 +859,74 @@ class ParsePaperUseCase:
             ) from exc
 
     execute = parse
+
+    def _replay_completed_run(
+        self,
+        *,
+        run_id: str,
+        final: Any,
+        actor_scope: Mapping[str, str],
+    ) -> "ParsePaperResult":
+        """Rebuild a completed parse response without fetching or parsing again."""
+
+        if not isinstance(final, Mapping):
+            raise ParsePaperError(
+                "run_recovery_invalid",
+                "completed research parse record is invalid",
+                status_code=503,
+                details={"run_id": run_id},
+            )
+        status = str(final.get("status") or "").strip()
+        paper_id = str(final.get("paper_id") or "").strip()
+        if status not in PARSE_STATUSES or status == "failed" or not paper_id:
+            raise ParsePaperError(
+                "run_already_finalized",
+                "research parse run is already finalized",
+                status_code=409,
+                retryable=False,
+                details={"run_id": run_id, "status": status or "failed"},
+            )
+        paper = _repository_get(self._paper_repository, paper_id, "paper", actor_scope=actor_scope)
+        identity = _repository_get(self._identity_repository, paper_id, "identity", actor_scope=actor_scope)
+        document = _repository_get(self._document_repository, paper_id, "document", actor_scope=actor_scope)
+        evidence_pack = _repository_get(self._evidence_repository, paper_id, "evidence", actor_scope=actor_scope)
+        snapshots: list[ResearchSourceSnapshot] = []
+        for snapshot_id in final.get("source_snapshot_refs") or []:
+            snapshot = _repository_get(self._snapshot_repository, str(snapshot_id), "snapshot", actor_scope=actor_scope)
+            if isinstance(snapshot, ResearchSourceSnapshot):
+                snapshots.append(snapshot)
+        catalog_entry = None
+        getter = getattr(self._catalog_projection, "get_catalog", None)
+        if callable(getter):
+            try:
+                catalog_entry = getter(paper_id, actor_scope=dict(actor_scope))
+            except Exception:
+                catalog_entry = None
+        artifacts = unique_texts([str(item) for item in (final.get("artifact_refs") or [])])
+        return ParsePaperResult(
+            run_id=run_id,
+            paper_id=paper_id,
+            status=status,
+            paper=paper if isinstance(paper, ResearchPaper) else None,
+            identity=identity if isinstance(identity, ResearchPaperIdentity) else None,
+            source_snapshots=snapshots,
+            document=document if isinstance(document, ResearchDocument) else None,
+            parser_attempts=_parser_attempts(document) if isinstance(document, ResearchDocument) else [],
+            quality_report=dict(document.quality_report) if isinstance(document, ResearchDocument) else {},
+            evidence_pack=evidence_pack if isinstance(evidence_pack, ResearchEvidencePack) else None,
+            chunk_manifest_ref=_artifact_ref_by_kind(artifacts, "research-chunk-manifest"),
+            evidence_pack_ref=_artifact_ref_by_kind(artifacts, "research-evidence-pack"),
+            catalog_entry=catalog_entry if isinstance(catalog_entry, ResearchPaperCatalogEntry) else None,
+            catalog_status=str(final.get("catalog_status") or "").strip() or None,
+            artifact_refs=artifacts,
+            diagnostics=[{"code": "run_replayed", "run_id": run_id}],
+            provenance=_provenance(
+                paper if isinstance(paper, ResearchPaper) else ResearchPaper(paper_id=paper_id, title=paper_id),
+                snapshots,
+                actor_scope,
+            ),
+            idempotent=True,
+        )
 
     def _resolve(self, request: ParsePaperRequest) -> ResolvedPaperSource:
         resolver = self._resolver
@@ -1247,7 +1415,7 @@ class ParsePaperUseCase:
         event = {
             "event_id": event_id,
             "run_id": run_id,
-            "event_type": "research_parse_phase",
+            "event_type": "research_parse_terminal" if payload.get("terminal") else "research_parse_phase",
             "status": status,
             "from_status": payload.get("from_status"),
             "to_status": payload.get("to_status", status),
@@ -1824,6 +1992,15 @@ def _quality_report(
         or document.metadata.get("arxiv_id")
         or document.metadata.get("doi")
         or document.metadata.get("openreview_id")
+        or (
+            paper is not None
+            and (
+                paper.metadata.get("external_id")
+                or paper.metadata.get("arxiv_id")
+                or paper.metadata.get("doi")
+                or paper.metadata.get("openreview_id")
+            )
+        )
     )
     benchmark_tables = [
         table
@@ -1836,12 +2013,11 @@ def _quality_report(
     thresholds = {
         "metadata": {
             "title_present": True,
-            "author_present": True,
-            "external_id_present": False,
+            "author_or_external_id_present": True,
         },
         "reading": {
             "title_present": True,
-            "abstract_present": True,
+            "abstract_present": "diagnostic_only",
             "body_chars_min": 3000,
             "sections_min": 3,
             "non_empty_section_ratio_min": 0.8,
@@ -1850,13 +2026,14 @@ def _quality_report(
         },
         "catalog": {
             "title_present": True,
-            "abstract_present": True,
+            "abstract_present": "diagnostic_only",
             "body_chars_min": 3000,
             "sections_min": 3,
             "non_empty_section_ratio_min": 0.8,
             "replacement_char_ratio_max": 0.02,
-            "locator_coverage_min": 0.8,
+            "locator_coverage_min": 0.9,
             "benchmark_evidence_required_when_table_present": True,
+            "reference_locator_required_when_present": True,
         },
     }[profile]
     hard_failures: list[dict[str, Any]] = []
@@ -1867,15 +2044,27 @@ def _quality_report(
 
     if profile == "metadata":
         require("title_missing", title_present, True, title_present)
-        require("authors_missing", author_present, True, author_present)
+        require(
+            "author_or_external_id_missing",
+            {"authors": author_present, "external_id": external_id_present},
+            "at least one author or external id",
+            author_present or external_id_present,
+        )
     else:
         require("title_missing", title_present, True, title_present)
-        require("abstract_missing", abstract_present, True, abstract_present)
+        # Abstract is useful for reading and catalog projections, but its
+        # absence is a diagnostic rather than a hard parse failure.
         require("body_too_short", body_chars, 3000, body_chars >= 3000)
         require("sections_insufficient", len(document.sections), 3, len(document.sections) >= 3)
         require("empty_sections_excessive", non_empty_ratio, 0.8, non_empty_ratio >= 0.8)
         require("replacement_chars_excessive", replacement_ratio, 0.02, replacement_ratio <= 0.02)
-        require("locator_coverage_insufficient", locator_score, 0.8, locator_score >= 0.8)
+        locator_threshold = 0.9 if profile == "catalog" else 0.8
+        require(
+            "locator_coverage_insufficient",
+            locator_score,
+            locator_threshold,
+            locator_score >= locator_threshold,
+        )
         if profile == "catalog" and benchmark_tables:
             table_evidence = sum(1 for table in benchmark_tables if table.rows and table.source_ref)
             require(
@@ -1883,6 +2072,16 @@ def _quality_report(
                 table_evidence,
                 len(benchmark_tables),
                 table_evidence == len(benchmark_tables),
+            )
+        if profile == "catalog" and document.references:
+            located_references = sum(
+                1 for reference in document.references if reference.source_ref.strip()
+            )
+            require(
+                "reference_locator_missing",
+                located_references,
+                len(document.references),
+                located_references == len(document.references),
             )
     passed = not hard_failures
     document_status = "parsed" if passed else "degraded"
@@ -1918,6 +2117,11 @@ def _quality_report(
         "profile": profile,
         "thresholds": thresholds,
         "hardFailures": hard_failures,
+        "diagnostics": (
+            [{"code": "abstract_missing", "severity": "info"}]
+            if not abstract_present and profile != "metadata"
+            else []
+        ),
         "passed": passed,
         "documentStatus": document_status,
         "parseStatus": parse_status,
@@ -1965,6 +2169,14 @@ def _request_fingerprint(request: ParsePaperRequest, actor_scope: Mapping[str, s
     return sha256(encoded).hexdigest()
 
 
+def _scope_key(actor_scope: Mapping[str, Any] | None) -> str:
+    return "|".join(
+        f"{key}={str((actor_scope or {}).get(key) or '').strip()}"
+        for key in ("tenant_id", "user_id", "memory_namespace")
+        if str((actor_scope or {}).get(key) or "").strip()
+    ) or "public"
+
+
 def _parse_budget(options: Mapping[str, Any]) -> dict[str, Any]:
     timeout_seconds = float(options.get("timeout_seconds", 300.0))
     max_attempts = int(options.get("max_attempts", 2))
@@ -2009,13 +2221,15 @@ def _create_run_intent(
     request_fingerprint: str,
     actor_scope: Mapping[str, str],
     budget: Mapping[str, Any] | None = None,
-) -> None:
-    method = getattr(sink, "create_run_intent", None)
+) -> Mapping[str, Any] | None:
+    method = getattr(sink, "acquire_run_lease", None)
     if not callable(method):
-        return
+        method = getattr(sink, "create_run_intent", None)
+    if not callable(method):
+        return None
     try:
         try:
-            method(
+            result = method(
                 run_id,
                 request_fingerprint=request_fingerprint,
                 actor_scope=dict(actor_scope),
@@ -2024,13 +2238,20 @@ def _create_run_intent(
         except TypeError as exc:
             if "budget" not in str(exc):
                 raise
-            method(
+            result = method(
                 run_id,
                 request_fingerprint=request_fingerprint,
                 actor_scope=dict(actor_scope),
             )
-    except Exception:  # pragma: no cover - optional diagnostics must not hide parse errors
-        LOGGER.warning("research parse run intent could not be persisted", exc_info=True)
+    except Exception as exc:
+        raise ParsePaperError(
+            "run_intent_persist_failed",
+            "research parse run intent could not be persisted",
+            status_code=503,
+            retryable=True,
+            details={"run_id": run_id, "error_type": type(exc).__name__},
+        ) from exc
+    return dict(result) if isinstance(result, Mapping) else None
 
 
 def _finalize_run(
@@ -2039,11 +2260,18 @@ def _finalize_run(
     payload: Mapping[str, Any],
 ) -> None:
     method = getattr(sink, "finalize", None)
-    if callable(method):
-        try:
-            method(run_id, dict(payload))
-        except Exception:  # pragma: no cover - finalization remains observable through phase event
-            LOGGER.warning("research parse final result could not be persisted", exc_info=True)
+    if not callable(method):
+        return
+    try:
+        method(run_id, dict(payload))
+    except Exception as exc:
+        raise ParsePaperError(
+            "run_final_persist_failed",
+            "research parse final result could not be persisted",
+            status_code=503,
+            retryable=True,
+            details={"run_id": run_id, "error_type": type(exc).__name__},
+        ) from exc
 
 
 def _published_artifacts(document: ResearchDocument) -> dict[str, str]:
@@ -2055,6 +2283,11 @@ def _published_artifacts(document: ResearchDocument) -> dict[str, str]:
         for kind, ref in raw.items()
         if str(kind).strip() and str(ref).strip()
     }
+
+
+def _artifact_ref_by_kind(artifact_refs: list[str], artifact_type: str) -> str | None:
+    marker = f"/{artifact_type}/"
+    return next((ref for ref in artifact_refs if marker in ref), None)
 
 
 def _catalog_status(value: Any) -> str | None:

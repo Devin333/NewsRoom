@@ -160,9 +160,10 @@ def ingest_papers_application(args: argparse.Namespace) -> int:
     outcomes = []
     from interfaces.services.research_service import ResearchParseInput, ResearchServiceError
 
+    service = _research_service(args)
     for source in args.sources:
         try:
-            outcomes.append(_research_service(args).parse_paper(ResearchParseInput(
+            outcomes.append(service.parse_paper(ResearchParseInput(
                 source=source,
                 source_type=getattr(args, "source_type", None),
                 tenant_id=args.tenant_id,
@@ -174,11 +175,27 @@ def ingest_papers_application(args: argparse.Namespace) -> int:
             outcomes.append(_application_error_payload(source, exc, args=args))
         except Exception as exc:
             outcomes.append(_unexpected_error_payload(source, exc, args=args))
+    statuses = [str(item.get("status") or "failed") for item in outcomes]
+    failed = sum(status == "failed" for status in statuses)
+    metadata_only = sum(status == "metadata_only" for status in statuses)
+    degraded = sum(status in {"degraded", "catalog_partial", "metadata_only"} for status in statuses)
+    succeeded = sum(status in {"parsed", "catalog_ready"} for status in statuses)
     payload = {
+        "status": "failed" if failed else ("degraded" if degraded else "completed"),
+        "summary": {
+            "total": len(outcomes),
+            "succeeded": succeeded,
+            "metadataOnly": metadata_only,
+            "degraded": degraded,
+            "failed": failed,
+        },
         "outcomes": outcomes,
-        "succeeded": sum(item.get("status") not in {"failed", "metadata_only"} for item in outcomes),
-        "metadataOnly": sum(item.get("status") == "metadata_only" for item in outcomes),
-        "failed": sum(item.get("status") == "failed" for item in outcomes),
+        # Preserve the original flat counters for existing scripts.
+        "succeeded": succeeded,
+        "metadataOnly": metadata_only,
+        "degraded": degraded,
+        "failed": failed,
+        "provenance": {"actorScope": _actor_scope_payload(args)},
     }
     return _emit_command_payload(payload, json_output=args.json, label="Ingest complete")
 
@@ -312,9 +329,60 @@ def _emit_command_payload(payload: dict, *, json_output: bool, label: str) -> in
         print(f"{label}: {payload.get('status', 'ok')}")
         if payload.get("paperId"):
             print(f"paper: {payload['paperId']}")
+    return _command_exit_code(payload)
+
+
+def _command_exit_code(payload: dict) -> int:
+    """Return the stable CLI exit code for one result or a batch envelope."""
+
+    outcomes = payload.get("outcomes")
+    if isinstance(outcomes, list):
+        codes = [_command_exit_code(item) for item in outcomes if isinstance(item, dict)]
+        if codes:
+            return max(codes)
+
     status = str(payload.get("status") or "").casefold()
-    if status == "failed" or payload.get("error") or payload.get("failed", 0):
-        return 1
+    error = payload.get("error")
+    error_map = error if isinstance(error, dict) else {}
+    code = str(error_map.get("code") or payload.get("errorCode") or "").casefold()
+    status_code = error_map.get("statusCode", payload.get("statusCode"))
+    try:
+        status_code = int(status_code) if status_code is not None else None
+    except (TypeError, ValueError):
+        status_code = None
+    retryable = bool(error_map.get("retryable", payload.get("retryable", False)))
+
+    if status in {"invalid_request", "validation_error"} or code in {
+        "invalid_request",
+        "validation_error",
+        "parse_options_invalid",
+    }:
+        return 2
+    if status_code in {401, 403} or any(
+        marker in code
+        for marker in ("forbidden", "permission", "scope", "actor_unauthorized", "tenant_unauthorized")
+    ):
+        return 3
+    if code.startswith(("source_", "remote_source", "github_source")) or code in {
+        "source_denied",
+        "source_fetch_failed",
+        "source_rate_limited",
+        "source_timeout",
+    }:
+        return 4
+    if status == "catalog_partial" or code.startswith(("catalog_", "benchmark_", "leaderboard_", "relation_")):
+        return 6
+    if any(
+        marker in code
+        for marker in ("persist", "recovery", "artifact", "event_", "run_intent", "run_final")
+    ):
+        return 7
+    if status == "degraded" and not error:
+        return 0
+    if status == "failed" or code.startswith(("parse_", "quality_", "parser_")):
+        return 5
+    if payload.get("error") or payload.get("failed", 0):
+        return 5 if not retryable else 4
     return 0
 
 

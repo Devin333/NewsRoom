@@ -10,6 +10,7 @@ from backend.research.application.catalog import (
     ResearchPaperCatalogService,
 )
 from backend.research.application.parse_paper import (
+    InMemoryResearchEventSink,
     MetadataOnlySourceResolver,
     ParsePaperError,
     ParsePaperRequest,
@@ -680,6 +681,93 @@ def test_quality_profile_emits_hard_failures_and_catalog_eligibility() -> None:
     assert report["catalogEligible"] is True
     assert report["hardFailures"] == []
     assert report["thresholds"]["body_chars_min"] == 3000
+
+
+def test_quality_profile_treats_missing_abstract_as_diagnostic_and_metadata_allows_external_id() -> None:
+    digest = "b" * 64
+    document = ResearchDocument(
+        paper_id="metadata-quality-paper",
+        source_hash=digest,
+        title="Metadata quality paper",
+        sections=[
+            ResearchSection(
+                section_id=f"section-{index}",
+                title=f"Section {index}",
+                text=("body " * 700),
+                source_ref=f"paper://metadata-quality-paper/section-{index}",
+            )
+            for index in range(3)
+        ],
+        lineage=SourceLineage(
+            source_refs=["paper://metadata-quality-paper"],
+            source_hash=digest,
+        ),
+        metadata={"doi": "10.1000/quality"},
+    )
+
+    metadata = _quality_report(document, profile="metadata")
+    reading = _quality_report(document, profile="reading")
+
+    assert metadata["passed"] is True
+    assert reading["passed"] is True
+    assert reading["diagnostics"] == [{"code": "abstract_missing", "severity": "info"}]
+
+
+def test_parse_replays_completed_run_without_resolving_or_parsing_again() -> None:
+    repository = InMemoryResearchCatalogRepository()
+    parser = _Parser()
+    sink = InMemoryResearchEventSink()
+    use_case = ParsePaperUseCase(
+        source_resolver=_Resolver(
+            source_url="https://publisher.example/replay",
+            paper_id="replay-paper",
+            content=b"replay source",
+        ),
+        paper_repository=repository,
+        identity_repository=repository,
+        source_snapshot_repository=repository,
+        document_repository=repository,
+        document_parser=parser,
+        event_sink=sink,
+    )
+    request = ParsePaperRequest(source="https://publisher.example/replay", run_id="replay-run")
+
+    first = use_case.parse(request)
+    replay = use_case.parse(request)
+
+    assert first.idempotent is False
+    assert replay.idempotent is True
+    assert replay.paper_id == first.paper_id
+    assert parser.calls == 1
+    assert replay.diagnostics == [{"code": "run_replayed", "run_id": "replay-run"}]
+
+
+def test_parse_does_not_hide_intent_or_final_marker_failures() -> None:
+    class _IntentFailure:
+        def create_run_intent(self, *args, **kwargs) -> None:  # type: ignore[no-untyped-def]
+            raise OSError("intent store unavailable")
+
+        def append(self, run_id: str, event: dict) -> None:
+            raise AssertionError("append must not occur after intent failure")
+
+    with pytest.raises(ParsePaperError) as intent_error:
+        ParsePaperUseCase(event_sink=_IntentFailure()).parse(
+            ParsePaperRequest(source="https://publisher.example/intent")
+        )
+    assert intent_error.value.code == "run_intent_persist_failed"
+
+    class _FinalFailure:
+        def append(self, run_id: str, event: dict) -> None:
+            return None
+
+        def finalize(self, run_id: str, payload: dict) -> None:
+            raise OSError("final store unavailable")
+
+    with pytest.raises(ParsePaperError) as final_error:
+        ParsePaperUseCase(event_sink=_FinalFailure()).parse(
+            ParsePaperRequest(source="https://publisher.example/final")
+        )
+    assert final_error.value.code == "run_final_persist_failed"
 
 
 def test_refresh_appends_an_immutable_snapshot_for_unchanged_source() -> None:
