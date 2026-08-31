@@ -76,6 +76,10 @@ class ResearchSourceResolverAdapter:
         source_type = request.source_type or _infer_source_type(source)
         if request.content_ref and source_type == "local":
             source = request.content_ref.strip()
+        elif request.content_ref and source_type != "github":
+            content_resolved = self._resolve_content_ref(source, source_type, request)
+            if content_resolved is not None:
+                return content_resolved
         if source_type == "arxiv":
             return self._resolve_arxiv(source, request)
         if source_type == "local":
@@ -83,6 +87,77 @@ class ResearchSourceResolverAdapter:
         if source_type == "github":
             return self._resolve_github(source, request)
         return self._resolve_remote(source, source_type, request)
+
+    def _resolve_content_ref(
+        self,
+        source: str,
+        source_type: str,
+        request: Any,
+    ) -> ResolvedPaperSource | None:
+        """Use an authorized local upload as full text while retaining source metadata."""
+
+        content_ref = str(request.content_ref or "").strip()
+        if not content_ref or content_ref.startswith(("artifact://", "content://", "https://", "http://")):
+            return None
+        try:
+            path = _local_path(content_ref)
+            if self._local_root is not None and not _is_descendant(path, self._local_root):
+                return self._metadata_only(source, source_type, request, "content_ref_outside_allowed_root")
+            if not path.is_file():
+                return None
+            content = path.read_bytes()
+            if len(content) > self._fetch_policy.max_bytes:
+                return self._metadata_only(source, source_type, request, "content_ref_size_exceeded")
+            source_url = source if source.startswith(("http://", "https://")) else ""
+            canonical = canonicalize_url(source_url) if source_url else ""
+            external_id = _metadata_external_id(source, source_type, metadata=request.metadata)
+            metadata = {
+                **dict(request.metadata),
+                "content_ref": path.as_uri(),
+                "content_type": mimetypes.guess_type(path.name)[0] or _guess_content_type(content),
+            }
+            paper_id = _explicit_paper_id(metadata) or stable_research_id(
+                "paper", source_type, external_id or canonical or source
+            )
+            paper = _paper_from_metadata(
+                paper_id=paper_id,
+                source_type=source_type,
+                canonical_url=canonical,
+                external_id=external_id,
+                metadata=metadata,
+            )
+            source_hash = hashlib.sha256(content).hexdigest()
+            source_ref = canonical or path.as_uri()
+            snapshot = _snapshot(
+                paper=paper,
+                source_type=source_type,
+                canonical_url=canonical,
+                external_id=external_id,
+                content_type=metadata["content_type"],
+                source_hash=source_hash,
+                access_status="available",
+                metadata={"content_ref": path.as_uri(), "source_descriptor": source},
+            )
+            record = PaperSourceRecord(
+                source_id=snapshot.snapshot_id,
+                paper_id=paper_id,
+                source_type=source_type,
+                source_url=canonical or _local_source_url(path),
+                fetched_at=snapshot.fetched_at,
+                source_hash=source_hash,
+                metadata=metadata,
+            )
+            return ResolvedPaperSource(
+                paper=paper,
+                snapshot=snapshot,
+                content=content,
+                content_type=snapshot.content_type,
+                source_record=record,
+                access_status="available",
+                diagnostics=({"code": "content_ref_used", "content_ref": path.as_uri()},),
+            )
+        except OSError:
+            return None
 
     def _resolve_arxiv(self, source: str, request: Any) -> ResolvedPaperSource:
         if self._arxiv_provider is None:

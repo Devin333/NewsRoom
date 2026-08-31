@@ -47,6 +47,9 @@ def register(subparsers: argparse._SubParsersAction) -> None:
     search_parser = catalog_subparsers.add_parser("search", help="Search Catalog papers")
     search_parser.add_argument("query", nargs="?", default="")
     search_parser.add_argument("--limit", type=int, default=50)
+    search_parser.add_argument("--cursor", default=None)
+    search_parser.add_argument("--sort", default="observed_at desc, stable_id asc")
+    search_parser.add_argument("--include-diagnostics", action="store_true")
     _add_scope_flags(search_parser)
     search_parser.add_argument("--json", action="store_true", help="Print machine-readable JSON")
     search_parser.set_defaults(handler=catalog_search)
@@ -159,7 +162,6 @@ def ingest_papers_application(args: argparse.Namespace) -> int:
             outcomes.append(_research_service(args).parse_paper(ResearchParseInput(
                 source=source,
                 source_type=getattr(args, "source_type", None),
-                options={"with_propositions": bool(getattr(args, "with_propositions", False))},
                 tenant_id=args.tenant_id,
                 user_id=args.user_id,
                 memory_namespace=args.memory_namespace,
@@ -198,7 +200,14 @@ def catalog_show(args: argparse.Namespace) -> int:
 
 def catalog_search(args: argparse.Namespace) -> int:
     return _run_application_call(
-        lambda: _research_service(args).list_catalog_papers(query=args.query, limit=args.limit, actor=_actor_input(args)),
+        lambda: _research_service(args).list_catalog_papers(
+            query=args.query,
+            limit=args.limit,
+            cursor=args.cursor,
+            sort=args.sort,
+            include_diagnostics=args.include_diagnostics,
+            actor=_actor_input(args),
+        ),
         args=args,
         label="Catalog search failed",
     )

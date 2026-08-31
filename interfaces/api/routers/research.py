@@ -103,6 +103,7 @@ def create_router(services: ApiServices, helpers: ApiRouteHelpers) -> APIRouter:
             return services.research_service_factory().parse_paper(
                 ResearchParseInput(
                     source=source,
+                    source_url=payload.sourceUrl,
                     source_type=payload.sourceType,
                     content_ref=payload.contentRef,
                     run_id=payload.runId,
@@ -259,13 +260,23 @@ def create_router(services: ApiServices, helpers: ApiRouteHelpers) -> APIRouter:
         request: Request,
         query: str = "",
         limit: int = 50,
+        cursor: str | None = None,
+        sort: str = "observed_at desc, stable_id asc",
+        includeDiagnostics: bool = False,
         tenantId: str | None = None,
         userId: str | None = None,
         memoryNamespace: str | None = None,
     ):
         def call():
             actor = _bound_research_actor(request, tenant_id=tenantId, user_id=userId, memory_namespace=memoryNamespace, require_trusted_actor=True)
-            return services.research_service_factory().list_catalog_papers(query=query, limit=limit, actor=actor)
+            return services.research_service_factory().list_catalog_papers(
+                query=query,
+                limit=limit,
+                cursor=cursor,
+                sort=sort,
+                include_diagnostics=includeDiagnostics,
+                actor=actor,
+            )
 
         return _service_response(helpers, call)
 

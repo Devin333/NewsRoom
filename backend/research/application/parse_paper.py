@@ -48,6 +48,22 @@ from backend.research.services.evidence_builder import ResearchEvidenceBuilder
 LOGGER = logging.getLogger(__name__)
 
 ParseStatus = str
+PARSE_OPTION_KEYS = frozenset(
+    {
+        "parser_backend",
+        "quality_profile",
+        "refresh",
+        "include_code",
+        "include_catalog",
+        "include_chunks",
+        "include_evidence",
+        "max_attempts",
+        "timeout_seconds",
+    }
+)
+PARSE_OPTION_MAX_ATTEMPTS = 5
+PARSE_OPTION_MAX_TIMEOUT_SECONDS = 600
+PARSE_QUALITY_PROFILES = frozenset({"metadata", "reading", "catalog"})
 PARSE_STATUSES = frozenset(
     {
         "received",
@@ -87,6 +103,7 @@ class ParsePaperRequest(PrimitiveModel):
     """Input DTO shared by HTTP, CLI and direct application callers."""
 
     source: str
+    source_url: str | None = None
     source_type: ResearchSourceType | None = None
     content_ref: str | None = None
     run_id: str | None = None
@@ -97,7 +114,7 @@ class ParsePaperRequest(PrimitiveModel):
     options: dict[str, Any] = Field(default_factory=dict)
     metadata: dict[str, Any] = Field(default_factory=dict)
 
-    @field_validator("source", "content_ref", "run_id", "tenant_id", "user_id", "memory_namespace")
+    @field_validator("source", "source_url", "content_ref", "run_id", "tenant_id", "user_id", "memory_namespace")
     @classmethod
     def _normalize_optional_text(cls, value: str | None) -> str | None:
         if value is None:
@@ -109,6 +126,8 @@ class ParsePaperRequest(PrimitiveModel):
     def _validate_source(self) -> "ParsePaperRequest":
         if not self.source:
             raise ValueError("source is required")
+        if self.source_url and not _source_descriptors_equal(self.source, self.source_url):
+            raise ValueError("source and source_url must identify the same source")
         return self
 
 
@@ -199,6 +218,28 @@ class InMemoryResearchEventSink:
     def append(self, run_id: str, event: dict[str, Any]) -> None:
         self.events.append({"run_id": run_id, **dict(event)})
 
+    def create_run_intent(self, run_id: str, *, request_fingerprint: str, actor_scope: Mapping[str, str]) -> None:
+        self.events.append(
+            {
+                "run_id": run_id,
+                "event_id": f"{run_id}:intent",
+                "event_type": "research_parse_run_intent",
+                "status": "received",
+                "request_fingerprint": request_fingerprint,
+                "actor_scope": dict(actor_scope),
+            }
+        )
+
+    def finalize(self, run_id: str, payload: Mapping[str, Any]) -> None:
+        self.events.append(
+            {
+                "run_id": run_id,
+                "event_id": f"{run_id}:final",
+                "event_type": "research_parse_final_result",
+                **dict(payload),
+            }
+        )
+
 
 class ParsePaperUseCase:
     """Resolve, parse and persist one paper through bounded application steps."""
@@ -255,6 +296,12 @@ class ParsePaperUseCase:
         catalog_entry: ResearchPaperCatalogEntry | None = None
         catalog_status: str | None = None
         event_context: dict[str, Any] = {"actor_scope": actor_scope}
+        _create_run_intent(
+            self._event_sink,
+            run_id,
+            request_fingerprint=_request_fingerprint(request, actor_scope),
+            actor_scope=actor_scope,
+        )
 
         def emit(status: str, payload: Mapping[str, Any]) -> None:
             nonlocal current_status
@@ -284,9 +331,37 @@ class ParsePaperUseCase:
                 diagnostics=diagnostics,
                 event_context=event_context,
                 emit=emit,
+                max_retries=effective_max_retries(request.options, self._max_retries),
             )
             diagnostics.extend(dict(item) for item in resolved.diagnostics)
             snapshot = _snapshot_for_scope(resolved.snapshot, actor_scope, resolved.content)
+            if request.options:
+                snapshot = snapshot.model_copy(
+                    update={
+                        "metadata": {
+                            **dict(snapshot.metadata),
+                            "parse_options": dict(request.options),
+                        },
+                    }
+                )
+            if bool(request.options.get("refresh", False)):
+                # Refresh is a new immutable observation even when the bytes
+                # are unchanged. Binding the id to run_id keeps replay stable.
+                snapshot = snapshot.model_copy(
+                    update={
+                        "snapshot_id": stable_research_id(
+                            "source_snapshot_refresh",
+                            snapshot.paper_id,
+                            snapshot.snapshot_id,
+                            run_id,
+                        ),
+                        "metadata": {
+                            **dict(snapshot.metadata),
+                            "refresh": True,
+                            "run_id": run_id,
+                        },
+                    }
+                )
             existing_snapshot = _repository_get(
                 self._snapshot_repository,
                 snapshot.snapshot_id,
@@ -356,7 +431,7 @@ class ParsePaperUseCase:
                     "code": "full_text_unavailable" if status == "metadata_only" else "source_fetch_failed",
                     "access_status": resolved.access_status,
                 })
-                if self._catalog_projection is not None and status == "metadata_only":
+                if self._catalog_projection is not None and status == "metadata_only" and request.options.get("include_catalog", True):
                     try:
                         catalog_entry = _refresh_catalog_projection(
                             self._catalog_projection,
@@ -383,6 +458,18 @@ class ParsePaperUseCase:
                         "diagnostics": diagnostics,
                     },
                 )
+                _finalize_run(
+                    self._event_sink,
+                    run_id,
+                    {
+                        "status": status,
+                        "paper_id": paper.paper_id,
+                        "catalog_status": catalog_status,
+                        "artifact_refs": artifact_refs,
+                        "source_snapshot_refs": [item.snapshot_id for item in snapshots],
+                        "actor_scope": actor_scope,
+                    },
+                )
                 return ParsePaperResult(
                     run_id=run_id,
                     paper_id=paper.paper_id,
@@ -400,9 +487,13 @@ class ParsePaperUseCase:
 
             existing = self._existing_document(paper.paper_id, snapshot, actor_scope=actor_scope)
             published_artifacts: dict[str, str] = {}
-            if existing is not None:
+            # Documents are keyed by paper/source hash and remain immutable;
+            # refresh adds a source observation but may reuse the same parsed
+            # document when the bytes did not change.
+            reuse_existing_document = existing is not None
+            if reuse_existing_document:
                 document = existing
-                idempotent = True
+                idempotent = not bool(request.options.get("refresh", False))
                 diagnostics.append({"code": "source_checksum_reused", "source_hash": document.source_hash})
                 published_artifacts = _published_artifacts(document)
             else:
@@ -415,19 +506,32 @@ class ParsePaperUseCase:
                     diagnostics=diagnostics,
                     event_context=event_context,
                     emit=emit,
+                    max_retries=effective_max_retries(request.options, self._max_retries),
                 )
                 idempotent = False
+            parser_attempts = _parser_attempts(document)
+            quality_report = _quality_report(
+                document,
+                profile=str(request.options.get("quality_profile") or "reading"),
+            )
+            if not reuse_existing_document:
+                document = document.model_copy(
+                    update={
+                        "quality_report": quality_report,
+                        "metadata": {**dict(document.metadata), "quality_report": quality_report},
+                    }
+                )
                 if self._document_repository is not None:
                     self._document_repository.save(document)
-            parser_attempts = _parser_attempts(document)
-            quality_report = _quality_report(document)
             if document.metadata.get("degraded"):
                 status = "degraded"
                 diagnostics.append({"code": "parser_degraded", "quality": quality_report})
             else:
                 status = "parsed"
             evidence_pack = None
-            if idempotent and self._evidence_repository is not None:
+            include_evidence = bool(request.options.get("include_evidence", True))
+            include_chunks = bool(request.options.get("include_chunks", True))
+            if include_evidence and idempotent and self._evidence_repository is not None:
                 existing_evidence = _repository_get(
                     self._evidence_repository,
                     paper.paper_id,
@@ -436,7 +540,7 @@ class ParsePaperUseCase:
                 )
                 if isinstance(existing_evidence, ResearchEvidencePack):
                     evidence_pack = existing_evidence
-            evidence_pack = evidence_pack or self._build_evidence(document)
+            evidence_pack = (evidence_pack or self._build_evidence(document)) if include_evidence else None
             if evidence_pack is not None:
                 evidence_pack = evidence_pack.model_copy(
                     update={
@@ -478,8 +582,8 @@ class ParsePaperUseCase:
             if document_ref:
                 artifact_refs.append(document_ref)
                 published_artifacts["research-document"] = document_ref
-            chunk_manifest_ref = published_artifacts.get("research-chunk-manifest")
-            if chunk_manifest_ref is None:
+            chunk_manifest_ref = published_artifacts.get("research-chunk-manifest") if include_chunks else None
+            if include_chunks and chunk_manifest_ref is None:
                 chunk_manifest_ref = self._publish_chunk_manifest(
                     paper=paper,
                     document=document,
@@ -508,7 +612,7 @@ class ParsePaperUseCase:
                 }
             )
             emit(status, {"paper_id": paper.paper_id, "parser_attempts": parser_attempts})
-            if self._catalog_projection is not None:
+            if self._catalog_projection is not None and request.options.get("include_catalog", True):
                 try:
                     catalog_entry = _refresh_catalog_projection(
                         self._catalog_projection,
@@ -529,6 +633,19 @@ class ParsePaperUseCase:
                     diagnostics.append({"code": "catalog_projection_failed", "error_type": type(exc).__name__})
                     status = "catalog_partial"
                     emit("catalog_partial", {"paper_id": paper.paper_id, "error_type": type(exc).__name__})
+            _finalize_run(
+                self._event_sink,
+                run_id,
+                {
+                    "status": status,
+                    "paper_id": paper.paper_id,
+                    "catalog_status": catalog_status,
+                    "artifact_refs": artifact_refs,
+                    "source_snapshot_refs": [item.snapshot_id for item in snapshots],
+                    "document_id": document.document_id,
+                    "actor_scope": actor_scope,
+                },
+            )
             return ParsePaperResult(
                 run_id=run_id,
                 paper_id=paper.paper_id,
@@ -596,6 +713,7 @@ class ParsePaperUseCase:
         diagnostics: list[dict[str, Any]],
         event_context: Mapping[str, Any],
         emit: Any,
+        max_retries: int | None = None,
     ) -> ResolvedPaperSource:
         """Retry only resolver failures that explicitly opt into retry.
 
@@ -606,19 +724,20 @@ class ParsePaperUseCase:
         retried here.
         """
 
-        for attempt in range(self._max_retries + 1):
+        retry_budget = self._max_retries if max_retries is None else max(0, int(max_retries))
+        for attempt in range(retry_budget + 1):
             try:
                 return self._resolve(request)
             except Exception as exc:
                 retryable = isinstance(exc, ParsePaperError) and exc.retryable
                 retryable = retryable or _is_retryable(exc)
-                if not retryable or attempt >= self._max_retries:
+                if not retryable or attempt >= retry_budget:
                     raise
                 retry_number = attempt + 1
                 diagnostic = {
                     "code": "source_retry_scheduled",
                     "attempt": retry_number,
-                    "max_retries": self._max_retries,
+                    "max_retries": retry_budget,
                     "error_type": type(exc).__name__,
                 }
                 diagnostics.append(diagnostic)
@@ -627,7 +746,7 @@ class ParsePaperUseCase:
                     {
                         "phase": "retry_scheduled",
                         "attempt": retry_number,
-                        "max_retries": self._max_retries,
+                        "max_retries": retry_budget,
                         "diagnostics": [diagnostic],
                         "run_id": run_id,
                         **dict(event_context),
@@ -890,6 +1009,7 @@ class ParsePaperUseCase:
         diagnostics: list[dict[str, Any]],
         event_context: Mapping[str, Any],
         emit: Any,
+        max_retries: int | None = None,
     ) -> ResearchDocument:
         """Retry a failed parse a bounded number of times.
 
@@ -898,19 +1018,20 @@ class ParsePaperUseCase:
         failure is observable without creating an unbounded workflow loop.
         """
 
-        for attempt in range(self._max_retries + 1):
+        retry_budget = self._max_retries if max_retries is None else max(0, int(max_retries))
+        for attempt in range(retry_budget + 1):
             try:
                 return self._parse_document(paper, snapshot, resolved)
             except Exception as exc:
                 retryable = isinstance(exc, ParsePaperError) and exc.retryable
                 retryable = retryable or _is_retryable(exc)
-                if not retryable or attempt >= self._max_retries:
+                if not retryable or attempt >= retry_budget:
                     raise
                 retry_number = attempt + 1
                 diagnostic = {
                     "code": "parser_retry_scheduled",
                     "attempt": retry_number,
-                    "max_retries": self._max_retries,
+                    "max_retries": retry_budget,
                     "error_type": type(exc).__name__,
                 }
                 diagnostics.append(diagnostic)
@@ -919,7 +1040,7 @@ class ParsePaperUseCase:
                     {
                         "phase": "retry_scheduled",
                         "attempt": retry_number,
-                        "max_retries": self._max_retries,
+                        "max_retries": retry_budget,
                         "diagnostics": [diagnostic],
                         "run_id": run_id,
                         **dict(event_context),
@@ -1235,6 +1356,79 @@ def infer_source_type(source: str) -> ResearchSourceType:
     return "manual"
 
 
+def validate_parse_options(options: Mapping[str, Any] | None) -> dict[str, Any]:
+    """Validate the public parse option contract at the application boundary."""
+
+    values = dict(options or {})
+    unknown = sorted(str(key) for key in values if str(key) not in PARSE_OPTION_KEYS)
+    if unknown:
+        raise ParsePaperError(
+            "invalid_request",
+            "parse options contain unsupported keys",
+            status_code=400,
+            details={"unknown_options": unknown},
+        )
+    for key in ("refresh", "include_code", "include_catalog", "include_chunks", "include_evidence"):
+        if key in values and not isinstance(values[key], bool):
+            raise ParsePaperError(
+                "invalid_request",
+                f"parse option {key} must be boolean",
+                status_code=400,
+                details={"option": key},
+            )
+    if "parser_backend" in values:
+        backend = str(values["parser_backend"]).strip().casefold()
+        if not backend:
+            raise ParsePaperError("invalid_request", "parser_backend must not be empty", status_code=400)
+        values["parser_backend"] = backend
+    if "quality_profile" in values:
+        profile = str(values["quality_profile"]).strip().casefold()
+        if profile not in PARSE_QUALITY_PROFILES:
+            raise ParsePaperError(
+                "invalid_request",
+                "quality_profile is unsupported",
+                status_code=400,
+                details={"allowed": sorted(PARSE_QUALITY_PROFILES)},
+            )
+        values["quality_profile"] = profile
+    if "max_attempts" in values:
+        raw = values["max_attempts"]
+        if isinstance(raw, bool) or not isinstance(raw, int) or not 1 <= raw <= PARSE_OPTION_MAX_ATTEMPTS:
+            raise ParsePaperError(
+                "invalid_request",
+                f"max_attempts must be between 1 and {PARSE_OPTION_MAX_ATTEMPTS}",
+                status_code=400,
+            )
+    if "timeout_seconds" in values:
+        raw = values["timeout_seconds"]
+        if isinstance(raw, bool) or not isinstance(raw, (int, float)) or not 0 < float(raw) <= PARSE_OPTION_MAX_TIMEOUT_SECONDS:
+            raise ParsePaperError(
+                "invalid_request",
+                f"timeout_seconds must be between 1 and {PARSE_OPTION_MAX_TIMEOUT_SECONDS}",
+                status_code=400,
+            )
+        values["timeout_seconds"] = float(raw)
+    return values
+
+
+def effective_max_retries(options: Mapping[str, Any] | None, configured: int) -> int:
+    values = dict(options or {})
+    max_attempts = values.get("max_attempts")
+    if max_attempts is None:
+        return configured
+    return min(configured, max(0, int(max_attempts) - 1))
+
+
+def _source_descriptors_equal(left: str, right: str) -> bool:
+    def normalize(value: str) -> str:
+        text = str(value or "").strip()
+        if text.startswith(("http://", "https://")):
+            return canonicalize_url(text).casefold()
+        return text.rstrip("/").casefold()
+
+    return bool(normalize(left)) and normalize(left) == normalize(right)
+
+
 def _canonical_source(source: str) -> str:
     if source.startswith(("http://", "https://")):
         return canonicalize_url(source)
@@ -1524,8 +1718,45 @@ def _sanitize_parser_attempt(value: Mapping[str, Any]) -> dict[str, Any]:
     return result
 
 
-def _quality_report(document: ResearchDocument) -> dict[str, Any]:
+def _quality_report(document: ResearchDocument, *, profile: str = "reading") -> dict[str, Any]:
     body_chars = sum(len(section.text or "") for section in document.sections)
+    non_empty_sections = sum(1 for section in document.sections if (section.text or "").strip())
+    non_empty_ratio = non_empty_sections / len(document.sections) if document.sections else 0.0
+    text = "\n".join(section.text or "" for section in document.sections)
+    replacement_ratio = text.count("\ufffd") / len(text) if text else 0.0
+    element_count = sum(
+        len(items)
+        for items in (
+            document.sections,
+            document.figures,
+            document.tables,
+            document.equations,
+            document.references,
+        )
+    )
+    locator_count = len(set(document.source_locators))
+    locator_score = min(1.0, locator_count / element_count) if element_count else 0.0
+    structure_score = min(1.0, len(document.sections) / 3.0) * non_empty_ratio
+    text_score = min(1.0, body_chars / 3000.0) * max(0.0, 1.0 - replacement_ratio)
+    # A document with no optional structured elements is still structurally
+    # valid; when elements exist, require their locators to be represented.
+    structured_count = len(document.figures) + len(document.tables) + len(document.equations) + len(document.references)
+    element_score = 1.0 if structured_count == 0 else min(1.0, locator_count / (len(document.sections) + structured_count))
+    integrity_score = 1.0 if document.source_hash and document.lineage.source_hash == document.source_hash else 0.0
+    scores = {
+        "structure_score": round(structure_score, 6),
+        "text_score": round(text_score, 6),
+        "locator_score": round(locator_score, 6),
+        "element_score": round(element_score, 6),
+        "integrity_score": round(integrity_score, 6),
+    }
+    quality_score = (
+        0.25 * structure_score
+        + 0.25 * text_score
+        + 0.20 * locator_score
+        + 0.15 * element_score
+        + 0.15 * integrity_score
+    )
     return {
         "sections": len(document.sections),
         "figures": len(document.figures),
@@ -1533,8 +1764,64 @@ def _quality_report(document: ResearchDocument) -> dict[str, Any]:
         "equations": len(document.equations),
         "references": len(document.references),
         "bodyChars": body_chars,
+        "nonEmptySectionRatio": round(non_empty_ratio, 6),
+        "replacementCharRatio": round(replacement_ratio, 6),
+        "locatorCoverage": round(locator_score, 6),
+        "scores": scores,
+        "quality_score": round(quality_score, 6),
+        "qualityScore": round(quality_score, 6),
+        "formula_version": "research-quality-v1",
+        "profile": profile,
+        "weights": {
+            "structure_score": 0.25,
+            "text_score": 0.25,
+            "locator_score": 0.20,
+            "element_score": 0.15,
+            "integrity_score": 0.15,
+        },
         "degraded": bool(document.metadata.get("degraded")),
     }
+
+
+def _request_fingerprint(request: ParsePaperRequest, actor_scope: Mapping[str, str]) -> str:
+    payload = {
+        "source": request.source,
+        "source_type": request.source_type,
+        "content_ref": request.content_ref,
+        "options": dict(request.options),
+        "actor_scope": dict(actor_scope),
+    }
+    encoded = repr(sorted(payload.items())).encode("utf-8")
+    return sha256(encoded).hexdigest()
+
+
+def _create_run_intent(
+    sink: ResearchEventSink | None,
+    run_id: str,
+    *,
+    request_fingerprint: str,
+    actor_scope: Mapping[str, str],
+) -> None:
+    method = getattr(sink, "create_run_intent", None)
+    if not callable(method):
+        return
+    try:
+        method(run_id, request_fingerprint=request_fingerprint, actor_scope=dict(actor_scope))
+    except Exception:  # pragma: no cover - optional diagnostics must not hide parse errors
+        LOGGER.warning("research parse run intent could not be persisted", exc_info=True)
+
+
+def _finalize_run(
+    sink: ResearchEventSink | None,
+    run_id: str,
+    payload: Mapping[str, Any],
+) -> None:
+    method = getattr(sink, "finalize", None)
+    if callable(method):
+        try:
+            method(run_id, dict(payload))
+        except Exception:  # pragma: no cover - finalization remains observable through phase event
+            LOGGER.warning("research parse final result could not be persisted", exc_info=True)
 
 
 def _published_artifacts(document: ResearchDocument) -> dict[str, str]:

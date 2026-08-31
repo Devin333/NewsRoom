@@ -16,6 +16,7 @@ from backend.research.application.parse_paper import (
     ParsePaperUseCase,
     ResolvedPaperSource,
     infer_source_type,
+    validate_parse_options,
 )
 from backend.research.document.chunk_manifest import ChunkManifestManager
 from backend.research.document.chunker import PaperDocumentChunker
@@ -596,3 +597,48 @@ def test_parse_error_emits_terminal_failed_event_before_rethrowing() -> None:
         use_case.parse(ParsePaperRequest(source="https://publisher.example/failed", run_id="failed-run"))
 
     assert any(event["to_status"] == "failed" for event in events)
+
+
+def test_parse_options_are_allowlisted_and_bounded() -> None:
+    assert validate_parse_options({"quality_profile": "catalog", "max_attempts": 2})["max_attempts"] == 2
+
+    with pytest.raises(ParsePaperError) as unknown:
+        validate_parse_options({"with_propositions": True})
+    assert unknown.value.code == "invalid_request"
+    assert unknown.value.status_code == 400
+
+    with pytest.raises(ParsePaperError):
+        validate_parse_options({"max_attempts": 6})
+    with pytest.raises(ParsePaperError):
+        validate_parse_options({"timeout_seconds": 601})
+
+
+def test_refresh_appends_an_immutable_snapshot_for_unchanged_source() -> None:
+    repository = InMemoryResearchCatalogRepository()
+    use_case = ParsePaperUseCase(
+        source_resolver=MetadataOnlySourceResolver(),
+        paper_repository=repository,
+        identity_repository=repository,
+        source_snapshot_repository=repository,
+    )
+    first = use_case.parse(
+        ParsePaperRequest(
+            source="https://publisher.example/refresh",
+            source_type="publisher",
+            run_id="refresh-run-1",
+            tenant_id="tenant-a",
+        )
+    )
+    refreshed = use_case.parse(
+        ParsePaperRequest(
+            source="https://publisher.example/refresh",
+            source_type="publisher",
+            run_id="refresh-run-2",
+            tenant_id="tenant-a",
+            options={"refresh": True},
+        )
+    )
+
+    assert refreshed.source_snapshots[0].snapshot_id != first.source_snapshots[0].snapshot_id
+    assert refreshed.idempotent is False
+    assert len(repository.list_for_paper(first.paper_id, actor_scope={"tenant_id": "tenant-a"})) == 2

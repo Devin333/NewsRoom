@@ -48,6 +48,12 @@ class AuditEmitter:
         resource_type: str,
         result: AuditResult,
         resource_id: str | None = None,
+        permission: str | None = None,
+        scope_ref: str | None = None,
+        reason_code: str | None = None,
+        request_id: str | None = None,
+        run_id: str | None = None,
+        correlation_id: str | None = None,
         metadata: dict[str, Any] | None = None,
     ) -> AuditRecord | None:
         try:
@@ -57,6 +63,12 @@ class AuditEmitter:
                 resource_type=resource_type,
                 resource_id=resource_id,
                 result=result,
+                permission=permission,
+                scope_ref=scope_ref,
+                reason_code=reason_code,
+                request_id=request_id or actor.request_id,
+                run_id=run_id,
+                correlation_id=correlation_id or request_id or actor.request_id,
                 metadata=_redact_sensitive_keys(metadata or {}),
             )
             self.sink.append(record)

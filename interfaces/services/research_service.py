@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import logging
+import base64
+import hashlib
+import json
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from threading import RLock
@@ -78,6 +81,7 @@ class ResearchAskInput:
 @dataclass(frozen=True)
 class ResearchParseInput:
     source: str
+    source_url: str | None = None
     source_type: str | None = None
     content_ref: str | None = None
     run_id: str | None = None
@@ -301,6 +305,7 @@ class ResearchApplicationService:
             result = use_case.parse(
                 ParsePaperRequest(
                     source=command.source,
+                    source_url=command.source_url,
                     source_type=command.source_type,
                     content_ref=command.content_ref,
                     run_id=command.run_id,
@@ -410,14 +415,69 @@ class ResearchApplicationService:
         payload["provenance"] = {"actorScope": actor_scope.to_metadata()}
         return payload
 
-    def list_catalog_papers(self, *, query: str = "", limit: int = 50, actor: ResearchActorInput | None = None) -> dict[str, Any]:
+    def list_catalog_papers(
+        self,
+        *,
+        query: str = "",
+        limit: int = 50,
+        cursor: str | None = None,
+        sort: str = "observed_at desc, stable_id asc",
+        include_diagnostics: bool = False,
+        actor: ResearchActorInput | None = None,
+    ) -> dict[str, Any]:
         service = self._require_catalog_service()
         actor_scope = _resolve_actor_input(self._ask_use_case, actor)
+        if sort not in {"observed_at desc, stable_id asc", "title asc, stable_id asc"}:
+            raise ResearchServiceError(
+                "invalid_request",
+                "unsupported catalog sort",
+                status_code=400,
+                details={"allowed_sort": ["observed_at desc, stable_id asc", "title asc, stable_id asc"]},
+                user_action_required=True,
+            )
         try:
-            entries = service.search_papers(query, limit=limit, actor_scope=actor_scope.to_metadata())
+            if isinstance(limit, bool) or not 1 <= int(limit) <= 200:
+                raise CatalogError("invalid_limit", "limit must be between 1 and 200", status_code=400)
+            all_entries = service.search_papers(query, limit=200, actor_scope=actor_scope.to_metadata())
+            if sort == "title asc, stable_id asc":
+                all_entries.sort(key=lambda entry: (entry.identity.title.casefold(), entry.paper_id))
+            else:
+                all_entries.sort(
+                    key=lambda entry: (
+                        entry.observed_at.timestamp() if entry.observed_at is not None else 0.0,
+                        entry.paper_id,
+                    ),
+                    reverse=True,
+                )
+            offset = _decode_catalog_cursor(
+                cursor,
+                query=query,
+                sort=sort,
+                scope=actor_scope.to_metadata(),
+            )
+            entries = all_entries[offset : offset + int(limit)]
         except CatalogError as exc:
             raise ResearchServiceError(exc.code, exc.message, status_code=exc.status_code, details=exc.details, user_action_required=exc.status_code < 500) from exc
-        return {"papers": [_to_dict(entry) for entry in entries], "query": query, "provenance": {"actorScope": actor_scope.to_metadata()}}
+        payload_entries = [_to_dict(entry) for entry in entries]
+        if not include_diagnostics:
+            for entry in payload_entries:
+                metadata = entry.get("metadata")
+                if isinstance(metadata, dict):
+                    metadata.pop("diagnostics", None)
+        next_cursor = None
+        if offset + len(entries) < len(all_entries):
+            next_cursor = _encode_catalog_cursor(
+                offset=offset + len(entries),
+                query=query,
+                sort=sort,
+                scope=actor_scope.to_metadata(),
+            )
+        return {
+            "papers": payload_entries,
+            "query": query,
+            "pagination": {"limit": int(limit), "nextCursor": next_cursor, "sort": sort},
+            "provenance": {"actorScope": actor_scope.to_metadata()},
+        }
 
     def get_leaderboards(
         self,
@@ -1274,6 +1334,68 @@ def _require_text(value: Any, field_name: str) -> str:
             user_action_required=True,
         )
     return text
+
+
+def _catalog_scope_fingerprint(scope: Mapping[str, Any]) -> str:
+    encoded = json.dumps(
+        {str(key): str(value) for key, value in sorted(scope.items()) if str(value).strip()},
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _encode_catalog_cursor(
+    *,
+    offset: int,
+    query: str,
+    sort: str,
+    scope: Mapping[str, Any],
+) -> str:
+    payload = {
+        "v": "research.catalog.v1",
+        "offset": int(offset),
+        "query": hashlib.sha256(str(query or "").strip().casefold().encode("utf-8")).hexdigest(),
+        "scope": _catalog_scope_fingerprint(scope),
+        "sort": sort,
+    }
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return base64.urlsafe_b64encode(encoded).decode("ascii").rstrip("=")
+
+
+def _decode_catalog_cursor(
+    cursor: str | None,
+    *,
+    query: str,
+    sort: str,
+    scope: Mapping[str, Any],
+) -> int:
+    if not cursor:
+        return 0
+    try:
+        padded = str(cursor) + "=" * (-len(str(cursor)) % 4)
+        payload = json.loads(base64.urlsafe_b64decode(padded.encode("ascii")).decode("utf-8"))
+        if not isinstance(payload, dict):
+            raise ValueError
+        expected_query = hashlib.sha256(str(query or "").strip().casefold().encode("utf-8")).hexdigest()
+        if (
+            payload.get("v") != "research.catalog.v1"
+            or payload.get("query") != expected_query
+            or payload.get("scope") != _catalog_scope_fingerprint(scope)
+            or payload.get("sort") != sort
+            or isinstance(payload.get("offset"), bool)
+            or not isinstance(payload.get("offset"), int)
+            or payload["offset"] < 0
+        ):
+            raise ValueError
+        return int(payload["offset"])
+    except (ValueError, TypeError, UnicodeDecodeError, json.JSONDecodeError, base64.binascii.Error) as exc:
+        raise ResearchServiceError(
+            "invalid_cursor",
+            "catalog cursor is invalid or no longer matches the query",
+            status_code=400,
+            user_action_required=True,
+        ) from exc
 
 
 def _optional_text(value: Any) -> str | None:

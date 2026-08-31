@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -327,6 +328,25 @@ class FilesystemResearchCatalogStore:
                     raise ResearchCatalogStoreError("immutable research artifact ref conflicts with existing content")
             else:
                 write_json_object_unlocked(resolved, envelope)
+        marker = {
+            "schema_version": 1,
+            "record_type": "research_artifact_commit_marker",
+            "status": "committed",
+            "artifact_ref": f"artifact://research/{artifact_type}/{digest}",
+            "artifact_type": artifact_type,
+            "run_id": artifact_metadata.get("run_id"),
+            "content_checksum": digest,
+            "created_at": datetime.now(UTC).isoformat(),
+            "actor_scope": artifact_metadata.get("actor_scope", {}),
+        }
+        marker_path = target.with_suffix(".commit.json")
+        with locked_json_file(marker_path) as resolved:
+            if resolved.exists():
+                existing = read_json_object_unlocked(resolved, default={}, strict=True)
+                if existing.get("content_checksum") != digest:
+                    raise ResearchCatalogStoreError("research artifact commit marker conflicts with content")
+            else:
+                write_json_object_unlocked(resolved, marker)
         return f"artifact://research/{artifact_type}/{digest}"
 
 
@@ -335,6 +355,52 @@ class FilesystemResearchEventSink:
 
     def __init__(self, root: str | Path = ".newsroom/research_catalog") -> None:
         self.root = Path(root).expanduser()
+
+    def create_run_intent(
+        self,
+        run_id: str,
+        *,
+        request_fingerprint: str,
+        actor_scope: Mapping[str, str],
+    ) -> None:
+        target = self._run_record_path(run_id, actor_scope, "intent")
+        payload = {
+            "schema_version": 1,
+            "record_type": "research_parse_run_intent",
+            "record_id": f"{run_id}:intent",
+            "run_id": run_id,
+            "request_fingerprint": request_fingerprint,
+            "actor_scope": dict(actor_scope),
+            "status": "pending",
+        }
+        with locked_json_file(target) as resolved:
+            if resolved.exists():
+                existing = read_json_object_unlocked(resolved, default={}, strict=True)
+                if existing != payload:
+                    raise ResearchCatalogStoreError("research run intent conflicts with existing run")
+            else:
+                write_json_object_unlocked(resolved, payload)
+
+    def finalize(self, run_id: str, payload: Mapping[str, Any]) -> None:
+        actor_scope = payload.get("actor_scope")
+        scope = actor_scope if isinstance(actor_scope, Mapping) else {}
+        target = self._run_record_path(run_id, scope, "final")
+        record = {
+            "schema_version": 1,
+            "record_type": "research_parse_final_result",
+            "record_id": f"{run_id}:final",
+            "run_id": run_id,
+            **dict(payload),
+            "status": str(payload.get("status") or "failed"),
+            "actor_scope": dict(scope),
+        }
+        with locked_json_file(target) as resolved:
+            if resolved.exists():
+                existing = read_json_object_unlocked(resolved, default={}, strict=True)
+                if existing != record:
+                    raise ResearchCatalogStoreError("research final result conflicts with existing run")
+            else:
+                write_json_object_unlocked(resolved, record)
 
     def append(self, run_id: str, event: dict[str, Any]) -> None:
         run = _safe_segment(run_id, "run_id")
@@ -355,6 +421,21 @@ class FilesystemResearchEventSink:
             line = json.dumps({"run_id": run_id, **dict(event)}, ensure_ascii=False, sort_keys=True)
             with resolved.open("a", encoding="utf-8") as handle:
                 handle.write(line + "\n")
+
+    def _run_record_path(
+        self,
+        run_id: str,
+        actor_scope: Mapping[str, str],
+        record_kind: str,
+    ) -> Path:
+        run = _safe_segment(run_id, "run_id")
+        scope = {
+            str(key): str(value).strip()
+            for key, value in actor_scope.items()
+            if str(key) in {"tenant_id", "user_id", "memory_namespace"} and str(value).strip()
+        }
+        digest = hashlib.sha256(actor_scope_ref(scope).encode("utf-8")).hexdigest()[:32]
+        return self.root / "runs" / digest / f"{run}.{record_kind}.json"
 
 _STATE_COLLECTIONS = (
     "catalog",

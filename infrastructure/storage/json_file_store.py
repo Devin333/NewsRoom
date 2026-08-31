@@ -62,10 +62,10 @@ def write_json_object_unlocked(path: str | Path, payload: Mapping[str, Any]) -> 
     temporary = resolved.with_name(
         f"{resolved.name}.{os.getpid()}.{threading.get_ident()}.{uuid4().hex}.tmp"
     )
-    temporary.write_text(
-        json.dumps(dict(payload), ensure_ascii=False, indent=2, sort_keys=True),
-        encoding="utf-8",
-    )
+    with temporary.open("w", encoding="utf-8") as handle:
+        handle.write(json.dumps(dict(payload), ensure_ascii=False, indent=2, sort_keys=True))
+        handle.flush()
+        os.fsync(handle.fileno())
     attempts = 8 if os.name == "nt" else 1
     for attempt in range(attempts):
         try:
