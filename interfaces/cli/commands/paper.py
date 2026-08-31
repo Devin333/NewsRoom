@@ -18,6 +18,7 @@ def register(subparsers: argparse._SubParsersAction) -> None:
         action="store_true",
         help="Run LLM proposition decomposition (slower, needs LLM)",
     )
+    _add_parse_options(ingest_parser)
     _add_scope_flags(ingest_parser)
     ingest_parser.add_argument("--json", action="store_true", help="Print machine-readable JSON")
     ingest_parser.set_defaults(handler=ingest_papers_application)
@@ -27,6 +28,7 @@ def register(subparsers: argparse._SubParsersAction) -> None:
     parse_parser.add_argument("--source-type", default=None, help="Explicit source type")
     parse_parser.add_argument("--content-ref", default=None, help="Local content or artifact reference")
     parse_parser.add_argument("--run-id", default=None, help="Durable parse run id")
+    _add_parse_options(parse_parser)
     _add_scope_flags(parse_parser)
     parse_parser.add_argument("--json", action="store_true", help="Print machine-readable JSON")
     parse_parser.set_defaults(handler=parse_paper)
@@ -146,6 +148,7 @@ def parse_paper(args: argparse.Namespace) -> int:
                 tenant_id=args.tenant_id,
                 user_id=args.user_id,
                 memory_namespace=args.memory_namespace,
+                options=_parse_options_from_args(args),
             )
         ),
         args=args,
@@ -165,6 +168,7 @@ def ingest_papers_application(args: argparse.Namespace) -> int:
                 tenant_id=args.tenant_id,
                 user_id=args.user_id,
                 memory_namespace=args.memory_namespace,
+                options=_parse_options_from_args(args),
             )))
         except ResearchServiceError as exc:
             outcomes.append(_application_error_payload(source, exc, args=args))
@@ -252,6 +256,33 @@ def _add_scope_flags(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--tenant-id", default=None)
     parser.add_argument("--user-id", default=None)
     parser.add_argument("--memory-namespace", default=None)
+
+
+def _add_parse_options(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--parser-backend", default=None)
+    parser.add_argument("--quality-profile", choices=("metadata", "reading", "catalog"), default=None)
+    parser.add_argument("--refresh", action="store_true")
+    parser.add_argument("--include-code", action=argparse.BooleanOptionalAction, default=None)
+    parser.add_argument("--include-catalog", action=argparse.BooleanOptionalAction, default=None)
+    parser.add_argument("--include-chunks", action=argparse.BooleanOptionalAction, default=None)
+    parser.add_argument("--include-evidence", action=argparse.BooleanOptionalAction, default=None)
+    parser.add_argument("--max-attempts", type=int, default=None)
+    parser.add_argument("--timeout-seconds", type=float, default=None)
+
+
+def _parse_options_from_args(args: argparse.Namespace) -> dict[str, object]:
+    mapping = {
+        "parser_backend": getattr(args, "parser_backend", None),
+        "quality_profile": getattr(args, "quality_profile", None),
+        "refresh": True if getattr(args, "refresh", False) else None,
+        "include_code": getattr(args, "include_code", None),
+        "include_catalog": getattr(args, "include_catalog", None),
+        "include_chunks": getattr(args, "include_chunks", None),
+        "include_evidence": getattr(args, "include_evidence", None),
+        "max_attempts": getattr(args, "max_attempts", None),
+        "timeout_seconds": getattr(args, "timeout_seconds", None),
+    }
+    return {key: value for key, value in mapping.items() if value is not None}
 
 
 def _actor_input(args: argparse.Namespace):
