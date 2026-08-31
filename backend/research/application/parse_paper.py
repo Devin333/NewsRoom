@@ -1878,8 +1878,14 @@ def _refresh_catalog_projection(projection: ResearchCatalogProjection, **kwargs:
         parameters = inspect.signature(method).parameters
     except (TypeError, ValueError):
         parameters = {}
-    if "run_id" not in parameters:
+    accepts_kwargs = any(
+        parameter.kind is inspect.Parameter.VAR_KEYWORD
+        for parameter in parameters.values()
+    )
+    if "run_id" not in parameters and not accepts_kwargs:
         kwargs.pop("run_id", None)
+    if "include_code" not in parameters and not accepts_kwargs:
+        kwargs.pop("include_code", None)
     return method(**kwargs)
 
 
