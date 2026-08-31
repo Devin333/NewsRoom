@@ -910,6 +910,10 @@ def _required_api_permission(method: str, path: str) -> str | None:
             if "/artifacts/" in path:
                 return RESEARCH_ARTIFACT_READ_PERMISSION
             return RESEARCH_CATALOG_READ_PERMISSION
+        if path.endswith("/papers/analyze"):
+            # The pre-v1 analysis workflow is a run operation. Keep its
+            # established permission contract separate from paper parsing.
+            return "write:runs"
         if path.endswith("/catalog/refresh"):
             return RESEARCH_PAPER_REFRESH_PERMISSION
         if path.endswith("/papers/parse"):
