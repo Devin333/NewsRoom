@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import re
 from datetime import UTC, datetime
 from threading import RLock
 from typing import Any, Iterable, Mapping
@@ -115,6 +116,7 @@ class ResearchPaperCatalogService:
         actor_scope: Mapping[str, str],
         run_id: str | None = None,
         include_code: bool = True,
+        catalog_eligible: bool = True,
     ) -> ResearchPaperCatalogEntry:
         scope = dict(actor_scope)
         existing = _scoped_call(self._catalog.get, paper.paper_id, actor_scope=scope)
@@ -159,7 +161,7 @@ class ResearchPaperCatalogService:
             paper_id=paper.paper_id,
             identity=identity,
             relations=relations,
-            status="catalog_ready" if relations and all(item.status == "verified" for item in relations) else "catalog_partial",
+            status=("catalog_ready" if catalog_eligible and relations and all(item.status == "verified" for item in relations) else "catalog_partial"),
             source_snapshot_refs=_unique([*(existing.source_snapshot_refs if existing is not None else []), snapshot.snapshot_id]),
             identity_ref=f"identity://{identity.paper_id}",
             relation_refs=[relation.relation_id for relation in relations],
@@ -183,6 +185,10 @@ class ResearchPaperCatalogService:
                 "candidate_count": sum(item.status == "candidate" for item in relations),
                 "diagnostics": code_diagnostics,
                 "sota_claim_refs": [claim.claim_id for claim in sota_candidates],
+                "quality_gate": {
+                    "catalog_eligible": bool(catalog_eligible),
+                    "status": "passed" if catalog_eligible else "failed",
+                },
             },
         )
         self._catalog.save(entry)
@@ -431,6 +437,9 @@ class ResearchPaperCatalogService:
             reasons.append("evaluation_protocol_missing")
         elif expected_protocol is not None and score.evaluation_protocol != expected_protocol:
             reasons.append("evaluation_protocol_mismatch")
+        if score.metadata.get("protocol_contract_required"):
+            for field_name in score.metadata.get("protocol_unknown_fields", []):
+                reasons.append(f"protocol_{field_name}_missing")
         status = "verified" if not reasons else ("conflicting" if any("mismatch" in reason for reason in reasons) else "rejected")
         update = {
             "verification_status": status,
@@ -484,6 +493,7 @@ class ResearchPaperCatalogService:
                 metric_unit=score.unit,
                 split=score.split,
                 evaluation_protocol=score.evaluation_protocol,
+                protocol_fingerprint=score.protocol_fingerprint,
             )
             groups.setdefault(key, []).append(score)
         group_payloads: list[dict[str, Any]] = []
@@ -547,6 +557,7 @@ class ResearchPaperCatalogService:
                 metric_unit=score.unit,
                 split=score.split,
                 evaluation_protocol=score.evaluation_protocol,
+                protocol_fingerprint=score.protocol_fingerprint,
             )
             grouped.setdefault((score.benchmark_id, score.metric_id, key), []).append(score)
         leaderboards: list[dict[str, Any]] = []
@@ -1103,7 +1114,8 @@ class ResearchPaperCatalogService:
             )
             dataset_id = _candidate_text(item, "dataset_id", "datasetId") or _candidate_text(metadata, "dataset_id", "datasetId")
             metric_id = _candidate_text(item, "metric_id", "metricId") or _candidate_text(metadata, "metric_id", "metricId")
-            value = _candidate_number(item, "value", "score", "result")
+            raw_display = _candidate_text(item, "raw_display_value", "rawDisplayValue", "value", "score", "result")
+            value = _candidate_number(item, "normalized_value", "normalizedValue", "value", "score", "result")
             if not benchmark_id or not dataset_id or not metric_id or value is None:
                 continue
             source_refs = _text_values(item.get("source_refs") or item.get("sourceRefs")) or list(snapshot.lineage.source_refs)
@@ -1118,6 +1130,8 @@ class ResearchPaperCatalogService:
                 dataset_id=dataset_id,
                 metric_id=metric_id,
                 value=value,
+                raw_display_value=raw_display,
+                normalized_value=value,
                 baseline_id=_candidate_text(item, "baseline_id", "baselineId"),
                 baseline_ref=_candidate_text(item, "baseline_ref", "baselineRef", "baseline_id", "baselineId"),
                 source_refs=source_refs,
@@ -1125,11 +1139,20 @@ class ResearchPaperCatalogService:
                 evidence_refs=item_evidence,
                 verification_status="candidate",
                 split=_candidate_text(item, "split"),
-                unit=_candidate_text(item, "unit"),
+                unit=_candidate_text(item, "unit") or ("%" if raw_display and raw_display.endswith("%") else None),
                 direction=direction,
                 dataset_version=_candidate_text(item, "dataset_version", "datasetVersion")
                 or _candidate_text(metadata, "dataset_version", "datasetVersion"),
                 evaluation_protocol=_candidate_text(item, "evaluation_protocol", "evaluationProtocol"),
+                unit_conversion=_candidate_text(item, "unit_conversion", "unitConversion") or "identity",
+                rounding_mode=_candidate_text(item, "rounding_mode", "roundingMode"),
+                normalization_version=_candidate_text(item, "normalization_version", "normalizationVersion") or "research-score-normalization-v1",
+                uncertainty=_candidate_number(item, "uncertainty", "std", "error", "margin_of_error"),
+                sample_count=_candidate_int(item, "sample_count", "sampleCount"),
+                seed_count=_candidate_int(item, "seed_count", "seedCount"),
+                protocol_fingerprint=_candidate_text(item, "protocol_fingerprint", "protocolFingerprint"),
+                selection_policy=_candidate_text(item, "selection_policy", "selectionPolicy") or "single_observation",
+                checkpoint_ref=_candidate_text(item, "checkpoint_ref", "checkpointRef", "checkpoint"),
                 observed_at=snapshot.observed_at or snapshot.fetched_at or datetime.now(UTC),
                 actor_scope=dict(actor_scope or metadata.get("actor_scope") or {}),
                 metadata={
@@ -1137,6 +1160,7 @@ class ResearchPaperCatalogService:
                     "actor_scope": dict(actor_scope or metadata.get("actor_scope") or {}),
                     "dataset_version": _candidate_text(item, "dataset_version", "datasetVersion")
                     or _candidate_text(metadata, "dataset_version", "datasetVersion"),
+                    "protocol_contract_required": True,
                 },
             ))
         return result
@@ -1507,6 +1531,17 @@ def _score_row(score: ResearchScore, compatibility: Mapping[str, str]) -> dict[s
         "datasetId": score.dataset_id,
         "metricId": score.metric_id,
         "value": score.value,
+        "rawDisplayValue": score.raw_display_value,
+        "normalizedValue": score.normalized_value,
+        "normalizationVersion": score.normalization_version or score.metadata.get("normalization_version"),
+        "unitConversion": score.unit_conversion,
+        "roundingMode": score.rounding_mode,
+        "uncertainty": score.uncertainty,
+        "sampleCount": score.sample_count,
+        "seedCount": score.seed_count,
+        "protocolFingerprint": score.protocol_fingerprint,
+        "selectionPolicy": score.selection_policy,
+        "checkpointRef": score.checkpoint_ref,
         "baselineRef": score.baseline_ref or score.baseline_id,
         "sourceSnapshotRefs": list(score.source_snapshot_refs),
         "evidenceRefs": list(score.evidence_refs),
@@ -1559,6 +1594,10 @@ def _verified_score_missing_reason(score: ResearchScore) -> str | None:
     for field_name, value in required:
         if value is None or (isinstance(value, (list, tuple, set)) and not value) or not str(value).strip():
             return f"{field_name}_missing"
+    if score.metadata.get("protocol_contract_required"):
+        unknown = score.metadata.get("protocol_unknown_fields")
+        if isinstance(unknown, (list, tuple, set)) and unknown:
+            return "protocol_dimensions_missing"
     return None
 
 
@@ -1573,8 +1612,19 @@ def _sort_score_rows(
     ascending tie-breaker so equal values do not depend on input order.
     """
     if direction == "lower_is_better":
-        return sorted(rows, key=lambda row: (float(row["value"]), str(row["scoreId"])))
-    return sorted(rows, key=lambda row: (-float(row["value"]), str(row["scoreId"])))
+        ordered = sorted(rows, key=lambda row: (float(row["normalizedValue"]), str(row["scoreId"])))
+    else:
+        ordered = sorted(rows, key=lambda row: (-float(row["normalizedValue"]), str(row["scoreId"])))
+    previous: float | None = None
+    rank = 0
+    for row in ordered:
+        value = float(row["normalizedValue"])
+        if previous is None or value != previous:
+            rank += 1
+            previous = value
+        row["rank"] = rank
+        row["tieGroup"] = f"{direction}:{value:.12g}"
+    return ordered
 
 
 def _compatibility_key_payload(key: tuple[str, ...]) -> dict[str, str]:
@@ -1586,6 +1636,7 @@ def _compatibility_key_payload(key: tuple[str, ...]) -> dict[str, str]:
         "unit",
         "split",
         "evaluationProtocol",
+        "protocolFingerprint",
     )
     return {label: str(value) for label, value in zip(labels, key)}
 
@@ -1619,11 +1670,21 @@ def _candidate_number(value: Mapping[str, Any], *keys: str) -> float | None:
         raw = value.get(key)
         if raw is None:
             continue
-        try:
-            return float(str(raw).strip().rstrip("%"))
-        except (TypeError, ValueError):
-            continue
+        text = str(raw).strip().replace(",", "")
+        match = re.search(r"[-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][-+]?\d+)?", text)
+        if match is not None:
+            try:
+                return float(match.group(0))
+            except ValueError:
+                continue
     return None
+
+
+def _candidate_int(value: Mapping[str, Any], *keys: str) -> int | None:
+    number = _candidate_number(value, *keys)
+    if number is None or int(number) != number or number < 0:
+        return None
+    return int(number)
 
 
 def _text_values(value: Any) -> list[str]:

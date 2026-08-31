@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from datetime import UTC, datetime
+from hashlib import sha256
 from typing import Any, Literal
 
 from pydantic import Field, field_validator, model_validator
@@ -100,6 +101,20 @@ class ResearchScore(PrimitiveModel):
     direction: Literal["higher_is_better", "lower_is_better"] | None = None
     dataset_version: str | None = None
     evaluation_protocol: str | None = None
+    # ``value`` is retained as the backwards-compatible comparison value.
+    # The fields below keep the original observation separate from the value
+    # selected by a deterministic normalization contract.
+    raw_display_value: str | None = None
+    normalized_value: float | None = None
+    unit_conversion: str | None = None
+    rounding_mode: str | None = None
+    normalization_version: str | None = None
+    uncertainty: float | None = None
+    sample_count: int | None = None
+    seed_count: int | None = None
+    protocol_fingerprint: str | None = None
+    selection_policy: str | None = None
+    checkpoint_ref: str | None = None
     observed_at: datetime | None = None
     actor_scope: dict[str, str] = Field(default_factory=dict)
     metadata: dict[str, Any] = Field(default_factory=dict)
@@ -126,12 +141,28 @@ class ResearchScore(PrimitiveModel):
             raise ValueError("benchmark score requires source refs")
         if not -1_000_000_000 <= float(self.value) <= 1_000_000_000:
             raise ValueError("benchmark score is outside supported range")
+        if self.normalized_value is not None and not -1_000_000_000 <= float(self.normalized_value) <= 1_000_000_000:
+            raise ValueError("normalized benchmark score is outside supported range")
+        if self.uncertainty is not None and float(self.uncertainty) < 0:
+            raise ValueError("benchmark score uncertainty must be non-negative")
+        for field_name in ("sample_count", "seed_count"):
+            value = getattr(self, field_name)
+            if value is not None and (isinstance(value, bool) or int(value) < 0):
+                raise ValueError(f"benchmark score {field_name} must be non-negative")
         object.__setattr__(self, "source_refs", refs)
         object.__setattr__(self, "source_snapshot_refs", snapshot_refs)
         object.__setattr__(self, "evidence_refs", unique_texts(self.evidence_refs))
         baseline = self.baseline_ref or self.baseline_id
         object.__setattr__(self, "baseline_ref", baseline)
         object.__setattr__(self, "baseline_id", self.baseline_id or baseline)
+        normalized_value = float(self.value) if self.normalized_value is None else float(self.normalized_value)
+        object.__setattr__(self, "normalized_value", normalized_value)
+        object.__setattr__(self, "value", normalized_value)
+        raw_display = self.raw_display_value
+        if raw_display is None:
+            raw_display = str(self.value)
+        raw_display = str(raw_display).strip()
+        object.__setattr__(self, "raw_display_value", raw_display or None)
         status = self.status or self.verification_status
         object.__setattr__(self, "verification_status", status)
         object.__setattr__(self, "status", status)
@@ -147,6 +178,22 @@ class ResearchScore(PrimitiveModel):
             )
         else:
             object.__setattr__(self, "dataset_version", None)
+        protocol_fingerprint = self.protocol_fingerprint or _score_protocol_fingerprint(self)
+        object.__setattr__(self, "protocol_fingerprint", protocol_fingerprint)
+        metadata = dict(self.metadata)
+        protocol_fields = _score_protocol_fields(self)
+        metadata.update(
+            {
+                "raw_display_value": self.raw_display_value,
+                "normalized_value": normalized_value,
+                "normalization_version": self.normalization_version or "research-score-normalization-v1",
+                "protocol_fingerprint": protocol_fingerprint,
+                "protocol_unknown_fields": [
+                    name for name, value in protocol_fields.items() if value == "unknown"
+                ],
+            }
+        )
+        object.__setattr__(self, "metadata", metadata)
         scope = _normalized_scope(self.metadata)
         scope.update(_normalized_scope(self.actor_scope))
         object.__setattr__(self, "actor_scope", scope)
@@ -294,6 +341,53 @@ def _normalized_scope(value: Mapping[str, Any] | None) -> dict[str, str]:
         for key, raw in source.items()
         if str(key) in allowed and str(raw).strip()
     }
+
+
+def _score_protocol_fields(score: ResearchScore) -> dict[str, str]:
+    """Return the canonical comparison dimensions for a score observation.
+
+    The fingerprint is deliberately derived from explicit typed fields first,
+    then from metadata.  Missing dimensions remain ``unknown`` so a caller can
+    keep the score as a candidate instead of accidentally comparing unlike
+    experiments.
+    """
+
+    metadata = score.metadata if isinstance(score.metadata, Mapping) else {}
+
+    def dimension(name: str, *values: Any) -> str:
+        for value in values:
+            if value is not None and str(value).strip():
+                return normalize_key(str(value).strip())
+        fallback = metadata.get(name)
+        if fallback is not None and str(fallback).strip():
+            return normalize_key(str(fallback).strip())
+        return "unknown"
+
+    return {
+        "benchmark": dimension("benchmark", score.benchmark_id),
+        "dataset": dimension("dataset", score.dataset_id),
+        "dataset_version": dimension("dataset_version", score.dataset_version),
+        "split": dimension("split", score.split),
+        "metric": dimension("metric", score.metric_id),
+        "metric_definition": dimension(
+            "metric_definition",
+            metadata.get("metric_definition_version"),
+            metadata.get("metric_definition"),
+        ),
+        "direction": dimension("direction", score.direction),
+        "unit": dimension("unit", score.unit),
+        "preprocessing": dimension("preprocessing"),
+        "sample_scope": dimension("sample_scope"),
+        "aggregation": dimension("aggregation"),
+        "evaluation_protocol": dimension("evaluation_protocol", score.evaluation_protocol),
+        "evaluation_code_ref": dimension("evaluation_code_ref"),
+    }
+
+
+def _score_protocol_fingerprint(score: ResearchScore) -> str:
+    fields = _score_protocol_fields(score)
+    canonical = "|".join(f"{name}={fields[name]}" for name in sorted(fields))
+    return sha256(canonical.encode("utf-8")).hexdigest()
 
 
 def _ensure_utc(value: datetime) -> datetime:

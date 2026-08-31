@@ -91,6 +91,11 @@ class ResearchSourceSnapshot(PrimitiveModel):
     fetched_at: datetime | None = None
     observed_at: datetime | None = None
     access_status: SourceAccessStatus = "available"
+    reason_code: str | None = None
+    parent_snapshot_id: str | None = None
+    version_id: str | None = None
+    request_fingerprint: str | None = None
+    resolver_version: str | None = None
     lineage: SourceLineage
     artifact_refs: list[str] = Field(default_factory=list)
     actor_scope: dict[str, str] = Field(default_factory=dict)
@@ -108,7 +113,17 @@ class ResearchSourceSnapshot(PrimitiveModel):
         text = value.strip() if value is not None else None
         return canonicalize_url(text) if text else None
 
-    @field_validator("external_id", "content_type", "source_hash", "checksum")
+    @field_validator(
+        "external_id",
+        "content_type",
+        "source_hash",
+        "checksum",
+        "reason_code",
+        "parent_snapshot_id",
+        "version_id",
+        "request_fingerprint",
+        "resolver_version",
+    )
     @classmethod
     def _normalize_optional_text(cls, value: str | None) -> str | None:
         if value is None:
@@ -148,6 +163,20 @@ class ResearchSourceSnapshot(PrimitiveModel):
             object.__setattr__(self, "observed_at", ensure_utc(self.observed_at))
         if self.fetched_at is None:
             object.__setattr__(self, "fetched_at", self.observed_at)
+        metadata = dict(self.metadata)
+        for field_name in (
+            "reason_code",
+            "parent_snapshot_id",
+            "version_id",
+            "request_fingerprint",
+            "resolver_version",
+        ):
+            if getattr(self, field_name) is None and metadata.get(field_name) is not None:
+                object.__setattr__(self, field_name, str(metadata[field_name]).strip() or None)
+            value = getattr(self, field_name)
+            if value is not None:
+                metadata[field_name] = value
+        object.__setattr__(self, "metadata", metadata)
         # Scope may arrive through different adapter generations. Merge all
         # envelopes so unrelated metadata cannot hide lineage isolation.
         scope = _normalized_actor_scope(self.lineage.metadata)
@@ -507,13 +536,14 @@ def metric_compatibility_key(
     metric_unit: str | None,
     split: str | None,
     evaluation_protocol: str | None,
-) -> tuple[str, str, str, str, str, str, str]:
+    protocol_fingerprint: str | None = None,
+) -> tuple[str, ...]:
     """Return the normalized fields required for deterministic score comparison."""
 
     def _dimension(value: str | None) -> str:
         return str(value or "").strip().casefold()
 
-    return (
+    base = (
         normalize_key(dataset_id),
         _dimension(dataset_version),
         normalize_key(metric_id),
@@ -522,6 +552,7 @@ def metric_compatibility_key(
         _dimension(split),
         _dimension(evaluation_protocol),
     )
+    return base if protocol_fingerprint is None else (*base, _dimension(protocol_fingerprint))
 
 
 def metric_dimensions_compatible(left: tuple[str, ...], right: tuple[str, ...]) -> bool:

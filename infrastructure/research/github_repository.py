@@ -8,6 +8,7 @@ from urllib.parse import urlsplit
 from backend.research.domain.code_repository import (
     CodeRepositoryObservation,
     CodeRepositoryProfile,
+    CodeRepositorySignal,
 )
 from infrastructure.external.sources.github import (
     GITHUB_API_URL,
@@ -102,6 +103,31 @@ class GithubResearchRepositoryAdapter:
                 "reproducibility": reproducibility,
             },
         )
+        signal_snapshot_ref = str(reproducibility["source_snapshot_ref"])
+        signals = [
+            CodeRepositorySignal(
+                signal=signal_name,
+                present=bool(reproducibility.get(presence_key)),
+                observed_at=observed_at,
+                ref=(reproducibility.get("refs") or {}).get(signal_name),
+                branch=metadata.default_branch,
+                commit_sha=commit_sha,
+                source_snapshot_refs=[signal_snapshot_ref],
+                metadata={
+                    "detection": "github_contents_api",
+                    "checked_paths": list(reproducibility.get("checked_paths") or []),
+                },
+            )
+            for signal_name, presence_key in (
+                ("readme", "has_readme"),
+                ("install", "install_instructions_ref"),
+                ("requirements", "has_requirements"),
+                ("examples", "has_examples"),
+                ("training", "has_training_script"),
+                ("inference", "has_inference_demo"),
+                ("checkpoint", "has_model_checkpoint"),
+            )
+        ]
         return CodeRepositoryProfile(
             repo_url=canonical_url,
             canonical_repo_id=str(metadata.repository_id or repository.slug()),
@@ -144,6 +170,11 @@ class GithubResearchRepositoryAdapter:
             observed_at=observed_at,
             source_snapshot_refs=[str(reproducibility["source_snapshot_ref"])],
             observations=[observation],
+            signals=signals,
+            observation_limits={
+                "max_files_checked": len(reproducibility.get("checked_paths") or []),
+                "max_file_bytes": 256 * 1024,
+            },
             metadata={
                 "metrics_source": "github_repository_api",
                 "repository_id": metadata.repository_id,

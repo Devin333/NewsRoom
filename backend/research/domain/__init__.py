@@ -33,6 +33,7 @@ from backend.research.domain.common import (
 from backend.research.domain.code_repository import (
     CodeRepositoryObservation,
     CodeRepositoryProfile,
+    CodeRepositorySignal,
     compute_star_growth,
 )
 from backend.research.domain.document import (
@@ -160,6 +161,7 @@ __all__ = [
     "ResearchEvidencePack",
     "ResearchFigure",
     "ResearchPaper",
+    "CodeRepositorySignal",
     "ResearchPaperCatalogEntry",
     "ResearchPaperIdentity",
     "ResearchPaperRelation",

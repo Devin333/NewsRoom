@@ -1442,6 +1442,7 @@ def _build_configured_composition(
             fetch_policy=package_policy,
             rate_limiter=source_runtime.reservation_ledger,
             local_root=settings.research_root,
+            artifact_reader=catalog_store,
         )
         parse_use_case = ParsePaperUseCase(
             source_resolver=source_resolver,

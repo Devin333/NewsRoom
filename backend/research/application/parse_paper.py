@@ -145,6 +145,7 @@ class ResearchCatalogProjection(Protocol):
         actor_scope: Mapping[str, str],
         run_id: str | None = None,
         include_code: bool = True,
+        catalog_eligible: bool = True,
     ) -> Any: ...
 
 
@@ -346,6 +347,17 @@ class ParsePaperUseCase:
             _ensure_budget(budget_started, budget, diagnostics, phase="resolving")
             diagnostics.extend(dict(item) for item in resolved.diagnostics)
             snapshot = _snapshot_for_scope(resolved.snapshot, actor_scope, resolved.content)
+            request_fingerprint = _request_fingerprint(request, actor_scope)
+            snapshot = snapshot.model_copy(
+                update={
+                    "request_fingerprint": request_fingerprint,
+                    "metadata": {
+                        **dict(snapshot.metadata),
+                        "request_fingerprint": request_fingerprint,
+                        "resolver_version": snapshot.resolver_version or "research-source-resolver-v1",
+                    },
+                }
+            )
             if request.options:
                 snapshot = snapshot.model_copy(
                     update={
@@ -358,6 +370,7 @@ class ParsePaperUseCase:
             if bool(request.options.get("refresh", False)):
                 # Refresh is a new immutable observation even when the bytes
                 # are unchanged. Binding the id to run_id keeps replay stable.
+                parent_snapshot_id = snapshot.snapshot_id
                 snapshot = snapshot.model_copy(
                     update={
                         "snapshot_id": stable_research_id(
@@ -370,7 +383,9 @@ class ParsePaperUseCase:
                             **dict(snapshot.metadata),
                             "refresh": True,
                             "run_id": run_id,
+                            "parent_snapshot_id": parent_snapshot_id,
                         },
+                        "parent_snapshot_id": parent_snapshot_id,
                     }
                 )
             existing_snapshot = _repository_get(
@@ -526,22 +541,30 @@ class ParsePaperUseCase:
             parser_attempts = _parser_attempts(document)
             quality_report = _quality_report(
                 document,
-                profile=str(request.options.get("quality_profile") or "reading"),
+                profile=str(request.options.get("quality_profile") or "metadata"),
+                paper=paper,
             )
+            parse_status = str(quality_report.get("parseStatus") or "parsed")
+            document_status = str(quality_report.get("documentStatus") or "parsed")
             if not reuse_existing_document:
                 document = document.model_copy(
                     update={
+                        "status": document_status,
                         "quality_report": quality_report,
-                        "metadata": {**dict(document.metadata), "quality_report": quality_report},
+                        "metadata": {
+                            **dict(document.metadata),
+                            "quality_report": quality_report,
+                            "degraded": document_status == "degraded",
+                        },
                     }
                 )
                 if self._document_repository is not None:
                     self._document_repository.save(document)
-            if document.metadata.get("degraded"):
-                status = "degraded"
+            if document_status == "degraded":
+                status = parse_status
                 diagnostics.append({"code": "parser_degraded", "quality": quality_report})
             else:
-                status = "parsed"
+                status = parse_status
             evidence_pack = None
             include_evidence = bool(request.options.get("include_evidence", True))
             include_chunks = bool(request.options.get("include_chunks", True))
@@ -640,12 +663,13 @@ class ParsePaperUseCase:
                         actor_scope=actor_scope,
                         run_id=run_id,
                         include_code=bool(request.options.get("include_code", True)),
+                        catalog_eligible=bool(quality_report.get("catalogEligible", False)),
                     )
                     catalog_status = _catalog_status(catalog_entry)
                     if catalog_status:
                         if catalog_status != status:
                             emit(catalog_status, {"paper_id": paper.paper_id, "catalog_status": catalog_status})
-                        status = catalog_status
+                        status = _aggregate_parse_status(status, catalog_status)
                 except Exception as exc:  # catalog failure must be visible, not hide parse
                     diagnostics.append({"code": "catalog_projection_failed", "error_type": type(exc).__name__})
                     status = "catalog_partial"
@@ -1761,7 +1785,13 @@ def _sanitize_parser_attempt(value: Mapping[str, Any]) -> dict[str, Any]:
     return result
 
 
-def _quality_report(document: ResearchDocument, *, profile: str = "reading") -> dict[str, Any]:
+def _quality_report(
+    document: ResearchDocument,
+    *,
+    profile: str = "reading",
+    paper: ResearchPaper | None = None,
+) -> dict[str, Any]:
+    profile = profile if profile in {"metadata", "reading", "catalog"} else "reading"
     body_chars = sum(len(section.text or "") for section in document.sections)
     non_empty_sections = sum(1 for section in document.sections if (section.text or "").strip())
     non_empty_ratio = non_empty_sections / len(document.sections) if document.sections else 0.0
@@ -1786,6 +1816,77 @@ def _quality_report(document: ResearchDocument, *, profile: str = "reading") -> 
     structured_count = len(document.figures) + len(document.tables) + len(document.equations) + len(document.references)
     element_score = 1.0 if structured_count == 0 else min(1.0, locator_count / (len(document.sections) + structured_count))
     integrity_score = 1.0 if document.source_hash and document.lineage.source_hash == document.source_hash else 0.0
+    title_present = bool((document.title or (paper.title if paper is not None else "") or "").strip())
+    abstract_present = bool((document.abstract or "").strip())
+    author_present = bool(document.authors or (paper.authors if paper is not None else []))
+    external_id_present = bool(
+        document.metadata.get("external_id")
+        or document.metadata.get("arxiv_id")
+        or document.metadata.get("doi")
+        or document.metadata.get("openreview_id")
+    )
+    benchmark_tables = [
+        table
+        for table in document.tables
+        if any(
+            token in (table.caption or "").casefold()
+            for token in ("benchmark", "result", "accuracy", "performance", "evaluation", "sota")
+        )
+    ]
+    thresholds = {
+        "metadata": {
+            "title_present": True,
+            "author_present": True,
+            "external_id_present": False,
+        },
+        "reading": {
+            "title_present": True,
+            "abstract_present": True,
+            "body_chars_min": 3000,
+            "sections_min": 3,
+            "non_empty_section_ratio_min": 0.8,
+            "replacement_char_ratio_max": 0.02,
+            "locator_coverage_min": 0.8,
+        },
+        "catalog": {
+            "title_present": True,
+            "abstract_present": True,
+            "body_chars_min": 3000,
+            "sections_min": 3,
+            "non_empty_section_ratio_min": 0.8,
+            "replacement_char_ratio_max": 0.02,
+            "locator_coverage_min": 0.8,
+            "benchmark_evidence_required_when_table_present": True,
+        },
+    }[profile]
+    hard_failures: list[dict[str, Any]] = []
+
+    def require(code: str, observed: Any, expected: Any, passed: bool) -> None:
+        if not passed:
+            hard_failures.append({"code": code, "observed": observed, "expected": expected})
+
+    if profile == "metadata":
+        require("title_missing", title_present, True, title_present)
+        require("authors_missing", author_present, True, author_present)
+    else:
+        require("title_missing", title_present, True, title_present)
+        require("abstract_missing", abstract_present, True, abstract_present)
+        require("body_too_short", body_chars, 3000, body_chars >= 3000)
+        require("sections_insufficient", len(document.sections), 3, len(document.sections) >= 3)
+        require("empty_sections_excessive", non_empty_ratio, 0.8, non_empty_ratio >= 0.8)
+        require("replacement_chars_excessive", replacement_ratio, 0.02, replacement_ratio <= 0.02)
+        require("locator_coverage_insufficient", locator_score, 0.8, locator_score >= 0.8)
+        if profile == "catalog" and benchmark_tables:
+            table_evidence = sum(1 for table in benchmark_tables if table.rows and table.source_ref)
+            require(
+                "benchmark_evidence_missing",
+                table_evidence,
+                len(benchmark_tables),
+                table_evidence == len(benchmark_tables),
+            )
+    passed = not hard_failures
+    document_status = "parsed" if passed else "degraded"
+    parse_status = "parsed" if passed else ("catalog_partial" if profile == "catalog" else "degraded")
     scores = {
         "structure_score": round(structure_score, 6),
         "text_score": round(text_score, 6),
@@ -1815,6 +1916,18 @@ def _quality_report(document: ResearchDocument, *, profile: str = "reading") -> 
         "qualityScore": round(quality_score, 6),
         "formula_version": "research-quality-v1",
         "profile": profile,
+        "thresholds": thresholds,
+        "hardFailures": hard_failures,
+        "passed": passed,
+        "documentStatus": document_status,
+        "parseStatus": parse_status,
+        "catalogEligible": passed and profile == "catalog",
+        "metadataCompleteness": {
+            "title": title_present,
+            "authors": author_present,
+            "externalId": external_id_present,
+            "abstract": abstract_present,
+        },
         "weights": {
             "structure_score": 0.25,
             "text_score": 0.25,
@@ -1822,8 +1935,22 @@ def _quality_report(document: ResearchDocument, *, profile: str = "reading") -> 
             "element_score": 0.15,
             "integrity_score": 0.15,
         },
-        "degraded": bool(document.metadata.get("degraded")),
+        "degraded": not passed or bool(document.metadata.get("degraded")),
     }
+
+
+def _aggregate_parse_status(current: str, catalog_status: str) -> str:
+    """Keep a parser degradation visible when catalog projection is partial."""
+
+    order = {
+        "failed": 60,
+        "metadata_only": 50,
+        "degraded": 40,
+        "catalog_partial": 30,
+        "catalog_ready": 20,
+        "parsed": 10,
+    }
+    return current if order.get(current, 0) >= order.get(catalog_status, 0) else catalog_status
 
 
 def _request_fingerprint(request: ParsePaperRequest, actor_scope: Mapping[str, str]) -> str:

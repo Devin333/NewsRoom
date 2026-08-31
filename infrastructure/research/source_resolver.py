@@ -4,6 +4,8 @@ import hashlib
 import ipaddress
 import mimetypes
 import os
+import socket
+import base64
 from datetime import UTC, datetime
 from collections.abc import Mapping
 from pathlib import Path
@@ -59,6 +61,7 @@ class ResearchSourceResolverAdapter:
         fetch_policy: SourceFetchPolicy | None = None,
         rate_limiter: DomainRateLimiter | None = None,
         local_root: str | Path | None = None,
+        artifact_reader: Any | None = None,
         fetch_bytes: Callable[[str, SourceFetchPolicy], tuple[bytes, str | None, str]] | None = None,
     ) -> None:
         self._arxiv_provider = arxiv_provider
@@ -70,6 +73,7 @@ class ResearchSourceResolverAdapter:
         )
         self._rate_limiter = rate_limiter or DomainRateLimiter()
         self._local_root = Path(local_root).expanduser().resolve() if local_root else None
+        self._artifact_reader = artifact_reader
         self._fetch_bytes_impl = fetch_bytes
 
     def resolve(self, request: Any) -> ResolvedPaperSource:
@@ -98,8 +102,12 @@ class ResearchSourceResolverAdapter:
         """Use an authorized local upload as full text while retaining source metadata."""
 
         content_ref = str(request.content_ref or "").strip()
-        if not content_ref or content_ref.startswith(("artifact://", "content://", "https://", "http://")):
+        if not content_ref:
             return None
+        if content_ref.startswith("artifact://"):
+            return self._resolve_artifact_ref(source, source_type, request, content_ref)
+        if content_ref.startswith("content://") or content_ref.startswith(("https://", "http://")):
+            return self._metadata_only(source, source_type, request, "content_ref_scheme_not_supported")
         try:
             path = _local_path(content_ref)
             if self._local_root is not None and not _is_descendant(path, self._local_root):
@@ -159,6 +167,64 @@ class ResearchSourceResolverAdapter:
             )
         except OSError:
             return None
+
+    def _resolve_artifact_ref(
+        self,
+        source: str,
+        source_type: str,
+        request: Any,
+        content_ref: str,
+    ) -> ResolvedPaperSource | None:
+        reader = self._artifact_reader
+        read = getattr(reader, "read", None)
+        if not callable(read):
+            return self._metadata_only(source, source_type, request, "artifact_reader_not_configured")
+        try:
+            envelope = read(
+                content_ref,
+                actor_scope=dict(getattr(request, "actor_scope", {}) or {}),
+                include_payload=True,
+            )
+            payload = envelope.get("payload") if isinstance(envelope, Mapping) else None
+            if isinstance(payload, Mapping):
+                raw = payload.get("content") or payload.get("text") or payload.get("bytes_base64")
+                content = base64.b64decode(raw) if payload.get("bytes_base64") else str(raw or "").encode("utf-8")
+            elif isinstance(payload, str):
+                content = payload.encode("utf-8")
+            else:
+                return self._metadata_only(source, source_type, request, "artifact_payload_not_content")
+            if len(content) > self._fetch_policy.max_bytes:
+                return self._metadata_only(source, source_type, request, "artifact_content_size_exceeded")
+            metadata = {**dict(request.metadata), "content_ref": content_ref, "artifact_ref": content_ref}
+            paper_id = _explicit_paper_id(metadata) or stable_research_id("paper", source_type, source)
+            paper = _paper_from_metadata(
+                paper_id=paper_id,
+                source_type=source_type,
+                canonical_url=canonicalize_url(source) if source.startswith(("http://", "https://")) else "",
+                external_id=_metadata_external_id(source, source_type, metadata=metadata),
+                metadata=metadata,
+            )
+            digest = hashlib.sha256(content).hexdigest()
+            snapshot = _snapshot(
+                paper=paper,
+                source_type=source_type,
+                canonical_url=content_ref,
+                external_id=content_ref,
+                content_type=str((envelope.get("metadata") or {}).get("content_type") or _guess_content_type(content)),
+                source_hash=digest,
+                access_status="available",
+                metadata={"content_ref": content_ref, "artifact_ref": content_ref},
+            )
+            return ResolvedPaperSource(
+                paper=paper,
+                snapshot=snapshot,
+                content=content,
+                content_type=snapshot.content_type,
+                access_status="available",
+                diagnostics=({"code": "artifact_ref_used", "content_ref": content_ref},),
+            )
+        except Exception as exc:
+            return self._metadata_only(source, source_type, request, "artifact_ref_unavailable", exc)
 
     def _resolve_arxiv(self, source: str, request: Any) -> ResolvedPaperSource:
         if self._arxiv_provider is None:
@@ -421,6 +487,8 @@ class ResearchSourceResolverAdapter:
 
 def _snapshot(*, paper: ResearchPaper, source_type: str, canonical_url: str, external_id: str | None, content_type: str | None, source_hash: str | None, access_status: str, metadata: dict[str, Any]) -> ResearchSourceSnapshot:
     source_ref = canonical_url or f"source://{source_type}/{external_id or paper.paper_id}"
+    metadata = dict(metadata)
+    reason_code = str(metadata.get("reason_code") or metadata.get("reason") or "").strip() or None
     return ResearchSourceSnapshot(
         snapshot_id=stable_research_id("source_snapshot", paper.paper_id, source_ref, source_hash or ""),
         paper_id=paper.paper_id,
@@ -432,6 +500,9 @@ def _snapshot(*, paper: ResearchPaper, source_type: str, canonical_url: str, ext
         checksum=source_hash,
         fetched_at=datetime.now(UTC),
         access_status=access_status,
+        reason_code=reason_code,
+        version_id=str(metadata.get("version_id") or metadata.get("version") or "").strip() or None,
+        resolver_version=str(metadata.get("resolver_version") or "research-source-resolver-v1").strip() or None,
         lineage=SourceLineage(source_refs=[source_ref], source_hash=source_hash),
         metadata=metadata,
     )
@@ -572,12 +643,27 @@ def _ensure_remote_target_allowed(url: str) -> None:
     parsed = urlsplit(str(url or "").strip())
     if parsed.scheme.casefold() not in {"http", "https"} or not parsed.hostname:
         return
+    addresses: set[str] = {parsed.hostname}
     try:
         address = ipaddress.ip_address(parsed.hostname)
+        addresses = {str(address)}
     except ValueError:
-        return
-    if address.is_private or address.is_loopback or address.is_link_local or address.is_unspecified or address.is_reserved or address.is_multicast:
-        raise ResearchSourceError("remote source target is not publicly routable")
+        try:
+            addresses.update(
+                str(item[4][0])
+                for item in socket.getaddrinfo(parsed.hostname, parsed.port or (443 if parsed.scheme.casefold() == "https" else 80), type=socket.SOCK_STREAM)
+            )
+        except OSError:
+            # An unresolved hostname will be handled by the fetch policy; do
+            # not turn DNS availability into an identity or parsing failure.
+            return
+    for value in addresses:
+        try:
+            address = ipaddress.ip_address(value)
+        except ValueError:
+            continue
+        if address.is_private or address.is_loopback or address.is_link_local or address.is_unspecified or address.is_reserved or address.is_multicast:
+            raise ResearchSourceError("remote source target is not publicly routable")
 
 
 def _is_descendant(path: Path, root: Path) -> bool:

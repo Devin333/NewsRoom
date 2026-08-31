@@ -17,6 +17,7 @@ from backend.research.application.parse_paper import (
     ResolvedPaperSource,
     infer_source_type,
     validate_parse_options,
+    _quality_report,
 )
 from backend.research.document.chunk_manifest import ChunkManifestManager
 from backend.research.document.chunker import PaperDocumentChunker
@@ -622,12 +623,9 @@ def test_parse_options_are_allowlisted_and_bounded() -> None:
     assert parsed.value.code == "invalid_request"
 
 
-def test_parse_budget_exhaustion_is_explicit_and_durable() -> None:
-    import time
-
+def test_parse_budget_exhaustion_is_explicit_and_durable(monkeypatch: pytest.MonkeyPatch) -> None:
     class _SlowResolver:
         def resolve(self, request: ParsePaperRequest) -> ResolvedPaperSource:
-            time.sleep(0.01)
             return MetadataOnlySourceResolver().resolve(request)
 
     events: list[dict] = []
@@ -635,6 +633,12 @@ def test_parse_budget_exhaustion_is_explicit_and_durable() -> None:
     class _Events:
         def append(self, run_id: str, event: dict) -> None:
             events.append({"run_id": run_id, **event})
+
+    ticks = iter((0.0, 0.0, 1.0))
+    monkeypatch.setattr(
+        "backend.research.application.parse_paper.monotonic",
+        lambda: next(ticks),
+    )
 
     with pytest.raises(ParsePaperError) as error:
         ParsePaperUseCase(source_resolver=_SlowResolver(), event_sink=_Events()).parse(
@@ -646,6 +650,36 @@ def test_parse_budget_exhaustion_is_explicit_and_durable() -> None:
 
     assert error.value.code == "budget_exhausted"
     assert any(item.get("to_status") == "failed" for item in events)
+
+
+def test_quality_profile_emits_hard_failures_and_catalog_eligibility() -> None:
+    digest = "a" * 64
+    document = ResearchDocument(
+        paper_id="quality-paper",
+        source_hash=digest,
+        title="Quality paper",
+        abstract="A complete abstract.",
+        sections=[
+            ResearchSection(
+                section_id=f"section-{index}",
+                title=f"Section {index}",
+                text=("body " * 700),
+                source_ref=f"paper://quality-paper/section-{index}",
+            )
+            for index in range(3)
+        ],
+        lineage=SourceLineage(
+            source_refs=["paper://quality-paper"],
+            source_hash=digest,
+        ),
+    )
+
+    report = _quality_report(document, profile="catalog")
+
+    assert report["passed"] is True
+    assert report["catalogEligible"] is True
+    assert report["hardFailures"] == []
+    assert report["thresholds"]["body_chars_min"] == 3000
 
 
 def test_refresh_appends_an_immutable_snapshot_for_unchanged_source() -> None:

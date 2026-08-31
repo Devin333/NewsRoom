@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import Field, field_validator, model_validator
 
@@ -129,6 +129,7 @@ class ResearchDocument(PrimitiveModel):
     artifact_refs: list[str] = Field(default_factory=list)
     parser_attempts: list[dict[str, Any]] = Field(default_factory=list)
     quality_report: dict[str, Any] = Field(default_factory=dict)
+    status: Literal["parsed", "degraded", "quarantined"] = "parsed"
     source_locators: list[str] = Field(default_factory=list)
     created_at: datetime | None = None
     observed_at: datetime | None = None
@@ -202,6 +203,8 @@ class ResearchDocument(PrimitiveModel):
         quality_report = self.quality_report or metadata.get("quality_report") or metadata.get("parse_quality")
         if isinstance(quality_report, Mapping):
             object.__setattr__(self, "quality_report", dict(quality_report))
+        if metadata.get("degraded") and self.status == "parsed":
+            object.__setattr__(self, "status", "degraded")
         source_locators = list(self.source_locators)
         for item in (*self.sections, *self.figures, *self.tables, *self.equations, *self.references):
             source_ref = getattr(item, "source_ref", None)

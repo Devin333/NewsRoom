@@ -78,6 +78,21 @@ def test_compare_scores_sorts_lower_direction_and_separates_incompatible_groups(
     assert [row["scoreId"] for row in second["rows"]] == ["other-version"]
 
 
+def test_compare_scores_assigns_dense_rank_and_tie_group() -> None:
+    result = _service().compare_scores(
+        [_score("rank-a", 90.0), _score("rank-b", 90.0), _score("rank-c", 80.0)]
+    )
+
+    assert [(row["scoreId"], row["rank"]) for row in result.rows] == [
+        ("rank-a", 1),
+        ("rank-b", 1),
+        ("rank-c", 2),
+    ]
+    assert result.rows[0]["tieGroup"] == result.rows[1]["tieGroup"]
+    assert result.rows[0]["rawDisplayValue"] == "90.0"
+    assert result.rows[0]["normalizedValue"] == 90.0
+
+
 def test_leaderboard_result_uses_independent_excluded_score_lists() -> None:
     left = CatalogLeaderboardResult(rows=[], observed_at=datetime.now(UTC))
     right = CatalogLeaderboardResult(rows=[], observed_at=datetime.now(UTC))

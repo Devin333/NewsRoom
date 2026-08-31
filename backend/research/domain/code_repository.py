@@ -56,6 +56,36 @@ class CodeRepositoryObservation(PrimitiveModel):
         return self
 
 
+class CodeRepositorySignal(PrimitiveModel):
+    """Typed, non-executable evidence about repository reproducibility."""
+
+    signal: Literal[
+        "readme",
+        "license",
+        "install",
+        "requirements",
+        "examples",
+        "training",
+        "inference",
+        "checkpoint",
+    ]
+    present: bool
+    observed_at: datetime
+    ref: str | None = None
+    branch: str | None = None
+    commit_sha: str | None = None
+    source_snapshot_refs: list[str] = Field(default_factory=list)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def _normalize(self) -> "CodeRepositorySignal":
+        object.__setattr__(self, "observed_at", ensure_utc(self.observed_at))
+        object.__setattr__(self, "source_snapshot_refs", _unique_texts(self.source_snapshot_refs))
+        if self.ref is not None:
+            object.__setattr__(self, "ref", canonicalize_url(self.ref))
+        return self
+
+
 class CodeRepositoryProfile(PrimitiveModel):
     repo_url: str | None = None
     repository_url: str | None = None
@@ -99,6 +129,8 @@ class CodeRepositoryProfile(PrimitiveModel):
     star_growth_30d: float | None = None
     trend_label: Literal["unknown", "cooling", "steady", "warming", "hot"] = "unknown"
     observations: list[CodeRepositoryObservation] = Field(default_factory=list)
+    signals: list[CodeRepositorySignal] = Field(default_factory=list)
+    observation_limits: dict[str, int] = Field(default_factory=dict)
     source_snapshot_refs: list[str] = Field(default_factory=list)
     actor_scope: dict[str, str] = Field(default_factory=dict)
     observed_at: datetime | None = None
@@ -148,6 +180,12 @@ class CodeRepositoryProfile(PrimitiveModel):
         for observation in self.observations:
             if observation.repo_url != repo_url:
                 raise ValueError("repository observations must match profile repo_url")
+        limits = {
+            str(key): int(value)
+            for key, value in self.observation_limits.items()
+            if str(key).strip() and isinstance(value, int) and not isinstance(value, bool) and value >= 0
+        }
+        object.__setattr__(self, "observation_limits", limits)
         refs = {
             str(item)
             for item in self.source_snapshot_refs
@@ -207,4 +245,4 @@ def compute_star_growth(
     return {"star_growth_daily": round(daily, 4), "trend_label": trend}
 
 
-__all__ = ["CodeRepositoryObservation", "CodeRepositoryProfile", "compute_star_growth"]
+__all__ = ["CodeRepositoryObservation", "CodeRepositoryProfile", "CodeRepositorySignal", "compute_star_growth"]
