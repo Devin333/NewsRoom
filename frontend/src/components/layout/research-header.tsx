@@ -69,7 +69,7 @@ export function ResearchHeader({
         </Link>
 
         <div
-          className="relative hidden flex-1 items-center justify-start lg:flex"
+          className="relative hidden flex-1 items-center justify-start xl:flex"
           onKeyDown={(event) => {
             if (event.key === "Escape") {
               setActiveGroupId(null)
@@ -130,7 +130,7 @@ export function ResearchHeader({
 
         <Sheet open={mobileOpen} onOpenChange={setMobileOpen}>
           <SheetTrigger asChild>
-            <Button type="button" variant="ghost" size="icon" className="lg:hidden" aria-label={t(papersCopy.openNavigation, locale)}>
+            <Button type="button" variant="ghost" size="icon" className="xl:hidden" aria-label={t(papersCopy.openNavigation, locale)}>
               <Menu className="size-5" />
             </Button>
           </SheetTrigger>
