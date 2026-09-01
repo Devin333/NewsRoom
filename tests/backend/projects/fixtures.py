@@ -1,16 +1,22 @@
 """Canonical values shared by Projects Lab contract tests."""
 
-from backend.projects.lab import (
-    LAB_CONTRACT_VERSION,
-    LAB_NEXT_ACTION_VALUES,
-    LAB_WORKFLOW_STAGE_VALUES,
-)
-
-
 LAB_CONTRACT_FIXTURE = {
-    "version": LAB_CONTRACT_VERSION,
-    "stages": LAB_WORKFLOW_STAGE_VALUES,
-    "next_actions": LAB_NEXT_ACTION_VALUES,
+    "version": "projects-lab/v1",
+    "stages": (
+        "clarifying_requirements",
+        "ready_to_generate",
+        "solution_generated",
+        "solution_saved",
+        "solution_adopted",
+        "solution_archived",
+    ),
+    "next_actions": (
+        "answer_question",
+        "generate_solution",
+        "review_solution",
+        "save_solution",
+        "none",
+    ),
     "error_codes": (
         "invalid_project_lab_request",
         "project_lab_session_not_found",
