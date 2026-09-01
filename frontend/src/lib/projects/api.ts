@@ -1,4 +1,5 @@
 import { apiDelete, apiGet, apiPatch, apiPost } from "@/lib/api/client"
+import { parseProjectsLabNextAction, parseProjectsLabStage } from "@/types/projects"
 import type {
   ProjectClientRequest,
   ProjectDetailResult,
@@ -30,6 +31,7 @@ import type {
   ProjectsLabNodeExplainResult,
   ProjectsLabSaveRequest,
   ProjectsLabSessionRequest,
+  ProjectsLabSession,
   ProjectsLabSessionResponse,
   ProjectsLabSolutionResult,
   ProjectsToolCompareRequest,
@@ -43,6 +45,24 @@ import type {
   ProjectsWatchlistPatchRequest,
 } from "@/types/projects"
 
+type ProjectsLabSessionWire = Omit<
+  ProjectsLabSessionResponse["session"],
+  "current_stage" | "next_action" | "can_generate_solution" | "unanswered_question_ids"
+> & {
+  current_stage?: unknown
+  next_action?: unknown
+  can_generate_solution?: unknown
+  unanswered_question_ids?: unknown
+}
+
+type ProjectsLabSessionWireResponse = {
+  session: ProjectsLabSessionWire
+}
+
+type ProjectsLabSolutionWireResult = Omit<ProjectsLabSolutionResult, "session"> & {
+  session: ProjectsLabSessionWire
+}
+
 type ApiEnvelope<T> = {
   ok?: boolean
   success?: boolean
@@ -52,7 +72,10 @@ type ApiEnvelope<T> = {
     message: string
     detail?: unknown
     details?: unknown
+    request_id?: string
     retryable?: boolean
+    user_action_required?: boolean
+    status?: number
   } | null
 }
 
@@ -60,13 +83,25 @@ export class ProjectsApiError extends Error {
   code: string
   detail?: unknown
   retryable?: boolean
+  status?: number
+  requestId?: string
+  userActionRequired?: boolean
 
-  constructor(message: string, code = "projects_api_error", detail?: unknown, retryable?: boolean) {
+  constructor(
+    message: string,
+    code = "projects_api_error",
+    detail?: unknown,
+    retryable?: boolean,
+    options?: { status?: number; requestId?: string; userActionRequired?: boolean }
+  ) {
     super(message)
     this.name = "ProjectsApiError"
     this.code = code
     this.detail = detail
     this.retryable = retryable
+    this.status = options?.status
+    this.requestId = options?.requestId
+    this.userActionRequired = options?.userActionRequired
   }
 }
 
@@ -161,8 +196,8 @@ export async function recommendProjectTools(request: ProjectsToolRecommendReques
 }
 
 export async function startProjectLabSession(request: ProjectsLabSessionRequest, init?: RequestInit): Promise<ProjectsLabSessionResponse> {
-  const envelope = await apiPost<ApiEnvelope<ProjectsLabSessionResponse>>("/api/v1/projects/lab/sessions", request, init)
-  return unwrapEnvelope(envelope)
+  const envelope = await apiPost<ApiEnvelope<ProjectsLabSessionWireResponse>>("/api/v1/projects/lab/sessions", request, init)
+  return normalizeLabSessionResponse(unwrapEnvelope(envelope))
 }
 
 export async function answerProjectLabQuestion(
@@ -170,26 +205,27 @@ export async function answerProjectLabQuestion(
   request: ProjectsLabAnswerRequest,
   init?: RequestInit
 ): Promise<ProjectsLabSessionResponse> {
-  const envelope = await apiPost<ApiEnvelope<ProjectsLabSessionResponse>>(
+  const envelope = await apiPost<ApiEnvelope<ProjectsLabSessionWireResponse>>(
     `/api/v1/projects/lab/sessions/${encodeURIComponent(sessionId)}/answer`,
     request,
     init
   )
-  return unwrapEnvelope(envelope)
+  return normalizeLabSessionResponse(unwrapEnvelope(envelope))
 }
 
 export async function generateProjectLabSolution(sessionId: string, init?: RequestInit): Promise<ProjectsLabSolutionResult> {
-  const envelope = await apiPost<ApiEnvelope<ProjectsLabSolutionResult>>(
+  const envelope = await apiPost<ApiEnvelope<ProjectsLabSolutionWireResult>>(
     `/api/v1/projects/lab/sessions/${encodeURIComponent(sessionId)}/generate-solution`,
     undefined,
     init
   )
-  return unwrapEnvelope(envelope)
+  const result = unwrapEnvelope(envelope)
+  return { ...result, session: normalizeLabSession(result.session) }
 }
 
 export async function fetchProjectLabSession(sessionId: string, init?: RequestInit): Promise<ProjectsLabSessionResponse> {
-  const envelope = await apiGet<ApiEnvelope<ProjectsLabSessionResponse>>(`/api/v1/projects/lab/sessions/${encodeURIComponent(sessionId)}`, init)
-  return unwrapEnvelope(envelope)
+  const envelope = await apiGet<ApiEnvelope<ProjectsLabSessionWireResponse>>(`/api/v1/projects/lab/sessions/${encodeURIComponent(sessionId)}`, init)
+  return normalizeLabSessionResponse(unwrapEnvelope(envelope))
 }
 
 export async function explainProjectLabNode(
@@ -210,12 +246,12 @@ export async function saveProjectLabSession(
   request: ProjectsLabSaveRequest,
   init?: RequestInit
 ): Promise<ProjectsLabSessionResponse> {
-  const envelope = await apiPost<ApiEnvelope<ProjectsLabSessionResponse>>(
+  const envelope = await apiPost<ApiEnvelope<ProjectsLabSessionWireResponse>>(
     `/api/v1/projects/lab/sessions/${encodeURIComponent(sessionId)}/save`,
     request,
     init
   )
-  return unwrapEnvelope(envelope)
+  return normalizeLabSessionResponse(unwrapEnvelope(envelope))
 }
 
 export async function createProjectCollection(
@@ -382,8 +418,36 @@ function unwrapEnvelope<T>(envelope: ApiEnvelope<T>): T {
     error?.message ?? "Projects API request failed",
     error?.code,
     error?.detail ?? error?.details,
-    error?.retryable
+    error?.retryable,
+    {
+      status: error?.status,
+      requestId: error?.request_id,
+      userActionRequired: error?.user_action_required,
+    }
   )
+}
+
+function normalizeLabSessionResponse(response: ProjectsLabSessionWireResponse): ProjectsLabSessionResponse {
+  return { ...response, session: normalizeLabSession(response.session) }
+}
+
+function normalizeLabSession(session: ProjectsLabSessionWire): ProjectsLabSession {
+  const parsedStage = parseProjectsLabStage(session.current_stage)
+  const nextAction = parseProjectsLabNextAction(session.next_action)
+  const questions = Array.isArray(session.questions) ? session.questions : []
+  const unanswered = Array.isArray(session.unanswered_question_ids)
+    ? session.unanswered_question_ids.filter((value): value is string => typeof value === "string")
+    : questions
+        .filter((question) => question.required !== false && (question.answered_value === undefined || question.answered_value === null || question.answered_value === ""))
+        .map((question) => question.id)
+  return {
+    ...session,
+    current_stage: parsedStage.value,
+    raw_current_stage: parsedStage.raw,
+    next_action: nextAction,
+    can_generate_solution: session.can_generate_solution === true,
+    unanswered_question_ids: unanswered,
+  } as ProjectsLabSession
 }
 
 function queryString(params: Record<string, unknown>): string {

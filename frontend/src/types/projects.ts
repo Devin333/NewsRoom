@@ -405,6 +405,50 @@ export type ProjectsToolRecommendResult = {
   meta: ProjectsApiMeta
 }
 
+export const PROJECTS_LAB_STAGES = [
+  "clarifying_requirements",
+  "ready_to_generate",
+  "solution_generated",
+  "solution_saved",
+  "solution_adopted",
+  "solution_archived",
+] as const
+
+export type ProjectsLabStage = (typeof PROJECTS_LAB_STAGES)[number]
+export type ProjectsLabStageValue = ProjectsLabStage | "unknown"
+
+export const PROJECTS_LAB_NEXT_ACTIONS = [
+  "answer_question",
+  "generate_solution",
+  "review_solution",
+  "save_solution",
+  "none",
+] as const
+
+export type ProjectsLabNextAction = (typeof PROJECTS_LAB_NEXT_ACTIONS)[number]
+export type ProjectsLabNextActionValue = ProjectsLabNextAction | "unknown"
+
+export type ProjectsLabStageParseResult = {
+  value: ProjectsLabStageValue
+  raw: string | null
+  known: boolean
+}
+
+export function parseProjectsLabStage(value: unknown): ProjectsLabStageParseResult {
+  const raw = typeof value === "string" ? value : value == null ? null : String(value)
+  if (raw && (PROJECTS_LAB_STAGES as readonly string[]).includes(raw)) {
+    return { value: raw as ProjectsLabStage, raw, known: true }
+  }
+  return { value: "unknown", raw, known: false }
+}
+
+export function parseProjectsLabNextAction(value: unknown): ProjectsLabNextActionValue {
+  if (typeof value === "string" && (PROJECTS_LAB_NEXT_ACTIONS as readonly string[]).includes(value)) {
+    return value as ProjectsLabNextAction
+  }
+  return "unknown"
+}
+
 export type ProjectsLabSessionRequest = {
   user_problem: string
   user_id?: string | null
@@ -424,9 +468,20 @@ export type ProjectsLabSession = Record<string, unknown> & {
   id: string
   user_problem: string
   selected_case_ids: string[]
-  questions: Array<Record<string, unknown> & { id: string; question: string; answered_value?: unknown }>
-  current_stage: string
+  questions: Array<Record<string, unknown> & {
+    id: string
+    question: string
+    options?: Array<{ label: string; value: string }>
+    required?: boolean
+    answered_value?: unknown
+  }>
+  current_stage: ProjectsLabStageValue
+  raw_current_stage?: string | null
+  next_action: ProjectsLabNextActionValue
+  can_generate_solution: boolean
+  unanswered_question_ids: string[]
   generated_solution?: string | null
+  solution_json?: Record<string, unknown> | null
 }
 
 export type ProjectsLabSessionResponse = {

@@ -1,6 +1,5 @@
 import { safeApiGet } from "@/lib/api/server"
 import type {
-  ReviewHistoryEvent,
   ReviewRiskLevel,
   StudioReviewDetail,
   StudioReviewItem,
@@ -76,7 +75,7 @@ export async function getReviewQueue(): Promise<StudioReviewQueue> {
 
   const notices: string[] = []
   let dataState: StudioReviewQueue["dataState"] = "ready"
-  let items: StudioReviewItem[] = []
+  const items: StudioReviewItem[] = []
 
   if (runsResult.ok) {
     const candidateRuns = runsResult.data.runs ?? []

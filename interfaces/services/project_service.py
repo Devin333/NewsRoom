@@ -11,10 +11,14 @@ from backend.projects import (
     CollectionGenerateRequest,
     CollectionItemCreateRequest,
     InteractionRequest,
+    LabAnswerValidationError,
     LabAnswerRequest,
     LabNodeExplainRequest,
+    LabQuestionNotFoundError,
     LabSaveRequest,
+    LabSessionNotReadyError,
     LabSessionRequest,
+    LabSolutionMissingError,
     ProjectArtifactRepository,
     ProjectDomainService,
     ProjectListQuery,
@@ -45,6 +49,24 @@ class ProjectLabNodeNotFoundError(LookupError):
 
 
 class ProjectLabSessionNotFoundError(LookupError):
+    pass
+
+
+class ProjectLabQuestionNotFoundError(LookupError):
+    pass
+
+
+class ProjectLabAnswerValidationError(ValueError):
+    pass
+
+
+class ProjectLabSessionNotReadyError(RuntimeError):
+    def __init__(self, unanswered_question_ids: list[str]) -> None:
+        super().__init__("project lab session is not ready to generate a solution")
+        self.unanswered_question_ids = list(unanswered_question_ids)
+
+
+class ProjectLabSolutionMissingError(RuntimeError):
     pass
 
 
@@ -158,13 +180,21 @@ class ProjectApplicationService:
         return result.to_dict()
 
     def answer_lab_question(self, session_id: str, request: LabAnswerRequest) -> dict[str, Any]:
-        result = self.domain.answer_lab_question(session_id, request)
+        try:
+            result = self.domain.answer_lab_question(session_id, request)
+        except LabQuestionNotFoundError as exc:
+            raise ProjectLabQuestionNotFoundError(str(exc)) from exc
+        except LabAnswerValidationError as exc:
+            raise ProjectLabAnswerValidationError(str(exc)) from exc
         if result is None:
             raise ProjectLabSessionNotFoundError(f"project lab session not found: {session_id}")
         return result.to_dict()
 
     def generate_lab_solution(self, session_id: str) -> dict[str, Any]:
-        result = self.domain.generate_lab_solution(session_id)
+        try:
+            result = self.domain.generate_lab_solution(session_id)
+        except LabSessionNotReadyError as exc:
+            raise ProjectLabSessionNotReadyError(exc.unanswered_question_ids) from exc
         if result is None:
             raise ProjectLabSessionNotFoundError(f"project lab session not found: {session_id}")
         return result.to_dict()
@@ -176,7 +206,10 @@ class ProjectApplicationService:
         return result.to_dict()
 
     def save_lab_session(self, session_id: str, request: LabSaveRequest) -> dict[str, Any]:
-        result = self.domain.save_lab_session(session_id, request)
+        try:
+            result = self.domain.save_lab_session(session_id, request)
+        except LabSolutionMissingError as exc:
+            raise ProjectLabSolutionMissingError(str(exc)) from exc
         if result is None:
             raise ProjectLabSessionNotFoundError(f"project lab session not found: {session_id}")
         return result.to_dict()

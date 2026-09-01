@@ -18,6 +18,8 @@ import {
 import type { ProjectsApiCollection, ProjectsApiProjectDetail, ProjectsApiTool } from "@/types/projects"
 import { ProjectEmptyState, ProjectErrorState, ProjectLoadingState, ProjectSourceLine } from "@/features/projects/components/project-product-state"
 import { formatScore, labelize } from "@/features/projects/components/project-format"
+import { LabGraph, LabSolutionPanel, LabWorkflowStatus } from "@/features/projects/components/projects-product-page"
+import { presentLabWorkflow, labSolutionValue } from "@/features/projects/components/lab-workflow"
 
 type UnknownRecord = Record<string, unknown>
 
@@ -106,32 +108,48 @@ export function ProjectCollectionDetailPage({ slug }: { slug: string }) {
 }
 
 export function ProjectLabSessionPage({ sessionId }: { sessionId: string }) {
+  const [savedMessage, setSavedMessage] = useState<string | null>(null)
   const query = useQuery({
     queryKey: ["projects", "lab-session", sessionId],
     queryFn: () => fetchProjectLabSession(sessionId),
   })
   const save = useMutation({
     mutationFn: () => saveProjectLabSession(sessionId, { status: "saved", note: "Saved from Projects Lab detail." }),
-    onSuccess: () => query.refetch(),
+    onSuccess: (result) => {
+      setSavedMessage(result.session.current_stage === "solution_adopted" ? "Solution adopted." : result.session.current_stage === "solution_archived" ? "Session archived." : "Session saved.")
+      void query.refetch()
+    },
   })
   if (query.isLoading) return <ProjectLoadingState title="Loading Lab Session" />
   if (query.isError) return <ProjectErrorState message={query.error instanceof Error ? query.error.message : undefined} onRetry={() => query.refetch()} />
   if (!query.data) return <ProjectEmptyState />
   const session = query.data.session
+  const workflow = presentLabWorkflow(session)
+  const solution = labSolutionValue(session) ?? (session.generated_solution ? { markdown: session.generated_solution } : null)
+  const canSave = !workflow.isUnknown && Boolean(solution) && ["solution_generated"].includes(session.current_stage)
   return (
-    <main className="space-y-6 font-papers-research">
+    <main className="space-y-6 overflow-x-hidden font-papers-research">
       <BackLink href="/projects/lab" label="Lab" />
       <Header title="Lab Session" eyebrow={session.current_stage} body={session.user_problem} />
-      <div className="flex flex-wrap gap-2">
-        <Button type="button" onClick={() => save.mutate()} disabled={save.isPending}>
-          Save Session
+      <div className="flex flex-wrap items-center gap-3">
+        <LabWorkflowStatus session={session} />
+        <Button
+          type="button"
+          onClick={() => save.mutate()}
+          disabled={save.isPending || !canSave}
+        >
+          {save.isPending ? "Saving Session" : "Save Session"}
         </Button>
+        {!canSave && !workflow.isUnknown && session.current_stage !== "solution_saved" ? <p className="basis-full text-sm text-muted-foreground">Save becomes available after a generated solution is ready.</p> : null}
+        {workflow.isUnknown ? <p className="basis-full text-sm text-destructive">Unsupported Lab stage; actions are disabled.</p> : null}
+        {save.isError ? <p className="basis-full text-sm text-destructive" role="alert">{save.error instanceof Error ? save.error.message : "Save failed"}</p> : null}
+        {savedMessage ? <p className="basis-full text-sm text-emerald-700 dark:text-emerald-300" aria-live="polite">{savedMessage}</p> : null}
       </div>
       <section className="grid gap-4 lg:grid-cols-2">
         <RequirementProfilePanel profile={session.requirement_profile} />
-        <GraphPanel graph={session.graph_state} />
+        <section className="rounded-md border border-[#d8dee7] bg-white p-4 shadow-sm dark:border-border dark:bg-card"><LabGraph sessionId={session.id} graph={session.graph_state} /></section>
         <QuestionsPanel questions={session.questions} />
-        <SolutionPanel solution={session.solution_json ?? session.generated_solution} />
+        {solution ? <section className="rounded-md border border-[#d8dee7] bg-white p-4 shadow-sm dark:border-border dark:bg-card"><LabSolutionPanel session={session} solution={solution} /></section> : <SolutionPanel solution={null} />}
       </section>
     </main>
   )
@@ -477,28 +495,6 @@ function RequirementProfilePanel({ profile }: { profile?: unknown }) {
             <span className="font-semibold text-[#202124] dark:text-foreground">{String(value)}</span>
           </div>
         ))}
-      </div>
-    </section>
-  )
-}
-
-function GraphPanel({ graph }: { graph?: unknown }) {
-  const record = asRecord(graph)
-  if (!record) return null
-  const nodeCount = Array.isArray(record.nodes) ? record.nodes.length : 0
-  const edgeCount = Array.isArray(record.edges) ? record.edges.length : 0
-  return (
-    <section className="rounded-md border border-[#d8dee7] bg-white p-4 shadow-sm dark:border-border dark:bg-card">
-      <h2 className="text-sm font-semibold text-[#202124] dark:text-foreground">Graph</h2>
-      <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
-        <div className="rounded-md bg-[#f8fafc] p-2 dark:bg-background">
-          <p className="text-[#667085] dark:text-muted-foreground">Nodes</p>
-          <p className="font-semibold text-[#202124] dark:text-foreground">{nodeCount}</p>
-        </div>
-        <div className="rounded-md bg-[#f8fafc] p-2 dark:bg-background">
-          <p className="text-[#667085] dark:text-muted-foreground">Edges</p>
-          <p className="font-semibold text-[#202124] dark:text-foreground">{edgeCount}</p>
-        </div>
       </div>
     </section>
   )

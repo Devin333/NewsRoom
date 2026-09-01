@@ -3,6 +3,12 @@ from __future__ import annotations
 from fastapi.testclient import TestClient
 
 from interfaces.api import create_app
+from interfaces.services.project_service import (
+    ProjectLabAnswerValidationError,
+    ProjectLabQuestionNotFoundError,
+    ProjectLabSessionNotReadyError,
+    ProjectLabSolutionMissingError,
+)
 
 
 def test_projects_api_registers_product_routes_with_envelope() -> None:
@@ -130,10 +136,47 @@ def test_projects_api_not_found_errors_use_standard_envelope() -> None:
     assert payload["error"]["code"] == "project_not_found"
 
 
+def test_projects_api_lab_contract_errors_use_status_specific_envelopes() -> None:
+    service = _FakeProjectApplicationService()
+    client = TestClient(create_app(project_service_factory=lambda: service, audit_emitter_factory=None))
+
+    service.lab_answer_error = ProjectLabQuestionNotFoundError("project lab question not found")
+    response = client.post(
+        "/api/v1/projects/lab/sessions/session-1/answer",
+        json={"question_id": "missing", "answer": "value"},
+    )
+    assert response.status_code == 404
+    assert response.json()["error"]["code"] == "project_lab_question_not_found"
+
+    service.lab_answer_error = ProjectLabAnswerValidationError("answer must be a non-empty string")
+    response = client.post(
+        "/api/v1/projects/lab/sessions/session-1/answer",
+        json={"question_id": "question-1", "answer": "   "},
+    )
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "invalid_project_lab_answer"
+
+    service.lab_answer_error = None
+    service.lab_generate_error = ProjectLabSessionNotReadyError(["question-1", "question-2"])
+    response = client.post("/api/v1/projects/lab/sessions/session-1/generate-solution")
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "lab_session_not_ready"
+    assert response.json()["error"]["details"]["unanswered_question_ids"] == ["question-1", "question-2"]
+
+    service.lab_generate_error = None
+    service.lab_save_error = ProjectLabSolutionMissingError("project lab solution is required before saving a session")
+    response = client.post("/api/v1/projects/lab/sessions/session-1/save", json={"status": "saved"})
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "lab_solution_missing"
+
+
 class _FakeProjectApplicationService:
     def __init__(self, *, not_found: bool = False) -> None:
         self.not_found = not_found
         self.calls = []
+        self.lab_answer_error = None
+        self.lab_generate_error = None
+        self.lab_save_error = None
 
     def get_home(self, *, limit=6, user_id=None):
         self.calls.append(("get_home", {"limit": limit, "user_id": user_id}))
@@ -226,10 +269,14 @@ class _FakeProjectApplicationService:
         return _session()
 
     def answer_lab_question(self, session_id, request):
+        if self.lab_answer_error is not None:
+            raise self.lab_answer_error
         self.calls.append(("answer_lab_question", {"session_id": session_id, "question_id": request.question_id}))
         return _session()
 
     def generate_lab_solution(self, session_id):
+        if self.lab_generate_error is not None:
+            raise self.lab_generate_error
         self.calls.append(("generate_lab_solution", {"session_id": session_id}))
         return {"session": _session(), "solution": {"id": "solution-1"}}
 
@@ -238,6 +285,8 @@ class _FakeProjectApplicationService:
         return {"session_id": session_id, "node_id": request.node_id, "title": "Node", "explanation": "Node explanation."}
 
     def save_lab_session(self, session_id, request):
+        if self.lab_save_error is not None:
+            raise self.lab_save_error
         self.calls.append(("save_lab_session", {"session_id": session_id, "status": request.status}))
         return _session()
 

@@ -95,34 +95,59 @@ describe("ProjectsProductPage", () => {
         id: "lab-session-1",
         user_problem: "Need a newsroom workflow module",
         selected_case_ids: ["case-1", "case-2", "case-3"],
-        current_stage: "clarifying",
+        current_stage: "clarifying_requirements",
+        next_action: "answer_question",
+        can_generate_solution: false,
+        unanswered_question_ids: ["q-context", "q-deploy"],
         questions: [
-          { id: "q-context", question: "Which workflow stage needs the most help?" },
-          { id: "q-deploy", question: "What deployment constraint matters most?" },
+          { id: "q-context", question: "Which workflow stage needs the most help?", required: true },
+          { id: "q-deploy", question: "What deployment constraint matters most?", required: true },
         ],
       },
     })
-    vi.mocked(answerProjectLabQuestion).mockResolvedValueOnce({
-      session: {
-        id: "lab-session-1",
-        user_problem: "Need a newsroom workflow module",
-        selected_case_ids: ["case-1", "case-2", "case-3"],
-        current_stage: "ready_to_generate",
-        questions: [
-          { id: "q-context", question: "Which workflow stage needs the most help?", answered_value: "Batch ingestion" },
-          { id: "q-deploy", question: "What deployment constraint matters most?" },
-        ],
-      },
-    })
+    vi.mocked(answerProjectLabQuestion)
+      .mockResolvedValueOnce({
+        session: {
+          id: "lab-session-1",
+          user_problem: "Need a newsroom workflow module",
+          selected_case_ids: ["case-1", "case-2", "case-3"],
+          current_stage: "clarifying_requirements",
+          next_action: "answer_question",
+          can_generate_solution: false,
+          unanswered_question_ids: ["q-deploy"],
+          questions: [
+            { id: "q-context", question: "Which workflow stage needs the most help?", required: true, answered_value: "Batch ingestion" },
+            { id: "q-deploy", question: "What deployment constraint matters most?", required: true },
+          ],
+        },
+      })
+      .mockResolvedValueOnce({
+        session: {
+          id: "lab-session-1",
+          user_problem: "Need a newsroom workflow module",
+          selected_case_ids: ["case-1", "case-2", "case-3"],
+          current_stage: "ready_to_generate",
+          next_action: "generate_solution",
+          can_generate_solution: true,
+          unanswered_question_ids: [],
+          questions: [
+            { id: "q-context", question: "Which workflow stage needs the most help?", required: true, answered_value: "Batch ingestion" },
+            { id: "q-deploy", question: "What deployment constraint matters most?", required: true, answered_value: "Local deployment" },
+          ],
+        },
+      })
     vi.mocked(generateProjectLabSolution).mockResolvedValueOnce({
       session: {
         id: "lab-session-1",
         user_problem: "Need a newsroom workflow module",
         selected_case_ids: ["case-1", "case-2", "case-3"],
         current_stage: "solution_generated",
+        next_action: "review_solution",
+        can_generate_solution: false,
+        unanswered_question_ids: [],
         questions: [
-          { id: "q-context", question: "Which workflow stage needs the most help?", answered_value: "Batch ingestion" },
-          { id: "q-deploy", question: "What deployment constraint matters most?" },
+          { id: "q-context", question: "Which workflow stage needs the most help?", required: true, answered_value: "Batch ingestion" },
+          { id: "q-deploy", question: "What deployment constraint matters most?", required: true, answered_value: "Local deployment" },
         ],
         generated_solution: "Use AgentKit as the orchestration layer.",
       },
@@ -149,7 +174,7 @@ describe("ProjectsProductPage", () => {
         selected_case_ids: ["case-1", "case-2", "case-3"],
       })
     )
-    expect(await screen.findByText("clarifying")).toBeInTheDocument()
+    expect(await screen.findByText("clarifying_requirements")).toBeInTheDocument()
     expect(screen.getByText("Which workflow stage needs the most help?")).toBeInTheDocument()
 
     const answerButton = screen.getByRole("button", { name: "Answer" })
@@ -164,15 +189,64 @@ describe("ProjectsProductPage", () => {
         answer: "Batch ingestion",
       })
     )
-    expect(await screen.findByText("ready_to_generate")).toBeInTheDocument()
+    expect(await screen.findByText("clarifying_requirements")).toBeInTheDocument()
     expect(screen.getByText("What deployment constraint matters most?")).toBeInTheDocument()
     expect(screen.getByPlaceholderText("Answer clarification")).toHaveValue("")
+    expect(screen.getByRole("button", { name: "Generate Solution" })).toBeDisabled()
+
+    fireEvent.change(screen.getByPlaceholderText("Answer clarification"), { target: { value: "  Local deployment  " } })
+    fireEvent.click(screen.getByRole("button", { name: "Answer" }))
+
+    await waitFor(() =>
+      expect(answerProjectLabQuestion).toHaveBeenLastCalledWith("lab-session-1", {
+        question_id: "q-deploy",
+        answer: "Local deployment",
+      })
+    )
+    expect(await screen.findByText("ready_to_generate")).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: "Generate Solution" })).toBeEnabled()
 
     fireEvent.click(screen.getByRole("button", { name: "Generate Solution" }))
 
     await waitFor(() => expect(generateProjectLabSolution).toHaveBeenCalledWith("lab-session-1"))
     expect(await screen.findByText(/workflow automation/)).toBeInTheDocument()
     expect(screen.getByText(/candidate_projects/)).toBeInTheDocument()
+  })
+
+  it("keeps Lab actions disabled when the server returns an unsupported stage", async () => {
+    vi.mocked(fetchProjectProductSection).mockResolvedValueOnce({
+      hot: [],
+      rising: [],
+      tools: [],
+      cases: [],
+      collections: [],
+      watchlist: [],
+      recommendations: [],
+      meta: readyMeta(),
+      metrics: [],
+    })
+    vi.mocked(startProjectLabSession).mockResolvedValueOnce({
+      session: {
+        id: "lab-session-unknown",
+        user_problem: "Need a future workflow",
+        selected_case_ids: [],
+        current_stage: "unknown",
+        raw_current_stage: "future_stage",
+        next_action: "unknown",
+        can_generate_solution: true,
+        unanswered_question_ids: [],
+        questions: [],
+      },
+    })
+
+    renderWithQueryClient(<ProjectsProductPage route="lab" />)
+    fireEvent.change(await screen.findByPlaceholderText("Describe the module or product problem"), {
+      target: { value: "Need a future workflow" },
+    })
+    fireEvent.click(screen.getByRole("button", { name: "Start Session" }))
+
+    expect(await screen.findByText("Unsupported stage: future_stage")).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: "Generate Solution" })).toBeDisabled()
   })
 
   it("adds a Watchlist item and refreshes the list after a successful save", async () => {

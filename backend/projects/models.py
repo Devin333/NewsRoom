@@ -312,6 +312,7 @@ class LabQuestion(PrimitiveModel):
     question_type: Literal["single_choice", "multi_choice", "priority_rank", "scale", "free_text", "confirm"]
     options: list[dict[str, str]] = Field(default_factory=list)
     purpose: str
+    required: bool = True
     answered_value: Any | None = None
 
 
@@ -337,7 +338,10 @@ class LabSession(PrimitiveModel):
     selected_case_ids: list[str] = Field(default_factory=list)
     graph_state: LabGraphState
     questions: list[LabQuestion] = Field(default_factory=list)
-    current_stage: str = "understanding_problem"
+    current_stage: str = "clarifying_requirements"
+    next_action: str = "answer_question"
+    can_generate_solution: bool = False
+    unanswered_question_ids: list[str] = Field(default_factory=list)
     generated_solution: str | None = None
     solution_json: dict[str, Any] | None = None
     status: LabSessionStatus = LabSessionStatus.ACTIVE

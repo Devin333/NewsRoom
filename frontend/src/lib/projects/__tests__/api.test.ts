@@ -27,6 +27,7 @@ import {
   refreshProjectWatchlistItem,
   saveProjectLabSession,
   startProjectLabSession,
+  ProjectsApiError,
 } from "@/lib/projects/api"
 
 vi.mock("@/lib/api/client", () => ({
@@ -272,7 +273,7 @@ describe("projects API client", () => {
 
     const session = await fetchProjectLabSession("session/1")
     expect(apiGet).toHaveBeenCalledWith("/api/v1/projects/lab/sessions/session%2F1", undefined)
-    expect(session.session.current_stage).toBe("clarifying")
+    expect(session.session.current_stage).toBe("clarifying_requirements")
 
     const nodeExplanation = await explainProjectLabNode("session/1", { node_id: "node-1", style: "plain" })
     expect(apiPost).toHaveBeenCalledWith(
@@ -289,6 +290,45 @@ describe("projects API client", () => {
       undefined
     )
     expect(saved.session.status).toBe("saved")
+  })
+
+  it("normalizes unsupported Lab contract values and preserves readiness conflict details", async () => {
+    vi.mocked(apiGet).mockResolvedValueOnce({
+      ok: true,
+      data: {
+        session: {
+          ...labSession("session-unknown"),
+          current_stage: "future_stage",
+          next_action: "future_action",
+          can_generate_solution: true,
+          unanswered_question_ids: [],
+        },
+      },
+    })
+
+    const session = await fetchProjectLabSession("session-unknown")
+    expect(session.session.current_stage).toBe("unknown")
+    expect(session.session.raw_current_stage).toBe("future_stage")
+    expect(session.session.next_action).toBe("unknown")
+
+    vi.mocked(apiPost).mockResolvedValueOnce({
+      success: false,
+      error: {
+        code: "lab_session_not_ready",
+        message: "Answer all required Lab questions before generating a solution.",
+        details: { unanswered_question_ids: ["q-context"] },
+        status: 409,
+        user_action_required: true,
+      },
+    })
+
+    await expect(generateProjectLabSolution("session-unknown")).rejects.toMatchObject({
+      name: "ProjectsApiError",
+      code: "lab_session_not_ready",
+      status: 409,
+      detail: { unanswered_question_ids: ["q-context"] },
+      userActionRequired: true,
+    } satisfies Partial<ProjectsApiError>)
   })
 
   it("uses Projects API v1 collection mutation routes", async () => {
@@ -379,7 +419,13 @@ describe("projects API client", () => {
   })
 
   it("covers Projects API v1 mutations", async () => {
-    vi.mocked(apiPost).mockResolvedValue({ success: true, data: { ok: true } })
+    vi.mocked(apiPost)
+      .mockResolvedValueOnce({ success: true, data: { ok: true } })
+      .mockResolvedValueOnce({ success: true, data: { ok: true } })
+      .mockResolvedValueOnce({ success: true, data: { session: labSession("session-1") } })
+      .mockResolvedValueOnce({ success: true, data: { session: labSession("session-1") } })
+      .mockResolvedValueOnce({ success: true, data: { session: labSession("session-1"), solution: {} } })
+      .mockResolvedValue({ success: true, data: { ok: true } })
     vi.mocked(apiPatch).mockResolvedValue({ success: true, data: { item: { id: "watch-1" } } })
     vi.mocked(apiDelete).mockResolvedValue({ success: true, data: { deleted: true, item_id: "watch-1" } })
 
@@ -526,7 +572,10 @@ function labSession(id: string) {
     id,
     user_problem: "Need a newsroom workflow module",
     selected_case_ids: ["case-1"],
-    current_stage: "clarifying",
-    questions: [{ id: "q-context", question: "Which workflow stage needs help?" }],
+    current_stage: "clarifying_requirements",
+    next_action: "answer_question",
+    can_generate_solution: false,
+    unanswered_question_ids: ["q-context"],
+    questions: [{ id: "q-context", question: "Which workflow stage needs help?", required: true }],
   }
 }

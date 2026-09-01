@@ -1,4 +1,10 @@
 from backend.projects.bridge import ProjectRadarBridge
+from backend.projects.lab import (
+    LabAnswerValidationError,
+    LabQuestionNotFoundError,
+    LabSessionNotReadyError,
+    LabSolutionMissingError,
+)
 from backend.projects.dto import (
     CaseExplainRequest,
     CaseMapRequest,
@@ -51,12 +57,16 @@ __all__ = [
     "CollectionType",
     "InteractionRequest",
     "IntegrationDifficulty",
+    "LabAnswerValidationError",
     "LabAnswerRequest",
     "LabNodeExplainRequest",
+    "LabQuestionNotFoundError",
     "LabSaveRequest",
     "LabSession",
+    "LabSessionNotReadyError",
     "LabSessionRequest",
     "LabSessionStatus",
+    "LabSolutionMissingError",
     "ModuleCase",
     "Project",
     "ProjectAction",

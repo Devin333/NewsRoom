@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import datetime, timezone as _tz
 UTC = _tz.utc
 from typing import Any
@@ -27,6 +28,102 @@ from backend.projects.models import (
 from backend.projects.repository import ProjectStateRepository
 
 
+LAB_WORKFLOW_STAGES = frozenset(
+    {
+        "clarifying_requirements",
+        "ready_to_generate",
+        "solution_generated",
+        "solution_saved",
+        "solution_adopted",
+        "solution_archived",
+    }
+)
+LAB_NEXT_ACTIONS = frozenset(
+    {"answer_question", "generate_solution", "review_solution", "save_solution", "none"}
+)
+
+
+class LabQuestionNotFoundError(LookupError):
+    def __init__(self, session_id: str, question_id: str) -> None:
+        super().__init__(f"project lab question not found: {session_id}/{question_id}")
+        self.session_id = session_id
+        self.question_id = question_id
+
+
+class LabAnswerValidationError(ValueError):
+    pass
+
+
+class LabSessionNotReadyError(RuntimeError):
+    def __init__(self, unanswered_question_ids: list[str]) -> None:
+        super().__init__("project lab session is not ready to generate a solution")
+        self.unanswered_question_ids = list(unanswered_question_ids)
+
+
+class LabSolutionMissingError(RuntimeError):
+    pass
+
+
+@dataclass(frozen=True)
+class LabStateContract:
+    current_stage: str
+    next_action: str
+    can_generate_solution: bool
+    unanswered_question_ids: list[str]
+
+
+def derive_lab_workflow(session: LabSession) -> LabStateContract:
+    """Derive the server-owned Lab workflow fields from durable session state."""
+    unanswered_question_ids = [
+        question.id
+        for question in session.questions
+        if question.required and _is_unanswered(question.answered_value)
+    ]
+    has_solution = _has_solution(session)
+
+    if session.status == LabSessionStatus.SAVED:
+        return LabStateContract(
+            current_stage="solution_saved",
+            next_action="none",
+            can_generate_solution=False,
+            unanswered_question_ids=unanswered_question_ids,
+        )
+    if session.status == LabSessionStatus.ADOPTED:
+        return LabStateContract(
+            current_stage="solution_adopted",
+            next_action="none",
+            can_generate_solution=False,
+            unanswered_question_ids=unanswered_question_ids,
+        )
+    if session.status == LabSessionStatus.ARCHIVED:
+        return LabStateContract(
+            current_stage="solution_archived",
+            next_action="none",
+            can_generate_solution=False,
+            unanswered_question_ids=unanswered_question_ids,
+        )
+    if has_solution:
+        return LabStateContract(
+            current_stage="solution_generated",
+            next_action="review_solution",
+            can_generate_solution=False,
+            unanswered_question_ids=unanswered_question_ids,
+        )
+    if unanswered_question_ids:
+        return LabStateContract(
+            current_stage="clarifying_requirements",
+            next_action="answer_question",
+            can_generate_solution=False,
+            unanswered_question_ids=unanswered_question_ids,
+        )
+    return LabStateContract(
+        current_stage="ready_to_generate",
+        next_action="generate_solution",
+        can_generate_solution=True,
+        unanswered_question_ids=[],
+    )
+
+
 class ProjectLabService:
     def __init__(self, state_repository: ProjectStateRepository) -> None:
         self.state_repository = state_repository
@@ -39,7 +136,7 @@ class ProjectLabService:
         profile = _requirement_profile(request, selected_cases)
         graph = _build_graph(session_id, request, selected_cases)
         questions = _questions(session_id, request, dataset, selected_cases)
-        session = LabSession(
+        session = _with_workflow_contract(LabSession(
             id=session_id,
             user_id=request.user_id,
             user_problem=request.user_problem.strip(),
@@ -51,9 +148,8 @@ class ProjectLabService:
             selected_case_ids=[case.id for case in selected_cases],
             graph_state=graph,
             questions=questions,
-            current_stage="clarifying_requirements",
             status=LabSessionStatus.ACTIVE,
-        )
+        ))
         self.state_repository.update(
             lambda state: state.model_copy(update={"lab_sessions": [*state.lab_sessions, session]})
         )
@@ -62,10 +158,11 @@ class ProjectLabService:
     def get_session(self, session_id: str) -> LabSession | None:
         for session in self.state_repository.load().lab_sessions:
             if session.id == session_id:
-                return session
+                return _with_workflow_contract(session)
         return None
 
     def answer(self, session_id: str, request: LabAnswerRequest) -> LabSession | None:
+        answer = _validated_answer(request.answer)
         updated: LabSession | None = None
 
         def update(state):
@@ -75,27 +172,31 @@ class ProjectLabService:
                 if session.id != session_id:
                     sessions.append(session)
                     continue
+                if not any(question.id == request.question_id for question in session.questions):
+                    raise LabQuestionNotFoundError(session_id, request.question_id)
                 questions = [
-                    question.model_copy(update={"answered_value": request.answer})
+                    question.model_copy(update={"answered_value": answer})
                     if question.id == request.question_id
                     else question
                     for question in session.questions
                 ]
-                answered = any(question.id == request.question_id for question in session.questions)
-                if not answered:
-                    sessions.append(session)
-                    continue
                 node = LabGraphNode(
                     id=stable_id("lab_node", session_id, request.question_id, "answer"),
                     node_type="feedback",
                     title="User clarification",
-                    payload={"question_id": request.question_id, "answer": request.answer},
+                    payload={"question_id": request.question_id, "answer": answer},
                 )
+                nodes = [item for item in session.graph_state.nodes if item.id != node.id]
+                edges = [
+                    edge
+                    for edge in session.graph_state.edges
+                    if not (edge.source_id == request.question_id and edge.target_id == node.id)
+                ]
                 graph = session.graph_state.model_copy(
                     update={
-                        "nodes": [*session.graph_state.nodes, node],
+                        "nodes": [*nodes, node],
                         "edges": [
-                            *session.graph_state.edges,
+                            *edges,
                             LabGraphEdge(
                                 source_id=request.question_id,
                                 target_id=node.id,
@@ -106,14 +207,13 @@ class ProjectLabService:
                         "focused_node_ids": [node.id],
                     }
                 )
-                updated = session.model_copy(
+                updated = _with_workflow_contract(session.model_copy(
                     update={
                         "questions": questions,
                         "graph_state": graph,
-                        "current_stage": "solution_ready",
                         "updated_at": _now(),
                     }
-                )
+                ))
                 sessions.append(updated)
             return state.model_copy(update={"lab_sessions": sessions})
 
@@ -164,30 +264,32 @@ class ProjectLabService:
                 if session.id != session_id:
                     sessions.append(session)
                     continue
-                cases = [case for case in dataset.cases if case.id in session.selected_case_ids]
-                solution = _solution(session, cases, dataset)
+                ready_session = _with_workflow_contract(session)
+                if not ready_session.can_generate_solution:
+                    raise LabSessionNotReadyError(ready_session.unanswered_question_ids)
+                cases = [case for case in dataset.cases if case.id in ready_session.selected_case_ids]
+                solution = _solution(ready_session, cases, dataset)
                 solution_node = LabGraphNode(
-                    id=stable_id("lab_node", session.id, "solution"),
+                    id=stable_id("lab_node", ready_session.id, "solution"),
                     node_type="solution",
                     title=solution.title,
                     payload=solution.solution_json,
                 )
-                graph = session.graph_state.model_copy(
+                graph = ready_session.graph_state.model_copy(
                     update={
-                        "nodes": [*session.graph_state.nodes, solution_node],
+                        "nodes": [item for item in ready_session.graph_state.nodes if item.id != solution_node.id] + [solution_node],
                         "focused_node_ids": [solution_node.id],
                     }
                 )
-                updated = session.model_copy(
+                updated = _with_workflow_contract(ready_session.model_copy(
                     update={
                         "generated_solution": solution.markdown,
                         "solution_json": solution.solution_json,
                         "graph_state": graph,
-                        "current_stage": "solution_generated",
                         "status": LabSessionStatus.ACTIVE,
                         "updated_at": _now(),
                     }
-                )
+                ))
                 sessions.append(updated)
                 result = LabSolutionResult(session=updated, solution=solution.to_dict())
             return state.model_copy(update={"lab_sessions": sessions})
@@ -205,23 +307,54 @@ class ProjectLabService:
                 if session.id != session_id:
                     sessions.append(session)
                     continue
+                if not _has_solution(session):
+                    raise LabSolutionMissingError("project lab solution is required before saving a session")
                 metadata = dict(session.graph_state.metadata)
-                if request.note:
-                    metadata["save_note"] = request.note
+                note = request.note.strip() if isinstance(request.note, str) else None
+                if note:
+                    metadata["save_note"] = note
                 graph = session.graph_state.model_copy(update={"metadata": metadata})
-                updated = session.model_copy(
+                updated = _with_workflow_contract(session.model_copy(
                     update={
                         "status": LabSessionStatus(request.status),
                         "graph_state": graph,
-                        "current_stage": f"solution_{request.status}",
                         "updated_at": _now(),
                     }
-                )
+                ))
                 sessions.append(updated)
             return state.model_copy(update={"lab_sessions": sessions})
 
         self.state_repository.update(update)
         return updated
+
+
+def _with_workflow_contract(session: LabSession) -> LabSession:
+    workflow = derive_lab_workflow(session)
+    return session.model_copy(
+        update={
+            "current_stage": workflow.current_stage,
+            "next_action": workflow.next_action,
+            "can_generate_solution": workflow.can_generate_solution,
+            "unanswered_question_ids": workflow.unanswered_question_ids,
+        }
+    )
+
+
+def _has_solution(session: LabSession) -> bool:
+    return bool(session.solution_json) or bool((session.generated_solution or "").strip())
+
+
+def _is_unanswered(value: Any) -> bool:
+    return value is None or (isinstance(value, str) and not value.strip())
+
+
+def _validated_answer(value: Any) -> str:
+    if not isinstance(value, str):
+        raise LabAnswerValidationError("answer must be a non-empty string")
+    answer = value.strip()
+    if not answer:
+        raise LabAnswerValidationError("answer must be a non-empty string")
+    return answer
 
 
 def _select_cases(dataset: ProjectDataset, request: LabSessionRequest) -> list[ModuleCase]:

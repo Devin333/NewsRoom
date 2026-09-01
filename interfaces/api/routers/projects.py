@@ -28,8 +28,12 @@ from interfaces.api.deps import ApiRouteHelpers, ApiServices, get_actor_context
 from interfaces.services.project_service import (
     ProjectCaseNotFoundError,
     ProjectCollectionNotFoundError,
+    ProjectLabAnswerValidationError,
     ProjectLabNodeNotFoundError,
+    ProjectLabQuestionNotFoundError,
     ProjectLabSessionNotFoundError,
+    ProjectLabSessionNotReadyError,
+    ProjectLabSolutionMissingError,
     ProjectNotFoundError,
     ProjectWatchlistItemNotFoundError,
 )
@@ -214,6 +218,10 @@ def create_router(services: ApiServices, helpers: ApiRouteHelpers) -> APIRouter:
             return helpers.success({"session": services.project_service_factory().answer_lab_question(session_id, request)})
         except ProjectLabSessionNotFoundError as exc:
             return helpers.error(status_code=404, code="project_lab_session_not_found", message=str(exc))
+        except ProjectLabQuestionNotFoundError as exc:
+            return helpers.error(status_code=404, code="project_lab_question_not_found", message=str(exc))
+        except ProjectLabAnswerValidationError as exc:
+            return helpers.error(status_code=422, code="invalid_project_lab_answer", message=str(exc))
 
     @router.post("/api/v1/projects/lab/sessions/{session_id}/explain-node")
     def explain_project_lab_node(session_id: str, request: LabNodeExplainRequest):
@@ -228,6 +236,14 @@ def create_router(services: ApiServices, helpers: ApiRouteHelpers) -> APIRouter:
             return helpers.success(services.project_service_factory().generate_lab_solution(session_id))
         except ProjectLabSessionNotFoundError as exc:
             return helpers.error(status_code=404, code="project_lab_session_not_found", message=str(exc))
+        except ProjectLabSessionNotReadyError as exc:
+            return helpers.error(
+                status_code=409,
+                code="lab_session_not_ready",
+                message=str(exc),
+                details={"unanswered_question_ids": exc.unanswered_question_ids},
+                user_action_required=True,
+            )
 
     @router.post("/api/v1/projects/lab/sessions/{session_id}/save")
     def save_project_lab_session(session_id: str, request: LabSaveRequest):
@@ -235,6 +251,13 @@ def create_router(services: ApiServices, helpers: ApiRouteHelpers) -> APIRouter:
             return helpers.success({"session": services.project_service_factory().save_lab_session(session_id, request)})
         except ProjectLabSessionNotFoundError as exc:
             return helpers.error(status_code=404, code="project_lab_session_not_found", message=str(exc))
+        except ProjectLabSolutionMissingError as exc:
+            return helpers.error(
+                status_code=409,
+                code="lab_solution_missing",
+                message=str(exc),
+                user_action_required=True,
+            )
 
     @router.get("/api/v1/projects/collections")
     def list_project_collections():

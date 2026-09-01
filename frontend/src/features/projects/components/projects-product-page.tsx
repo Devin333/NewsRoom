@@ -1,9 +1,9 @@
 "use client"
 
 import Link from "next/link"
-import { ArrowRight, Binoculars, Boxes, FlaskConical, Flame, FolderKanban, GitBranch, Search, Sparkles, Star } from "lucide-react"
+import { AlertCircle, ArrowRight, Binoculars, Boxes, Check, ChevronRight, CircleHelp, Clipboard, ExternalLink, FlaskConical, Flame, FolderKanban, GitBranch, Info, Loader2, Search, Sparkles, Star } from "lucide-react"
 import type { ComponentType } from "react"
-import { useMemo, useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 import { useMutation, useQuery } from "@tanstack/react-query"
 import { useSearchParams } from "next/navigation"
 import { Badge } from "@/components/ui/badge"
@@ -15,6 +15,8 @@ import {
   fetchProjectProductSection,
   fetchProjectsHome,
   generateProjectLabSolution,
+  explainProjectLabNode,
+  ProjectsApiError,
   recordProjectInteraction,
   projectProductSection,
   startProjectLabSession,
@@ -22,6 +24,8 @@ import {
 import { formatScore, labelize } from "@/features/projects/components/project-format"
 import { ProjectProductCard } from "@/features/projects/components/project-product-card"
 import { ProjectDegradedNotice, ProjectEmptyState, ProjectErrorState, ProjectLoadingState, ProjectSourceLine } from "@/features/projects/components/project-product-state"
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { presentLabWorkflow, labQuestionAnswered, labSolutionValue } from "@/features/projects/components/lab-workflow"
 import type {
   ProjectCategoryAlias,
   ProjectProductRoute,
@@ -486,11 +490,14 @@ function WatchlistView({ data, onChanged }: { data: ProjectsApiWatchlistResult; 
 function LabView({ data }: { data: ProductData }) {
   const meta = getMeta(data)
   const [problem, setProblem] = useState("")
-  const [answer, setAnswer] = useState("")
   const [session, setSession] = useState<ProjectsLabSession | null>(null)
   const [solution, setSolution] = useState<ProjectsLabSolutionResult | null>(null)
+  const [focusQuestionId, setFocusQuestionId] = useState<string | null>(null)
   const selectedCaseIds = useMemo(() => ("cases" in data ? data.cases.slice(0, 3).map((item) => item.id) : []), [data])
-  const activeQuestion = session?.questions.find((question) => question.answered_value === undefined || question.answered_value === null)
+  const workflow = session ? presentLabWorkflow(session) : null
+  const activeQuestion = session && session.next_action === "answer_question"
+    ? session.questions.find((question) => session.unanswered_question_ids.includes(question.id))
+    : undefined
 
   const startSession = useMutation({
     mutationFn: () =>
@@ -498,22 +505,22 @@ function LabView({ data }: { data: ProductData }) {
         user_problem: problem.trim(),
         selected_case_ids: selectedCaseIds,
       }),
-    onSuccess: (result) => {
+      onSuccess: (result) => {
       void recordProjectInteraction({
         event_type: "lab_started",
         target_type: "lab_session",
         target_id: result.session.id,
         query_text: problem.trim(),
       })
-      setSession(result.session)
-      setSolution(null)
-      setAnswer("")
-    },
+        setSession(result.session)
+        setSolution(null)
+        setFocusQuestionId(result.session.unanswered_question_ids[0] ?? null)
+      },
   })
   const answerQuestion = useMutation({
-    mutationFn: () => {
-      if (!session || !activeQuestion) throw new Error("No active Lab question")
-      return answerProjectLabQuestion(session.id, { question_id: activeQuestion.id, answer: answer.trim() })
+    mutationFn: ({ questionId, answer }: { questionId: string; answer: string }) => {
+      if (!session) throw new Error("No active Lab session")
+      return answerProjectLabQuestion(session.id, { question_id: questionId, answer })
     },
     onSuccess: (result) => {
       void recordProjectInteraction({
@@ -523,12 +530,12 @@ function LabView({ data }: { data: ProductData }) {
         action_value: activeQuestion?.id,
       })
       setSession(result.session)
-      setAnswer("")
+      setFocusQuestionId(result.session.unanswered_question_ids[0] ?? null)
     },
   })
   const generateSolution = useMutation({
     mutationFn: () => {
-      if (!session) throw new Error("No active Lab session")
+      if (!session || !workflow?.canGenerate) throw new Error("Lab session is not ready to generate a solution")
       return generateProjectLabSolution(session.id)
     },
     onSuccess: (result) => {
@@ -539,73 +546,90 @@ function LabView({ data }: { data: ProductData }) {
       })
       setSession(result.session)
       setSolution(result)
+      setFocusQuestionId(null)
+    },
+    onError: (cause) => {
+      if (cause instanceof ProjectsApiError && cause.status === 409) {
+        const details = asRecord(cause.detail)
+        const unanswered = Array.isArray(details?.unanswered_question_ids) ? details.unanswered_question_ids.find((item): item is string => typeof item === "string") : undefined
+        setFocusQuestionId(unanswered ?? session?.unanswered_question_ids[0] ?? null)
+      }
     },
   })
 
+  useEffect(() => {
+    if (!focusQuestionId) return
+    document.getElementById(`lab-question-${focusQuestionId}`)?.focus()
+  }, [focusQuestionId, session])
+
   return (
-    <section className="grid gap-5 lg:grid-cols-[minmax(0,28rem)_1fr]">
+    <section className="space-y-5" aria-label="Projects Lab workspace">
       <form
-        className="space-y-3 rounded-md border border-[#d8dee7] bg-white p-4 shadow-sm dark:border-border dark:bg-card"
+        className="space-y-3 border-y border-[#d8dee7] bg-white py-5 dark:border-border dark:bg-card lg:rounded-md lg:border lg:px-5"
+        aria-busy={startSession.isPending}
         onSubmit={(event) => {
           event.preventDefault()
           if (!problem.trim()) return
           startSession.mutate()
         }}
       >
-        <h2 className="text-base font-semibold text-[#202124] dark:text-foreground">Start Lab Session</h2>
+        <div>
+          <p className="text-xs font-semibold uppercase tracking-wide text-[#667085] dark:text-muted-foreground">Research brief</p>
+          <h2 className="mt-1 text-xl font-semibold text-[#202124] dark:text-foreground">Start Lab Session</h2>
+        </div>
         {meta ? <ProjectSourceLine meta={meta} /> : null}
+        {meta?.data_state !== "ready" ? <ProjectDegradedNotice meta={meta ?? { source: "none", data_state: "empty", notices: [] }} /> : null}
+        <p className="text-sm leading-6 text-muted-foreground">Describe the real module or product problem you want to clarify. The session will use only selected Project Radar cases.</p>
         <textarea
+          id="lab-problem"
           value={problem}
           onChange={(event) => setProblem(event.target.value)}
-          className="min-h-28 w-full rounded-md border border-input bg-card px-3 py-2 text-sm"
+          aria-describedby="lab-problem-help"
+          aria-invalid={startSession.isError}
+          className="min-h-28 w-full rounded-md border border-input bg-card px-3 py-2 text-base leading-6"
           placeholder="Describe the module or product problem"
         />
-        <Button type="submit" disabled={!problem.trim() || startSession.isPending}>
-          {startSession.isPending ? "Starting" : "Start Session"}
-        </Button>
-        {startSession.isError ? <p className="text-sm text-destructive">{startSession.error instanceof Error ? startSession.error.message : "Lab session failed"}</p> : null}
+        <p id="lab-problem-help" className="text-xs text-muted-foreground">A non-empty brief is required.</p>
+        <div className="flex flex-wrap items-center gap-3">
+          <Button type="submit" disabled={!problem.trim() || startSession.isPending}>
+            {startSession.isPending ? <><Loader2 className="size-4 animate-spin" /> Starting</> : <>Start Session <ChevronRight className="size-4" /></>}
+          </Button>
+          {startSession.isPending ? <span className="text-sm text-muted-foreground" aria-live="polite">Creating session from real data</span> : null}
+        </div>
+        {startSession.isError ? <p id="lab-problem-error" role="alert" className="text-sm text-destructive">{startSession.error instanceof Error ? startSession.error.message : "Lab session failed"}</p> : null}
       </form>
-      <div className="space-y-4 rounded-md border border-[#d8dee7] bg-white p-4 shadow-sm dark:border-border dark:bg-card">
-        <h2 className="text-base font-semibold text-[#202124] dark:text-foreground">Session Workspace</h2>
-        {session ? (
-          <>
-            <div className="rounded-md bg-secondary/60 p-3 text-sm">
-              <p className="font-medium text-[#202124] dark:text-foreground">{session.current_stage}</p>
-              <p className="mt-1 text-muted-foreground">{session.user_problem}</p>
-            </div>
-            <LabGraph graph={session.graph_state} />
-            {activeQuestion ? (
-              <div className="space-y-3">
-                <p className="text-sm font-medium text-[#202124] dark:text-foreground">{activeQuestion.question}</p>
-                <Input value={answer} onChange={(event) => setAnswer(event.target.value)} placeholder="Answer clarification" />
-                <Button
-                  type="button"
-                  variant="outline"
-                  disabled={!answer.trim() || answerQuestion.isPending}
-                  onClick={() => answerQuestion.mutate()}
-                >
-                  {answerQuestion.isPending ? "Saving Answer" : "Answer"}
-                </Button>
+      {!session ? <ProjectEmptyState title="No active Lab session" /> : (
+        <div className="grid gap-5 lg:grid-cols-[minmax(13rem,0.8fr)_minmax(0,2fr)_minmax(16rem,1fr)]">
+          <LabWorkflowStatus session={session} />
+          <div className="min-w-0 space-y-5">
+            <section className="border-y border-[#d8dee7] bg-white py-5 dark:border-border dark:bg-card lg:rounded-md lg:border lg:px-5">
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-[#667085] dark:text-muted-foreground">Session brief</p>
+                  <h2 className="mt-1 text-lg font-semibold text-[#202124] dark:text-foreground">{session.user_problem}</h2>
+                </div>
+                <Button asChild variant="outline" size="sm"><Link href={`/projects/lab/${encodeURIComponent(session.id)}`}>Open detail <ExternalLink className="size-3.5" /></Link></Button>
               </div>
-            ) : null}
-            <Button type="button" disabled={generateSolution.isPending} onClick={() => generateSolution.mutate()}>
-              {generateSolution.isPending ? "Generating" : "Generate Solution"}
-            </Button>
-            {answerQuestion.isError ? <p className="text-sm text-destructive">{answerQuestion.error instanceof Error ? answerQuestion.error.message : "Answer failed"}</p> : null}
-            {generateSolution.isError ? <p className="text-sm text-destructive">{generateSolution.error instanceof Error ? generateSolution.error.message : "Solution failed"}</p> : null}
-            {solution ? (
-              <div className="space-y-3">
-                <Button asChild variant="outline" size="sm">
-                  <Link href={`/projects/lab/${encodeURIComponent(solution.session.id)}`}>Open Session Detail</Link>
+              <LabClarificationList session={session} mutation={answerQuestion} hasError={answerQuestion.isError} focusQuestionId={focusQuestionId} onAnswer={(questionId, answer) => answerQuestion.mutate({ questionId, answer })} />
+              {answerQuestion.isError ? <p role="alert" className="mt-3 text-sm text-destructive">{answerQuestion.error instanceof Error ? answerQuestion.error.message : "Answer failed"}</p> : null}
+              <div className="mt-5 flex flex-wrap items-center gap-3 border-t border-border pt-4">
+                <Button type="button" disabled={!workflow?.canGenerate || generateSolution.isPending} onClick={() => generateSolution.mutate()}>
+                  {generateSolution.isPending ? <><Loader2 className="size-4 animate-spin" /> Generating</> : <>Generate Solution <ChevronRight className="size-4" /></>}
                 </Button>
-                <pre className="max-h-72 overflow-auto rounded-md bg-[#111827] p-3 text-xs text-white">{JSON.stringify(solution.solution, null, 2)}</pre>
+                <span className="text-sm text-muted-foreground" aria-live="polite">{workflow?.actionLabel}</span>
               </div>
-            ) : null}
-          </>
-        ) : (
-          <p className="text-sm leading-6 text-muted-foreground">No active Lab session yet.</p>
-        )}
-      </div>
+              {generateSolution.isError ? (
+                <p role="alert" className="mt-3 text-sm text-destructive">
+                  {generateSolution.error instanceof Error ? generateSolution.error.message : "Solution failed"}
+                  {generateSolution.error && typeof generateSolution.error === "object" && "status" in generateSolution.error && generateSolution.error.status === 409 ? " Return to the unanswered clarification above." : ""}
+                </p>
+              ) : null}
+              {solution ? <LabSolutionPanel session={solution.session} solution={solution.solution} /> : session.generated_solution || session.solution_json ? <LabSolutionPanel session={session} solution={session.solution_json ?? { markdown: session.generated_solution }} /> : null}
+            </section>
+          </div>
+          <LabContextPanel session={session} />
+        </div>
+      )}
     </section>
   )
 }
@@ -752,43 +776,192 @@ const NODE_COLORS: Record<string, string> = {
   question: "#d97706", feedback: "#7c3aed", pattern: "#0891b2", component: "#be185d",
 }
 
-function LabGraph({ graph }: { graph?: unknown }) {
+export function LabWorkflowStatus({ session }: { session: ProjectsLabSession }) {
+  const workflow = presentLabWorkflow(session)
+  return (
+    <aside className="h-fit border-y border-[#d8dee7] bg-white py-5 dark:border-border dark:bg-card lg:rounded-md lg:border lg:p-5" aria-label="Lab workflow status">
+      <div className="flex items-start gap-3">
+        <span className={`mt-0.5 flex size-9 shrink-0 items-center justify-center rounded-full ${workflow.statusTone === "success" ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-300" : workflow.statusTone === "warning" ? "bg-amber-100 text-amber-700 dark:bg-amber-500/20 dark:text-amber-300" : "bg-secondary text-muted-foreground"}`}>
+          {workflow.statusTone === "success" ? <Check className="size-4" /> : workflow.statusTone === "warning" ? <AlertCircle className="size-4" /> : <CircleHelp className="size-4" />}
+        </span>
+        <div className="min-w-0">
+          <p className="text-xs font-semibold uppercase tracking-wide text-[#667085] dark:text-muted-foreground">Workflow</p>
+          <h2 className="mt-1 text-base font-semibold text-[#202124] dark:text-foreground">{workflow.stageLabel}</h2>
+          <p className="mt-2 text-sm leading-6 text-muted-foreground" aria-live="polite">{workflow.actionLabel}</p>
+        </div>
+      </div>
+      {workflow.unansweredCount > 0 ? <p className="mt-4 rounded-md bg-amber-50 px-3 py-2 text-sm text-amber-900 dark:bg-amber-500/10 dark:text-amber-100">{workflow.unansweredCount} required clarification{workflow.unansweredCount === 1 ? "" : "s"} remaining.</p> : null}
+      {workflow.isUnknown ? <p className="mt-4 rounded-md bg-amber-50 px-3 py-2 text-sm text-amber-900 dark:bg-amber-500/10 dark:text-amber-100">Actions are disabled until the server returns a supported workflow state.</p> : null}
+      <span className="sr-only">{session.current_stage}</span>
+    </aside>
+  )
+}
+
+export function LabClarificationList({
+  session,
+  focusQuestionId,
+  onAnswer,
+  mutation,
+  hasError,
+}: {
+  session: ProjectsLabSession
+  focusQuestionId?: string | null
+  onAnswer: (questionId: string, answer: string) => void
+  mutation: { isPending: boolean }
+  hasError?: boolean
+}) {
+  const [drafts, setDrafts] = useState<Record<string, string>>({})
+  const unanswered = new Set(session.unanswered_question_ids)
+  const firstUnansweredId = session.questions.find((question) => unanswered.has(question.id))?.id
+  if (!session.questions.length) return <p className="mt-5 text-sm text-muted-foreground">No clarification questions are available.</p>
+  return (
+    <div className="mt-5 space-y-3" aria-label="Lab clarification questions">
+      {session.questions.map((question, index) => {
+        const answered = !unanswered.has(question.id) || labQuestionAnswered(question.answered_value)
+        const draft = drafts[question.id] ?? ""
+        const active = !answered && question.id === firstUnansweredId
+        return (
+          <div key={question.id} className={`rounded-md border p-4 ${answered ? "border-border bg-secondary/30" : "border-primary/40 bg-card"}`}>
+            <div className="flex items-start gap-3">
+              <span className="mt-0.5 flex size-6 shrink-0 items-center justify-center rounded-full bg-secondary text-xs font-semibold text-muted-foreground">{index + 1}</span>
+              <div className="min-w-0 flex-1">
+                <p className="text-sm font-medium text-[#202124] dark:text-foreground">{question.question}</p>
+                {answered ? <p className="mt-2 flex items-center gap-1 text-sm text-muted-foreground"><Check className="size-3.5 text-emerald-600" /> {String(question.answered_value ?? "Answered")}</p> : !active ? <p className="mt-2 text-xs text-muted-foreground">Waiting for the previous clarification.</p> : (
+                  <div className="mt-3 space-y-2">
+                    {question.options?.length ? <div className="flex flex-wrap gap-2">{question.options.map((option) => <button key={option.value} type="button" className="min-h-11 rounded-md border border-border px-3 text-sm hover:bg-secondary" onClick={() => setDrafts((current) => ({ ...current, [question.id]: option.value }))}>{option.label}</button>)}</div> : null}
+                    <label className="sr-only" htmlFor={`lab-question-${question.id}`}>Answer: {question.question}</label>
+                    <div className="flex flex-col gap-2 sm:flex-row">
+                      <Input
+                        id={`lab-question-${question.id}`}
+                        autoFocus={focusQuestionId === question.id}
+                        value={draft}
+                        onChange={(event) => setDrafts((current) => ({ ...current, [question.id]: event.target.value }))}
+                        placeholder="Answer clarification"
+                        aria-required={question.required !== false}
+                        aria-invalid={Boolean(hasError)}
+                        aria-describedby={hasError ? `lab-question-${question.id}-error` : undefined}
+                        disabled={mutation.isPending}
+                      />
+                      <Button type="button" variant="outline" className="min-h-11" disabled={!draft.trim() || mutation.isPending} onClick={() => onAnswer(question.id, draft.trim())}>
+                        {mutation.isPending ? <><Loader2 className="size-4 animate-spin" /> Saving Answer</> : "Answer"}
+                      </Button>
+                    </div>
+                    {hasError ? <p id={`lab-question-${question.id}-error`} className="text-sm text-destructive" role="alert">Answer could not be saved. Review the answer and retry.</p> : null}
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
+export function LabContextPanel({ session }: { session: ProjectsLabSession }) {
+  return (
+    <aside className="min-w-0 space-y-5 border-y border-[#d8dee7] bg-white py-5 dark:border-border dark:bg-card lg:rounded-md lg:border lg:p-5">
+      <div>
+        <p className="text-xs font-semibold uppercase tracking-wide text-[#667085] dark:text-muted-foreground">Context</p>
+        <h2 className="mt-1 text-lg font-semibold text-[#202124] dark:text-foreground">Real Project Radar references</h2>
+      </div>
+      <div className="rounded-md bg-secondary/40 p-3 text-sm">
+        <p className="font-medium text-[#202124] dark:text-foreground">{session.selected_case_ids.length} selected case{session.selected_case_ids.length === 1 ? "" : "s"}</p>
+        <p className="mt-1 text-muted-foreground">Only API-provided case and graph records are shown.</p>
+      </div>
+      <LabGraph sessionId={session.id} graph={session.graph_state} />
+    </aside>
+  )
+}
+
+export function LabGraph({ sessionId, graph }: { sessionId?: string; graph?: unknown }) {
   const record = asRecord(graph)
   const nodes = recordArray(record?.nodes)
-  if (!nodes.length) return null
   const edges = recordArray(record?.edges)
   const focused = stringArray(record?.focused_node_ids)
-  const cx = 200, cy = 120, r = 90
-  const pos: Record<string, { x: number; y: number }> = {}
-  nodes.forEach((node, i) => {
-    const a = (2 * Math.PI * i) / nodes.length - Math.PI / 2
+  const [selectedNode, setSelectedNode] = useState<string | null>(null)
+  const [explanation, setExplanation] = useState<{ title: string; explanation: string; related_nodes: Array<Record<string, unknown>> } | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const explain = useMutation({
+    mutationFn: (nodeId: string) => {
+      if (!sessionId) throw new Error("Lab session is unavailable")
+      return explainProjectLabNode(sessionId, { node_id: nodeId, style: "plain" })
+    },
+    onSuccess: (result) => { setExplanation(result); setError(null) },
+    onError: (cause) => setError(cause instanceof Error ? cause.message : "Node explanation failed"),
+  })
+  if (!record) return <p className="text-sm text-muted-foreground">Graph context is unavailable.</p>
+  if (!nodes.length) return <p className="text-sm text-muted-foreground">No graph nodes are available.</p>
+  const cx = 200, cy = 120, radius = 90
+  const positions: Record<string, { x: number; y: number }> = {}
+  nodes.forEach((node, index) => {
+    const angle = (2 * Math.PI * index) / nodes.length - Math.PI / 2
     const id = textValue(node.id)
-    if (id) {
-      pos[id] = { x: cx + r * Math.cos(a), y: cy + r * Math.sin(a) }
-    }
+    if (id) positions[id] = { x: cx + radius * Math.cos(angle), y: cy + radius * Math.sin(angle) }
   })
   return (
-    <div className="rounded-md border border-[#e5e7eb] bg-[#f8fafc] p-2 dark:border-border dark:bg-background">
-      <p className="mb-1 text-xs font-semibold text-[#667085]">Graph — {nodes.length} nodes, {edges.length} edges</p>
-      <svg viewBox="0 0 400 240" className="w-full" style={{ maxHeight: 200 }}>
-        {edges.map((edge, i) => {
-          const s = pos[textValue(edge.source_id)]
-          const t = pos[textValue(edge.target_id)]
-          return s && t ? <line key={i} x1={s.x} y1={s.y} x2={t.x} y2={t.y} stroke="#d1d5db" strokeWidth={1.5} /> : null
-        })}
+    <section aria-labelledby="lab-graph-title">
+      <div className="flex items-baseline justify-between gap-2">
+        <h3 id="lab-graph-title" className="text-sm font-semibold text-[#202124] dark:text-foreground">Graph context</h3>
+        <span className="text-xs text-muted-foreground">{nodes.length} nodes · {edges.length} relationships</span>
+      </div>
+      <div className="mt-3 overflow-hidden rounded-md border border-border bg-[#f8fafc] p-2 dark:bg-background">
+        <svg viewBox="0 0 400 240" className="w-full" role="img" aria-label={`Graph with ${nodes.length} nodes and ${edges.length} relationships`} style={{ maxHeight: 200 }}>
+          {edges.map((edge, index) => {
+            const source = positions[textValue(edge.source_id)]
+            const target = positions[textValue(edge.target_id)]
+            return source && target ? <line key={index} x1={source.x} y1={source.y} x2={target.x} y2={target.y} stroke="#cbd5e1" strokeWidth={1.5} /> : null
+          })}
+          {nodes.map((node) => {
+            const id = textValue(node.id)
+            const position = positions[id]
+            if (!position) return null
+            const active = focused.includes(id) || selectedNode === id
+            const color = NODE_COLORS[textValue(node.node_type)] ?? "#6b7280"
+            return <g key={id}><circle cx={position.x} cy={position.y} r={active ? 10 : 7} fill={color} opacity={active ? 1 : 0.7} /><text x={position.x} y={position.y + 18} textAnchor="middle" fontSize={8} fill="currentColor">{textValue(node.title).slice(0, 18)}</text></g>
+          })}
+        </svg>
+      </div>
+      <ol className="mt-3 space-y-2" aria-label="Graph nodes and relationships">
         {nodes.map((node) => {
           const id = textValue(node.id)
-          const p = pos[id]; if (!p) return null
-          const color = NODE_COLORS[textValue(node.node_type)] ?? "#6b7280"
-          return (
-            <g key={id}>
-              <circle cx={p.x} cy={p.y} r={focused.includes(id) ? 10 : 7} fill={color} opacity={focused.includes(id) ? 1 : 0.7} />
-              <text x={p.x} y={p.y + 18} textAnchor="middle" fontSize={8} fill="#374151">{textValue(node.title).slice(0, 14)}</text>
-            </g>
-          )
+          const related = edges.filter((edge) => textValue(edge.source_id) === id || textValue(edge.target_id) === id).length
+          return <li key={id} className="flex items-center gap-2 text-sm"><button type="button" className="min-h-11 min-w-0 flex-1 rounded-md border border-transparent px-2 text-left hover:border-border hover:bg-secondary" aria-pressed={selectedNode === id} onClick={() => setSelectedNode(id)}><span className="font-medium text-[#202124] dark:text-foreground">{textValue(node.title) || "Unnamed node"}</span><span className="ml-2 text-xs text-muted-foreground">{textValue(node.node_type)} · {related} related</span></button><Button type="button" variant="ghost" size="icon" aria-label={`Explain ${textValue(node.title)}`} disabled={explain.isPending} onClick={() => explain.mutate(id)}><Info className="size-4" /></Button></li>
         })}
-      </svg>
-    </div>
+      </ol>
+      {explain.isPending ? <p className="mt-3 text-sm text-muted-foreground" aria-live="polite">Loading node explanation</p> : null}
+      {error ? <p className="mt-3 text-sm text-destructive" role="alert">{error}</p> : null}
+      {explanation ? <div className="mt-3 rounded-md border border-primary/30 bg-primary/5 p-3" aria-live="polite"><p className="text-sm font-semibold text-[#202124] dark:text-foreground">{explanation.title}</p><p className="mt-1 text-sm leading-6 text-muted-foreground">{explanation.explanation}</p>{explanation.related_nodes.length ? <p className="mt-2 text-xs text-muted-foreground">{explanation.related_nodes.length} related node{explanation.related_nodes.length === 1 ? "" : "s"}</p> : null}</div> : null}
+    </section>
+  )
+}
+
+export function LabSolutionPanel({ session, solution }: { session: ProjectsLabSession; solution: Record<string, unknown> }) {
+  const [copyState, setCopyState] = useState<"idle" | "success" | "error">("idle")
+  const structured = labSolutionValue(session) ?? solution
+  const copyStructured = async () => {
+    const text = JSON.stringify(structured, null, 2)
+    try {
+      if (!navigator.clipboard) throw new Error("Clipboard is unavailable")
+      await navigator.clipboard.writeText(text)
+      setCopyState("success")
+    } catch {
+      setCopyState("error")
+    }
+  }
+  const evidence = asRecord(structured)
+  const summaryText = session.generated_solution || textValue(evidence?.summary) || "Summary is unavailable."
+  const structuredKeys = Object.keys(structured)
+  const evidenceKeys = ["case_ids", "project_ids", "data_policy", "review_notes"]
+  return (
+    <section className="mt-5 border-t border-border pt-5" aria-labelledby="lab-solution-title">
+      <div className="flex flex-wrap items-start justify-between gap-3"><div><p className="text-xs font-semibold uppercase tracking-wide text-[#667085] dark:text-muted-foreground">Output</p><h2 id="lab-solution-title" className="mt-1 text-lg font-semibold text-[#202124] dark:text-foreground">Generated solution</h2></div><Button asChild variant="outline" size="sm"><Link href={`/projects/lab/${encodeURIComponent(session.id)}`}>Open session detail <ExternalLink className="size-3.5" /></Link></Button></div>
+      <Tabs defaultValue="summary" className="mt-4"><TabsList className="max-w-full overflow-x-auto"><TabsTrigger value="summary">Summary</TabsTrigger><TabsTrigger value="structured">Structured</TabsTrigger><TabsTrigger value="evidence">Evidence</TabsTrigger></TabsList>
+        <TabsContent value="summary"><div className="rounded-md border border-border bg-secondary/30 p-4"><p className="whitespace-pre-wrap text-sm leading-7 text-[#334155] dark:text-muted-foreground">{summaryText}</p>{textValue(evidence?.module) ? <p className="mt-3 text-sm font-medium text-[#334155] dark:text-foreground">Module: {textValue(evidence?.module)}</p> : null}<p className="mt-3 text-xs text-muted-foreground">Structured fields: {structuredKeys.length ? structuredKeys.join(", ") : "Unavailable"}</p></div></TabsContent>
+        <TabsContent value="structured"><div className="relative"><pre className="max-h-80 overflow-auto rounded-md bg-[#111827] p-4 pr-14 text-xs leading-5 text-white">{JSON.stringify(structured, null, 2)}</pre><Button type="button" variant="secondary" size="icon" className="absolute right-2 top-2" aria-label="Copy structured solution data" title="Copy structured solution data" onClick={copyStructured}><Clipboard className="size-4" /></Button></div><p className="mt-2 text-xs text-muted-foreground" aria-live="polite">{copyState === "success" ? "Structured solution data copied." : copyState === "error" ? "Structured solution data could not be copied." : "Copy only the structured solution data."}</p></TabsContent>
+        <TabsContent value="evidence"><dl className="grid gap-2 sm:grid-cols-2">{evidenceKeys.map((key) => <div key={key} className="rounded-md border border-border bg-secondary/30 p-3"><dt className="text-xs font-semibold uppercase text-muted-foreground">{key.replaceAll("_", " ")}</dt><dd className="mt-1 break-words text-sm text-[#334155] dark:text-foreground">{evidence?.[key] === undefined ? "Unavailable from the API response." : Array.isArray(evidence[key]) ? evidence[key].join(", ") : String(evidence[key])}</dd></div>)}</dl></TabsContent>
+      </Tabs>
+    </section>
   )
 }
 
