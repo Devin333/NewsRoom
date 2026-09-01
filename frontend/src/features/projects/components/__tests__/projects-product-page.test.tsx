@@ -1,7 +1,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { afterEach, describe, expect, it, vi } from "vitest"
-import { LabGraph, ProjectsProductPage } from "@/features/projects/components/projects-product-page"
+import { LabGraph, LabSolutionPanel, ProjectsProductPage } from "@/features/projects/components/projects-product-page"
 import {
   addProjectWatchlistItem,
   answerProjectLabQuestion,
@@ -11,6 +11,7 @@ import {
   generateProjectLabSolution,
   recordProjectInteraction,
   startProjectLabSession,
+  ProjectsApiError,
 } from "@/lib/projects/api"
 
 vi.mock("@/lib/projects/api", async (importOriginal) => {
@@ -223,6 +224,76 @@ describe("ProjectsProductPage", () => {
     await waitFor(() => expect(generateProjectLabSolution).toHaveBeenCalledWith("lab-session-1"))
     expect(await screen.findByText(/workflow automation/)).toBeInTheDocument()
     expect(screen.getByText(/candidate_projects/)).toBeInTheDocument()
+  })
+
+  it("keeps the brief and exposes pending feedback when starting the session fails", async () => {
+    vi.mocked(fetchProjectProductSection).mockResolvedValueOnce({
+      hot: [], rising: [], tools: [], cases: [], collections: [], watchlist: [], recommendations: [], meta: readyMeta(), metrics: [],
+    })
+    vi.mocked(startProjectLabSession).mockRejectedValueOnce(new Error("Session service unavailable"))
+
+    renderWithQueryClient(<ProjectsProductPage route="lab" />)
+    const brief = await screen.findByPlaceholderText("Describe the module or product problem")
+    fireEvent.change(brief, { target: { value: "  Keep this failed brief  " } })
+    fireEvent.click(screen.getByRole("button", { name: "Start Session" }))
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("Session service unavailable")
+    expect(brief).toHaveValue("  Keep this failed brief  ")
+  })
+
+  it("shows pending feedback while a session request is in flight", async () => {
+    vi.mocked(fetchProjectProductSection).mockResolvedValueOnce({
+      hot: [], rising: [], tools: [], cases: [], collections: [], watchlist: [], recommendations: [], meta: readyMeta(), metrics: [],
+    })
+    vi.mocked(startProjectLabSession).mockImplementationOnce(() => new Promise(() => undefined))
+
+    renderWithQueryClient(<ProjectsProductPage route="lab" />)
+    const brief = await screen.findByPlaceholderText("Describe the module or product problem")
+    fireEvent.change(brief, { target: { value: "Need pending feedback" } })
+    fireEvent.click(screen.getByRole("button", { name: "Start Session" }))
+
+    expect(await screen.findByText("Creating session from real data")).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: "Starting" })).toBeDisabled()
+  })
+
+  it("renders a readiness response when generation is rejected with 409", async () => {
+    vi.mocked(fetchProjectProductSection).mockResolvedValueOnce({
+      hot: [], rising: [], tools: [], cases: [], collections: [], watchlist: [], recommendations: [], meta: readyMeta(), metrics: [],
+    })
+    vi.mocked(startProjectLabSession).mockResolvedValueOnce({ session: {
+      id: "lab-session-409", user_problem: "Need a gated workflow", selected_case_ids: [], current_stage: "ready_to_generate", next_action: "generate_solution", can_generate_solution: true, unanswered_question_ids: [], questions: [],
+    } })
+    vi.mocked(generateProjectLabSolution).mockRejectedValueOnce(new ProjectsApiError("Answer required", "lab_not_ready", { unanswered_question_ids: ["q-context"] }, false, { status: 409, userActionRequired: true }))
+
+    renderWithQueryClient(<ProjectsProductPage route="lab" />)
+    const brief = await screen.findByPlaceholderText("Describe the module or product problem")
+    fireEvent.change(brief, { target: { value: "Need a gated workflow" } })
+    fireEvent.click(screen.getByRole("button", { name: "Start Session" }))
+    const generate = await screen.findByRole("button", { name: "Generate Solution" })
+    fireEvent.click(generate)
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("Return to the unanswered clarification above.")
+  })
+
+  it("reports structured solution copy success and failure", async () => {
+    const writeText = vi.fn().mockResolvedValueOnce(undefined).mockRejectedValueOnce(new Error("Clipboard blocked"))
+    Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText } })
+    const solutionSession = {
+      id: "lab-session-copy", user_problem: "Need copyable output", selected_case_ids: [], current_stage: "solution_generated" as const, next_action: "review_solution" as const, can_generate_solution: false, unanswered_question_ids: [], questions: [], solution_json: { module: "workflow" },
+    }
+
+    const view = renderWithQueryClient(<LabSolutionPanel session={solutionSession} solution={{ module: "workflow" }} />)
+    const structuredTab = screen.getByRole("tab", { name: "Structured" })
+    structuredTab.focus()
+    fireEvent.keyDown(structuredTab, { key: "Enter", code: "Enter" })
+    await waitFor(() => expect(screen.getByRole("tab", { name: "Structured" })).toHaveAttribute("aria-selected", "true"))
+    const copy = screen.getByRole("button", { name: "Copy structured solution data" })
+    fireEvent.click(copy)
+    expect(await screen.findByText("Structured solution data copied.")).toBeInTheDocument()
+    fireEvent.click(copy)
+    expect(await screen.findByText("Structured solution data could not be copied.")).toBeInTheDocument()
+    expect(writeText).toHaveBeenCalledTimes(2)
+    view.unmount()
   })
 
   it("keeps Lab actions disabled when the server returns an unsupported stage", async () => {
