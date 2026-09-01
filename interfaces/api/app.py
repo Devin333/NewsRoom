@@ -33,6 +33,13 @@ from interfaces.models import (
     RunResponse,
     actor_context_from_headers,
 )
+from interfaces.models.actor import (
+    RESEARCH_ARTIFACT_READ_PERMISSION,
+    RESEARCH_CATALOG_READ_PERMISSION,
+    RESEARCH_PAPER_INGEST_PERMISSION,
+    RESEARCH_PAPER_PARSE_PERMISSION,
+    RESEARCH_PAPER_REFRESH_PERMISSION,
+)
 from interfaces.models.contracts import RunStatus
 from interfaces.api.deps import ApiRouteHelpers, build_api_services
 from interfaces.api.rate_limit import Clock, InMemoryRateLimiter
@@ -899,7 +906,21 @@ def _required_api_permission(method: str, path: str) -> str | None:
     if resource == "projects":
         return "read:reports" if method == "GET" else "write:runs"
     if resource == "research":
-        return "read:reports" if method == "GET" else "write:runs"
+        if method == "GET":
+            if "/artifacts/" in path:
+                return RESEARCH_ARTIFACT_READ_PERMISSION
+            return RESEARCH_CATALOG_READ_PERMISSION
+        if path.endswith("/papers/analyze"):
+            # The pre-v1 analysis workflow is a run operation. Keep its
+            # established permission contract separate from paper parsing.
+            return "write:runs"
+        if path.endswith("/catalog/refresh"):
+            return RESEARCH_PAPER_REFRESH_PERMISSION
+        if path.endswith("/papers/parse"):
+            return RESEARCH_PAPER_PARSE_PERMISSION
+        if path.endswith("/papers/ingest"):
+            return RESEARCH_PAPER_INGEST_PERMISSION
+        return RESEARCH_PAPER_PARSE_PERMISSION
     if resource in {"workers", "queues"}:
         return "read:reports"
     if resource == "schedules":
@@ -951,12 +972,32 @@ def _emit_api_audit(
             request_id=request_id,
             ip_address=request.client.host if request.client else None,
         )
+    permission = _required_api_permission(request.method, path)
+    run_id = request.query_params.get("run_id") or request.query_params.get("runId")
+    scope_ref = actor.metadata.get("scope_ref") if isinstance(actor.metadata, Mapping) else None
+    if not scope_ref:
+        scope_material = {
+            key: actor.metadata.get(key)
+            for key in ("tenant_id", "user_id", "memory_namespace")
+            if isinstance(actor.metadata, Mapping) and actor.metadata.get(key)
+        }
+        if scope_material:
+            scope_ref = hashlib.sha256(
+                json.dumps(scope_material, sort_keys=True, separators=(",", ":")).encode("utf-8")
+            ).hexdigest()
+    reason_code = "success" if status_code < 400 else _http_error_code(status_code)
     audit_emitter.emit(
         actor=actor,
         action=_api_audit_action(request.method, path),
         resource_type=_api_resource_type(path),
         resource_id=_api_resource_id(path),
         result=result,  # type: ignore[arg-type]
+        permission=permission,
+        scope_ref=str(scope_ref) if scope_ref else None,
+        reason_code=reason_code,
+        request_id=request_id,
+        run_id=run_id,
+        correlation_id=request_id,
         metadata={
             "method": request.method,
             "path": path,

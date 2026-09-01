@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import logging
+import base64
+import hashlib
+import json
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from threading import RLock
@@ -16,10 +19,20 @@ from backend.research.application import (
     classify_research_run_record,
     research_identity_scope_ref,
 )
+from backend.research.application.catalog import (
+    CatalogError,
+    ResearchPaperCatalogService,
+)
+from backend.research.application.parse_paper import (
+    ParsePaperError,
+    ParsePaperRequest,
+    ParsePaperUseCase,
+)
 from backend.research.domain import stable_research_id
 from backend.research.ports.artifact_publication import (
     ResearchArtifactDiagnosticReader,
 )
+from backend.research.ports.artifact_store import ResearchArtifactReadPort
 from backend.research.ports.run_store import (
     ResearchRunDiagnosticStore,
     ResearchRunDisposition,
@@ -67,6 +80,20 @@ class ResearchAskInput:
 
 
 @dataclass(frozen=True)
+class ResearchParseInput:
+    source: str
+    source_url: str | None = None
+    source_type: str | None = None
+    content_ref: str | None = None
+    run_id: str | None = None
+    options: dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
+    tenant_id: str | None = None
+    user_id: str | None = None
+    memory_namespace: str | None = None
+
+
+@dataclass(frozen=True)
 class ResearchActorInput:
     tenant_id: str | None = None
     user_id: str | None = None
@@ -91,6 +118,24 @@ class ResearchServiceError(Exception):
         self.details = details or {}
         self.retryable = retryable
         self.user_action_required = user_action_required
+
+    @property
+    def public_message(self) -> str:
+        """Return a stable client-safe message without upstream diagnostics."""
+
+        messages = {
+            "invalid_request": "Research request is invalid",
+            "forbidden": "Research actor is not authorized",
+            "research_parse_unavailable": "Research parse runtime is not configured",
+            "source_denied": "Paper source is unavailable",
+            "source_fetch_failed": "Paper source is unavailable",
+            "document_not_found": "Research document was not found",
+            "catalog_not_found": "Research catalog entry was not found",
+            "artifact_not_found": "Research artifact was not found",
+            "artifact_forbidden": "Research artifact is not authorized",
+            "artifact_corrupt": "Research artifact integrity could not be verified",
+        }
+        return messages.get(self.code, "Research paper operation failed")
 
 
 class ResearchActorAuthorizationError(ResearchServiceError):
@@ -215,6 +260,9 @@ class ResearchApplicationService:
         run_store: ResearchRunStore | None = None,
         run_reconciler: ResearchRunDispositionReconciler | None = None,
         diagnostic_artifact_reader: ResearchArtifactDiagnosticReader | None = None,
+        artifact_reader: ResearchArtifactReadPort | None = None,
+        parse_use_case: ParsePaperUseCase | None = None,
+        catalog_service: ResearchPaperCatalogService | None = None,
     ) -> None:
         self._analyze_use_case = analyze_use_case or _UnconfiguredAnalyzeUseCase()
         self._ask_use_case = ask_use_case or AskPaperUseCase()
@@ -230,8 +278,413 @@ class ResearchApplicationService:
                 "ResearchArtifactDiagnosticReader"
             )
         self._diagnostic_artifact_reader = diagnostic_artifact_reader
+        if artifact_reader is not None and not isinstance(artifact_reader, ResearchArtifactReadPort):
+            raise TypeError("artifact_reader must implement ResearchArtifactReadPort")
+        self._artifact_reader = artifact_reader
+        self._parse_use_case = parse_use_case
+        self._catalog_service = catalog_service
         if self._run_reconciler is not None:
             self._run_reconciler.reconcile_pending()
+
+    def parse_paper(self, command: ResearchParseInput) -> dict[str, Any]:
+        if not isinstance(command, ResearchParseInput):
+            raise ResearchServiceError(
+                "invalid_request",
+                "parse command must be ResearchParseInput",
+                status_code=400,
+                user_action_required=True,
+            )
+        use_case = self._parse_use_case
+        if use_case is None:
+            raise ResearchServiceError(
+                "research_parse_unavailable",
+                "Research paper parse runtime is not configured",
+                status_code=503,
+                retryable=False,
+                user_action_required=True,
+            )
+        actor_scope = _resolve_actor_scope(
+            self._ask_use_case,
+            tenant_id=command.tenant_id,
+            user_id=command.user_id,
+            memory_namespace=command.memory_namespace,
+        )
+        try:
+            result = use_case.parse(
+                ParsePaperRequest(
+                    source=command.source,
+                    source_url=command.source_url,
+                    source_type=command.source_type,
+                    content_ref=command.content_ref,
+                    run_id=command.run_id,
+                    tenant_id=actor_scope.tenant_id,
+                    user_id=actor_scope.user_id,
+                    memory_namespace=actor_scope.memory_namespace,
+                    actor_scope=actor_scope.to_metadata(),
+                    options=dict(command.options),
+                    metadata=dict(command.metadata),
+                )
+            )
+        except ParsePaperError as exc:
+            raise ResearchServiceError(
+                exc.code,
+                exc.message,
+                status_code=exc.status_code,
+                details=exc.details,
+                retryable=exc.retryable,
+                user_action_required=exc.status_code < 500,
+            ) from exc
+        except ValueError as exc:
+            raise ResearchServiceError("invalid_request", str(exc), status_code=400, user_action_required=True) from exc
+        except Exception as exc:
+            raise ResearchServiceError(
+                "research_parse_failed",
+                "Research paper parse request failed",
+                status_code=500,
+                details={"error_type": type(exc).__name__},
+                retryable=True,
+            ) from exc
+        if hasattr(result, "to_contract"):
+            payload = result.to_contract()
+        elif isinstance(result, Mapping):
+            payload = dict(result)
+        else:
+            payload = _to_dict(result)
+        payload.setdefault("metadata", {})
+        payload["metadata"] = {
+            **_mapping(payload.get("metadata")),
+            "actorScope": actor_scope.to_metadata(),
+        }
+        return payload
+
+    def get_sources(self, paper_id: str, *, actor: ResearchActorInput | None = None) -> dict[str, Any]:
+        service = self._require_catalog_service()
+        actor_scope = _resolve_actor_input(self._ask_use_case, actor)
+        snapshots = service.list_sources(paper_id, actor_scope=actor_scope.to_metadata())
+        return {
+            "paperId": paper_id,
+            "sources": [_to_dict(snapshot) for snapshot in snapshots],
+            "provenance": {"actorScope": actor_scope.to_metadata()},
+        }
+
+    def get_document(self, paper_id: str, *, actor: ResearchActorInput | None = None) -> dict[str, Any]:
+        service = self._require_catalog_service()
+        actor_scope = _resolve_actor_input(self._ask_use_case, actor)
+        document = service.get_document(paper_id, actor_scope=actor_scope.to_metadata())
+        if document is None:
+            raise ResearchServiceError("document_not_found", f"document not found for paper {paper_id}", status_code=404, user_action_required=True)
+        return {"paperId": paper_id, "document": _to_dict(document), "provenance": {"actorScope": actor_scope.to_metadata()}}
+
+    def get_catalog(self, paper_id: str, *, actor: ResearchActorInput | None = None) -> dict[str, Any]:
+        service = self._require_catalog_service()
+        actor_scope = _resolve_actor_input(self._ask_use_case, actor)
+        try:
+            entry = service.get_catalog(paper_id, actor_scope=actor_scope.to_metadata())
+        except CatalogError as exc:
+            raise ResearchServiceError(exc.code, exc.message, status_code=exc.status_code, details=exc.details, user_action_required=exc.status_code < 500) from exc
+        return {"paperId": paper_id, "catalog": _to_dict(entry), "provenance": {"actorScope": actor_scope.to_metadata()}}
+
+    def get_code(self, paper_id: str, *, actor: ResearchActorInput | None = None) -> dict[str, Any]:
+        service = self._require_catalog_service()
+        actor_scope = _resolve_actor_input(self._ask_use_case, actor)
+        try:
+            profiles = service.get_code(paper_id, actor_scope=actor_scope.to_metadata())
+        except CatalogError as exc:
+            raise ResearchServiceError(exc.code, exc.message, status_code=exc.status_code, details=exc.details, user_action_required=exc.status_code < 500) from exc
+        return {"paperId": paper_id, "repositories": profiles, "provenance": {"actorScope": actor_scope.to_metadata()}}
+
+    def get_benchmarks(
+        self,
+        paper_id: str,
+        *,
+        benchmark_id: str | None = None,
+        metric_id: str | None = None,
+        dataset_id: str | None = None,
+        dataset_version: str | None = None,
+        split: str | None = None,
+        evaluation_protocol: str | None = None,
+        actor: ResearchActorInput | None = None,
+    ) -> dict[str, Any]:
+        service = self._require_catalog_service()
+        actor_scope = _resolve_actor_input(self._ask_use_case, actor)
+        try:
+            payload = service.get_benchmarks(
+                paper_id,
+                actor_scope=actor_scope.to_metadata(),
+                benchmark_id=benchmark_id,
+                metric_id=metric_id,
+                dataset_id=dataset_id,
+                dataset_version=dataset_version,
+                split=split,
+                evaluation_protocol=evaluation_protocol,
+            )
+        except CatalogError as exc:
+            raise ResearchServiceError(exc.code, exc.message, status_code=exc.status_code, details=exc.details, user_action_required=exc.status_code < 500) from exc
+        payload["provenance"] = {"actorScope": actor_scope.to_metadata()}
+        return payload
+
+    def get_artifact(
+        self,
+        artifact_ref: str,
+        *,
+        include_payload: bool = False,
+        max_chars: int = 200_000,
+        actor: ResearchActorInput | None = None,
+    ) -> dict[str, Any]:
+        """Read a Research Catalog artifact through the scoped read port."""
+
+        ref = _require_text(artifact_ref, "artifactRef")
+        if not isinstance(include_payload, bool):
+            raise ResearchServiceError(
+                "invalid_request",
+                "includePayload must be boolean",
+                status_code=400,
+                user_action_required=True,
+            )
+        if isinstance(max_chars, bool) or not isinstance(max_chars, int) or not 1 <= max_chars <= 1_000_000:
+            raise ResearchServiceError(
+                "invalid_request",
+                "maxChars must be between 1 and 1000000",
+                status_code=400,
+                user_action_required=True,
+            )
+        reader = self._artifact_reader
+        if reader is None:
+            raise ResearchServiceError(
+                "research_artifact_unavailable",
+                "Research artifact reader is not configured",
+                status_code=503,
+                retryable=False,
+                user_action_required=True,
+            )
+        actor_scope = _resolve_actor_input(self._ask_use_case, actor)
+        try:
+            payload = reader.read(
+                ref,
+                actor_scope=actor_scope.to_metadata(),
+                include_payload=include_payload,
+                max_chars=max_chars,
+            )
+        except FileNotFoundError as exc:
+            raise ResearchServiceError(
+                "artifact_not_found",
+                "research artifact was not found",
+                status_code=404,
+                user_action_required=True,
+            ) from exc
+        except PermissionError as exc:
+            raise ResearchServiceError(
+                "artifact_forbidden",
+                "research artifact is not authorized",
+                status_code=403,
+                user_action_required=True,
+            ) from exc
+        except Exception as exc:
+            raise ResearchServiceError(
+                "artifact_corrupt",
+                "research artifact integrity could not be verified",
+                status_code=409,
+                details={"error_type": type(exc).__name__},
+                user_action_required=True,
+            ) from exc
+        return {
+            **dict(payload),
+            "provenance": {"actorScope": actor_scope.to_metadata()},
+        }
+
+    def list_catalog_papers(
+        self,
+        *,
+        query: str = "",
+        limit: int = 50,
+        cursor: str | None = None,
+        sort: str = "observed_at desc, stable_id asc",
+        include_diagnostics: bool = False,
+        actor: ResearchActorInput | None = None,
+    ) -> dict[str, Any]:
+        service = self._require_catalog_service()
+        actor_scope = _resolve_actor_input(self._ask_use_case, actor)
+        if sort not in {"observed_at desc, stable_id asc", "title asc, stable_id asc"}:
+            raise ResearchServiceError(
+                "invalid_request",
+                "unsupported catalog sort",
+                status_code=400,
+                details={"allowed_sort": ["observed_at desc, stable_id asc", "title asc, stable_id asc"]},
+                user_action_required=True,
+            )
+        try:
+            if isinstance(limit, bool) or not 1 <= int(limit) <= 200:
+                raise CatalogError("invalid_limit", "limit must be between 1 and 200", status_code=400)
+            all_entries = service.search_papers(query, limit=200, actor_scope=actor_scope.to_metadata())
+            if sort == "title asc, stable_id asc":
+                all_entries.sort(key=lambda entry: (entry.identity.title.casefold(), entry.paper_id))
+            else:
+                all_entries.sort(
+                    key=lambda entry: (
+                        entry.observed_at.timestamp() if entry.observed_at is not None else 0.0,
+                        entry.paper_id,
+                    ),
+                    reverse=True,
+                )
+            offset = _decode_catalog_cursor(
+                cursor,
+                query=query,
+                sort=sort,
+                scope=actor_scope.to_metadata(),
+            )
+            entries = all_entries[offset : offset + int(limit)]
+        except CatalogError as exc:
+            raise ResearchServiceError(exc.code, exc.message, status_code=exc.status_code, details=exc.details, user_action_required=exc.status_code < 500) from exc
+        payload_entries = [_to_dict(entry) for entry in entries]
+        if not include_diagnostics:
+            for entry in payload_entries:
+                metadata = entry.get("metadata")
+                if isinstance(metadata, dict):
+                    metadata.pop("diagnostics", None)
+        next_cursor = None
+        if offset + len(entries) < len(all_entries):
+            next_cursor = _encode_catalog_cursor(
+                offset=offset + len(entries),
+                query=query,
+                sort=sort,
+                scope=actor_scope.to_metadata(),
+            )
+        return {
+            "papers": payload_entries,
+            "query": query,
+            "pagination": {"limit": int(limit), "nextCursor": next_cursor, "sort": sort},
+            "provenance": {"actorScope": actor_scope.to_metadata()},
+        }
+
+    def get_leaderboards(
+        self,
+        *,
+        benchmark_id: str | None = None,
+        metric_id: str | None = None,
+        dataset_id: str | None = None,
+        dataset_version: str | None = None,
+        split: str | None = None,
+        evaluation_protocol: str | None = None,
+        actor: ResearchActorInput | None = None,
+    ) -> dict[str, Any]:
+        service = self._require_catalog_service()
+        actor_scope = _resolve_actor_input(self._ask_use_case, actor)
+        scores = service.all_scores(actor_scope=actor_scope.to_metadata())
+        return {
+            "leaderboards": service.list_leaderboards(
+                scores,
+                benchmark_id=benchmark_id,
+                metric_id=metric_id,
+                dataset_id=dataset_id,
+                dataset_version=dataset_version,
+                split=split,
+                evaluation_protocol=evaluation_protocol,
+            ),
+            "provenance": {"actorScope": actor_scope.to_metadata()},
+        }
+
+    def refresh_catalog(self, paper_id: str | None = None, *, actor: ResearchActorInput | None = None) -> dict[str, Any]:
+        service = self._require_catalog_service()
+        actor_scope = _resolve_actor_input(self._ask_use_case, actor)
+        if self._parse_use_case is None:
+            raise ResearchServiceError(
+                "research_parse_unavailable",
+                "Research paper parse runtime is not configured",
+                status_code=503,
+                retryable=False,
+                user_action_required=True,
+            )
+        try:
+            entries = (
+                [service.get_catalog(paper_id, actor_scope=actor_scope.to_metadata())]
+                if paper_id
+                else service.search_papers("", limit=200, actor_scope=actor_scope.to_metadata())
+            )
+        except CatalogError as exc:
+            raise ResearchServiceError(
+                exc.code,
+                exc.message,
+                status_code=exc.status_code,
+                details=exc.details,
+                user_action_required=exc.status_code < 500,
+            ) from exc
+        outcomes: list[dict[str, Any]] = []
+        for entry in entries:
+            snapshots = service.list_sources(entry.paper_id, actor_scope=actor_scope.to_metadata())
+            snapshot = next(
+                (item for item in reversed(snapshots) if item.access_status in {"available", "metadata_only"}),
+                None,
+            )
+            if snapshot is None:
+                outcomes.append({"paperId": entry.paper_id, "status": "failed", "code": "source_snapshot_missing"})
+                continue
+            # URL sources must be refreshed through their canonical URL. An
+            # external id such as a DOI is an identifier, not a fetch target;
+            # arXiv/OpenReview adapters are the explicit exceptions.
+            source = (
+                snapshot.external_id
+                if snapshot.source_type in {"arxiv", "openreview"} and snapshot.external_id
+                else snapshot.canonical_url or snapshot.external_id
+            )
+            if not source:
+                outcomes.append({"paperId": entry.paper_id, "status": "failed", "code": "source_locator_missing"})
+                continue
+            try:
+                refresh_metadata = {}
+                if snapshot.source_type == "github":
+                    # A repository observation must be explicitly attached to
+                    # the already-known paper; the resolver rejects
+                    # stand-alone GitHub URLs by design.
+                    refresh_metadata = {
+                        "paper_id": entry.paper_id,
+                        "title": entry.identity.title,
+                    }
+                outcome = self.parse_paper(
+                    ResearchParseInput(
+                        source=source,
+                        source_type=snapshot.source_type,
+                        tenant_id=actor_scope.tenant_id,
+                        user_id=actor_scope.user_id,
+                        memory_namespace=actor_scope.memory_namespace,
+                        options={"refresh": True},
+                        metadata=refresh_metadata,
+                    )
+                )
+            except ResearchServiceError as exc:
+                outcomes.append({
+                    "paperId": entry.paper_id,
+                    "status": "failed",
+                    "code": exc.code,
+                    "message": exc.public_message,
+                    "retryable": exc.retryable,
+                })
+            else:
+                outcomes.append(outcome)
+        if paper_id:
+            outcome = outcomes[0] if outcomes else {"paperId": paper_id, "status": "failed"}
+            return {
+                **outcome,
+                "refreshed": outcome.get("status") not in {"failed", "metadata_only"},
+                "provenance": {"actorScope": actor_scope.to_metadata()},
+            }
+        failed = sum(item.get("status") == "failed" for item in outcomes)
+        return {
+            "status": "catalog_partial" if failed else "catalog_ready",
+            "refreshed": True,
+            "outcomes": outcomes,
+            "provenance": {"actorScope": actor_scope.to_metadata()},
+        }
+
+    def _require_catalog_service(self) -> ResearchPaperCatalogService:
+        if self._catalog_service is None:
+            raise ResearchServiceError(
+                "research_catalog_unavailable",
+                "Research paper catalog runtime is not configured",
+                status_code=503,
+                retryable=False,
+                user_action_required=True,
+            )
+        return self._catalog_service
 
     def analyze_paper(self, command: ResearchAnalyzeInput) -> dict[str, Any]:
         paper_id = _require_text(command.paper_id, "paperId")
@@ -960,6 +1413,68 @@ def _require_text(value: Any, field_name: str) -> str:
     return text
 
 
+def _catalog_scope_fingerprint(scope: Mapping[str, Any]) -> str:
+    encoded = json.dumps(
+        {str(key): str(value) for key, value in sorted(scope.items()) if str(value).strip()},
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _encode_catalog_cursor(
+    *,
+    offset: int,
+    query: str,
+    sort: str,
+    scope: Mapping[str, Any],
+) -> str:
+    payload = {
+        "v": "research.catalog.v1",
+        "offset": int(offset),
+        "query": hashlib.sha256(str(query or "").strip().casefold().encode("utf-8")).hexdigest(),
+        "scope": _catalog_scope_fingerprint(scope),
+        "sort": sort,
+    }
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return base64.urlsafe_b64encode(encoded).decode("ascii").rstrip("=")
+
+
+def _decode_catalog_cursor(
+    cursor: str | None,
+    *,
+    query: str,
+    sort: str,
+    scope: Mapping[str, Any],
+) -> int:
+    if not cursor:
+        return 0
+    try:
+        padded = str(cursor) + "=" * (-len(str(cursor)) % 4)
+        payload = json.loads(base64.urlsafe_b64decode(padded.encode("ascii")).decode("utf-8"))
+        if not isinstance(payload, dict):
+            raise ValueError
+        expected_query = hashlib.sha256(str(query or "").strip().casefold().encode("utf-8")).hexdigest()
+        if (
+            payload.get("v") != "research.catalog.v1"
+            or payload.get("query") != expected_query
+            or payload.get("scope") != _catalog_scope_fingerprint(scope)
+            or payload.get("sort") != sort
+            or isinstance(payload.get("offset"), bool)
+            or not isinstance(payload.get("offset"), int)
+            or payload["offset"] < 0
+        ):
+            raise ValueError
+        return int(payload["offset"])
+    except (ValueError, TypeError, UnicodeDecodeError, json.JSONDecodeError, base64.binascii.Error) as exc:
+        raise ResearchServiceError(
+            "invalid_cursor",
+            "catalog cursor is invalid or no longer matches the query",
+            status_code=400,
+            user_action_required=True,
+        ) from exc
+
+
 def _optional_text(value: Any) -> str | None:
     if value is None:
         return None
@@ -1221,6 +1736,7 @@ __all__ = [
     "ResearchActorAuthorizationError",
     "ResearchApplicationService",
     "ResearchAskInput",
+    "ResearchParseInput",
     "ResearchRagAskUseCase",
     "ResearchRunRecord",
     "ResearchRunStore",

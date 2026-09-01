@@ -1,6 +1,24 @@
 from __future__ import annotations
 
 from backend.research.domain.analysis import ResearchAnalysis, ThreeMinuteRead
+from backend.research.domain.catalog import (
+    CatalogRelationStatus,
+    CatalogRelationType,
+    CatalogTargetType,
+    ResearchPaperCatalogEntry,
+    ResearchPaperIdentity,
+    ResearchPaperRelation,
+    ResearchSourceSnapshot,
+    ResearchSourceType,
+    SourceAccessStatus,
+    actor_scope_matches,
+    actor_scope_ref,
+    build_paper_identity_fingerprint,
+    metric_compatibility_key,
+    metric_dimensions_compatible,
+    same_paper_identity,
+    validate_relation_for_publication,
+)
 from backend.research.domain.common import (
     CandidateReview,
     CandidateStatus,
@@ -15,6 +33,7 @@ from backend.research.domain.common import (
 from backend.research.domain.code_repository import (
     CodeRepositoryObservation,
     CodeRepositoryProfile,
+    CodeRepositorySignal,
     compute_star_growth,
 )
 from backend.research.domain.document import (
@@ -83,6 +102,9 @@ from backend.research.domain.run_disposition import (
 __all__ = [
     "CandidateReview",
     "CandidateStatus",
+    "CatalogRelationStatus",
+    "CatalogRelationType",
+    "CatalogTargetType",
     "CodeRepositoryObservation",
     "CodeRepositoryProfile",
     "EvidenceRef",
@@ -139,16 +161,30 @@ __all__ = [
     "ResearchEvidencePack",
     "ResearchFigure",
     "ResearchPaper",
+    "CodeRepositorySignal",
+    "ResearchPaperCatalogEntry",
+    "ResearchPaperIdentity",
+    "ResearchPaperRelation",
     "ResearchQualityResult",
     "ResearchReaderPayload",
     "ResearchReference",
     "ResearchSection",
     "ResearchTable",
     "ResearchValidationSeverity",
+    "ResearchSourceSnapshot",
+    "ResearchSourceType",
+    "SourceAccessStatus",
+    "actor_scope_matches",
+    "actor_scope_ref",
     "SourceLineage",
     "SourceScopedValue",
     "ThreeMinuteRead",
     "compute_star_growth",
+    "build_paper_identity_fingerprint",
+    "metric_compatibility_key",
+    "metric_dimensions_compatible",
+    "same_paper_identity",
+    "validate_relation_for_publication",
     "derive_research_run_disposition",
     "apply_research_run_disposition",
     "disposition_claim_matches",

@@ -2,7 +2,14 @@ import json
 from datetime import UTC, datetime
 
 from backend.foundation.models.source import SourceDefinition
-from infrastructure.external.sources.github import GITHUB_API_URL, GithubConnector, GithubRepository
+import pytest
+
+from infrastructure.external.sources.github import (
+    GITHUB_API_URL,
+    GithubConnector,
+    GithubRepository,
+    build_github_contents_url,
+)
 
 
 GITHUB_RELEASES = json.dumps(
@@ -133,6 +140,26 @@ GITHUB_REPOSITORY_METADATA = json.dumps(
         "updated_at": "2026-05-11T10:00:00Z",
     }
 )
+
+
+@pytest.mark.parametrize("path", ["../README.md", "a/../b", "./README.md", "README.md/"])
+def test_github_contents_path_rejects_traversal_and_ambiguous_segments(path: str) -> None:
+    with pytest.raises(ValueError):
+        build_github_contents_url(
+            GITHUB_API_URL,
+            GithubRepository(owner="owner", name="repo"),
+            path,
+        )
+
+
+@pytest.mark.parametrize("path", [".env", ".github/workflows/ci.yml", "notebooks/results.ipynb", "weights/model.pt", "secrets/token.txt"])
+def test_github_contents_path_rejects_sensitive_or_binary_observations(path: str) -> None:
+    with pytest.raises(ValueError):
+        build_github_contents_url(
+            GITHUB_API_URL,
+            GithubRepository(owner="owner", name="repo"),
+            path,
+        )
 
 GITHUB_DISCUSSIONS = json.dumps(
     {

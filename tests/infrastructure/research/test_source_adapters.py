@@ -2,12 +2,14 @@ from __future__ import annotations
 
 from dataclasses import replace
 from datetime import datetime, timezone
+from pathlib import Path
 
 import pytest
 
 from backend.research.domain import (
     PaperSourceRecord,
     ResearchDocument,
+    ResearchPaper,
     ResearchSection,
 )
 from backend.research.domain.common import SourceLineage
@@ -26,9 +28,179 @@ from infrastructure.research import (
     ResearchSourceError,
     require_arxiv_id,
 )
+from infrastructure.research.source_resolver import ResearchSourceResolverAdapter
+from backend.research.application.parse_paper import ParsePaperRequest
 
 
 UTC = timezone.utc
+
+
+def test_local_source_resolver_keeps_file_locator_without_breaking_legacy_source_url() -> None:
+    # Use a tiny source fixture so the resolver exercises the real local path,
+    # checksum and PaperSourceRecord construction path.
+    root = Path(__file__).resolve().parent
+    source = root / "_tmp_local_research.tex"
+    source.write_text(r"\documentclass{article}\begin{document}text\end{document}", encoding="utf-8")
+    try:
+        resolver = ResearchSourceResolverAdapter(local_root=root)
+        result = resolver.resolve(
+            ParsePaperRequest(source=str(source), source_type="local")
+        )
+    finally:
+        source.unlink(missing_ok=True)
+
+    assert result.access_status == "available"
+    assert result.source_record is not None
+    assert result.source_record.source_url.startswith("source://local/")
+    assert result.source_record.metadata["source_locator"].startswith("file://")
+
+
+def test_local_source_resolver_accepts_file_uri() -> None:
+    root = Path(__file__).resolve().parent
+    source = root / "_tmp_local_research_file_uri.tex"
+    source.write_text("\\section{Method} local", encoding="utf-8")
+    try:
+        result = ResearchSourceResolverAdapter(local_root=root).resolve(
+            ParsePaperRequest(source=source.as_uri(), source_type="local")
+        )
+    finally:
+        source.unlink(missing_ok=True)
+
+    assert result.access_status == "available"
+    assert result.content == b"\\section{Method} local"
+
+
+def test_remote_injected_fetcher_obeys_size_and_content_type_policy() -> None:
+    policy = replace(
+        ResearchSourceResolverAdapter()._fetch_policy,  # noqa: SLF001 - exercise adapter policy boundary
+        max_bytes=4,
+    )
+
+    oversized = ResearchSourceResolverAdapter(
+        fetch_policy=policy,
+        fetch_bytes=lambda _url, _policy: (b"12345", "application/pdf", "https://example.test/paper.pdf"),
+    ).resolve(
+        ParsePaperRequest(source="https://example.test/paper.pdf", source_type="publisher")
+    )
+    assert oversized.access_status == "failed"
+    assert oversized.diagnostics[0]["code"] == "remote_source_denied_or_failed"
+    assert oversized.diagnostics[0]["error_type"] == "ValueError"
+    assert oversized.snapshot.diagnostics[0]["code"] == "remote_source_denied_or_failed"
+    assert oversized.snapshot.source_policy["https_only"] is True
+
+    unsupported = ResearchSourceResolverAdapter(
+        fetch_bytes=lambda _url, _policy: (b"body", "application/zip", "https://example.test/paper.zip"),
+    ).resolve(
+        ParsePaperRequest(source="https://example.test/paper.zip", source_type="publisher")
+    )
+    assert unsupported.access_status == "unsupported"
+    assert unsupported.diagnostics[0]["error_type"] == "UnsupportedContentTypeError"
+
+
+def test_remote_injected_fetcher_rejects_private_target_before_transport() -> None:
+    calls: list[str] = []
+
+    def fetch(url, _policy):
+        calls.append(url)
+        return b"body", "text/plain", url
+
+    result = ResearchSourceResolverAdapter(fetch_bytes=fetch).resolve(
+        ParsePaperRequest(source="http://127.0.0.1/paper", source_type="publisher")
+    )
+
+    assert result.access_status == "failed"
+    assert calls == []
+    assert result.diagnostics[0]["error_type"] == "ResearchSourceError"
+    assert result.snapshot.user_action_required is False
+
+
+def test_remote_injected_fetcher_rejects_plain_http_before_transport() -> None:
+    calls: list[str] = []
+
+    def fetch(url, _policy):
+        calls.append(url)
+        return b"body", "text/plain", url
+
+    result = ResearchSourceResolverAdapter(fetch_bytes=fetch).resolve(
+        ParsePaperRequest(source="http://example.test/paper", source_type="publisher")
+    )
+
+    assert result.access_status == "failed"
+    assert calls == []
+    assert result.diagnostics[0]["error_type"] == "ResearchSourceError"
+    assert result.snapshot.user_action_required is False
+
+
+def test_openreview_query_id_is_used_as_external_identity() -> None:
+    source = "https://openreview.net/forum?id=paper-note-123"
+    resolver = ResearchSourceResolverAdapter(
+        fetch_bytes=lambda url, _policy: (
+            b"<html><title>OpenReview paper</title><p>Abstract</p></html>",
+            "text/html",
+            url,
+        )
+    )
+
+    result = resolver.resolve(ParsePaperRequest(source=source, source_type="openreview"))
+
+    assert result.snapshot.external_id == "paper-note-123"
+    assert result.paper.title == "OpenReview paper"
+
+
+def test_github_source_adapter_rejects_repository_without_paper_context() -> None:
+    resolver = ResearchSourceResolverAdapter()
+
+    with pytest.raises(ResearchSourceError, match="paper context"):
+        resolver.resolve(
+            ParsePaperRequest(
+                source="https://github.com/example/research-code",
+                source_type="github",
+            )
+        )
+
+
+def test_github_source_adapter_preserves_explicit_paper_id_for_observation() -> None:
+    resolver = ResearchSourceResolverAdapter()
+
+    result = resolver.resolve(
+        ParsePaperRequest(
+            source="https://github.com/example/research-code",
+            source_type="github",
+            metadata={"paper_id": "paper-known"},
+        )
+    )
+
+    assert result.paper.paper_id == "paper-known"
+    assert result.snapshot.paper_id == "paper-known"
+    assert result.access_status == "metadata_only"
+
+
+def test_typed_scope_merges_metadata_and_explicit_scope() -> None:
+    from backend.research.benchmark.models import ResearchMetric
+    from backend.research.domain import ResearchPaperIdentity
+
+    paper = ResearchPaper(
+        paper_id="paper-scope-merge",
+        title="Scope merge",
+        actor_scope={"tenant_id": "tenant-a"},
+        metadata={"actor_scope": {"user_id": "user-a"}},
+    )
+    identity = ResearchPaperIdentity(
+        paper_id="paper-scope-merge",
+        title="Scope merge",
+        actor_scope={"tenant_id": "tenant-a"},
+        metadata={"actor_scope": {"user_id": "user-a"}},
+    )
+    metric = ResearchMetric(
+        metric_id="metric-scope-merge",
+        name="Accuracy",
+        actor_scope={"tenant_id": "tenant-a"},
+        metadata={"actor_scope": {"user_id": "user-a"}},
+    )
+
+    assert paper.actor_scope == {"tenant_id": "tenant-a", "user_id": "user-a"}
+    assert identity.actor_scope == {"tenant_id": "tenant-a", "user_id": "user-a"}
+    assert metric.actor_scope == {"tenant_id": "tenant-a", "user_id": "user-a"}
 
 
 def test_arxiv_provider_projects_exact_recorded_connector_item() -> None:

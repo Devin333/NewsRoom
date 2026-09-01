@@ -20,6 +20,7 @@ from backend.research.domain.document import (
     ResearchTable,
 )
 from backend.research.document.arxiv_parser import ArxivDocumentParser
+from backend.research.document.latex_compiler import _read_tex_files
 from backend.research.document.marker_pdf_parser import MarkerPdfDocumentParser
 from backend.research.document.mineru_pdf_parser import MinerUPdfDocumentParser
 from backend.research.document.pdf_compiler import (
@@ -54,6 +55,20 @@ def _make_pdf(text_pages: list[str]) -> bytes:
     data = doc.tobytes()
     doc.close()
     return data
+
+
+def test_latex_archive_rejects_path_traversal_before_reading_members() -> None:
+    buffer = io.BytesIO()
+    with tarfile.open(fileobj=buffer, mode="w:gz") as archive:
+        payload = b"\\documentclass{article}\\begin{document}\\section{Safe}text\\end{document}"
+        info = tarfile.TarInfo("../escape.tex")
+        info.size = len(payload)
+        archive.addfile(info, io.BytesIO(payload))
+
+    files, strategy = _read_tex_files(buffer.getvalue())
+
+    assert files is None
+    assert strategy is None
 
 
 def _make_latex_targz(tex_content: str) -> bytes:
@@ -230,6 +245,12 @@ def test_detect_latex_targz():
 def test_detect_raw_bytes_treated_as_latex():
     fmt, _ = detect_source_format(b"some random bytes")
     assert fmt is SourceFormat.LATEX
+
+
+def test_detect_html_with_leading_whitespace():
+    fmt, canonical = detect_source_format(b" \n\t<html><body>paper</body></html>")
+    assert fmt is SourceFormat.HTML
+    assert canonical.lstrip().startswith(b"<html>")
 
 
 # ── _parse_mmd (unit, no nougat needed) ──────────────────────────────────────

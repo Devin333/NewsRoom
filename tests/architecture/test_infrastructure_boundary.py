@@ -60,6 +60,20 @@ ALLOWED_BUSINESS_IMPORTS = {
     "infrastructure/research/source_provider.py": {
         "backend.research.domain.paper",
     },
+    "infrastructure/research/catalog_store.py": {
+        "backend.research.domain.catalog",
+        "backend.research.domain.code_repository",
+        "backend.research.domain.document",
+        "backend.research.domain.evidence",
+        "backend.research.domain.paper",
+        "backend.research.ports.catalog_models",
+    },
+    "infrastructure/research/source_resolver.py": {
+        "backend.research.domain.catalog",
+        "backend.research.domain.common",
+        "backend.research.domain.paper",
+        "backend.research.ports.source_resolver",
+    },
 }
 
 SOURCE_ADAPTER_BUSINESS_IMPORTS = {
@@ -110,6 +124,20 @@ RESEARCH_ADAPTER_BUSINESS_IMPORTS = {
     },
     "infrastructure/research/source_provider.py": {
         "backend.research.domain.paper",
+    },
+    "infrastructure/research/catalog_store.py": {
+        "backend.research.domain.catalog",
+        "backend.research.domain.code_repository",
+        "backend.research.domain.document",
+        "backend.research.domain.evidence",
+        "backend.research.domain.paper",
+        "backend.research.ports.catalog_models",
+    },
+    "infrastructure/research/source_resolver.py": {
+        "backend.research.domain.catalog",
+        "backend.research.domain.common",
+        "backend.research.domain.paper",
+        "backend.research.ports.source_resolver",
     },
 }
 

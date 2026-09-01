@@ -99,6 +99,37 @@ def test_research_service_reader_and_analysis_return_research_payloads() -> None
     assert reader["metadata"]["readerPayloadRef"] == "artifact://research-run-1/reader"
 
 
+def test_research_service_reads_catalog_artifact_with_metadata_default() -> None:
+    class Reader:
+        def __init__(self) -> None:
+            self.calls = []
+
+        def read(self, ref, *, actor_scope, include_payload=False, max_chars=200_000):
+            self.calls.append((ref, actor_scope, include_payload, max_chars))
+            return {
+                "artifactRef": ref,
+                "artifactType": "research-document",
+                "contentChecksum": "sha256:" + "a" * 64,
+                "metadata": {"paper_id": "paper-1"},
+            }
+
+    reader = Reader()
+    service = ResearchApplicationService(artifact_reader=reader)
+
+    response = service.get_artifact(
+        "artifact://research/research-document/" + "a" * 64,
+        actor=ResearchActorInput(
+            tenant_id="tenant-a",
+            user_id="user-a",
+            memory_namespace="research:tenant:tenant-a:user:user-a",
+        ),
+    )
+
+    assert "payload" not in response
+    assert response["provenance"]["actorScope"]["tenant_id"] == "tenant-a"
+    assert reader.calls[0][2] is False
+
+
 def test_research_service_ask_returns_grounded_evidence_refs() -> None:
     service = ResearchApplicationService(
         analyze_use_case=FakeAnalyzeUseCase(),

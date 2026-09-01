@@ -124,6 +124,50 @@ def test_github_adapter_uses_top_level_retryability() -> None:
     assert exc_info.value.retryable is True
 
 
+def test_github_adapter_records_reproducibility_signals_and_revision() -> None:
+    connector = _EnrichedConnector(_metadata())
+    adapter = GithubResearchRepositoryAdapter(
+        connector,
+        clock=lambda: datetime(2026, 7, 12, tzinfo=UTC),
+    )
+
+    profile = adapter.fetch_profile("https://github.com/NewsRoom/Runtime")
+
+    assert profile.default_branch == "main"
+    assert profile.commit_sha == "abc123"
+    assert profile.release == "v1.2.0"
+    assert profile.has_readme is True
+    assert profile.has_requirements is True
+    assert profile.has_examples is True
+    assert profile.has_training_script is True
+    assert profile.has_inference_demo is True
+    assert profile.has_model_checkpoint is True
+    assert profile.install_instructions_ref
+    assert profile.observations[0].metadata["reproducibility"]["source"] == "github_contents_api"
+    assert {signal.signal for signal in profile.signals} == {
+        "readme",
+        "license",
+        "install",
+        "requirements",
+        "examples",
+        "training",
+        "inference",
+        "checkpoint",
+    }
+    install = next(signal for signal in profile.signals if signal.signal == "install")
+    assert install.status == "observed"
+    assert install.detection_rule.endswith("/install")
+    assert install.matched_refs == [profile.install_instructions_ref]
+    assert install.source_snapshot_id in install.source_snapshot_refs
+    assert profile.observation_limits == {
+        "max_files_checked": 64,
+        "max_file_bytes": 256 * 1024,
+        "max_total_bytes": 4 * 1024 * 1024,
+        "max_directory_depth": 3,
+    }
+    assert "runnable" not in profile.metadata["reproducibility_observation"]
+
+
 class _Connector:
     def __init__(self, metadata, *, errors=None) -> None:
         self.metadata = metadata
@@ -133,6 +177,31 @@ class _Connector:
     def fetch_repository_metadata(self, source, *, repository):
         self.repositories.append(repository.slug())
         return self.metadata, list(self.errors)
+
+
+class _EnrichedConnector(_Connector):
+    def fetch_repository_file(self, source, *, repository, path, ref=None):
+        files = {
+            "README.md": "# Runtime\n\npip install runtime\n",
+            "requirements.txt": "pydantic\n",
+            "examples": "__directory__",
+            "training": "__directory__",
+            "inference": "__directory__",
+            "checkpoints": "__directory__",
+        }
+        return files.get(path), []
+
+    def fetch_commits(self, source, *, repository, limit=None):
+        class _Item:
+            metadata = {"sha": "abc123"}
+
+        return [_Item()], []
+
+    def fetch_releases(self, source, *, repository, limit=None):
+        class _Item:
+            metadata = {"tag_name": "v1.2.0"}
+
+        return [_Item()], []
 
 
 class _SourceError:
@@ -171,4 +240,6 @@ def _metadata(
         pushed_at=datetime(2026, 7, 10, tzinfo=UTC),
         updated_at=datetime(2026, 7, 11, tzinfo=UTC),
         watchers_count=watchers_count,
+        default_branch="main",
+        license_name="MIT",
     )

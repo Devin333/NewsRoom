@@ -3,6 +3,7 @@ from __future__ import annotations
 import gzip
 import io
 import os
+import posixpath
 import re
 import tarfile
 from hashlib import sha256
@@ -57,6 +58,9 @@ _INCLUDEGRAPHICS_RE = re.compile(
     re.DOTALL,
 )
 _IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".pdf"}
+_MAX_ARCHIVE_FILES = 2000
+_MAX_ARCHIVE_MEMBER_BYTES = 8 * 1024 * 1024
+_MAX_ARCHIVE_TOTAL_BYTES = 64 * 1024 * 1024
 
 
 
@@ -71,7 +75,8 @@ def _extract_latex_images(data: bytes, paper_id: str) -> dict[str, str]:
     figs = _figures_dir(paper_id)
     try:
         with tarfile.open(fileobj=io.BytesIO(data), mode="r:gz") as tf:
-            for member in tf.getmembers():
+            members = _safe_tar_members(tf)
+            for member in members:
                 if not member.isfile():
                     continue
                 _, ext = os.path.splitext(member.name)
@@ -80,7 +85,9 @@ def _extract_latex_images(data: bytes, paper_id: str) -> dict[str, str]:
                 f_obj = tf.extractfile(member)
                 if not f_obj:
                     continue
-                img_bytes = f_obj.read()
+                img_bytes = f_obj.read(_MAX_ARCHIVE_MEMBER_BYTES + 1)
+                if len(img_bytes) > _MAX_ARCHIVE_MEMBER_BYTES:
+                    continue
                 if len(img_bytes) < 1000:   # skip tiny placeholder files
                     continue
                 os.makedirs(figs, exist_ok=True)
@@ -162,14 +169,19 @@ def _read_tex_files(data: bytes) -> tuple[dict[str, str], str] | tuple[None, Non
     files: dict[str, str] = {}
     try:
         with tarfile.open(fileobj=io.BytesIO(data), mode="r:gz") as tf:
-            for member in tf.getmembers():
+            for member in _safe_tar_members(tf):
                 if member.name.endswith(".tex") and member.isfile():
                     f: IO[bytes] | None = tf.extractfile(member)
                     if f:
-                        files[member.name.lstrip("./")] = f.read().decode("utf-8", errors="replace")
+                        content = f.read(_MAX_ARCHIVE_MEMBER_BYTES + 1)
+                        if len(content) <= _MAX_ARCHIVE_MEMBER_BYTES:
+                            files[member.name.lstrip("./")] = content.decode("utf-8", errors="replace")
         if files:
             return files, "tar_gz"
-    except (tarfile.TarError, gzip.BadGzipFile, EOFError):
+    except tarfile.TarError as exc:
+        if any(token in str(exc) for token in ("unsafe", "exceeds", "unsupported", "too many")):
+            return None, None
+    except (gzip.BadGzipFile, EOFError):
         pass
     try:
         text = gzip.decompress(data).decode("utf-8", errors="replace")
@@ -184,6 +196,36 @@ def _read_tex_files(data: bytes) -> tuple[dict[str, str], str] | tuple[None, Non
     except Exception:
         pass
     return None, None
+
+
+def _safe_tar_members(tf: tarfile.TarFile) -> list[tarfile.TarInfo]:
+    """Validate archive members before reading any untrusted bytes."""
+
+    members = tf.getmembers()
+    if len(members) > _MAX_ARCHIVE_FILES:
+        raise tarfile.TarError("latex archive contains too many files")
+    total = 0
+    safe: list[tarfile.TarInfo] = []
+    for member in members:
+        name = str(member.name).replace("\\", "/")
+        normalized = posixpath.normpath(name)
+        if (
+            not name
+            or normalized in {".", ".."}
+            or normalized.startswith("../")
+            or normalized.startswith("/")
+            or ".." in name.split("/")
+        ):
+            raise tarfile.TarError("latex archive contains an unsafe path")
+        if member.issym() or member.islnk() or member.isdev() or member.isfifo():
+            raise tarfile.TarError("latex archive contains an unsupported link or device")
+        if member.size < 0 or member.size > _MAX_ARCHIVE_MEMBER_BYTES:
+            raise tarfile.TarError("latex archive member exceeds size limit")
+        total += member.size
+        if total > _MAX_ARCHIVE_TOTAL_BYTES:
+            raise tarfile.TarError("latex archive exceeds total size limit")
+        safe.append(member)
+    return safe
 
 
 def _parse_sections(tex: str, source_ref: str, paper_id: str) -> list[ResearchSection]:

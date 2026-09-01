@@ -80,6 +80,32 @@ bounded timing/size data, key version, and a short HMAC digest prefix. It must n
 contain prompts, responses, tool arguments, raw scope identifiers, full keys, or
 secrets.
 
+## Provider prompt-cache probe
+
+The Redis cache above is an application-layer response cache. It is separate
+from a model provider's prompt/context cache. To test whether an
+OpenAI-compatible provider reports reuse of a long prompt prefix, set the three
+environment variables below and run the standalone probe:
+
+```powershell
+$env:OPENAI_BASE_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+$env:OPENAI_MODEL = "deepseek-v4-flash"
+$env:OPENAI_API_KEY = "<your-api-key>"
+.\.venv\Scripts\python.exe scripts\probe_prompt_cache.py
+```
+
+The probe sends three requests with the same long `system` prefix and a
+different short `user` suffix. `RESULT=HIT` means a response reported a
+positive `cached_tokens` value (normally
+`usage.prompt_tokens_details.cached_tokens`). `RESULT=WARM_HIT` means the first
+request was already a hit, so the prefix may have been warm before the probe.
+`RESULT=MISS` means the provider reported a cache field but no hit occurred in
+this run; `RESULT=UNREPORTED` means the provider did not expose a recognized
+cache field. Neither a miss nor an unreported field proves that the model has
+no cache. This diagnostic can confirm provider-side accounting only; raw model
+KV tensors are not exposed by an API call. The script never prints the API key
+or the full request/response.
+
 ## Invalidation and incident response
 
 Do not scan or synchronously delete the cache from request paths. Invalidate by

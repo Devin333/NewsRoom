@@ -44,4 +44,16 @@ def include_routers(api: FastAPI, *, services: ApiServices, helpers: ApiRouteHel
         harness_graph.create_router(services, helpers),
         harness_waits.create_router(services, helpers),
     ):
-        api.include_router(router)
+        # FastAPI 0.1xx stores an ``_IncludedRouter`` wrapper when using
+        # ``include_router``. The application has no router prefixes or
+        # include-level dependencies, so append the concrete routes directly;
+        # this keeps route introspection and the OpenAPI contract consistent
+        # across FastAPI versions.
+        api.router.routes.extend(router.routes)
+        mark_routes_changed = getattr(api.router, "_mark_routes_changed", None)
+        if callable(mark_routes_changed):
+            mark_routes_changed()
+        for handler in router.on_startup:
+            api.router.add_event_handler("startup", handler)
+        for handler in router.on_shutdown:
+            api.router.add_event_handler("shutdown", handler)

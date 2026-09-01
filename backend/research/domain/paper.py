@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from collections.abc import Mapping
 from typing import Any, Literal
 
 from pydantic import Field, field_validator, model_validator
@@ -20,6 +21,7 @@ class ResearchPaper(PrimitiveModel):
     pdf_url: str | None = None
     code_url: str | None = None
     topics: list[str] = Field(default_factory=list)
+    actor_scope: dict[str, str] = Field(default_factory=dict)
     metadata: dict[str, Any] = Field(default_factory=dict)
 
     @field_validator("paper_id", "title")
@@ -41,16 +43,32 @@ class ResearchPaper(PrimitiveModel):
         for field_name in ("source_url", "pdf_url", "code_url"):
             value = optional_text(getattr(self, field_name))
             object.__setattr__(self, field_name, canonicalize_url(value) if value else None)
+        scope = _normalized_scope(self.metadata)
+        scope.update(_normalized_scope(self.actor_scope))
+        object.__setattr__(self, "actor_scope", scope)
+        if scope:
+            object.__setattr__(self, "metadata", {**dict(self.metadata), "actor_scope": scope})
         return self
 
 
 class PaperSourceRecord(PrimitiveModel):
     source_id: str
     paper_id: str
-    source_type: Literal["arxiv", "openreview", "publisher", "github", "manual", "other"] = "other"
+    source_type: Literal[
+        "arxiv",
+        "openreview",
+        "doi",
+        "crossref",
+        "publisher",
+        "local",
+        "github",
+        "manual",
+        "other",
+    ] = "other"
     source_url: str
     fetched_at: datetime | None = None
     source_hash: str | None = None
+    actor_scope: dict[str, str] = Field(default_factory=dict)
     metadata: dict[str, Any] = Field(default_factory=dict)
 
     @field_validator("source_id", "paper_id", "source_url")
@@ -63,7 +81,27 @@ class PaperSourceRecord(PrimitiveModel):
         object.__setattr__(self, "source_url", canonicalize_url(self.source_url))
         if self.fetched_at is not None:
             object.__setattr__(self, "fetched_at", ensure_utc(self.fetched_at))
+        scope = _normalized_scope(self.metadata)
+        scope.update(_normalized_scope(self.actor_scope))
+        object.__setattr__(self, "actor_scope", scope)
+        if scope:
+            object.__setattr__(self, "metadata", {**dict(self.metadata), "actor_scope": scope})
         return self
+
+
+def _normalized_scope(value: Mapping[str, Any] | None) -> dict[str, str]:
+    if not isinstance(value, Mapping):
+        return {}
+    source: dict[str, Any] = dict(value)
+    nested = source.get("actor_scope")
+    if isinstance(nested, Mapping):
+        source.update(dict(nested))
+    allowed = {"tenant_id", "user_id", "memory_namespace"}
+    return {
+        str(key): str(raw).strip()
+        for key, raw in source.items()
+        if str(key) in allowed and str(raw).strip()
+    }
 
 
 __all__ = ["PaperSourceRecord", "ResearchPaper"]

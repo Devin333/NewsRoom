@@ -2,6 +2,10 @@ from __future__ import annotations
 
 import json
 import os
+from tempfile import NamedTemporaryFile
+from datetime import UTC, datetime
+from collections.abc import Mapping
+from hashlib import sha256
 from pathlib import Path
 from typing import Any
 
@@ -10,7 +14,7 @@ from backend.research.document.citation_spans import remap_span_origin_ids
 from framework.rag.core import build_chunk_semantic_key, build_rag_stable_id, content_fingerprint
 
 
-_MANIFEST_VERSION = 1
+_MANIFEST_VERSION = 2
 
 
 def default_chunk_manifest_path(paper_id: str) -> Path:
@@ -22,13 +26,38 @@ class ChunkManifestManager:
     def __init__(self, manifest_path: str | Path | None = None) -> None:
         self._manifest_path = Path(manifest_path) if manifest_path is not None else None
 
-    def path_for(self, paper_id: str) -> Path:
-        return self._manifest_path or default_chunk_manifest_path(paper_id)
+    def path_for(
+        self,
+        paper_id: str,
+        *,
+        actor_scope: Mapping[str, str] | None = None,
+    ) -> Path:
+        paper_id = _safe_paper_id(paper_id)
+        scope_key = _scope_key(actor_scope)
+        if self._manifest_path is None:
+            base = default_chunk_manifest_path(paper_id)
+            if scope_key != "public":
+                return base.parent.parent / scope_key / paper_id / base.name
+            return base
+        if self._manifest_path.suffix.casefold() == ".json":
+            if scope_key == "public":
+                return self._manifest_path
+            return self._manifest_path.with_name(
+                f"{self._manifest_path.stem}-{scope_key}{self._manifest_path.suffix}"
+            )
+        root = self._manifest_path / scope_key if scope_key != "public" else self._manifest_path
+        return root / paper_id / "chunk_manifest.json"
 
-    def resolve_chunk_ids(self, paper_id: str, chunks: list[PaperChunk]) -> list[PaperChunk]:
+    def resolve_chunk_ids(
+        self,
+        paper_id: str,
+        chunks: list[PaperChunk],
+        *,
+        actor_scope: Mapping[str, str] | None = None,
+    ) -> list[PaperChunk]:
         if not chunks:
             return []
-        manifest = self._load(paper_id)
+        manifest = self._load(paper_id, actor_scope=actor_scope)
         previous_by_key = _previous_chunk_ids_by_semantic_key(manifest)
         previous_ids = set(previous_by_key.values())
         keyed_chunks = _ensure_unique_semantic_keys(paper_id, chunks)
@@ -87,10 +116,15 @@ class ChunkManifestManager:
         chunks: list[PaperChunk],
         *,
         document_metadata: dict[str, Any] | None = None,
+        actor_scope: Mapping[str, str] | None = None,
+        document_id: str | None = None,
+        source_hash: str | None = None,
+        run_id: str | None = None,
+        observed_at: datetime | str | None = None,
     ) -> Path:
-        path = self.path_for(paper_id)
+        path = self.path_for(paper_id, actor_scope=actor_scope)
         path.parent.mkdir(parents=True, exist_ok=True)
-        previous = self._load(paper_id)
+        previous = self._load(paper_id, actor_scope=actor_scope)
         current_keys = {
             str(chunk.metadata.get("semantic_key"))
             for chunk in chunks
@@ -101,21 +135,63 @@ class ChunkManifestManager:
             for entry in previous.get("chunks", [])
             if entry.get("semantic_key") and entry.get("semantic_key") not in current_keys
         ]
+        metadata = dict(document_metadata or {})
+        document_id = str(document_id or metadata.get("document_id") or paper_id)
+        source_hash = str(source_hash or metadata.get("source_hash") or "") or None
+        scope = _normalized_scope(actor_scope or metadata.get("actor_scope"))
+        observed_text = _iso_timestamp(observed_at)
+        previous_manifest_id = str(previous.get("manifest_id") or "") or None
+        manifest_id = _manifest_id(paper_id, document_id, source_hash, observed_text)
+        previous_entries = [entry for entry in previous.get("chunks", []) if isinstance(entry, dict)]
+        entries = [
+            _manifest_entry(
+                chunk,
+                paper_id=paper_id,
+                document_id=document_id,
+                source_hash=source_hash,
+                actor_scope=scope,
+                previous_entries=previous_entries,
+            )
+            for chunk in chunks
+        ]
+        history = [item for item in previous.get("history", []) if isinstance(item, dict)]
+        if previous_manifest_id and previous_manifest_id != manifest_id:
+            history.append(
+                {
+                    "manifest_id": previous_manifest_id,
+                    "document_id": previous.get("document_id"),
+                    "source_hash": previous.get("source_hash"),
+                    "observed_at": previous.get("observed_at"),
+                    "run_id": previous.get("run_id"),
+                    "chunks": previous_entries,
+                    "stale_chunk_ids": list(previous.get("stale_chunk_ids", [])),
+                }
+            )
         payload = {
             "version": _MANIFEST_VERSION,
+            "manifest_id": manifest_id,
             "paper_id": paper_id,
-            "chunks": [_manifest_entry(chunk) for chunk in chunks],
+            "document_id": document_id,
+            "source_hash": source_hash,
+            "observed_at": observed_text,
+            "run_id": str(run_id).strip() if run_id else None,
+            "actor_scope": scope,
+            "chunks": entries,
             "stale_chunk_ids": stale_chunk_ids,
+            "history": history,
             **_parser_cascade_manifest(document_metadata),
         }
-        path.write_text(
-            json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
-            encoding="utf-8",
-        )
+        payload = {key: value for key, value in payload.items() if value is not None}
+        _atomic_write_json(path, payload)
         return path
 
-    def _load(self, paper_id: str) -> dict[str, Any]:
-        path = self.path_for(paper_id)
+    def _load(
+        self,
+        paper_id: str,
+        *,
+        actor_scope: Mapping[str, str] | None = None,
+    ) -> dict[str, Any]:
+        path = self.path_for(paper_id, actor_scope=actor_scope)
         if not path.exists():
             return {"version": _MANIFEST_VERSION, "paper_id": paper_id, "chunks": []}
         try:
@@ -233,18 +309,114 @@ def _remap_chunk_identity(
     return chunk.model_copy(update=updates)
 
 
-def _manifest_entry(chunk: PaperChunk) -> dict[str, Any]:
+def _manifest_entry(
+    chunk: PaperChunk,
+    *,
+    paper_id: str | None = None,
+    document_id: str | None = None,
+    source_hash: str | None = None,
+    actor_scope: Mapping[str, str] | None = None,
+    previous_entries: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    metadata = dict(chunk.metadata)
+    locators = metadata.get("source_locators")
+    if isinstance(locators, str):
+        locators = [locators]
+    elif not isinstance(locators, (list, tuple)):
+        locators = []
+    locators = _unique_texts([
+        *[str(item) for item in locators],
+        metadata.get("source_locator"),
+        metadata.get("source_ref"),
+    ])
+    previous = _previous_entry_for_chunk(chunk, previous_entries or [])
+    current_hash = str(metadata.get("content_hash") or content_fingerprint(chunk.content))
+    stale_of = None
+    if previous is not None and str(previous.get("content_hash") or "") != current_hash:
+        stale_of = str(previous.get("chunk_id") or "") or None
     return {
         "chunk_id": chunk.chunk_id,
+        "paper_id": paper_id or chunk.paper_id,
+        "document_id": document_id or metadata.get("document_id") or paper_id or chunk.paper_id,
+        "source_hash": source_hash or metadata.get("source_hash"),
         "semantic_key": chunk.metadata.get("semantic_key"),
-        "content_hash": chunk.metadata.get("content_hash"),
+        "content_hash": current_hash,
+        "content_ref": str(metadata.get("content_ref") or f"chunk://{paper_id or chunk.paper_id}/{chunk.chunk_id}"),
         "chunk_type": chunk.chunk_type,
         "parent_chunk_id": chunk.parent_chunk_id,
         "section_title": chunk.section_title,
         "section_index": chunk.section_index,
         "source_locator": chunk.metadata.get("source_locator"),
         "source_ref": chunk.metadata.get("source_ref"),
+        "source_locators": locators,
+        "parse_source": chunk.parse_source,
+        "stale_of": stale_of,
+        "actor_scope": dict(actor_scope or {}),
     }
+
+
+def _previous_entry_for_chunk(
+    chunk: PaperChunk,
+    previous_entries: list[dict[str, Any]],
+) -> dict[str, Any] | None:
+    semantic_key = str(chunk.metadata.get("semantic_key") or "")
+    source_locator = str(chunk.metadata.get("source_locator") or "")
+    for entry in previous_entries:
+        if semantic_key and str(entry.get("semantic_key") or "") == semantic_key:
+            return entry
+    for entry in previous_entries:
+        if source_locator and str(entry.get("source_locator") or "") == source_locator:
+            return entry
+    return None
+
+
+def _manifest_id(
+    paper_id: str,
+    document_id: str,
+    source_hash: str | None,
+    observed_at: str,
+) -> str:
+    encoded = "|".join((paper_id, document_id, source_hash or "", observed_at))
+    return "manifest:" + sha256(encoded.encode("utf-8")).hexdigest()
+
+
+def _iso_timestamp(value: datetime | str | None) -> str:
+    if isinstance(value, datetime):
+        normalized = value if value.tzinfo else value.replace(tzinfo=UTC)
+        return normalized.astimezone(UTC).isoformat()
+    if value:
+        return str(value)
+    return datetime.now(UTC).isoformat()
+
+
+def _normalized_scope(value: Mapping[str, Any] | None) -> dict[str, str]:
+    if not isinstance(value, Mapping):
+        return {}
+    nested = value.get("actor_scope")
+    # Callers may pass either the typed scope itself or a metadata envelope
+    # containing ``actor_scope``. Flatten both forms before deriving a path so
+    # a scoped manifest can never fall back to the public location.
+    source: dict[str, Any] = dict(value)
+    if isinstance(nested, Mapping):
+        source.update(dict(nested))
+    allowed = {"tenant_id", "user_id", "memory_namespace"}
+    return {
+        str(key): str(raw).strip()
+        for key, raw in source.items()
+        if str(key) in allowed and str(raw).strip()
+    }
+
+
+def _unique_texts(values: list[Any] | tuple[Any, ...]) -> list[str]:
+    result: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        text = str(value or "").strip()
+        key = text.casefold()
+        if text and key not in seen:
+            seen.add(key)
+            result.append(text)
+    return result
 
 
 def _parser_cascade_manifest(document_metadata: dict[str, Any] | None) -> dict[str, Any]:
@@ -254,6 +426,48 @@ def _parser_cascade_manifest(document_metadata: dict[str, Any] | None) -> dict[s
     if not isinstance(cascade, dict):
         return {}
     return {"parser_cascade": cascade}
+
+
+def _scope_key(scope: Mapping[str, str] | None) -> str:
+    values = _normalized_scope(scope)
+    if not values:
+        return "public"
+    encoded = json.dumps(values, ensure_ascii=True, sort_keys=True, separators=(",", ":"))
+    return sha256(encoded.encode("utf-8")).hexdigest()[:24]
+
+
+def _safe_paper_id(value: str) -> str:
+    text = str(value or "").strip()
+    if not text or text in {".", ".."} or any(char in text for char in "\\/:\x00"):
+        raise ValueError("paper_id contains an unsafe path segment")
+    return text
+
+
+def _atomic_write_json(path: Path, payload: Mapping[str, Any]) -> None:
+    """Replace a manifest atomically so an interrupted refresh cannot truncate it."""
+
+    encoded = (json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n").encode("utf-8")
+    temporary: str | None = None
+    try:
+        with NamedTemporaryFile(
+            mode="wb",
+            dir=path.parent,
+            prefix=f".{path.name}.",
+            suffix=".tmp",
+            delete=False,
+        ) as handle:
+            temporary = handle.name
+            handle.write(encoded)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, path)
+        temporary = None
+    finally:
+        if temporary:
+            try:
+                os.unlink(temporary)
+            except FileNotFoundError:
+                pass
 
 
 __all__ = ["ChunkManifestManager", "default_chunk_manifest_path"]

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import json
 import os
 from dataclasses import dataclass
@@ -7,7 +8,7 @@ from datetime import datetime, timezone as _tz
 UTC = _tz.utc
 from hashlib import sha256
 from typing import Callable, Any
-from urllib.parse import urlencode
+from urllib.parse import quote, urlencode
 from urllib.request import Request
 
 from infrastructure.external.sources.models import RawSourceItem, SourceDefinition, SourceError
@@ -176,6 +177,8 @@ class GithubRepositoryMetadata:
     pushed_at: datetime | None
     updated_at: datetime | None
     watchers_count: int | None = None
+    default_branch: str | None = None
+    license_name: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -194,6 +197,8 @@ class GithubRepositoryMetadata:
             "pushed_at": _dt(self.pushed_at),
             "updated_at": _dt(self.updated_at),
             "watchers_count": self.watchers_count,
+            "default_branch": self.default_branch,
+            "license_name": self.license_name,
         }
 
 
@@ -489,6 +494,49 @@ class GithubConnector:
             return self.parse_repository_metadata(payload), []
         except Exception as exc:
             return None, [_exception_source_error(source, exc, phase="parse")]
+
+    @source_fetch_response_scope
+    def fetch_repository_file(
+        self,
+        source: SourceDefinition,
+        *,
+        repository: str | GithubRepository,
+        path: str,
+        ref: str | None = None,
+    ) -> tuple[str | None, list[SourceError]]:
+        """Fetch one text file through the same GitHub policy boundary."""
+
+        policy = effective_fetch_policy(self.fetch_policy, source)
+        try:
+            repo = _repository_from_source(source, repository=repository)
+            clean_path = _validate_repository_path(path)
+            endpoint = build_github_contents_url(
+                source.url or GITHUB_API_URL,
+                repo,
+                clean_path,
+                ref=ref,
+            )
+            rate_limit = self._rate_limiter.reserve(
+                endpoint,
+                limit_per_minute=self.fetch_policy.rate_limit_per_domain_per_minute,
+            )
+            if not rate_limit.allowed:
+                return None, [rate_limited_source_error(source, rate_limit, url=endpoint)]
+            payload = run_with_fetch_retries(
+                lambda: self._fetch_source_text(endpoint, policy),
+                policy,
+            )
+            decoded = json.loads(payload)
+            if isinstance(decoded, list):
+                return "__directory__", []
+            if not isinstance(decoded, dict):
+                raise ValueError("GitHub file response must be an object")
+            encoded = decoded.get("content")
+            if not isinstance(encoded, str):
+                raise ValueError("GitHub file response did not contain content")
+            return base64.b64decode(encoded.replace("\n", "")).decode("utf-8", errors="replace"), []
+        except Exception as exc:
+            return None, [_exception_source_error(source, exc, phase="fetch")]
 
     @source_fetch_response_scope
     def fetch_discussions(
@@ -968,6 +1016,63 @@ def build_github_releases_url(base_url: str, repository: GithubRepository, *, li
     return f"{base}/repos/{repository.owner}/{repository.name}/releases?{params}"
 
 
+def build_github_contents_url(
+    base_url: str,
+    repository: GithubRepository,
+    path: str,
+    *,
+    ref: str | None = None,
+) -> str:
+    base = base_url.rstrip("/")
+    clean_path = _validate_repository_path(path)
+    endpoint = f"{base}/repos/{repository.owner}/{repository.name}/contents/{quote(clean_path, safe='/')}"
+    return f"{endpoint}?{urlencode({'ref': ref})}" if ref else endpoint
+
+
+def _validate_repository_path(path: str) -> str:
+    """Reject traversal and sensitive/binary paths before URL construction."""
+
+    raw = str(path).replace("\\", "/")
+    parts = raw.split("/")
+    if not raw or any(part in {"", ".", ".."} for part in parts):
+        raise ValueError("repository file path contains an unsafe segment")
+    if any("\x00" in part for part in parts):
+        raise ValueError("repository file path contains NUL")
+    lowered = [part.casefold() for part in parts]
+    blocked_segments = {
+        ".env",
+        ".git",
+        ".github",
+        "workflows",
+        "secrets",
+        "secret",
+        "credentials",
+        "notebooks",
+    }
+    if any(part in blocked_segments for part in lowered):
+        raise ValueError("repository file path is outside the allowed observation scope")
+    blocked_names = {"id_rsa", "id_ed25519", "authorized_keys"}
+    if any(part in blocked_names or "token" in part or "password" in part for part in lowered):
+        raise ValueError("repository file path is outside the allowed observation scope")
+    blocked_suffixes = {
+        ".ipynb",
+        ".bin",
+        ".ckpt",
+        ".h5",
+        ".onnx",
+        ".pb",
+        ".pt",
+        ".pth",
+        ".safetensors",
+        ".zip",
+        ".tar",
+        ".gz",
+    }
+    if any(part.endswith(tuple(blocked_suffixes)) for part in lowered):
+        raise ValueError("repository file path is outside the allowed observation scope")
+    return "/".join(parts)
+
+
 def build_github_commits_url(base_url: str, repository: GithubRepository, *, limit: int) -> str:
     base = base_url.rstrip("/")
     params = urlencode({"per_page": limit})
@@ -1084,6 +1189,11 @@ def _repository_metadata(item: dict[str, Any]) -> GithubRepositoryMetadata | Non
         pushed_at=_parse_datetime(item.get("pushed_at")),
         updated_at=_parse_datetime(item.get("updated_at")),
         watchers_count=_optional_int(item.get("subscribers_count")),
+        default_branch=_optional_text(item.get("default_branch")),
+        license_name=_optional_text(
+            (_dict_or_empty(item.get("license")).get("spdx_id"))
+            or (_dict_or_empty(item.get("license")).get("name"))
+        ),
     )
 
 

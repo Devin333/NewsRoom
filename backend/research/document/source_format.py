@@ -19,17 +19,33 @@ _PDF_MAGIC   = b"%PDF"
 _GZIP_MAGIC  = b"\x1f\x8b"
 _ZIP_MAGIC   = b"PK\x03\x04"
 _HTML_TAGS   = (b"<!doctype", b"<html")
+_TAR_MAGIC_OFFSET = 257
+_TAR_MAGIC = b"ustar"
 
 
 def _sniff(data: bytes) -> SourceFormat:
-    head = data[:16].lower()
-    if data[:4] == _PDF_MAGIC:
+    normalized = data.lstrip()
+    head = normalized[:16].lower()
+    if normalized[:4] == _PDF_MAGIC:
         return SourceFormat.PDF
-    if data[:4] == _ZIP_MAGIC:
+    if normalized[:4] == _ZIP_MAGIC:
         return SourceFormat.ZIP
+    if len(data) >= _TAR_MAGIC_OFFSET + len(_TAR_MAGIC) and data[_TAR_MAGIC_OFFSET:_TAR_MAGIC_OFFSET + len(_TAR_MAGIC)] == _TAR_MAGIC:
+        return SourceFormat.LATEX
     if any(head.startswith(t) for t in _HTML_TAGS):
         return SourceFormat.HTML
-    return SourceFormat.LATEX  # tar.gz / single-tex / raw-tex handled by latex parser
+    # Plain text LaTeX is intentionally accepted, but arbitrary binary input
+    # must remain unsupported so the application can report a real format
+    # diagnostic instead of attempting a misleading parse.
+    try:
+        text = data.decode("utf-8")
+    except UnicodeDecodeError:
+        return SourceFormat.UNKNOWN
+    if not text.strip():
+        return SourceFormat.UNKNOWN
+    # Keep the historical plain-text fallback for compatibility with raw
+    # source fixtures; only non-text bytes are rejected as UNKNOWN.
+    return SourceFormat.LATEX
 
 
 def detect_source_format(data: bytes) -> tuple[SourceFormat, bytes]:
@@ -46,6 +62,8 @@ def detect_source_format(data: bytes) -> tuple[SourceFormat, bytes]:
             fmt = _sniff(inner)
             if fmt is SourceFormat.PDF:
                 return SourceFormat.PDF, inner
+            if fmt is SourceFormat.LATEX:
+                return SourceFormat.LATEX, data
             # gzip-wrapped tar / single .tex — keep original so LatexSourceParser
             # can handle its own tar/gzip decompression
         except Exception as exc:
