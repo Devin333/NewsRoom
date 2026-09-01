@@ -78,7 +78,7 @@ export function ProjectsProductPage({ route }: ProjectsProductPageProps) {
         : fetchProjectProductSection(route, { params: queryParams }),
   })
 
-  if (isLoading) return <ProjectLoadingState title={route === "home" ? "Loading Projects home" : `Loading ${section.title}`} />
+  if (isLoading) return route === "lab" ? <LabWorkspaceSkeleton /> : <ProjectLoadingState title={route === "home" ? "Loading Projects home" : `Loading ${section.title}`} />
   if (isError) return <ProjectErrorState message={error instanceof Error ? error.message : undefined} onRetry={() => refetch()} />
   if (!data) return <ProjectEmptyState />
 
@@ -630,6 +630,36 @@ function LabView({ data }: { data: ProductData }) {
           <LabContextPanel session={session} />
         </div>
       )}
+    </section>
+  )
+}
+
+export function LabWorkspaceSkeleton() {
+  return (
+    <section className="space-y-5" aria-label="Loading Projects Lab workspace" aria-busy="true">
+      <div className="animate-pulse border-y border-[#d8dee7] bg-white py-5 dark:border-border dark:bg-card lg:rounded-md lg:border lg:px-5">
+        <div className="h-3 w-24 rounded bg-secondary" />
+        <div className="mt-3 h-7 w-52 rounded bg-secondary" />
+        <div className="mt-5 h-28 w-full rounded-md bg-secondary" />
+        <div className="mt-3 h-10 w-36 rounded-md bg-secondary" />
+      </div>
+      <div className="grid gap-5 lg:grid-cols-[minmax(13rem,0.8fr)_minmax(0,2fr)_minmax(16rem,1fr)]">
+        <div className="animate-pulse border-y border-[#d8dee7] bg-white py-5 dark:border-border dark:bg-card lg:rounded-md lg:border lg:p-5">
+          <div className="h-4 w-20 rounded bg-secondary" />
+          <div className="mt-3 h-6 w-36 rounded bg-secondary" />
+          <div className="mt-6 h-16 rounded-md bg-secondary" />
+        </div>
+        <div className="animate-pulse space-y-5 border-y border-[#d8dee7] bg-white py-5 dark:border-border dark:bg-card lg:rounded-md lg:border lg:px-5">
+          <div className="h-5 w-2/3 rounded bg-secondary" />
+          <div className="h-28 rounded-md bg-secondary" />
+          <div className="h-28 rounded-md bg-secondary" />
+        </div>
+        <div className="animate-pulse border-y border-[#d8dee7] bg-white py-5 dark:border-border dark:bg-card lg:rounded-md lg:border lg:p-5">
+          <div className="h-4 w-16 rounded bg-secondary" />
+          <div className="mt-3 h-6 w-44 rounded bg-secondary" />
+          <div className="mt-5 h-44 rounded-md bg-secondary" />
+        </div>
+      </div>
     </section>
   )
 }

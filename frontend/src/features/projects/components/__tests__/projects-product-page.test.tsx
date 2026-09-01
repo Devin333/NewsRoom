@@ -73,6 +73,15 @@ describe("ProjectsProductPage", () => {
     expect(screen.getAllByText(/will not substitute fake projects/i).length).toBeGreaterThan(0)
   })
 
+  it("uses a workspace-shaped skeleton while Lab data is loading", () => {
+    vi.mocked(fetchProjectProductSection).mockImplementationOnce(() => new Promise(() => undefined))
+
+    renderWithQueryClient(<ProjectsProductPage route="lab" />)
+
+    expect(screen.getByLabelText("Loading Projects Lab workspace")).toHaveAttribute("aria-busy", "true")
+    expect(screen.queryByText("Loading Lab")).not.toBeInTheDocument()
+  })
+
   it("starts a Lab session, answers a question, and renders the generated solution", async () => {
     vi.mocked(fetchProjectProductSection).mockResolvedValueOnce({
       hot: [project("p1", "AgentKit")],
