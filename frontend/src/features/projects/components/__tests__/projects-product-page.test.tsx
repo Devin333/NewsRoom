@@ -1,12 +1,13 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { afterEach, describe, expect, it, vi } from "vitest"
-import { ProjectsProductPage } from "@/features/projects/components/projects-product-page"
+import { LabGraph, ProjectsProductPage } from "@/features/projects/components/projects-product-page"
 import {
   addProjectWatchlistItem,
   answerProjectLabQuestion,
   fetchProjectProductSection,
   fetchProjectsHome,
+  explainProjectLabNode,
   generateProjectLabSolution,
   recordProjectInteraction,
   startProjectLabSession,
@@ -20,6 +21,7 @@ vi.mock("@/lib/projects/api", async (importOriginal) => {
     answerProjectLabQuestion: vi.fn(),
     fetchProjectProductSection: vi.fn(),
     fetchProjectsHome: vi.fn(),
+    explainProjectLabNode: vi.fn(),
     generateProjectLabSolution: vi.fn(),
     recordProjectInteraction: vi.fn(),
     startProjectLabSession: vi.fn(),
@@ -31,6 +33,7 @@ describe("ProjectsProductPage", () => {
     vi.mocked(addProjectWatchlistItem).mockReset()
     vi.mocked(answerProjectLabQuestion).mockReset()
     vi.mocked(fetchProjectsHome).mockReset()
+    vi.mocked(explainProjectLabNode).mockReset()
     vi.mocked(fetchProjectProductSection).mockReset()
     vi.mocked(generateProjectLabSolution).mockReset()
     vi.mocked(recordProjectInteraction).mockReset()
@@ -256,6 +259,38 @@ describe("ProjectsProductPage", () => {
 
     expect(await screen.findByText("Unsupported stage: future_stage")).toBeInTheDocument()
     expect(screen.getByRole("button", { name: "Generate Solution" })).toBeDisabled()
+  })
+
+  it("exposes graph relationships and isolates node explanation feedback", async () => {
+    vi.mocked(explainProjectLabNode).mockResolvedValueOnce({
+      title: "User problem",
+      explanation: "The requirement is connected to the selected case.",
+      related_nodes: [{ id: "case-1" }],
+    })
+
+    renderWithQueryClient(
+      <LabGraph
+        sessionId="lab-session-graph"
+        graph={{
+          nodes: [
+            { id: "problem-1", title: "User problem", node_type: "user_problem" },
+            { id: "case-1", title: "Selected case", node_type: "case" },
+          ],
+          edges: [{ source_id: "problem-1", target_id: "case-1" }],
+        }}
+      />
+    )
+
+    expect(screen.getByRole("img", { name: "Graph with 2 nodes and 1 relationships" })).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: /User problem.*user_problem.*1 related/ })).toBeInTheDocument()
+    fireEvent.click(screen.getByRole("button", { name: "Explain User problem" }))
+
+    await waitFor(() => expect(explainProjectLabNode).toHaveBeenCalledWith("lab-session-graph", { node_id: "problem-1", style: "plain" }))
+    expect(await screen.findByText("The requirement is connected to the selected case.")).toBeInTheDocument()
+
+    vi.mocked(explainProjectLabNode).mockRejectedValueOnce(new Error("Explanation unavailable"))
+    fireEvent.click(screen.getByRole("button", { name: "Explain Selected case" }))
+    expect(await screen.findByRole("alert")).toHaveTextContent("Explanation unavailable")
   })
 
   it("adds a Watchlist item and refreshes the list after a successful save", async () => {

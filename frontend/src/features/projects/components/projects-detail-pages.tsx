@@ -1,9 +1,9 @@
 "use client"
 
 import Link from "next/link"
-import { ArrowLeft, ExternalLink } from "lucide-react"
+import { ArrowLeft, ExternalLink, Loader2 } from "lucide-react"
 import { useMutation, useQuery } from "@tanstack/react-query"
-import { useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import { Button } from "@/components/ui/button"
 import {
   explainProjectCase,
@@ -109,6 +109,7 @@ export function ProjectCollectionDetailPage({ slug }: { slug: string }) {
 
 export function ProjectLabSessionPage({ sessionId }: { sessionId: string }) {
   const [savedMessage, setSavedMessage] = useState<string | null>(null)
+  const saveStatusRef = useRef<HTMLParagraphElement>(null)
   const query = useQuery({
     queryKey: ["projects", "lab-session", sessionId],
     queryFn: () => fetchProjectLabSession(sessionId),
@@ -120,6 +121,9 @@ export function ProjectLabSessionPage({ sessionId }: { sessionId: string }) {
       void query.refetch()
     },
   })
+  useEffect(() => {
+    if (savedMessage) saveStatusRef.current?.focus()
+  }, [savedMessage])
   if (query.isLoading) return <ProjectLoadingState title="Loading Lab Session" />
   if (query.isError) return <ProjectErrorState message={query.error instanceof Error ? query.error.message : undefined} onRetry={() => query.refetch()} />
   if (!query.data) return <ProjectEmptyState />
@@ -137,13 +141,14 @@ export function ProjectLabSessionPage({ sessionId }: { sessionId: string }) {
           type="button"
           onClick={() => save.mutate()}
           disabled={save.isPending || !canSave}
+          aria-busy={save.isPending}
         >
-          {save.isPending ? "Saving Session" : "Save Session"}
+          {save.isPending ? <><Loader2 className="size-4 animate-spin" /> Saving Session</> : "Save Session"}
         </Button>
         {!canSave && !workflow.isUnknown && session.current_stage !== "solution_saved" ? <p className="basis-full text-sm text-muted-foreground">Save becomes available after a generated solution is ready.</p> : null}
         {workflow.isUnknown ? <p className="basis-full text-sm text-destructive">Unsupported Lab stage; actions are disabled.</p> : null}
-        {save.isError ? <p className="basis-full text-sm text-destructive" role="alert">{save.error instanceof Error ? save.error.message : "Save failed"}</p> : null}
-        {savedMessage ? <p className="basis-full text-sm text-emerald-700 dark:text-emerald-300" aria-live="polite">{savedMessage}</p> : null}
+        {save.isError ? <div className="flex basis-full flex-wrap items-center gap-3 text-sm text-destructive" role="alert"><span>{save.error instanceof Error ? save.error.message : "Save failed"}</span><Button type="button" variant="outline" size="sm" onClick={() => save.mutate()}>Retry Save</Button></div> : null}
+        {savedMessage ? <p ref={saveStatusRef} tabIndex={-1} className="basis-full text-sm text-emerald-700 outline-none focus-visible:ring-2 focus-visible:ring-ring dark:text-emerald-300" aria-live="polite">{savedMessage}</p> : null}
       </div>
       <section className="grid gap-4 lg:grid-cols-2">
         <RequirementProfilePanel profile={session.requirement_profile} />
