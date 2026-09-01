@@ -30,6 +30,7 @@ from interfaces.models import (
     ScheduleView,
     SourceHealthView,
 )
+from backend.projects.lab import LAB_CONTRACT_VERSION
 
 
 OPENAPI_TAGS = [
@@ -90,6 +91,7 @@ def export_openapi_schema(app: FastAPI | None = None) -> dict[str, Any]:
     schema = deepcopy(app.openapi())
     _ensure_contract_schemas(schema)
     _ensure_api_response_references(schema)
+    _ensure_projects_lab_contract(schema)
     return schema
 
 
@@ -291,3 +293,186 @@ def _ensure_api_response_references(schema: dict[str, Any]) -> None:
             content["application/json"] = {
                 "schema": {"$ref": f"#/components/schemas/{response_schema}"}
             }
+
+
+def _ensure_projects_lab_contract(schema: dict[str, Any]) -> None:
+    """Publish the Lab contract examples alongside the generic API envelope."""
+    info = schema.setdefault("info", {})
+    info["x-projects-lab-contract-version"] = LAB_CONTRACT_VERSION
+    paths = schema.get("paths")
+    if not isinstance(paths, dict):
+        return
+
+    examples: dict[tuple[str, str], dict[str, Any]] = {
+        ("/api/v1/projects/lab/sessions", "post"): {
+            "success": True,
+            "data": {
+                "session": {
+                    "id": "lab-session-123",
+                    "current_stage": "clarifying_requirements",
+                    "next_action": "answer_question",
+                    "can_generate_solution": False,
+                    "unanswered_question_ids": ["question-goal"],
+                }
+            },
+            "request_id": "req-lab-start",
+            "schema_version": "1.0",
+        },
+        ("/api/v1/projects/lab/sessions/{session_id}", "get"): {
+            "success": True,
+            "data": {
+                "session": {
+                    "id": "lab-session-123",
+                    "current_stage": "solution_generated",
+                    "next_action": "review_solution",
+                    "can_generate_solution": False,
+                    "unanswered_question_ids": [],
+                    "generated_solution": "# Solution",
+                    "solution_json": {"data_policy": "real_project_radar_only"},
+                }
+            },
+            "request_id": "req-lab-session",
+            "schema_version": "1.0",
+        },
+        ("/api/v1/projects/lab/sessions/{session_id}/answer", "post"): {
+            "success": True,
+            "data": {
+                "session": {
+                    "id": "lab-session-123",
+                    "current_stage": "ready_to_generate",
+                    "next_action": "generate_solution",
+                    "can_generate_solution": True,
+                    "unanswered_question_ids": [],
+                }
+            },
+            "request_id": "req-lab-answer",
+            "schema_version": "1.0",
+        },
+        ("/api/v1/projects/lab/sessions/{session_id}/explain-node", "post"): {
+            "success": True,
+            "data": {
+                "session_id": "lab-session-123",
+                "node_id": "lab-node-1",
+                "title": "Requirement",
+                "explanation": "This node is grounded in the submitted problem.",
+                "related_nodes": [],
+            },
+            "request_id": "req-lab-explain",
+            "schema_version": "1.0",
+        },
+        ("/api/v1/projects/lab/sessions/{session_id}/generate-solution", "post"): {
+            "success": True,
+            "data": {
+                "session": {
+                    "id": "lab-session-123",
+                    "current_stage": "solution_generated",
+                    "next_action": "review_solution",
+                    "can_generate_solution": False,
+                    "unanswered_question_ids": [],
+                },
+                "solution": {
+                    "id": "lab-solution-123",
+                    "solution_json": {"data_policy": "real_project_radar_only"},
+                },
+            },
+            "request_id": "req-lab-generate",
+            "schema_version": "1.0",
+        },
+        ("/api/v1/projects/lab/sessions/{session_id}/save", "post"): {
+            "success": True,
+            "data": {
+                "session": {
+                    "id": "lab-session-123",
+                    "current_stage": "solution_saved",
+                    "next_action": "none",
+                    "can_generate_solution": False,
+                    "unanswered_question_ids": [],
+                    "status": "saved",
+                }
+            },
+            "request_id": "req-lab-save",
+            "schema_version": "1.0",
+        },
+    }
+    for (path, method), example in examples.items():
+        operation = paths.get(path, {}).get(method)
+        if isinstance(operation, dict):
+            _attach_json_example(operation, "200", example)
+
+    error_examples = {
+        ("/api/v1/projects/lab/sessions", "post", "400"): (
+            "invalid_project_lab_request",
+            "user_problem is required",
+            {},
+        ),
+        ("/api/v1/projects/lab/sessions/{session_id}", "get", "404"): (
+            "project_lab_session_not_found",
+            "project lab session not found",
+            {},
+        ),
+        ("/api/v1/projects/lab/sessions/{session_id}/answer", "post", "404"): (
+            "project_lab_question_not_found",
+            "project lab question not found",
+            {},
+        ),
+        ("/api/v1/projects/lab/sessions/{session_id}/answer", "post", "422"): (
+            "invalid_project_lab_answer",
+            "answer must be a non-empty string",
+            {},
+        ),
+        ("/api/v1/projects/lab/sessions/{session_id}/explain-node", "post", "404"): (
+            "project_lab_node_not_found",
+            "project lab node not found",
+            {},
+        ),
+        ("/api/v1/projects/lab/sessions/{session_id}/generate-solution", "post", "404"): (
+            "project_lab_session_not_found",
+            "project lab session not found",
+            {},
+        ),
+        ("/api/v1/projects/lab/sessions/{session_id}/generate-solution", "post", "409"): (
+            "lab_session_not_ready",
+            "project lab session is not ready to generate a solution",
+            {"unanswered_question_ids": ["question-goal"]},
+        ),
+        ("/api/v1/projects/lab/sessions/{session_id}/save", "post", "404"): (
+            "project_lab_session_not_found",
+            "project lab session not found",
+            {},
+        ),
+        ("/api/v1/projects/lab/sessions/{session_id}/save", "post", "409"): (
+            "lab_solution_missing",
+            "project lab solution is required before saving a session",
+            {},
+        ),
+    }
+    for (path, method, status), (code, message, details) in error_examples.items():
+        operation = paths.get(path, {}).get(method)
+        if not isinstance(operation, dict):
+            continue
+        response = operation.setdefault("responses", {}).setdefault(status, {"description": "Error"})
+        response.setdefault("description", "Lab API error")
+        _attach_json_example(
+            operation,
+            status,
+            {
+                "success": False,
+                "data": None,
+                "error": {
+                    "code": code,
+                    "message": message,
+                    "details": details,
+                    "retryable": False,
+                    "user_action_required": status == "409",
+                    "request_id": "req-lab-error",
+                },
+                "request_id": "req-lab-error",
+                "schema_version": "1.0",
+            },
+        )
+
+
+def _attach_json_example(operation: dict[str, Any], status: str, example: dict[str, Any]) -> None:
+    response = operation.setdefault("responses", {}).setdefault(status, {"description": "Successful Response"})
+    content = response.setdefault("content", {}).setdefault("application/json", {})
+    content["example"] = example

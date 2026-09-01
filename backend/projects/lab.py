@@ -28,19 +28,24 @@ from backend.projects.models import (
 from backend.projects.repository import ProjectStateRepository
 
 
-LAB_WORKFLOW_STAGES = frozenset(
-    {
-        "clarifying_requirements",
-        "ready_to_generate",
-        "solution_generated",
-        "solution_saved",
-        "solution_adopted",
-        "solution_archived",
-    }
+LAB_CONTRACT_VERSION = "projects-lab/v1"
+LAB_WORKFLOW_STAGE_VALUES = (
+    "clarifying_requirements",
+    "ready_to_generate",
+    "solution_generated",
+    "solution_saved",
+    "solution_adopted",
+    "solution_archived",
 )
-LAB_NEXT_ACTIONS = frozenset(
-    {"answer_question", "generate_solution", "review_solution", "save_solution", "none"}
+LAB_NEXT_ACTION_VALUES = (
+    "answer_question",
+    "generate_solution",
+    "review_solution",
+    "save_solution",
+    "none",
 )
+LAB_WORKFLOW_STAGES = frozenset(LAB_WORKFLOW_STAGE_VALUES)
+LAB_NEXT_ACTIONS = frozenset(LAB_NEXT_ACTION_VALUES)
 
 
 class LabQuestionNotFoundError(LookupError):

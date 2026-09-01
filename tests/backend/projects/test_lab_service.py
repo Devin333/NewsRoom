@@ -3,6 +3,9 @@ from __future__ import annotations
 import pytest
 
 from backend.projects.lab import (
+    LAB_CONTRACT_VERSION,
+    LAB_NEXT_ACTION_VALUES,
+    LAB_WORKFLOW_STAGE_VALUES,
     LabAnswerValidationError,
     LabQuestionNotFoundError,
     LabSessionNotReadyError,
@@ -13,11 +16,18 @@ from backend.projects.models import ProjectDataset
 from backend.projects.repository import ProjectStateRepository
 from backend.projects.service import ProjectDomainService
 from tests.backend.projects.helpers import project_dataset_payload
+from tests.backend.projects.fixtures import LAB_CONTRACT_FIXTURE
 
 
 class _StaticArtifactRepository:
     def load_dataset(self):
         return ProjectDataset.model_validate(project_dataset_payload())
+
+
+def test_lab_contract_fixture_is_the_single_canonical_workflow_value_set() -> None:
+    assert LAB_CONTRACT_VERSION == LAB_CONTRACT_FIXTURE["version"]
+    assert LAB_WORKFLOW_STAGE_VALUES == LAB_CONTRACT_FIXTURE["stages"]
+    assert LAB_NEXT_ACTION_VALUES == LAB_CONTRACT_FIXTURE["next_actions"]
 
 
 def test_lab_session_generates_profile_graph_question_and_solution(tmp_path) -> None:
