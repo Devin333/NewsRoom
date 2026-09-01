@@ -152,9 +152,8 @@ def derive_research_run_disposition(
             artifact_evidence_ref=resolved_artifact_ref,
         )
     quality = payload.get("quality")
-    if not isinstance(quality, Mapping) and quality is not None:
-        quality = _object_mapping(quality)
-    if not isinstance(quality, Mapping) or "passed" not in quality:
+    quality_passed = _field_value(quality, "passed")
+    if quality is None or quality_passed is None:
         return _quarantine(
             ResearchRunDispositionReason.QUALITY_MISSING,
             identity_scope_ref=derived_scope_ref,
@@ -162,7 +161,7 @@ def derive_research_run_disposition(
             publication_authority_ref=resolved_authority_ref,
             artifact_evidence_ref=resolved_artifact_ref,
         )
-    if quality.get("passed") is not True:
+    if quality_passed is not True:
         return _quarantine(
             ResearchRunDispositionReason.QUALITY_REJECTED,
             identity_scope_ref=derived_scope_ref,
@@ -301,20 +300,17 @@ def _identity_scope_evidence(
     if explicit is not None:
         projections.append(explicit)
 
-    trace = payload.get("trace")
-    if isinstance(trace, Mapping):
-        trace_scope = _scope_projection(trace.get("metadata"))
-        if trace_scope is not None:
-            projections.append(trace_scope)
-    transcript = payload.get("transcript")
-    if isinstance(transcript, Mapping):
-        entries = transcript.get("entries")
-        if isinstance(entries, list):
-            for entry in entries:
-                if isinstance(entry, Mapping):
-                    projection = _scope_projection(entry.get("metadata"))
-                    if projection is not None:
-                        projections.append(projection)
+    trace_scope = _scope_projection(
+        _field_value(payload.get("trace"), "metadata")
+    )
+    if trace_scope is not None:
+        projections.append(trace_scope)
+    entries = _field_value(payload.get("transcript"), "entries")
+    if isinstance(entries, (list, tuple)):
+        for entry in entries:
+            projection = _scope_projection(_field_value(entry, "metadata"))
+            if projection is not None:
+                projections.append(projection)
 
     if not projections:
         return None, ResearchRunDispositionReason.IDENTITY_SCOPE_MISSING
@@ -408,7 +404,7 @@ def _publication_authority_evidence(
 def _result_payload(result: Any) -> dict[str, Any]:
     if isinstance(result, Mapping):
         return dict(result)
-    for name in ("to_persistence_dict", "to_dict"):
+    for name in ("to_disposition_payload", "to_persistence_dict", "to_dict"):
         encoder = getattr(result, name, None)
         if callable(encoder):
             value = encoder()
@@ -431,6 +427,12 @@ def _object_mapping(value: Any) -> dict[str, Any]:
         "diagnostics",
     )
     return {name: getattr(value, name) for name in names if hasattr(value, name)}
+
+
+def _field_value(value: Any, name: str) -> Any:
+    if isinstance(value, Mapping):
+        return value.get(name)
+    return getattr(value, name, None)
 
 
 def _scope_projection(value: Any) -> dict[str, str] | None:

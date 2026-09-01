@@ -315,6 +315,25 @@ class ResearchAnalysisResult:
         )
         return payload
 
+    def to_disposition_payload(self) -> dict[str, Any]:
+        """Return the bounded evidence projection used by run disposition."""
+
+        return {
+            "run_id": self.run_id,
+            "status": self.status,
+            "quality": self.quality,
+            "artifact_refs": dict(self.artifact_refs),
+            "actor_scope": self.actor_scope,
+            "trace": {"metadata": dict(self.trace.metadata)},
+            "transcript": {
+                "entries": [
+                    {"metadata": dict(entry.metadata)}
+                    for entry in self.transcript.entries()
+                ]
+            },
+            "diagnostics": dict(self.diagnostics),
+        }
+
     @classmethod
     def from_durable_failure(
         cls,

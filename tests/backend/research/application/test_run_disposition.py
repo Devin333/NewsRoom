@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from types import SimpleNamespace
 
 import pytest
 
@@ -171,6 +172,40 @@ def test_scope_conflicts_and_incomplete_artifacts_are_quarantined() -> None:
         require_publication_authority=False,
     )
     assert decision.reason is ResearchRunDispositionReason.ARTIFACT_EVIDENCE_MISSING
+
+
+def test_classifier_reads_structured_result_without_serializing_full_trace() -> None:
+    scope = {
+        "tenant_id": "tenant-a",
+        "user_id": "user-a",
+        "memory_namespace": "research:tenant:tenant-a:user:user-a",
+    }
+    payload = _result(run_id="run-structured", scope=scope)
+
+    class _StructuredResult:
+        def to_disposition_payload(self) -> dict:
+            return {
+                **payload,
+                "quality": SimpleNamespace(passed=True),
+                "actor_scope": SimpleNamespace(to_metadata=lambda: dict(scope)),
+                "trace": SimpleNamespace(metadata=dict(scope)),
+                "transcript": SimpleNamespace(
+                    entries=(SimpleNamespace(metadata=dict(scope)),)
+                ),
+            }
+
+        def to_persistence_dict(self) -> dict:
+            raise AssertionError("run disposition must not serialize the full trace")
+
+    decision = derive_research_run_disposition(
+        _StructuredResult(),
+        run_id="run-structured",
+        paper_id="paper-1",
+        require_publication_authority=False,
+    )
+
+    assert decision.disposition is ResearchRunDisposition.ACCEPTED
+    assert decision.identity_scope_ref == research_identity_scope_ref(scope)
 
 
 class _RecoverySource:
