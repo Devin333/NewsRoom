@@ -1,12 +1,11 @@
 import { Suspense } from "react"
-import { PageSkeleton } from "@/components/common/loading-skeleton"
-import { ProjectsProductPage } from "@/features/projects/components/projects-product-page"
+import { LabWorkspaceSkeleton, ProjectsProductPage } from "@/features/projects/components/projects-product-page"
 
 export const dynamic = "force-dynamic"
 
 export default function ProjectsLabPage() {
   return (
-    <Suspense fallback={<PageSkeleton />}>
+    <Suspense fallback={<LabWorkspaceSkeleton />}>
       <ProjectsProductPage route="lab" />
     </Suspense>
   )
