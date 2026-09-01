@@ -26,6 +26,7 @@ import { ProjectProductCard } from "@/features/projects/components/project-produ
 import { ProjectDegradedNotice, ProjectEmptyState, ProjectErrorState, ProjectLoadingState, ProjectSourceLine } from "@/features/projects/components/project-product-state"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { presentLabWorkflow, labQuestionAnswered, labSolutionValue } from "@/features/projects/components/lab-workflow"
+import { useI18n } from "@/lib/i18n/use-i18n"
 import type {
   ProjectCategoryAlias,
   ProjectProductRoute,
@@ -488,6 +489,7 @@ function WatchlistView({ data, onChanged }: { data: ProjectsApiWatchlistResult; 
 }
 
 function LabView({ data }: { data: ProductData }) {
+  const { t } = useI18n()
   const meta = getMeta(data)
   const [problem, setProblem] = useState("")
   const [session, setSession] = useState<ProjectsLabSession | null>(null)
@@ -563,7 +565,7 @@ function LabView({ data }: { data: ProductData }) {
   }, [focusQuestionId, session])
 
   return (
-    <section className="space-y-5" aria-label="Projects Lab workspace">
+    <section className="space-y-5" aria-label={t("projects.lab.workspace")}>
       <form
         className="space-y-3 border-y border-[#d8dee7] bg-white py-5 dark:border-border dark:bg-card lg:rounded-md lg:border lg:px-5"
         aria-busy={startSession.isPending}
@@ -574,12 +576,12 @@ function LabView({ data }: { data: ProductData }) {
         }}
       >
         <div>
-          <p className="text-xs font-semibold uppercase tracking-wide text-[#667085] dark:text-muted-foreground">Research brief</p>
-          <h2 className="mt-1 text-xl font-semibold text-[#202124] dark:text-foreground">Start Lab Session</h2>
+          <p className="text-xs font-semibold uppercase tracking-wide text-[#667085] dark:text-muted-foreground">{t("projects.lab.researchBrief")}</p>
+          <h2 className="mt-1 text-xl font-semibold text-[#202124] dark:text-foreground">{t("projects.lab.startSession")}</h2>
         </div>
         {meta ? <ProjectSourceLine meta={meta} /> : null}
         {meta?.data_state !== "ready" ? <ProjectDegradedNotice meta={meta ?? { source: "none", data_state: "empty", notices: [] }} /> : null}
-        <p className="text-sm leading-6 text-muted-foreground">Describe the real module or product problem you want to clarify. The session will use only selected Project Radar cases.</p>
+        <p className="text-sm leading-6 text-muted-foreground">{t("projects.lab.describePrompt")}</p>
         <textarea
           id="lab-problem"
           value={problem}
@@ -587,41 +589,41 @@ function LabView({ data }: { data: ProductData }) {
           aria-describedby="lab-problem-help"
           aria-invalid={startSession.isError}
           className="min-h-28 w-full rounded-md border border-input bg-card px-3 py-2 text-base leading-6"
-          placeholder="Describe the module or product problem"
+          placeholder={t("projects.lab.problemPlaceholder")}
         />
-        <p id="lab-problem-help" className="text-xs text-muted-foreground">A non-empty brief is required.</p>
+        <p id="lab-problem-help" className="text-xs text-muted-foreground">{t("projects.lab.problemRequired")}</p>
         <div className="flex flex-wrap items-center gap-3">
           <Button type="submit" disabled={!problem.trim() || startSession.isPending}>
-            {startSession.isPending ? <><Loader2 className="size-4 animate-spin" /> Starting</> : <>Start Session <ChevronRight className="size-4" /></>}
+            {startSession.isPending ? <><Loader2 className="size-4 animate-spin" /> {t("projects.lab.starting")}</> : <>{t("projects.lab.startButton")} <ChevronRight className="size-4" /></>}
           </Button>
-          {startSession.isPending ? <span className="text-sm text-muted-foreground" aria-live="polite">Creating session from real data</span> : null}
+          {startSession.isPending ? <span className="text-sm text-muted-foreground" aria-live="polite">{t("projects.lab.creating")}</span> : null}
         </div>
-        {startSession.isError ? <p id="lab-problem-error" role="alert" className="text-sm text-destructive">{startSession.error instanceof Error ? startSession.error.message : "Lab session failed"}</p> : null}
+        {startSession.isError ? <p id="lab-problem-error" role="alert" className="text-sm text-destructive">{startSession.error instanceof Error ? startSession.error.message : t("projects.lab.sessionFailed")}</p> : null}
       </form>
-      {!session ? <ProjectEmptyState title="No active Lab session" /> : (
+      {!session ? <ProjectEmptyState title={t("projects.lab.noActiveSession")} /> : (
         <div className="grid gap-5 lg:grid-cols-[minmax(13rem,0.8fr)_minmax(0,2fr)_minmax(16rem,1fr)]">
           <LabWorkflowStatus session={session} />
           <div className="min-w-0 space-y-5">
             <section className="border-y border-[#d8dee7] bg-white py-5 dark:border-border dark:bg-card lg:rounded-md lg:border lg:px-5">
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0">
-                  <p className="text-xs font-semibold uppercase tracking-wide text-[#667085] dark:text-muted-foreground">Session brief</p>
+                  <p className="text-xs font-semibold uppercase tracking-wide text-[#667085] dark:text-muted-foreground">{t("projects.lab.sessionBrief")}</p>
                   <h2 className="mt-1 text-lg font-semibold text-[#202124] dark:text-foreground">{session.user_problem}</h2>
                 </div>
-                <Button asChild variant="outline" size="sm"><Link href={`/projects/lab/${encodeURIComponent(session.id)}`}>Open detail <ExternalLink className="size-3.5" /></Link></Button>
+                <Button asChild variant="outline" size="sm"><Link href={`/projects/lab/${encodeURIComponent(session.id)}`}>{t("projects.lab.openDetail")} <ExternalLink className="size-3.5" /></Link></Button>
               </div>
               <LabClarificationList session={session} mutation={answerQuestion} hasError={answerQuestion.isError} focusQuestionId={focusQuestionId} onAnswer={(questionId, answer) => answerQuestion.mutate({ questionId, answer })} />
-              {answerQuestion.isError ? <p role="alert" className="mt-3 text-sm text-destructive">{answerQuestion.error instanceof Error ? answerQuestion.error.message : "Answer failed"}</p> : null}
+              {answerQuestion.isError ? <p role="alert" className="mt-3 text-sm text-destructive">{answerQuestion.error instanceof Error ? answerQuestion.error.message : t("projects.lab.answerFailed")}</p> : null}
               <div className="mt-5 flex flex-wrap items-center gap-3 border-t border-border pt-4">
                 <Button type="button" disabled={!workflow?.canGenerate || generateSolution.isPending} onClick={() => generateSolution.mutate()}>
-                  {generateSolution.isPending ? <><Loader2 className="size-4 animate-spin" /> Generating</> : <>Generate Solution <ChevronRight className="size-4" /></>}
+                  {generateSolution.isPending ? <><Loader2 className="size-4 animate-spin" /> {t("projects.lab.generating")}</> : <>{t("projects.lab.generateSolution")} <ChevronRight className="size-4" /></>}
                 </Button>
                 <span className="text-sm text-muted-foreground" aria-live="polite">{workflow?.actionLabel}</span>
               </div>
               {generateSolution.isError ? (
                 <p role="alert" className="mt-3 text-sm text-destructive">
-                  {generateSolution.error instanceof Error ? generateSolution.error.message : "Solution failed"}
-                  {generateSolution.error && typeof generateSolution.error === "object" && "status" in generateSolution.error && generateSolution.error.status === 409 ? " Return to the unanswered clarification above." : ""}
+                  {generateSolution.error instanceof Error ? generateSolution.error.message : t("projects.lab.solutionFailed")}
+                  {generateSolution.error && typeof generateSolution.error === "object" && "status" in generateSolution.error && generateSolution.error.status === 409 ? ` ${t("projects.lab.returnToClarification")}` : ""}
                 </p>
               ) : null}
               {solution ? <LabSolutionPanel session={solution.session} solution={solution.solution} /> : session.generated_solution || session.solution_json ? <LabSolutionPanel session={session} solution={session.solution_json ?? { markdown: session.generated_solution }} /> : null}
@@ -635,8 +637,9 @@ function LabView({ data }: { data: ProductData }) {
 }
 
 export function LabWorkspaceSkeleton() {
+  const { t } = useI18n()
   return (
-    <section className="space-y-5" aria-label="Loading Projects Lab workspace" aria-busy="true">
+    <section className="space-y-5" aria-label={t("projects.lab.loadingWorkspace")} aria-busy="true">
       <div className="animate-pulse border-y border-[#d8dee7] bg-white py-5 dark:border-border dark:bg-card lg:rounded-md lg:border lg:px-5">
         <div className="h-3 w-24 rounded bg-secondary" />
         <div className="mt-3 h-7 w-52 rounded bg-secondary" />
@@ -807,21 +810,24 @@ const NODE_COLORS: Record<string, string> = {
 }
 
 export function LabWorkflowStatus({ session }: { session: ProjectsLabSession }) {
+  const { t } = useI18n()
   const workflow = presentLabWorkflow(session)
+  const stageLabel = workflow.isUnknown ? `${t("projects.lab.unsupportedStageLabel")}: ${session.raw_current_stage ?? "unknown"}` : t(`projects.lab.stage.${session.current_stage}`)
+  const actionLabel = workflow.isUnknown ? t("projects.lab.actionsDisabled") : t(`projects.lab.action.${session.next_action}`)
   return (
-    <aside className="h-fit border-y border-[#d8dee7] bg-white py-5 dark:border-border dark:bg-card lg:rounded-md lg:border lg:p-5" aria-label="Lab workflow status">
+    <aside className="h-fit border-y border-[#d8dee7] bg-white py-5 dark:border-border dark:bg-card lg:rounded-md lg:border lg:p-5" aria-label={t("projects.lab.workflow")}>
       <div className="flex items-start gap-3">
         <span className={`mt-0.5 flex size-9 shrink-0 items-center justify-center rounded-full ${workflow.statusTone === "success" ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-300" : workflow.statusTone === "warning" ? "bg-amber-100 text-amber-700 dark:bg-amber-500/20 dark:text-amber-300" : "bg-secondary text-muted-foreground"}`}>
           {workflow.statusTone === "success" ? <Check className="size-4" /> : workflow.statusTone === "warning" ? <AlertCircle className="size-4" /> : <CircleHelp className="size-4" />}
         </span>
         <div className="min-w-0">
-          <p className="text-xs font-semibold uppercase tracking-wide text-[#667085] dark:text-muted-foreground">Workflow</p>
-          <h2 className="mt-1 text-base font-semibold text-[#202124] dark:text-foreground">{workflow.stageLabel}</h2>
-          <p className="mt-2 text-sm leading-6 text-muted-foreground" aria-live="polite">{workflow.actionLabel}</p>
+          <p className="text-xs font-semibold uppercase tracking-wide text-[#667085] dark:text-muted-foreground">{t("projects.lab.workflow")}</p>
+          <h2 className="mt-1 text-base font-semibold text-[#202124] dark:text-foreground">{stageLabel}</h2>
+          <p className="mt-2 text-sm leading-6 text-muted-foreground" aria-live="polite">{actionLabel}</p>
         </div>
       </div>
-      {workflow.unansweredCount > 0 ? <p className="mt-4 rounded-md bg-amber-50 px-3 py-2 text-sm text-amber-900 dark:bg-amber-500/10 dark:text-amber-100">{workflow.unansweredCount} required clarification{workflow.unansweredCount === 1 ? "" : "s"} remaining.</p> : null}
-      {workflow.isUnknown ? <p className="mt-4 rounded-md bg-amber-50 px-3 py-2 text-sm text-amber-900 dark:bg-amber-500/10 dark:text-amber-100">Actions are disabled until the server returns a supported workflow state.</p> : null}
+      {workflow.unansweredCount > 0 ? <p className="mt-4 rounded-md bg-amber-50 px-3 py-2 text-sm text-amber-900 dark:bg-amber-500/10 dark:text-amber-100">{t("projects.lab.remaining", { count: workflow.unansweredCount, suffix: workflow.unansweredCount === 1 ? "" : "s" })}</p> : null}
+      {workflow.isUnknown ? <p className="mt-4 rounded-md bg-amber-50 px-3 py-2 text-sm text-amber-900 dark:bg-amber-500/10 dark:text-amber-100">{t("projects.lab.actionsDisabled")}</p> : null}
       <span className="sr-only">{session.current_stage}</span>
     </aside>
   )
@@ -840,12 +846,13 @@ export function LabClarificationList({
   mutation: { isPending: boolean }
   hasError?: boolean
 }) {
+  const { t } = useI18n()
   const [drafts, setDrafts] = useState<Record<string, string>>({})
   const unanswered = new Set(session.unanswered_question_ids)
   const firstUnansweredId = session.questions.find((question) => unanswered.has(question.id))?.id
-  if (!session.questions.length) return <p className="mt-5 text-sm text-muted-foreground">No clarification questions are available.</p>
+  if (!session.questions.length) return <p className="mt-5 text-sm text-muted-foreground">{t("projects.lab.noQuestions")}</p>
   return (
-    <div className="mt-5 space-y-3" aria-label="Lab clarification questions">
+    <div className="mt-5 space-y-3" aria-label={t("projects.lab.questions")}>
       {session.questions.map((question, index) => {
         const answered = !unanswered.has(question.id) || labQuestionAnswered(question.answered_value)
         const draft = drafts[question.id] ?? ""
@@ -856,7 +863,7 @@ export function LabClarificationList({
               <span className="mt-0.5 flex size-6 shrink-0 items-center justify-center rounded-full bg-secondary text-xs font-semibold text-muted-foreground">{index + 1}</span>
               <div className="min-w-0 flex-1">
                 <p className="text-sm font-medium text-[#202124] dark:text-foreground">{question.question}</p>
-                {answered ? <p className="mt-2 flex items-center gap-1 text-sm text-muted-foreground"><Check className="size-3.5 text-emerald-600" /> {String(question.answered_value ?? "Answered")}</p> : !active ? <p className="mt-2 text-xs text-muted-foreground">Waiting for the previous clarification.</p> : (
+                {answered ? <p className="mt-2 flex items-center gap-1 text-sm text-muted-foreground"><Check className="size-3.5 text-emerald-600" /> {String(question.answered_value ?? t("projects.lab.answer"))}</p> : !active ? <p className="mt-2 text-xs text-muted-foreground">{t("projects.lab.waitingPrevious")}</p> : (
                   <div className="mt-3 space-y-2">
                     {question.options?.length ? <div className="flex flex-wrap gap-2">{question.options.map((option) => <button key={option.value} type="button" className="min-h-11 rounded-md border border-border px-3 text-sm hover:bg-secondary" onClick={() => setDrafts((current) => ({ ...current, [question.id]: option.value }))}>{option.label}</button>)}</div> : null}
                     <label className="sr-only" htmlFor={`lab-question-${question.id}`}>Answer: {question.question}</label>
@@ -866,17 +873,17 @@ export function LabClarificationList({
                         autoFocus={focusQuestionId === question.id}
                         value={draft}
                         onChange={(event) => setDrafts((current) => ({ ...current, [question.id]: event.target.value }))}
-                        placeholder="Answer clarification"
+                        placeholder={t("projects.lab.answerPlaceholder")}
                         aria-required={question.required !== false}
                         aria-invalid={Boolean(hasError)}
                         aria-describedby={hasError ? `lab-question-${question.id}-error` : undefined}
                         disabled={mutation.isPending}
                       />
                       <Button type="button" variant="outline" className="min-h-11" disabled={!draft.trim() || mutation.isPending} onClick={() => onAnswer(question.id, draft.trim())}>
-                        {mutation.isPending ? <><Loader2 className="size-4 animate-spin" /> Saving Answer</> : "Answer"}
+                        {mutation.isPending ? <><Loader2 className="size-4 animate-spin" /> {t("projects.lab.savingAnswer")}</> : t("projects.lab.answer")}
                       </Button>
                     </div>
-                    {hasError ? <p id={`lab-question-${question.id}-error`} className="text-sm text-destructive" role="alert">Answer could not be saved. Review the answer and retry.</p> : null}
+                    {hasError ? <p id={`lab-question-${question.id}-error`} className="text-sm text-destructive" role="alert">{t("projects.lab.answerError")}</p> : null}
                   </div>
                 )}
               </div>
@@ -889,15 +896,16 @@ export function LabClarificationList({
 }
 
 export function LabContextPanel({ session }: { session: ProjectsLabSession }) {
+  const { t } = useI18n()
   return (
     <aside className="min-w-0 space-y-5 border-y border-[#d8dee7] bg-white py-5 dark:border-border dark:bg-card lg:rounded-md lg:border lg:p-5">
       <div>
-        <p className="text-xs font-semibold uppercase tracking-wide text-[#667085] dark:text-muted-foreground">Context</p>
-        <h2 className="mt-1 text-lg font-semibold text-[#202124] dark:text-foreground">Real Project Radar references</h2>
+        <p className="text-xs font-semibold uppercase tracking-wide text-[#667085] dark:text-muted-foreground">{t("projects.lab.context")}</p>
+        <h2 className="mt-1 text-lg font-semibold text-[#202124] dark:text-foreground">{t("projects.lab.references")}</h2>
       </div>
       <div className="rounded-md bg-secondary/40 p-3 text-sm">
-        <p className="font-medium text-[#202124] dark:text-foreground">{session.selected_case_ids.length} selected case{session.selected_case_ids.length === 1 ? "" : "s"}</p>
-        <p className="mt-1 text-muted-foreground">Only API-provided case and graph records are shown.</p>
+        <p className="font-medium text-[#202124] dark:text-foreground">{t("projects.lab.selectedCases", { count: session.selected_case_ids.length, suffix: session.selected_case_ids.length === 1 ? "" : "s" })}</p>
+        <p className="mt-1 text-muted-foreground">{t("projects.lab.apiOnly")}</p>
       </div>
       <LabGraph sessionId={session.id} graph={session.graph_state} />
     </aside>
@@ -905,6 +913,7 @@ export function LabContextPanel({ session }: { session: ProjectsLabSession }) {
 }
 
 export function LabGraph({ sessionId, graph }: { sessionId?: string; graph?: unknown }) {
+  const { t } = useI18n()
   const record = asRecord(graph)
   const nodes = recordArray(record?.nodes)
   const edges = recordArray(record?.edges)
@@ -918,10 +927,10 @@ export function LabGraph({ sessionId, graph }: { sessionId?: string; graph?: unk
       return explainProjectLabNode(sessionId, { node_id: nodeId, style: "plain" })
     },
     onSuccess: (result) => { setExplanation(result); setError(null) },
-    onError: (cause) => setError(cause instanceof Error ? cause.message : "Node explanation failed"),
+    onError: (cause) => setError(cause instanceof Error ? cause.message : t("projects.lab.explanationFailed")),
   })
-  if (!record) return <p className="text-sm text-muted-foreground">Graph context is unavailable.</p>
-  if (!nodes.length) return <p className="text-sm text-muted-foreground">No graph nodes are available.</p>
+  if (!record) return <p className="text-sm text-muted-foreground">{t("projects.lab.graphUnavailable")}</p>
+  if (!nodes.length) return <p className="text-sm text-muted-foreground">{t("projects.lab.noGraphNodes")}</p>
   const cx = 200, cy = 120, radius = 90
   const positions: Record<string, { x: number; y: number }> = {}
   nodes.forEach((node, index) => {
@@ -932,11 +941,11 @@ export function LabGraph({ sessionId, graph }: { sessionId?: string; graph?: unk
   return (
     <section aria-labelledby="lab-graph-title">
       <div className="flex items-baseline justify-between gap-2">
-        <h3 id="lab-graph-title" className="text-sm font-semibold text-[#202124] dark:text-foreground">Graph context</h3>
-        <span className="text-xs text-muted-foreground">{nodes.length} nodes · {edges.length} relationships</span>
+        <h3 id="lab-graph-title" className="text-sm font-semibold text-[#202124] dark:text-foreground">{t("projects.lab.graphContext")}</h3>
+        <span className="text-xs text-muted-foreground">{t("projects.lab.graphSummary", { nodes: nodes.length, edges: edges.length })}</span>
       </div>
       <div className="mt-3 overflow-hidden rounded-md border border-border bg-[#f8fafc] p-2 dark:bg-background">
-        <svg viewBox="0 0 400 240" className="w-full" role="img" aria-label={`Graph with ${nodes.length} nodes and ${edges.length} relationships`} style={{ maxHeight: 200 }}>
+        <svg viewBox="0 0 400 240" className="w-full" role="img" aria-label={t("projects.lab.graphAria", { nodes: nodes.length, edges: edges.length })} style={{ maxHeight: 200 }}>
           {edges.map((edge, index) => {
             const source = positions[textValue(edge.source_id)]
             const target = positions[textValue(edge.target_id)]
@@ -952,14 +961,14 @@ export function LabGraph({ sessionId, graph }: { sessionId?: string; graph?: unk
           })}
         </svg>
       </div>
-      <ol className="mt-3 space-y-2" aria-label="Graph nodes and relationships">
+      <ol className="mt-3 space-y-2" aria-label={t("projects.lab.graphNodesRelationships")}>
         {nodes.map((node) => {
           const id = textValue(node.id)
           const related = edges.filter((edge) => textValue(edge.source_id) === id || textValue(edge.target_id) === id).length
-          return <li key={id} className="flex items-center gap-2 text-sm"><button type="button" className="min-h-11 min-w-0 flex-1 rounded-md border border-transparent px-2 text-left hover:border-border hover:bg-secondary" aria-pressed={selectedNode === id} onClick={() => setSelectedNode(id)}><span className="font-medium text-[#202124] dark:text-foreground">{textValue(node.title) || "Unnamed node"}</span><span className="ml-2 text-xs text-muted-foreground">{textValue(node.node_type)} · {related} related</span></button><Button type="button" variant="ghost" size="icon" aria-label={`Explain ${textValue(node.title)}`} disabled={explain.isPending} onClick={() => explain.mutate(id)}><Info className="size-4" /></Button></li>
+          return <li key={id} className="flex items-center gap-2 text-sm"><button type="button" className="min-h-11 min-w-0 flex-1 rounded-md border border-transparent px-2 text-left hover:border-border hover:bg-secondary" aria-pressed={selectedNode === id} onClick={() => setSelectedNode(id)}><span className="font-medium text-[#202124] dark:text-foreground">{textValue(node.title) || t("projects.lab.unnamedNode")}</span><span className="ml-2 text-xs text-muted-foreground">{textValue(node.node_type)} · {t("projects.lab.related", { count: related })}</span></button><Button type="button" variant="ghost" size="icon" aria-label={t("projects.lab.explain", { title: textValue(node.title) })} disabled={explain.isPending} onClick={() => explain.mutate(id)}><Info className="size-4" /></Button></li>
         })}
       </ol>
-      {explain.isPending ? <p className="mt-3 text-sm text-muted-foreground" aria-live="polite">Loading node explanation</p> : null}
+      {explain.isPending ? <p className="mt-3 text-sm text-muted-foreground" aria-live="polite">{t("projects.lab.loadingExplanation")}</p> : null}
       {error ? <p className="mt-3 text-sm text-destructive" role="alert">{error}</p> : null}
       {explanation ? <div className="mt-3 rounded-md border border-primary/30 bg-primary/5 p-3" aria-live="polite"><p className="text-sm font-semibold text-[#202124] dark:text-foreground">{explanation.title}</p><p className="mt-1 text-sm leading-6 text-muted-foreground">{explanation.explanation}</p>{explanation.related_nodes.length ? <p className="mt-2 text-xs text-muted-foreground">{explanation.related_nodes.length} related node{explanation.related_nodes.length === 1 ? "" : "s"}</p> : null}</div> : null}
     </section>
@@ -967,6 +976,7 @@ export function LabGraph({ sessionId, graph }: { sessionId?: string; graph?: unk
 }
 
 export function LabSolutionPanel({ session, solution }: { session: ProjectsLabSession; solution: Record<string, unknown> }) {
+  const { t } = useI18n()
   const [copyState, setCopyState] = useState<"idle" | "success" | "error">("idle")
   const structured = labSolutionValue(session) ?? solution
   const copyStructured = async () => {
@@ -980,15 +990,15 @@ export function LabSolutionPanel({ session, solution }: { session: ProjectsLabSe
     }
   }
   const evidence = asRecord(structured)
-  const summaryText = session.generated_solution || textValue(evidence?.summary) || "Summary is unavailable."
+  const summaryText = session.generated_solution || textValue(evidence?.summary) || t("projects.lab.unavailable")
   const structuredKeys = Object.keys(structured)
   const evidenceKeys = ["case_ids", "project_ids", "data_policy", "review_notes"]
   return (
     <section className="mt-5 border-t border-border pt-5" aria-labelledby="lab-solution-title">
-      <div className="flex flex-wrap items-start justify-between gap-3"><div><p className="text-xs font-semibold uppercase tracking-wide text-[#667085] dark:text-muted-foreground">Output</p><h2 id="lab-solution-title" className="mt-1 text-lg font-semibold text-[#202124] dark:text-foreground">Generated solution</h2></div><Button asChild variant="outline" size="sm"><Link href={`/projects/lab/${encodeURIComponent(session.id)}`}>Open session detail <ExternalLink className="size-3.5" /></Link></Button></div>
-      <Tabs defaultValue="summary" className="mt-4"><TabsList className="max-w-full overflow-x-auto"><TabsTrigger value="summary">Summary</TabsTrigger><TabsTrigger value="structured">Structured</TabsTrigger><TabsTrigger value="evidence">Evidence</TabsTrigger></TabsList>
+      <div className="flex flex-wrap items-start justify-between gap-3"><div><p className="text-xs font-semibold uppercase tracking-wide text-[#667085] dark:text-muted-foreground">{t("projects.lab.output")}</p><h2 id="lab-solution-title" className="mt-1 text-lg font-semibold text-[#202124] dark:text-foreground">{t("projects.lab.generatedSolution")}</h2></div><Button asChild variant="outline" size="sm"><Link href={`/projects/lab/${encodeURIComponent(session.id)}`}>{t("projects.lab.openSessionDetail")} <ExternalLink className="size-3.5" /></Link></Button></div>
+      <Tabs defaultValue="summary" className="mt-4"><TabsList className="max-w-full overflow-x-auto"><TabsTrigger value="summary">{t("projects.lab.summary")}</TabsTrigger><TabsTrigger value="structured">{t("projects.lab.structured")}</TabsTrigger><TabsTrigger value="evidence">{t("projects.lab.evidence")}</TabsTrigger></TabsList>
         <TabsContent value="summary"><div className="rounded-md border border-border bg-secondary/30 p-4"><p className="whitespace-pre-wrap text-sm leading-7 text-[#334155] dark:text-muted-foreground">{summaryText}</p>{textValue(evidence?.module) ? <p className="mt-3 text-sm font-medium text-[#334155] dark:text-foreground">Module: {textValue(evidence?.module)}</p> : null}<p className="mt-3 text-xs text-muted-foreground">Structured fields: {structuredKeys.length ? structuredKeys.join(", ") : "Unavailable"}</p></div></TabsContent>
-        <TabsContent value="structured"><div className="relative"><pre className="max-h-80 overflow-auto rounded-md bg-[#111827] p-4 pr-14 text-xs leading-5 text-white">{JSON.stringify(structured, null, 2)}</pre><Button type="button" variant="secondary" size="icon" className="absolute right-2 top-2" aria-label="Copy structured solution data" title="Copy structured solution data" onClick={copyStructured}><Clipboard className="size-4" /></Button></div><p className="mt-2 text-xs text-muted-foreground" aria-live="polite">{copyState === "success" ? "Structured solution data copied." : copyState === "error" ? "Structured solution data could not be copied." : "Copy only the structured solution data."}</p></TabsContent>
+        <TabsContent value="structured"><div className="relative"><pre className="max-h-80 overflow-auto rounded-md bg-[#111827] p-4 pr-14 text-xs leading-5 text-white">{JSON.stringify(structured, null, 2)}</pre><Button type="button" variant="secondary" size="icon" className="absolute right-2 top-2" aria-label={t("projects.lab.copyStructured")} title={t("projects.lab.copyStructured")} onClick={copyStructured}><Clipboard className="size-4" /></Button></div><p className="mt-2 text-xs text-muted-foreground" aria-live="polite">{copyState === "success" ? t("projects.lab.copySuccess") : copyState === "error" ? t("projects.lab.copyError") : t("projects.lab.copyHint")}</p></TabsContent>
         <TabsContent value="evidence"><dl className="grid gap-2 sm:grid-cols-2">{evidenceKeys.map((key) => <div key={key} className="rounded-md border border-border bg-secondary/30 p-3"><dt className="text-xs font-semibold uppercase text-muted-foreground">{key.replaceAll("_", " ")}</dt><dd className="mt-1 break-words text-sm text-[#334155] dark:text-foreground">{evidence?.[key] === undefined ? "Unavailable from the API response." : Array.isArray(evidence[key]) ? evidence[key].join(", ") : String(evidence[key])}</dd></div>)}</dl></TabsContent>
       </Tabs>
     </section>

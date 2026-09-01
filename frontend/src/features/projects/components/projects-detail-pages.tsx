@@ -20,6 +20,7 @@ import { ProjectEmptyState, ProjectErrorState, ProjectLoadingState, ProjectSourc
 import { formatScore, labelize } from "@/features/projects/components/project-format"
 import { LabGraph, LabSolutionPanel, LabWorkflowStatus } from "@/features/projects/components/projects-product-page"
 import { presentLabWorkflow, labSolutionValue } from "@/features/projects/components/lab-workflow"
+import { useI18n } from "@/lib/i18n/use-i18n"
 
 type UnknownRecord = Record<string, unknown>
 
@@ -108,6 +109,7 @@ export function ProjectCollectionDetailPage({ slug }: { slug: string }) {
 }
 
 export function ProjectLabSessionPage({ sessionId }: { sessionId: string }) {
+  const { t } = useI18n()
   const [savedMessage, setSavedMessage] = useState<string | null>(null)
   const saveStatusRef = useRef<HTMLParagraphElement>(null)
   const query = useQuery({
@@ -117,7 +119,7 @@ export function ProjectLabSessionPage({ sessionId }: { sessionId: string }) {
   const save = useMutation({
     mutationFn: () => saveProjectLabSession(sessionId, { status: "saved", note: "Saved from Projects Lab detail." }),
     onSuccess: (result) => {
-      setSavedMessage(result.session.current_stage === "solution_adopted" ? "Solution adopted." : result.session.current_stage === "solution_archived" ? "Session archived." : "Session saved.")
+      setSavedMessage(result.session.current_stage === "solution_adopted" ? t("projects.lab.solutionAdopted") : result.session.current_stage === "solution_archived" ? t("projects.lab.sessionArchived") : t("projects.lab.sessionSaved"))
       void query.refetch()
     },
   })
@@ -143,11 +145,11 @@ export function ProjectLabSessionPage({ sessionId }: { sessionId: string }) {
           disabled={save.isPending || !canSave}
           aria-busy={save.isPending}
         >
-          {save.isPending ? <><Loader2 className="size-4 animate-spin" /> Saving Session</> : "Save Session"}
+          {save.isPending ? <><Loader2 className="size-4 animate-spin" /> {t("projects.lab.savingSession")}</> : t("projects.lab.saveSession")}
         </Button>
-        {!canSave && !workflow.isUnknown && session.current_stage !== "solution_saved" ? <p className="basis-full text-sm text-muted-foreground">Save becomes available after a generated solution is ready.</p> : null}
-        {workflow.isUnknown ? <p className="basis-full text-sm text-destructive">Unsupported Lab stage; actions are disabled.</p> : null}
-        {save.isError ? <div className="flex basis-full flex-wrap items-center gap-3 text-sm text-destructive" role="alert"><span>{save.error instanceof Error ? save.error.message : "Save failed"}</span><Button type="button" variant="outline" size="sm" onClick={() => save.mutate()}>Retry Save</Button></div> : null}
+        {!canSave && !workflow.isUnknown && session.current_stage !== "solution_saved" ? <p className="basis-full text-sm text-muted-foreground">{t("projects.lab.saveAvailable")}</p> : null}
+        {workflow.isUnknown ? <p className="basis-full text-sm text-destructive">{t("projects.lab.unsupportedStage")}</p> : null}
+        {save.isError ? <div className="flex basis-full flex-wrap items-center gap-3 text-sm text-destructive" role="alert"><span>{save.error instanceof Error ? save.error.message : t("projects.lab.saveFailed")}</span><Button type="button" variant="outline" size="sm" onClick={() => save.mutate()}>{t("projects.lab.retrySave")}</Button></div> : null}
         {savedMessage ? <p ref={saveStatusRef} tabIndex={-1} className="basis-full text-sm text-emerald-700 outline-none focus-visible:ring-2 focus-visible:ring-ring dark:text-emerald-300" aria-live="polite">{savedMessage}</p> : null}
       </div>
       <section className="grid gap-4 lg:grid-cols-2">

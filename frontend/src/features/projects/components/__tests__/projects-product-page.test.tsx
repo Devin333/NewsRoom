@@ -1,6 +1,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { fireEvent, render, screen, waitFor } from "@testing-library/react"
-import { afterEach, describe, expect, it, vi } from "vitest"
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
+import { useUiStore } from "@/stores/ui-store"
 import { LabGraph, LabSolutionPanel, ProjectsProductPage } from "@/features/projects/components/projects-product-page"
 import {
   addProjectWatchlistItem,
@@ -30,6 +31,10 @@ vi.mock("@/lib/projects/api", async (importOriginal) => {
 })
 
 describe("ProjectsProductPage", () => {
+  beforeEach(() => {
+    useUiStore.setState({ locale: "en" })
+  })
+
   afterEach(() => {
     vi.mocked(addProjectWatchlistItem).mockReset()
     vi.mocked(answerProjectLabQuestion).mockReset()
@@ -75,6 +80,21 @@ describe("ProjectsProductPage", () => {
     await waitFor(() => expect(fetchProjectProductSection).toHaveBeenCalled())
     expect(await screen.findByText("No Real Project Radar Data")).toBeInTheDocument()
     expect(screen.getAllByText(/will not substitute fake projects/i).length).toBeGreaterThan(0)
+  })
+
+  it("renders a degraded notice while retaining parseable real Project Radar data", async () => {
+    vi.mocked(fetchProjectProductSection).mockResolvedValueOnce({
+      items: [project("p-degraded", "PartialKit")],
+      page: { page: 1, page_size: 18, total: 1, has_next: false },
+      meta: { source: "artifact", source_run_id: "run-partial", data_state: "partial", notices: ["Some source records were not parseable."] },
+      metrics: [],
+    })
+
+    renderWithQueryClient(<ProjectsProductPage route="hot" />)
+
+    expect((await screen.findAllByText("PartialKit")).length).toBeGreaterThan(0)
+    expect(screen.getByText("Some source records were not parseable.")).toBeInTheDocument()
+    expect(screen.getByText("Partial")).toBeInTheDocument()
   })
 
   it("uses a workspace-shaped skeleton while Lab data is loading", () => {

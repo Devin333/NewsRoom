@@ -1,6 +1,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { fireEvent, render, screen, waitFor } from "@testing-library/react"
-import { afterEach, describe, expect, it, vi } from "vitest"
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
+import { useUiStore } from "@/stores/ui-store"
 import { ProjectLabSessionPage } from "@/features/projects/components/projects-detail-pages"
 import { fetchProjectLabSession, saveProjectLabSession } from "@/lib/projects/api"
 import type { ProjectsLabSession } from "@/types/projects"
@@ -15,6 +16,10 @@ vi.mock("@/lib/projects/api", async (importOriginal) => {
 })
 
 describe("ProjectLabSessionPage", () => {
+  beforeEach(() => {
+    useUiStore.setState({ locale: "en" })
+  })
+
   afterEach(() => {
     vi.mocked(fetchProjectLabSession).mockReset()
     vi.mocked(saveProjectLabSession).mockReset()
