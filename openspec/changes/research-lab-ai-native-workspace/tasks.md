@@ -58,4 +58,4 @@
 - [x] 8.3 Run python -m scripts.dev compile and python -m scripts.dev smoke; resolve root causes if either fails. Depends on: 8.2.
 - [x] 8.4 Run openspec validate projects-lab-workflow-contract --strict and openspec validate research-lab-ai-native-workspace --strict. Depends on: 8.3.
 - [x] 8.5 Validate four release data modes: ready, empty, degraded, and 409 workflow gate. Depends on: 8.4.
-- [ ] 8.6 Commit the two completed OpenSpec changes and implementation files with path-scoped staging; do not stage unrelated worktree changes. Depends on: 8.5.
+- [x] 8.6 Commit the two completed OpenSpec changes and implementation files with path-scoped staging; do not stage unrelated worktree changes. Depends on: 8.5.
