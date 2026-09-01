@@ -5,6 +5,9 @@ import { Badge } from "@/components/ui/badge"
 import { useI18n } from "@/lib/i18n/use-i18n"
 import type { ProjectsApiMeta } from "@/types/projects"
 
+// Projects Lab state surfaces reuse global --border, --card, --secondary, and --muted-foreground tokens;
+// no Lab-only color token is needed, so light/dark ownership stays in the shared design system.
+
 export function ProjectLoadingState({ title = "Loading Projects" }: { title?: string }) {
   const { t } = useI18n()
   return (
