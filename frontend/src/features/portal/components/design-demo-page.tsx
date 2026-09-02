@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, type FormEvent, type ReactNode } from "react"
+import { useRef, useState, type FormEvent, type ReactNode } from "react"
 import {
   ArrowRight,
   BookOpen,
@@ -42,7 +42,7 @@ export function DesignDemoPage() {
   const [query, setQuery] = useState("")
   const [intent, setIntent] = useState<Intent>(intents[0])
   const [modeMenuOpen, setModeMenuOpen] = useState(false)
-  const [modeLocked, setModeLocked] = useState(false)
+  const selectedModeRef = useRef<Intent | null>(null)
   const [hasSubmitted, setHasSubmitted] = useState(false)
 
   function resolveIntent(value: string) {
@@ -53,9 +53,7 @@ export function DesignDemoPage() {
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     if (query.trim()) {
-      setIntent((currentIntent) =>
-        modeLocked ? currentIntent : resolveIntent(query),
-      )
+      setIntent(selectedModeRef.current ?? resolveIntent(query))
       setHasSubmitted(true)
     }
   }
@@ -63,7 +61,7 @@ export function DesignDemoPage() {
   function setPrompt(value: string) {
     setQuery(value)
     setIntent(resolveIntent(value))
-    setModeLocked(false)
+    selectedModeRef.current = null
     setHasSubmitted(false)
     setModeMenuOpen(false)
   }
@@ -113,7 +111,7 @@ export function DesignDemoPage() {
               <input value={query} onChange={(event) => { setQuery(event.target.value); setHasSubmitted(false) }} aria-label="向 Agora AI 提问" className="min-w-0 flex-1 bg-transparent px-1 text-sm text-[#3a304f] outline-none placeholder:text-[#aaa0b7]" placeholder="输入你想研究的问题..." />
               <button type="submit" aria-label="发送问题" className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-[#7c3aed] text-white transition-colors hover:bg-[#6d28d9]"><ArrowRight className="size-4" /></button>
 
-              {modeMenuOpen ? <ModeMenu activeIntent={intent} onSelect={(nextIntent) => { setIntent(nextIntent); setModeLocked(true); setModeMenuOpen(false); setHasSubmitted(false) }} /> : null}
+              {modeMenuOpen ? <ModeMenu activeIntent={intent} onSelect={(nextIntent) => { selectedModeRef.current = nextIntent; setIntent(nextIntent); setModeMenuOpen(false); setHasSubmitted(false) }} /> : null}
             </form>
 
             <div className="mt-3 flex flex-wrap items-center gap-2 px-1">
