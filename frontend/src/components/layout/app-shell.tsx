@@ -24,10 +24,15 @@ export function AppShell({ children, surface = "portal" }: { children: ReactNode
 
   const isPortalHomeRoute = pathname === "/"
   const isReaderRoute = isPaperReaderRoute(pathname)
+  const isDesignDemoRoute = pathname.startsWith("/design-demo")
   const usesResearchFrame = pathname.startsWith("/papers") || pathname.startsWith("/projects") || isPortalHomeRoute
 
   if (isReaderRoute) {
     return <div className="min-h-screen bg-background text-foreground">{children}</div>
+  }
+
+  if (isDesignDemoRoute) {
+    return <div className="min-h-screen bg-[#f5f6f3] text-[#18231f]">{children}</div>
   }
 
   return (
