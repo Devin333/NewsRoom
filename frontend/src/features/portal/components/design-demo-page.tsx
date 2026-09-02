@@ -85,16 +85,8 @@ export function DesignDemoPage() {
       </header>
 
       <main>
-        <section id="modules" className="mx-auto max-w-[1200px] px-8 pb-7 pt-10">
-          <div className="grid grid-cols-4 gap-4">
-            <ModuleCard icon={<BookOpen className="size-5" />} title="论文研究" description="论文、方法、证据" href="/papers" />
-            <ModuleCard icon={<Github className="size-5" />} title="项目雷达" description="仓库、工具、活跃度" href="/projects" />
-            <ModuleCard icon={<Quote className="size-5" />} title="社区信号" description="讨论、主题、动态" href="/community" />
-            <ModuleCard icon={<ClipboardCheck className="size-5" />} title="研究报告" description="整理、比较、输出" href="/reports" />
-          </div>
-        </section>
-
-        <section id="workspace" className="mx-auto max-w-[900px] px-8 pb-14">
+        <section id="workspace" className="mx-auto max-w-[900px] px-8 pb-14 pt-12">
+          <p className="mb-5 text-center text-[17px] leading-7 text-[#625873]">从一个问题开始，找到值得深入的研究线索。</p>
           <div className="overflow-visible rounded-2xl border border-[#e7dff1] bg-white p-5 shadow-[0_18px_45px_rgba(86,58,127,0.13)]">
             <div className="flex items-center justify-between px-1 text-xs text-[#8b7fa0]">
               <span className="inline-flex items-center gap-2 font-semibold uppercase tracking-[0.12em]"><Sparkles className="size-4 text-[#7c3aed]" />Agora AI</span>
@@ -117,6 +109,13 @@ export function DesignDemoPage() {
             </div>
 
             {hasSubmitted ? <div className="mt-4 flex items-center justify-between gap-4 rounded-lg border border-[#e0d3f4] bg-[#faf7ff] px-3.5 py-2.5 text-xs"><span className="inline-flex min-w-0 items-center gap-2 text-[#695d7d]"><span className="flex size-6 shrink-0 items-center justify-center rounded-md bg-[#f0e9ff] text-[#7c3aed]">{intent.icon}</span><span className="truncate">将带着你的问题进入 <strong className="font-semibold text-[#382758]">{intent.module}</strong></span></span><a href={intent.href} className="inline-flex shrink-0 items-center gap-1 font-semibold text-[#7042cc] hover:text-[#5425b5]">进入模块<ChevronRight className="size-3.5" /></a></div> : null}
+          </div>
+
+          <div id="modules" className="mt-5 grid grid-cols-2 gap-4">
+            <ModuleCard icon={<BookOpen className="size-5" />} title="论文研究" description="论文、方法、证据" href="/papers" />
+            <ModuleCard icon={<Github className="size-5" />} title="项目雷达" description="仓库、工具、活跃度" href="/projects" />
+            <ModuleCard icon={<Quote className="size-5" />} title="社区信号" description="讨论、主题、动态" href="/community" />
+            <ModuleCard icon={<ClipboardCheck className="size-5" />} title="研究报告" description="整理、比较、输出" href="/reports" />
           </div>
         </section>
 
