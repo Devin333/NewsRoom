@@ -9,7 +9,6 @@ import {
   ClipboardCheck,
   FileText,
   Github,
-  Play,
   Quote,
   Sparkles,
   WandSparkles,
@@ -75,7 +74,6 @@ export function DesignDemoPage() {
             <span className="text-[17px] font-bold tracking-[-0.02em] text-[#2b2148]">Agora<span className="text-[#7c3aed]">AI</span></span>
           </a>
           <div className="flex items-center gap-7 text-sm text-[#6d6286]">
-            <a href="#how-it-works" className="transition-colors hover:text-[#6735d3]">如何工作</a>
             <a href="#modules" className="transition-colors hover:text-[#6735d3]">研究模块</a>
             <a href="/papers" className="transition-colors hover:text-[#6735d3]">论文研究</a>
           </div>
@@ -87,17 +85,16 @@ export function DesignDemoPage() {
       </header>
 
       <main>
-        <section className="px-8 pb-14 pt-16 text-center">
-          <span className="inline-flex items-center gap-2 rounded-full bg-[#f0e9ff] px-3 py-1.5 text-xs font-medium text-[#7042cc]"><Sparkles className="size-3.5" />由 Agora Research 驱动</span>
-          <h1 className="mx-auto mt-6 max-w-[820px] text-[54px] font-bold leading-[1.05] tracking-[-0.045em] text-[#251d42]">研究得更清楚，<span className="text-[#7c3aed]">更快</span>找到答案</h1>
-          <p className="mx-auto mt-5 max-w-[650px] text-[17px] leading-7 text-[#756b84]">从一个自然语言问题开始。Agora AI 会理解你的研究意图，并将你带到最合适的论文、项目、社区或报告模块。</p>
-          <div className="mt-8 flex justify-center gap-3">
-            <a href="#workspace" className="inline-flex h-12 items-center gap-2 rounded-xl bg-[#7c3aed] px-5 text-sm font-semibold text-white shadow-[0_7px_18px_rgba(124,58,237,0.26)] transition-colors hover:bg-[#6d28d9]">开始提问<ArrowRight className="size-4" /></a>
-            <a href="#how-it-works" className="inline-flex h-12 items-center gap-2 rounded-xl border border-[#ddd2f1] bg-white px-5 text-sm font-semibold text-[#594f71] transition-colors hover:bg-[#faf7ff]"><Play className="size-4 fill-current" />查看示例</a>
+        <section id="modules" className="mx-auto max-w-[1200px] px-8 pb-7 pt-10">
+          <div className="grid grid-cols-4 gap-4">
+            <ModuleCard icon={<BookOpen className="size-5" />} title="论文研究" description="论文、方法、证据" href="/papers" />
+            <ModuleCard icon={<Github className="size-5" />} title="项目雷达" description="仓库、工具、活跃度" href="/projects" />
+            <ModuleCard icon={<Quote className="size-5" />} title="社区信号" description="讨论、主题、动态" href="/community" />
+            <ModuleCard icon={<ClipboardCheck className="size-5" />} title="研究报告" description="整理、比较、输出" href="/reports" />
           </div>
         </section>
 
-        <section id="workspace" className="mx-auto max-w-[900px] px-8 pb-12">
+        <section id="workspace" className="mx-auto max-w-[900px] px-8 pb-14">
           <div className="overflow-visible rounded-2xl border border-[#e7dff1] bg-white p-5 shadow-[0_18px_45px_rgba(86,58,127,0.13)]">
             <div className="flex items-center justify-between px-1 text-xs text-[#8b7fa0]">
               <span className="inline-flex items-center gap-2 font-semibold uppercase tracking-[0.12em]"><Sparkles className="size-4 text-[#7c3aed]" />Agora AI</span>
@@ -123,18 +120,6 @@ export function DesignDemoPage() {
           </div>
         </section>
 
-        <section id="how-it-works" className="border-y border-[#eee8f5] bg-white px-8 py-12">
-          <div className="mx-auto max-w-[1040px]">
-            <p className="text-center text-xs font-semibold uppercase tracking-[0.16em] text-[#8a7ca3]">HOW IT WORKS</p>
-            <h2 className="mt-3 text-center text-[30px] font-bold tracking-[-0.03em] text-[#2b2148]">一个入口，四类研究工作</h2>
-            <div id="modules" className="mt-8 grid grid-cols-4 gap-4">
-              <ModuleCard icon={<BookOpen className="size-5" />} title="论文研究" description="论文、方法、证据" href="/papers" />
-              <ModuleCard icon={<Github className="size-5" />} title="项目雷达" description="仓库、工具、活跃度" href="/projects" />
-              <ModuleCard icon={<Quote className="size-5" />} title="社区信号" description="讨论、主题、动态" href="/community" />
-              <ModuleCard icon={<ClipboardCheck className="size-5" />} title="研究报告" description="整理、比较、输出" href="/reports" />
-            </div>
-          </div>
-        </section>
       </main>
 
       <footer className="bg-[#fbf8ff] px-8 py-7"><div className="mx-auto flex max-w-[1200px] items-center justify-between text-xs text-[#9389a2]"><span>Agora Hub Research</span><span>用 AI 开始你的下一次研究</span></div></footer>
