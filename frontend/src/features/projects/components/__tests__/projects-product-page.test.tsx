@@ -106,6 +106,27 @@ describe("ProjectsProductPage", () => {
     expect(screen.queryByText("Loading Lab")).not.toBeInTheDocument()
   })
 
+  it("uses the research page frame without the generic Projects focus hero", async () => {
+    vi.mocked(fetchProjectProductSection).mockResolvedValueOnce({
+      hot: [],
+      rising: [],
+      tools: [],
+      cases: [],
+      collections: [],
+      watchlist: [],
+      recommendations: [],
+      meta: { source: "none", data_state: "empty", notices: ["No real Project Radar artifacts were found."] },
+      metrics: [],
+    })
+
+    renderWithQueryClient(<ProjectsProductPage route="lab" />)
+
+    expect(await screen.findByRole("heading", { name: "Lab" })).toBeInTheDocument()
+    expect(screen.getByText("Research workspace")).toBeInTheDocument()
+    expect(screen.queryByText("Current focus")).not.toBeInTheDocument()
+    expect(screen.getByText("Cases")).toBeInTheDocument()
+  })
+
   it("starts a Lab session, answers a question, and renders the generated solution", async () => {
     vi.mocked(fetchProjectProductSection).mockResolvedValueOnce({
       hot: [project("p1", "AgentKit")],

@@ -25,6 +25,8 @@ import { formatScore, labelize } from "@/features/projects/components/project-fo
 import { ProjectProductCard } from "@/features/projects/components/project-product-card"
 import { ProjectDegradedNotice, ProjectEmptyState, ProjectErrorState, ProjectLoadingState, ProjectSourceLine } from "@/features/projects/components/project-product-state"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { PapersHero } from "@/components/papers/papers-hero"
+import { PapersMicrobar } from "@/components/papers/papers-microbar"
 import { presentLabWorkflow, labQuestionAnswered, labSolutionValue } from "@/features/projects/components/lab-workflow"
 import { useI18n } from "@/lib/i18n/use-i18n"
 import type {
@@ -83,12 +85,45 @@ export function ProjectsProductPage({ route }: ProjectsProductPageProps) {
   if (isError) return <ProjectErrorState message={error instanceof Error ? error.message : undefined} onRetry={() => refetch()} />
   if (!data) return <ProjectEmptyState />
 
+  if (route === "lab") {
+    return <LabRoute data={data} section={section} isFetching={isFetching} />
+  }
+
   const meta = getMeta(data)
   return (
     <main className="space-y-9 font-papers-research">
       <ProjectHero section={section} route={route} data={data} query={query} onQueryChange={setQuery} isFetching={isFetching} />
       {meta ? <ProjectDegradedNotice meta={meta} /> : null}
       <RouteContent route={route} data={data} onRefresh={() => void refetch()} />
+    </main>
+  )
+}
+
+function LabRoute({ data, section, isFetching }: { data: ProductData; section: ProjectProductSection; isFetching: boolean }) {
+  const { t, locale } = useI18n()
+  const meta = getMeta(data)
+
+  return (
+    <main className="space-y-5 font-papers-research">
+      <PapersMicrobar items={[{ label: section.title }]} meta={t("projects.lab.headerMeta")} locale={locale} />
+      <PapersHero
+        variant="editorial"
+        eyebrow={t("projects.lab.headerEyebrow")}
+        title={section.title}
+        subtitle={t("projects.lab.headerDescription")}
+        stats={[
+          { label: t("projects.lab.statsCases"), value: caseCount(data) },
+          { label: t("projects.lab.statsProjects"), value: projectCount(data) },
+          { label: t("projects.lab.statsState"), value: meta?.data_state ?? "empty" },
+        ]}
+        aside={
+          <div className="flex min-h-9 items-center justify-between gap-3 rounded-xl border border-[#dfe5df] bg-white/80 px-3 py-2.5 shadow-sm dark:border-border dark:bg-card">
+            {meta ? <ProjectSourceLine meta={meta} /> : null}
+            {isFetching ? <span className="inline-flex shrink-0 items-center gap-1.5 text-xs text-muted-foreground"><Loader2 className="size-3.5 animate-spin" /> {t("projects.lab.refreshing")}</span> : null}
+          </div>
+        }
+      />
+      <LabView data={data} />
     </main>
   )
 }
@@ -565,9 +600,10 @@ function LabView({ data }: { data: ProductData }) {
   }, [focusQuestionId, session])
 
   return (
-    <section className="space-y-5" aria-label={t("projects.lab.workspace")}>
+    <section className="space-y-6" aria-label={t("projects.lab.workspace")}>
+      {meta?.data_state !== "ready" ? <ProjectDegradedNotice meta={meta ?? { source: "none", data_state: "empty", notices: [] }} /> : null}
       <form
-        className="space-y-3 border-y border-[#d8dee7] bg-white py-5 dark:border-border dark:bg-card lg:rounded-md lg:border lg:px-5"
+        className="rounded-xl border border-[#dfe5df] bg-white/70 p-5 shadow-sm dark:border-border dark:bg-card sm:p-6"
         aria-busy={startSession.isPending}
         onSubmit={(event) => {
           event.preventDefault()
@@ -575,36 +611,46 @@ function LabView({ data }: { data: ProductData }) {
           startSession.mutate()
         }}
       >
-        <div>
-          <p className="text-xs font-semibold uppercase tracking-wide text-[#667085] dark:text-muted-foreground">{t("projects.lab.researchBrief")}</p>
-          <h2 className="mt-1 text-xl font-semibold text-[#202124] dark:text-foreground">{t("projects.lab.startSession")}</h2>
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-[0.14em] text-primary">{t("projects.lab.researchBrief")}</p>
+            <h2 className="mt-1 text-xl font-semibold text-[#202124] dark:text-foreground">{t("projects.lab.startSession")}</h2>
+          </div>
+          <span className="hidden size-8 shrink-0 items-center justify-center rounded-full border border-border text-xs font-semibold text-muted-foreground sm:flex">01</span>
         </div>
-        {meta ? <ProjectSourceLine meta={meta} /> : null}
-        {meta?.data_state !== "ready" ? <ProjectDegradedNotice meta={meta ?? { source: "none", data_state: "empty", notices: [] }} /> : null}
-        <p className="text-sm leading-6 text-muted-foreground">{t("projects.lab.describePrompt")}</p>
-        <textarea
-          id="lab-problem"
-          value={problem}
-          onChange={(event) => setProblem(event.target.value)}
-          aria-describedby="lab-problem-help"
-          aria-invalid={startSession.isError}
-          className="min-h-28 w-full rounded-md border border-input bg-card px-3 py-2 text-base leading-6"
-          placeholder={t("projects.lab.problemPlaceholder")}
-        />
-        <p id="lab-problem-help" className="text-xs text-muted-foreground">{t("projects.lab.problemRequired")}</p>
-        <div className="flex flex-wrap items-center gap-3">
-          <Button type="submit" disabled={!problem.trim() || startSession.isPending}>
-            {startSession.isPending ? <><Loader2 className="size-4 animate-spin" /> {t("projects.lab.starting")}</> : <>{t("projects.lab.startButton")} <ChevronRight className="size-4" /></>}
-          </Button>
-          {startSession.isPending ? <span className="text-sm text-muted-foreground" aria-live="polite">{t("projects.lab.creating")}</span> : null}
+        <div className="mt-5 grid gap-6 lg:grid-cols-[minmax(0,1fr)_16rem]">
+          <div className="min-w-0 space-y-3">
+            <p className="text-sm leading-6 text-muted-foreground">{t("projects.lab.describePrompt")}</p>
+            <textarea
+              id="lab-problem"
+              value={problem}
+              onChange={(event) => setProblem(event.target.value)}
+              aria-describedby="lab-problem-help"
+              aria-invalid={startSession.isError}
+              className="min-h-32 w-full resize-y rounded-md border border-input bg-card px-3 py-3 text-base leading-6 shadow-none outline-none transition-colors placeholder:text-muted-foreground focus-visible:border-primary focus-visible:ring-2 focus-visible:ring-ring"
+              placeholder={t("projects.lab.problemPlaceholder")}
+            />
+            <p id="lab-problem-help" className="text-xs text-muted-foreground">{t("projects.lab.problemRequired")}</p>
+            <div className="flex flex-wrap items-center gap-3">
+              <Button type="submit" className="min-h-11" disabled={!problem.trim() || startSession.isPending}>
+                {startSession.isPending ? <><Loader2 className="size-4 animate-spin" /> {t("projects.lab.starting")}</> : <>{t("projects.lab.startButton")} <ChevronRight className="size-4" /></>}
+              </Button>
+              {startSession.isPending ? <span className="text-sm text-muted-foreground" aria-live="polite">{t("projects.lab.creating")}</span> : null}
+            </div>
+          </div>
+          <aside className="border-t border-border pt-4 text-sm lg:border-l lg:border-t-0 lg:pl-5 lg:pt-0">
+            <p className="text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground">{t("projects.lab.context")}</p>
+            <p className="mt-3 text-base font-semibold text-foreground">{t("projects.lab.selectedCases", { count: selectedCaseIds.length, suffix: selectedCaseIds.length === 1 ? "" : "s" })}</p>
+            <p className="mt-2 leading-6 text-muted-foreground">{t("projects.lab.apiOnly")}</p>
+          </aside>
         </div>
         {startSession.isError ? <p id="lab-problem-error" role="alert" className="text-sm text-destructive">{startSession.error instanceof Error ? startSession.error.message : t("projects.lab.sessionFailed")}</p> : null}
       </form>
       {!session ? <ProjectEmptyState title={t("projects.lab.noActiveSession")} /> : (
-        <div className="grid gap-5 lg:grid-cols-[minmax(13rem,0.8fr)_minmax(0,2fr)_minmax(16rem,1fr)]">
+        <div className="grid gap-6 lg:grid-cols-[minmax(13rem,0.8fr)_minmax(0,2fr)_minmax(16rem,1fr)]">
           <LabWorkflowStatus session={session} />
           <div className="min-w-0 space-y-5">
-            <section className="border-y border-[#d8dee7] bg-white py-5 dark:border-border dark:bg-card lg:rounded-md lg:border lg:px-5">
+            <section className="rounded-md border border-[#d8dee7] bg-white p-5 shadow-sm dark:border-border dark:bg-card sm:p-6">
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0">
                   <p className="text-xs font-semibold uppercase tracking-wide text-[#667085] dark:text-muted-foreground">{t("projects.lab.sessionBrief")}</p>
