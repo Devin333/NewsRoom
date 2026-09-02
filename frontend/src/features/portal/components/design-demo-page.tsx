@@ -68,7 +68,7 @@ export function DesignDemoPage() {
   return (
     <div className="min-h-screen bg-[#fbf8ff] text-[#211a3c]">
       <header className="border-b border-[#eee8f5] bg-white">
-        <nav className="mx-auto flex h-[64px] max-w-[1200px] items-center justify-between px-8" aria-label="主导航">
+        <nav className="mx-auto flex h-[72px] max-w-[1280px] items-center justify-between px-10" aria-label="主导航">
           <a href="/design-demo" className="flex items-center gap-2.5">
             <span className="flex size-9 items-center justify-center rounded-[10px] bg-[#7c3aed] text-white shadow-[0_5px_12px_rgba(124,58,237,0.22)]"><WandSparkles className="size-[18px]" /></span>
             <span className="text-[17px] font-bold tracking-[-0.02em] text-[#2b2148]">Agora<span className="text-[#7c3aed]">AI</span></span>
@@ -85,33 +85,33 @@ export function DesignDemoPage() {
       </header>
 
       <main>
-        <section id="workspace" className="mx-auto max-w-[900px] px-8 pb-14 pt-12">
-          <p className="mb-5 text-center text-[17px] leading-7 text-[#625873]">从一个问题开始，找到值得深入的研究线索。</p>
-          <div className="overflow-visible rounded-2xl border border-[#e7dff1] bg-white p-5 shadow-[0_18px_45px_rgba(86,58,127,0.13)]">
+        <section id="workspace" className="mx-auto max-w-[1080px] px-10 pb-24 pt-20">
+          <p className="mx-auto mb-8 max-w-[680px] text-center text-lg leading-8 text-[#625873]">从一个问题开始，找到值得深入的研究线索。</p>
+          <div className="overflow-visible rounded-2xl border border-[#e7dff1] bg-white p-7 shadow-[0_18px_45px_rgba(86,58,127,0.13)]">
             <div className="flex items-center justify-between px-1 text-xs text-[#8b7fa0]">
               <span className="inline-flex items-center gap-2 font-semibold uppercase tracking-[0.12em]"><Sparkles className="size-4 text-[#7c3aed]" />Agora AI</span>
               <span className="inline-flex items-center gap-2 text-[#7c3aed]"><span className="size-2 rounded-full bg-[#8b5cf6]" />准备回答</span>
             </div>
 
-            <form onSubmit={handleSubmit} className="relative mt-4 flex h-14 items-center gap-2 rounded-xl border border-[#ded4ec] bg-[#fefeff] p-2 pl-2.5 shadow-[0_3px_12px_rgba(86,58,127,0.06)] focus-within:border-[#a783ec] focus-within:ring-2 focus-within:ring-[#f0e9ff]">
+            <form onSubmit={handleSubmit} className="relative mt-5 flex h-16 items-center gap-2 rounded-xl border border-[#ded4ec] bg-[#fefeff] p-2 pl-2.5 shadow-[0_3px_12px_rgba(86,58,127,0.06)] focus-within:border-[#a783ec] focus-within:ring-2 focus-within:ring-[#f0e9ff]">
               <button type="button" aria-label="选择研究模式" aria-haspopup="menu" aria-expanded={modeMenuOpen} onClick={() => setModeMenuOpen((open) => !open)} className="inline-flex h-9 shrink-0 items-center gap-2 rounded-lg px-2.5 text-xs font-semibold text-[#5b4c76] transition-colors hover:bg-[#f3edff]">
                 <span className="flex size-7 items-center justify-center rounded-md bg-[#f0e9ff] text-[#7c3aed]">{intent.icon}</span>{intent.command}<ChevronRight className={cn("size-3.5 text-[#998caf] transition-transform", modeMenuOpen && "rotate-90")} />
               </button>
-              <input value={query} onChange={(event) => { setQuery(event.target.value); setHasSubmitted(false) }} aria-label="向 Agora AI 提问" className="min-w-0 flex-1 bg-transparent px-1 text-sm text-[#3a304f] outline-none placeholder:text-[#aaa0b7]" placeholder="输入你想研究的问题..." />
-              <button type="submit" aria-label="发送问题" className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-[#7c3aed] text-white transition-colors hover:bg-[#6d28d9]"><ArrowRight className="size-4" /></button>
+              <input value={query} onChange={(event) => { setQuery(event.target.value); setHasSubmitted(false) }} aria-label="向 Agora AI 提问" className="min-w-0 flex-1 bg-transparent px-1 text-base text-[#3a304f] outline-none placeholder:text-[#aaa0b7]" placeholder="输入你想研究的问题..." />
+              <button type="submit" aria-label="发送问题" className="flex size-11 shrink-0 items-center justify-center rounded-lg bg-[#7c3aed] text-white transition-colors hover:bg-[#6d28d9]"><ArrowRight className="size-4" /></button>
 
               {modeMenuOpen ? <ModeMenu activeIntent={intent} onSelect={(nextIntent) => { selectedModeRef.current = nextIntent; setIntent(nextIntent); setModeMenuOpen(false); setHasSubmitted(false) }} /> : null}
             </form>
 
-            <div className="mt-3 flex flex-wrap items-center gap-2 px-1">
+            <div className="mt-5 flex flex-wrap items-center gap-3 px-1">
               <span className="mr-1 text-xs text-[#9389a2]">试试：</span>
-              {quickPrompts.map((prompt) => <button key={prompt} type="button" onClick={() => setPrompt(prompt)} className="rounded-lg border border-[#e7dff1] bg-white px-2.5 py-1.5 text-left text-[11px] leading-4 text-[#6b607e] transition-colors hover:border-[#b99beb] hover:bg-[#faf7ff]">{prompt}</button>)}
+              {quickPrompts.map((prompt) => <button key={prompt} type="button" onClick={() => setPrompt(prompt)} className="rounded-lg border border-[#e7dff1] bg-white px-3 py-2 text-left text-xs leading-4 text-[#6b607e] transition-colors hover:border-[#b99beb] hover:bg-[#faf7ff]">{prompt}</button>)}
             </div>
 
-            {hasSubmitted ? <div className="mt-4 flex items-center justify-between gap-4 rounded-lg border border-[#e0d3f4] bg-[#faf7ff] px-3.5 py-2.5 text-xs"><span className="inline-flex min-w-0 items-center gap-2 text-[#695d7d]"><span className="flex size-6 shrink-0 items-center justify-center rounded-md bg-[#f0e9ff] text-[#7c3aed]">{intent.icon}</span><span className="truncate">将带着你的问题进入 <strong className="font-semibold text-[#382758]">{intent.module}</strong></span></span><a href={intent.href} className="inline-flex shrink-0 items-center gap-1 font-semibold text-[#7042cc] hover:text-[#5425b5]">进入模块<ChevronRight className="size-3.5" /></a></div> : null}
+            {hasSubmitted ? <div className="mt-5 flex items-center justify-between gap-4 rounded-lg border border-[#e0d3f4] bg-[#faf7ff] px-3.5 py-2.5 text-xs"><span className="inline-flex min-w-0 items-center gap-2 text-[#695d7d]"><span className="flex size-6 shrink-0 items-center justify-center rounded-md bg-[#f0e9ff] text-[#7c3aed]">{intent.icon}</span><span className="truncate">将带着你的问题进入 <strong className="font-semibold text-[#382758]">{intent.module}</strong></span></span><a href={intent.href} className="inline-flex shrink-0 items-center gap-1 font-semibold text-[#7042cc] hover:text-[#5425b5]">进入模块<ChevronRight className="size-3.5" /></a></div> : null}
           </div>
 
-          <div id="modules" className="mt-5 grid grid-cols-2 gap-4">
+          <div id="modules" className="mt-9 grid grid-cols-2 gap-6">
             <ModuleCard icon={<BookOpen className="size-5" />} title="论文研究" description="论文、方法、证据" href="/papers" />
             <ModuleCard icon={<Github className="size-5" />} title="项目雷达" description="仓库、工具、活跃度" href="/projects" />
             <ModuleCard icon={<Quote className="size-5" />} title="社区信号" description="讨论、主题、动态" href="/community" />
@@ -121,7 +121,7 @@ export function DesignDemoPage() {
 
       </main>
 
-      <footer className="bg-[#fbf8ff] px-8 py-7"><div className="mx-auto flex max-w-[1200px] items-center justify-between text-xs text-[#9389a2]"><span>Agora Hub Research</span><span>用 AI 开始你的下一次研究</span></div></footer>
+      <footer className="bg-[#fbf8ff] px-10 py-10"><div className="mx-auto flex max-w-[1280px] items-center justify-between text-xs text-[#9389a2]"><span>Agora Hub Research</span><span>用 AI 开始你的下一次研究</span></div></footer>
     </div>
   )
 }
@@ -131,5 +131,5 @@ function ModeMenu({ activeIntent, onSelect }: { activeIntent: Intent; onSelect: 
 }
 
 function ModuleCard({ icon, title, description, href }: { icon: ReactNode; title: string; description: string; href: string }) {
-  return <a href={href} className="group rounded-xl border border-[#e9e2f0] bg-[#fefeff] p-4 transition-colors hover:border-[#c7acef] hover:bg-[#fcfaff]"><span className="flex size-9 items-center justify-center rounded-lg bg-[#f0e9ff] text-[#7c3aed]">{icon}</span><h3 className="mt-5 text-sm font-semibold text-[#372b51]">{title}</h3><p className="mt-1 text-xs text-[#8e839b]">{description}</p><span className="mt-4 flex items-center gap-1 text-xs font-medium text-[#7650c6]">进入模块<ChevronRight className="size-3.5 transition-transform group-hover:translate-x-0.5" /></span></a>
+  return <a href={href} className="group flex min-h-[180px] flex-col rounded-xl border border-[#e9e2f0] bg-[#fefeff] p-6 transition-colors hover:border-[#c7acef] hover:bg-[#fcfaff]"><span className="flex size-11 items-center justify-center rounded-lg bg-[#f0e9ff] text-[#7c3aed]">{icon}</span><h3 className="mt-6 text-sm font-semibold text-[#372b51]">{title}</h3><p className="mt-2 text-xs text-[#8e839b]">{description}</p><span className="mt-auto flex items-center gap-1 pt-6 text-xs font-medium text-[#7650c6]">进入模块<ChevronRight className="size-3.5 transition-transform group-hover:translate-x-0.5" /></span></a>
 }
