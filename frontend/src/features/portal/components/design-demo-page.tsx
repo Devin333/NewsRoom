@@ -11,13 +11,13 @@ import {
   Github,
   Play,
   Quote,
-  Search,
   Sparkles,
   WandSparkles,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 
 type Intent = {
+  command: string
   module: string
   description: string
   href: string
@@ -26,10 +26,10 @@ type Intent = {
 }
 
 const intents: Intent[] = [
-  { module: "论文研究", description: "检索论文、方法和可验证的证据", href: "/papers", icon: <BookOpen className="size-4" />, keywords: ["论文", "文献", "研究", "方法", "评测", "引用"] },
-  { module: "项目雷达", description: "查看项目活跃度、仓库和工具链", href: "/projects", icon: <Github className="size-4" />, keywords: ["项目", "仓库", "github", "工具", "开源", "代码"] },
-  { module: "社区信号", description: "追踪讨论、主题和行业动态", href: "/community", icon: <Quote className="size-4" />, keywords: ["社区", "讨论", "动态", "趋势", "新闻", "行业"] },
-  { module: "研究报告", description: "整理研究结果并形成可读报告", href: "/reports", icon: <FileText className="size-4" />, keywords: ["报告", "总结", "整理", "结论", "对比"] },
+  { command: "找论文", module: "论文研究", description: "检索论文、方法和可验证的证据", href: "/papers", icon: <BookOpen className="size-4" />, keywords: ["论文", "文献", "研究", "方法", "评测", "引用"] },
+  { command: "找项目", module: "项目雷达", description: "查看项目活跃度、仓库和工具链", href: "/projects", icon: <Github className="size-4" />, keywords: ["项目", "仓库", "github", "工具", "开源", "代码"] },
+  { command: "看社区", module: "社区信号", description: "追踪讨论、主题和行业动态", href: "/community", icon: <Quote className="size-4" />, keywords: ["社区", "讨论", "动态", "趋势", "新闻", "行业"] },
+  { command: "写报告", module: "研究报告", description: "整理研究结果并形成可读报告", href: "/reports", icon: <FileText className="size-4" />, keywords: ["报告", "总结", "整理", "结论", "对比"] },
 ]
 
 const quickPrompts = [
@@ -39,8 +39,11 @@ const quickPrompts = [
 ]
 
 export function DesignDemoPage() {
-  const [query, setQuery] = useState(quickPrompts[0])
+  const [query, setQuery] = useState("")
   const [intent, setIntent] = useState<Intent>(intents[0])
+  const [modeMenuOpen, setModeMenuOpen] = useState(false)
+  const [modeLocked, setModeLocked] = useState(false)
+  const [hasSubmitted, setHasSubmitted] = useState(false)
 
   function resolveIntent(value: string) {
     const normalized = value.trim().toLowerCase()
@@ -49,12 +52,20 @@ export function DesignDemoPage() {
 
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
-    if (query.trim()) setIntent(resolveIntent(query))
+    if (query.trim()) {
+      setIntent((currentIntent) =>
+        modeLocked ? currentIntent : resolveIntent(query),
+      )
+      setHasSubmitted(true)
+    }
   }
 
   function setPrompt(value: string) {
     setQuery(value)
     setIntent(resolveIntent(value))
+    setModeLocked(false)
+    setHasSubmitted(false)
+    setModeMenuOpen(false)
   }
 
   return (
@@ -89,42 +100,28 @@ export function DesignDemoPage() {
         </section>
 
         <section id="workspace" className="mx-auto max-w-[900px] px-8 pb-12">
-          <div className="overflow-hidden rounded-2xl border border-[#e7dff1] bg-white shadow-[0_18px_45px_rgba(86,58,127,0.13)]">
-            <div className="flex h-14 items-center justify-between border-b border-[#eee8f5] px-6">
-              <div className="flex items-center gap-2"><span className="size-2.5 rounded-full bg-[#ff6a73]" /><span className="size-2.5 rounded-full bg-[#ffc542]" /><span className="size-2.5 rounded-full bg-[#4bd37b]" /><span className="ml-2 text-sm font-semibold text-[#655b77]">Agora AI Research</span></div>
-              <span className="inline-flex items-center gap-2 text-xs font-medium text-[#7c3aed]">AI 分流已启用 <span className="size-2 rounded-full bg-[#8b5cf6]" /></span>
+          <div className="overflow-visible rounded-2xl border border-[#e7dff1] bg-white p-5 shadow-[0_18px_45px_rgba(86,58,127,0.13)]">
+            <div className="flex items-center justify-between px-1 text-xs text-[#8b7fa0]">
+              <span className="inline-flex items-center gap-2 font-semibold uppercase tracking-[0.12em]"><Sparkles className="size-4 text-[#7c3aed]" />Agora AI</span>
+              <span className="inline-flex items-center gap-2 text-[#7c3aed]"><span className="size-2 rounded-full bg-[#8b5cf6]" />准备回答</span>
             </div>
 
-            <div className="grid divide-y divide-[#eee8f5] md:divide-y-0 md:grid-cols-2 md:divide-x">
-              <div className="p-6">
-                <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.12em] text-[#877b9f]"><span className="flex size-7 items-center justify-center rounded-lg bg-[#f0e9ff] text-[#7c3aed]"><Search className="size-4" /></span>你的问题</div>
-                <form onSubmit={handleSubmit} className="mt-5">
-                  <textarea value={query} onChange={(event) => setQuery(event.target.value)} aria-label="向 Agora AI 提问" className="h-[136px] w-full resize-none rounded-xl border border-[#e1d8ed] bg-[#fdfcff] p-4 text-sm leading-6 text-[#3a304f] outline-none placeholder:text-[#aaa0b7] focus:border-[#a783ec] focus:ring-2 focus:ring-[#efe8ff]" placeholder="输入你想研究的问题..." />
-                  <button type="submit" className="mt-4 inline-flex h-10 w-full items-center justify-center gap-2 rounded-lg bg-[#7c3aed] text-sm font-semibold text-white transition-colors hover:bg-[#6d28d9]"><Sparkles className="size-4" />分析研究意图</button>
-                </form>
-                <div className="mt-5">
-                  <p className="text-xs text-[#9389a2]">试试这些问题</p>
-                  <div className="mt-2 flex flex-wrap gap-2">
-                    {quickPrompts.map((prompt) => <button key={prompt} type="button" onClick={() => setPrompt(prompt)} className="rounded-lg border border-[#e7dff1] bg-white px-2.5 py-1.5 text-left text-[11px] leading-4 text-[#6b607e] transition-colors hover:border-[#b99beb] hover:bg-[#faf7ff]">{prompt}</button>)}
-                  </div>
-                </div>
-              </div>
+            <form onSubmit={handleSubmit} className="relative mt-4 flex h-14 items-center gap-2 rounded-xl border border-[#ded4ec] bg-[#fefeff] p-2 pl-2.5 shadow-[0_3px_12px_rgba(86,58,127,0.06)] focus-within:border-[#a783ec] focus-within:ring-2 focus-within:ring-[#f0e9ff]">
+              <button type="button" aria-label="选择研究模式" aria-haspopup="menu" aria-expanded={modeMenuOpen} onClick={() => setModeMenuOpen((open) => !open)} className="inline-flex h-9 shrink-0 items-center gap-2 rounded-lg px-2.5 text-xs font-semibold text-[#5b4c76] transition-colors hover:bg-[#f3edff]">
+                <span className="flex size-7 items-center justify-center rounded-md bg-[#f0e9ff] text-[#7c3aed]">{intent.icon}</span>{intent.command}<ChevronRight className={cn("size-3.5 text-[#998caf] transition-transform", modeMenuOpen && "rotate-90")} />
+              </button>
+              <input value={query} onChange={(event) => { setQuery(event.target.value); setHasSubmitted(false) }} aria-label="向 Agora AI 提问" className="min-w-0 flex-1 bg-transparent px-1 text-sm text-[#3a304f] outline-none placeholder:text-[#aaa0b7]" placeholder="输入你想研究的问题..." />
+              <button type="submit" aria-label="发送问题" className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-[#7c3aed] text-white transition-colors hover:bg-[#6d28d9]"><ArrowRight className="size-4" /></button>
 
-              <div className="p-6">
-                <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.12em] text-[#877b9f]"><span className="flex size-7 items-center justify-center rounded-lg bg-[#f0e9ff] text-[#7c3aed]"><Sparkles className="size-4" /></span>AI 研究计划</div>
-                <div className="mt-5 rounded-xl border border-[#e5dafa] bg-[#fcfaff] p-4">
-                  <div className="flex items-start gap-3"><span className="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-lg bg-[#7c3aed] text-white">{intent.icon}</span><div><p className="text-xs font-medium text-[#8e82a2]">建议进入</p><h2 className="mt-0.5 text-base font-semibold text-[#382758]">{intent.module}</h2></div></div>
-                  <p className="mt-4 text-sm leading-6 text-[#695d7d]">{intent.description}。我会优先提供真实来源、可打开的资料与后续可执行的研究路径。</p>
-                  <div className="mt-4 rounded-lg border border-[#eee8f5] bg-white px-3 py-2.5 text-xs leading-5 text-[#786d87]"><span className="font-semibold text-[#514368]">你的问题：</span>{query || "尚未输入问题"}</div>
-                </div>
-                <div className="mt-5 space-y-3">
-                  <PlanStep index="01" label="识别意图与范围" active />
-                  <PlanStep index="02" label="匹配已有研究模块" active />
-                  <PlanStep index="03" label="带着上下文进入研究" />
-                </div>
-                <a href={intent.href} className="mt-6 inline-flex h-10 w-full items-center justify-center gap-2 rounded-lg bg-[#251d42] text-sm font-semibold text-white transition-colors hover:bg-[#382758]">进入{intent.module}<ChevronRight className="size-4" /></a>
-              </div>
+              {modeMenuOpen ? <ModeMenu activeIntent={intent} onSelect={(nextIntent) => { setIntent(nextIntent); setModeLocked(true); setModeMenuOpen(false); setHasSubmitted(false) }} /> : null}
+            </form>
+
+            <div className="mt-3 flex flex-wrap items-center gap-2 px-1">
+              <span className="mr-1 text-xs text-[#9389a2]">试试：</span>
+              {quickPrompts.map((prompt) => <button key={prompt} type="button" onClick={() => setPrompt(prompt)} className="rounded-lg border border-[#e7dff1] bg-white px-2.5 py-1.5 text-left text-[11px] leading-4 text-[#6b607e] transition-colors hover:border-[#b99beb] hover:bg-[#faf7ff]">{prompt}</button>)}
             </div>
+
+            {hasSubmitted ? <div className="mt-4 flex items-center justify-between gap-4 rounded-lg border border-[#e0d3f4] bg-[#faf7ff] px-3.5 py-2.5 text-xs"><span className="inline-flex min-w-0 items-center gap-2 text-[#695d7d]"><span className="flex size-6 shrink-0 items-center justify-center rounded-md bg-[#f0e9ff] text-[#7c3aed]">{intent.icon}</span><span className="truncate">将带着你的问题进入 <strong className="font-semibold text-[#382758]">{intent.module}</strong></span></span><a href={intent.href} className="inline-flex shrink-0 items-center gap-1 font-semibold text-[#7042cc] hover:text-[#5425b5]">进入模块<ChevronRight className="size-3.5" /></a></div> : null}
           </div>
         </section>
 
@@ -147,8 +144,8 @@ export function DesignDemoPage() {
   )
 }
 
-function PlanStep({ index, label, active = false }: { index: string; label: string; active?: boolean }) {
-  return <div className="flex items-center gap-3 text-xs"><span className={cn("flex size-6 items-center justify-center rounded-full border text-[10px] font-semibold", active ? "border-[#cdb6f5] bg-[#f1eaff] text-[#7745d3]" : "border-[#e4ddec] bg-white text-[#a399ad]")}>{active ? <Check className="size-3.5" /> : index}</span><span className={active ? "font-medium text-[#5b4b75]" : "text-[#94899e]"}>{label}</span></div>
+function ModeMenu({ activeIntent, onSelect }: { activeIntent: Intent; onSelect: (intent: Intent) => void }) {
+  return <div role="menu" className="absolute left-2 top-[calc(100%+10px)] z-20 w-64 rounded-xl border border-[#e4d9ef] bg-white p-2 text-left shadow-[0_14px_36px_rgba(60,41,93,0.16)]"><p className="px-2.5 pb-2 pt-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-[#9a8eaa]">研究模式</p>{intents.map((item) => <button key={item.module} type="button" role="menuitem" onClick={() => onSelect(item)} className="flex w-full items-center gap-3 rounded-lg px-2.5 py-2.5 text-left transition-colors hover:bg-[#f8f4ff]"><span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-[#f0e9ff] text-[#7c3aed]">{item.icon}</span><span className="min-w-0 flex-1"><span className="block text-sm font-semibold text-[#3f3158]">{item.command}</span><span className="mt-0.5 block text-xs text-[#8e839b]">{item.description}</span></span>{activeIntent.module === item.module ? <Check className="size-4 shrink-0 text-[#7c3aed]" /> : null}</button>)}</div>
 }
 
 function ModuleCard({ icon, title, description, href }: { icon: ReactNode; title: string; description: string; href: string }) {
