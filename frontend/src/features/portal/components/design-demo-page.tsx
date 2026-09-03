@@ -85,11 +85,11 @@ export function DesignDemoPage() {
       </header>
 
       <main>
-        <section id="workspace" className="mx-auto max-w-[1080px] px-10 pb-24 pt-20">
+        <section id="workspace" className="mx-auto max-w-[1080px] px-10 pb-24 pt-28">
           <h1 className="mx-auto mb-14 max-w-[900px] text-center text-[40px] font-semibold leading-[1.35] tracking-normal [font-family:'STXinwei','STKaiti','KaiTi','Microsoft_YaHei',serif]">
             <span className="text-[#35274f]">从一个问题开始，</span><span className="text-[#7c3aed]">找到值得深入的研究线索。</span>
           </h1>
-          <div className="overflow-visible rounded-3xl border border-[#e7dff1] bg-white p-8 shadow-[0_18px_45px_rgba(86,58,127,0.13)]">
+          <div className="mx-auto w-full max-w-[960px] overflow-visible rounded-3xl border border-[#e7dff1] bg-white p-8 shadow-[0_18px_45px_rgba(86,58,127,0.13)]">
             <div className="flex items-center justify-between px-1 text-base text-[#8b7fa0]">
               <span className="inline-flex items-center gap-2 font-semibold uppercase tracking-[0.12em]"><Sparkles className="size-5 text-[#7c3aed]" />Agora AI</span>
               <span className="inline-flex items-center gap-2 text-[#7c3aed]"><span className="size-2 rounded-full bg-[#8b5cf6]" />准备回答</span>
