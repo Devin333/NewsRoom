@@ -43,6 +43,7 @@ from framework.harness.runtime.node_output import (
     HarnessGraphActivityOutputAttemptResult,
 )
 from framework.harness.workers.result import (
+    HarnessWorkerEvidence,
     HarnessWorkerResult,
     HarnessWorkerStatus,
 )
@@ -316,23 +317,42 @@ class HarnessGraphPhysicalActivityExecutor:
             event_sink=event_sink,
         )
         worker_result = worker_holder.get("value")
+        if (
+            worker_result is not None
+            and attempt.outcome.started
+            and not attempt.outcome.succeeded
+        ):
+            # Any started non-successful attempt needs a terminal envelope,
+            # including workers that returned their own FAILED result.  The
+            # envelope carries the physical identity needed for replay and
+            # prevents a raw worker candidate from bypassing Graph status.
+            worker_result = _terminal_worker_result(
+                activity,
+                attempt,
+                worker_result=worker_result,
+            )
         commit = attempt.commit
         if (
             worker_result is None
             and attempt.outcome.started
-            and attempt.outcome.error is not None
+            and not attempt.outcome.succeeded
         ):
-            # A worker may fail before returning a typed candidate (for
-            # example, a provider authorization/context guard). Preserve that
-            # deterministic failure as the Graph result evidence instead of
-            # losing the original error behind a missing-result exception.
-            worker_result = HarnessWorkerResult(
-                status=HarnessWorkerStatus.FAILED,
-                error=str(attempt.outcome.error),
-                diagnostics={
-                    "execution_error_type": type(attempt.outcome.error).__name__,
-                    "execution_error_reason_code": attempt.outcome.reason_code,
-                },
+            # A worker may fail before returning a typed candidate (or remain
+            # alive past its deadline). Preserve the terminal attempt fact as
+            # structured Worker evidence instead of losing it behind a
+            # missing-result exception.
+            worker_result = _terminal_worker_result(activity, attempt)
+        elif (
+            worker_result is None
+            and attempt.outcome.started
+            and attempt.outcome.succeeded
+        ):
+            # This is an invariant violation: a successful physical attempt
+            # must have returned a typed Worker result before it can publish
+            # node output.
+            raise HarnessValidationError(
+                "successful Graph activity is missing Worker evidence",
+                code="graph_physical_result_worker_evidence_missing",
             )
         current_commit = self._node_output_resource.committed_output(
             resource_identity
@@ -743,7 +763,10 @@ def _failed_activity_result(
     worker_result: HarnessWorkerResult | None,
 ) -> HarnessGraphActivityResult:
     outcome = attempt.outcome
-    if outcome.state is AttemptState.TIMED_OUT:
+    error_code = getattr(outcome.error, "code", None)
+    if error_code == "attempt_cancelled":
+        status = HarnessGraphActivityResultStatus.CANCELLED
+    elif outcome.state is AttemptState.TIMED_OUT:
         status = HarnessGraphActivityResultStatus.TIMEOUT
     elif outcome.state is AttemptState.INDETERMINATE or outcome.indeterminate:
         status = HarnessGraphActivityResultStatus.INDETERMINATE
@@ -783,6 +806,66 @@ def _failed_activity_result(
         payload_ref=payload_ref,
         status=status,
         termination_confirmed=outcome.termination_confirmed,
+    )
+
+
+def _terminal_worker_result(
+    activity: HarnessGraphActivity,
+    attempt: HarnessGraphActivityOutputAttemptResult,
+    *,
+    worker_result: HarnessWorkerResult | None = None,
+) -> HarnessWorkerResult:
+    """Build durable evidence for every started non-successful attempt."""
+
+    outcome = attempt.outcome
+    error = outcome.error
+    error_code = getattr(error, "code", None) or outcome.reason_code
+    if error_code == "attempt_cancelled":
+        graph_status = HarnessGraphActivityResultStatus.CANCELLED
+        reason_code = "activity_cancelled"
+    elif outcome.state is AttemptState.TIMED_OUT:
+        graph_status = HarnessGraphActivityResultStatus.TIMEOUT
+        reason_code = "activity_timeout"
+    elif outcome.state is AttemptState.INDETERMINATE or outcome.indeterminate:
+        graph_status = HarnessGraphActivityResultStatus.INDETERMINATE
+        reason_code = "activity_termination_uncertain"
+    else:
+        graph_status = HarnessGraphActivityResultStatus.FAILED
+        reason_code = error_code or "activity_failed"
+    context = outcome.context
+    terminal_payload = {
+        "run_id": activity.run_id,
+        "graph_id": activity.graph_ref.graph_id,
+        "node_id": activity.node_id,
+        "activity_id": activity.activity_id,
+        "attempt_id": None if context is None else context.attempt_id,
+        "attempt_state": outcome.state.value,
+        "reason_code": reason_code,
+        "termination_confirmed": bool(outcome.termination_confirmed),
+        "indeterminate": bool(outcome.indeterminate or graph_status is HarnessGraphActivityResultStatus.INDETERMINATE),
+        "graph_result_status": graph_status.value,
+    }
+    original_ref = (
+        None
+        if worker_result is None
+        else worker_result.candidate_result_ref
+    )
+    if original_ref is not None:
+        terminal_payload["worker_candidate_ref"] = original_ref
+    evidence = HarnessWorkerEvidence(
+        evidence_type="graph_activity_terminal",
+        payload=terminal_payload,
+    )
+    diagnostics = {
+        "graph_activity_terminal": terminal_payload,
+        "execution_error_type": None if error is None else type(error).__name__,
+        "execution_error_reason_code": error_code,
+    }
+    return HarnessWorkerResult(
+        status=HarnessWorkerStatus.FAILED,
+        diagnostics=diagnostics,
+        evidence=(evidence,),
+        error=str(error) if error is not None else reason_code,
     )
 
 

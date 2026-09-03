@@ -444,18 +444,37 @@ class MemoryForgetResult:
     memory_ids: list[str] = field(default_factory=list)
     skipped_count: int = 0
     warnings: list[str] = field(default_factory=list)
+    policy_decision: dict[str, Any] | None = None
+    operation_trace: MemoryOperationTrace | dict[str, Any] | None = None
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "operation_trace",
+            MemoryOperationTrace.from_any(self.operation_trace),
+        )
+        object.__setattr__(self, "warnings", [str(item) for item in self.warnings])
 
     @property
     def success(self) -> bool:
         return not self.warnings
 
     def to_dict(self) -> dict[str, Any]:
+        operation_trace = MemoryOperationTrace.from_any(self.operation_trace)
         return {
             "success": self.success,
             "forgotten_count": self.forgotten_count,
             "memory_ids": list(self.memory_ids),
             "skipped_count": self.skipped_count,
             "warnings": list(self.warnings),
+            "policy_decision": (
+                dict(self.policy_decision)
+                if self.policy_decision is not None
+                else None
+            ),
+            "operation_trace": (
+                operation_trace.to_dict() if operation_trace is not None else None
+            ),
         }
 
 

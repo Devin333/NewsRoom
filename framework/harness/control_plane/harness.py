@@ -288,6 +288,16 @@ class _GraphDispatchQueue:
         if self.downstream is not None:
             self.downstream.dispatch(activity)
 
+    def reconcile(self, activity: HarnessGraphActivity) -> bool:
+        """Delegate restart reconciliation to the physical dispatcher."""
+
+        if self.downstream is None:
+            return False
+        handler = getattr(self.downstream, "reconcile", None)
+        if not callable(handler):
+            return False
+        return bool(handler(activity))
+
     def resolve_parallel_capabilities(
         self,
         activity_refs: tuple[HarnessContractReference, ...],
@@ -1406,7 +1416,14 @@ class HarnessControlPlane:
             run_spec,
             activity.causal_decision_sequence + 2,
         )
-        if self._graph_result_committer is None:
+        if (
+            self._graph_result_committer is None
+            or graph_result.status is not HarnessGraphActivityResultStatus.SUCCEEDED
+        ):
+            # Failure, timeout, cancellation and indeterminate outcomes are
+            # already canonical Harness facts. Business result materializers
+            # may enrich successful output, but must not collapse these
+            # terminal distinctions or assert termination confirmation.
             state = self.accept_graph_activity_result(
                 run_spec,
                 graph_result,

@@ -220,7 +220,6 @@ class FakeSkillEvolutionPort:
         decision = self.promotion_decider.decide(
             candidate,
             evaluation,
-            approval_ref=candidate.metadata.get("approval_ref"),
             release_version=candidate.candidate_version or "0.2.0",
         )
         if decision.status == SkillPromotionStatus.PROMOTE:

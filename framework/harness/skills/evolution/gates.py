@@ -109,12 +109,12 @@ class SkillAllowedToolsGate:
         metadata = dict(candidate.manifest_snapshot.get("metadata", candidate.manifest_snapshot))
         allowed_tools = {str(tool) for tool in metadata.get("allowed_tools", ())}
         high_risk = sorted(allowed_tools.intersection(HIGH_RISK_TOOLS))
-        passed = not high_risk or bool(approval_ref or candidate.metadata.get("approval_ref"))
+        passed = not high_risk or bool(approval_ref)
         return SkillEvolutionGateResult(
             self.gate_name,
             passed,
             None if passed else "high risk allowed_tools require approval",
-            {"high_risk_tools": high_risk, "approval_ref": approval_ref or candidate.metadata.get("approval_ref")},
+            {"high_risk_tools": high_risk, "approval_ref": approval_ref},
         )
 
 
@@ -210,8 +210,17 @@ class SkillEvalImprovementGate:
     gate_name = "skill_eval_improvement"
 
     def evaluate(self, evaluation: SkillEvaluationResult) -> SkillEvolutionGateResult:
-        if evaluation.baseline_score is None:
-            return SkillEvolutionGateResult(self.gate_name, evaluation.passed, "no baseline configured", evaluation.to_dict())
+        held_out_cases = [
+            case for case in evaluation.case_results
+            if isinstance(case, dict) and case.get("split") == "held_out"
+        ]
+        if evaluation.baseline_score is None or evaluation.held_out_score is None or not held_out_cases:
+            return SkillEvolutionGateResult(
+                self.gate_name,
+                False,
+                "evaluation_unavailable",
+                {"evaluation_unavailable": True, "eval_case_count": evaluation.eval_case_count},
+            )
         improvement = evaluation.score - evaluation.baseline_score
         passed = evaluation.passed and improvement >= evaluation.minimum_improvement
         return SkillEvolutionGateResult(

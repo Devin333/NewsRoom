@@ -21,6 +21,8 @@ NON_SENSITIVE_TOKEN_KEYS = {
     "completion_tokens",
     "input_tokens",
     "max_input_tokens",
+    "max_tokens",
+    "max_completion_tokens",
     "max_output_tokens",
     "media_tokens",
     "message_tokens",
@@ -84,4 +86,3 @@ def _is_sensitive_key(key: Any) -> bool:
     if normalized in NON_SENSITIVE_TOKEN_KEYS:
         return False
     return _REDACTOR.contains_sensitive_key({str(key): None})
-

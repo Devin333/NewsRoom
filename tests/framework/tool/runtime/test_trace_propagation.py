@@ -229,7 +229,13 @@ class _MCPClient:
         self.calls: list[tuple[MCPServerConfig, str, dict[str, Any]]] = []
 
     def list_tools(self, server: MCPServerConfig) -> list[dict[str, Any]]:
-        return [{"name": "echo", "inputSchema": {"required": ["value"]}}]
+        return [{
+            "name": "echo",
+            "inputSchema": {"required": ["value"]},
+            "side_effect": "read_only",
+            "is_dangerous": False,
+            "requires_approval": False,
+        }]
 
     def call_tool(
         self,

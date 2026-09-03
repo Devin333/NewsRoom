@@ -888,6 +888,90 @@ def test_patch_history_is_immutable_and_running_tasks_cannot_be_edited():
     assert error.value.code == "task_plan_patch_task_not_pending"
 
 
+def test_replacement_rejects_cycle_created_by_automatic_dependency_rewire():
+    policy = _policy(
+        roles=("analysis.structure", "analysis.helper"),
+        required_roles=("analysis.structure", "analysis.helper"),
+        capabilities=("research.structure", "research.helper"),
+    )
+    plan, policy, registry, _ = _accepted_plan(
+        (
+            _task(
+                "structure",
+                depends_on=("helper",),
+                input_refs=("task://helper/output",),
+            ),
+            _task(
+                "helper",
+                capability="research.helper",
+                role="analysis.helper",
+            ),
+        ),
+        policy=policy,
+    )
+    projection = TaskPlanProjection(
+        run_id=plan.run_id,
+        stage_id=plan.stage_id,
+        graph_checksum=plan.graph_checksum,
+        graph_id=plan.graph_id,
+        graph_version=plan.graph_version,
+        graph_ref=plan.graph_ref,
+        graph_schema_version=plan.graph_schema_version,
+        compiler_version=plan.compiler_version,
+        condition_policy_version=plan.condition_policy_version,
+        stage_binding_checksum=plan.stage_binding_checksum,
+        stage_identity_schema=plan.stage_identity_schema,
+        stage_identity_checksum=plan.stage_identity_checksum,
+        plan_id=plan.plan_id,
+        plan_version=plan.version,
+        plan_checksum=plan.plan_checksum,
+        policy_ref=plan.policy_ref,
+        tasks=tuple(
+            TaskProjection(
+                task_id=item.task_id,
+                task_definition_checksum=item.task_definition_checksum,
+                status=(TaskLifecycle.FAILED if item.task_id == "helper" else TaskLifecycle.PENDING),
+                failure_reason_code=("transport" if item.task_id == "helper" else None),
+            )
+            for item in plan.tasks
+        ),
+        consumed_budget={},
+        last_sequence=1,
+    )
+    patch = PlanPatch.for_plan(
+        plan,
+        patch_id="cycle-after-rewire",
+        reason_code="repair",
+        source_candidate_ref="candidate://cycle-after-rewire",
+        operations=(
+            PlanPatchOperation(
+                PlanPatchOperationType.ADD_REPLACEMENT_TASK,
+                target_task_id="helper",
+                replacement_task=_task(
+                    "helper-replacement",
+                    capability="research.helper",
+                    role="analysis.helper",
+                    depends_on=("structure",),
+                    input_refs=("task://structure/output",),
+                ),
+            ),
+        ),
+    )
+
+    with pytest.raises(HarnessValidationError) as error:
+        TaskPlanPatchValidator().apply(
+            plan,
+            patch,
+            projection,
+            policy,
+            registry,
+            accepted_at="2026-08-01T00:01:00Z",
+            available_input_refs=("document", "evidence_pack"),
+        )
+
+    assert error.value.code == "task_plan_dependency_cycle"
+
+
 def test_patch_rejects_policy_reference_and_checksum_drift() -> None:
     plan, policy, registry, _ = _accepted_plan((_task("structure"),))
     store = InMemoryTaskPlanStore()

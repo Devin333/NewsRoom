@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from time import perf_counter
-from typing import Any
+from typing import Any, Callable
 from uuid import uuid4
 
 from dataclasses import replace
@@ -153,8 +153,9 @@ class MemoryRuntime:
             namespace=namespace,
             tenant_id=tenant_id,
         )
+        operation_type = _memory_write_operation(write_request.mode)
         operation = self._start_operation_trace(
-            operation_type="write",
+            operation_type=operation_type,
             namespace=write_request.namespace,
             metadata={
                 "accepted_count": len(write_request.records),
@@ -169,7 +170,7 @@ class MemoryRuntime:
             },
         )
         decision = memory_policy_decision(
-            "memory.write",
+            f"memory.{operation_type}",
             namespace=write_request.namespace,
             tenant_id=write_request.tenant_id,
         )
@@ -192,10 +193,16 @@ class MemoryRuntime:
             )
             self._record_operation_trace(operation)
             return result
+        effective_policy = (
+            self.policy
+            if write_request.mode
+            in {MemoryWriteMode.PROMOTE, MemoryWriteMode.INVALIDATE}
+            else (policy or self.policy)
+        )
         result = self.writer.write(
             write_request,
             store=self.store,
-            policy=policy or self.policy,
+            policy=effective_policy,
         )
         operation = self._finish_write_trace(
             operation,
@@ -217,10 +224,60 @@ class MemoryRuntime:
         request: MemoryForgetRequest | dict[str, Any] | str,
     ) -> MemoryForgetResult:
         if isinstance(request, str):
-            self.store.delete(request)
-            return MemoryForgetResult(forgotten_count=1, memory_ids=[request])
+            request = MemoryForgetRequest(memory_ids=[request])
         forget_request = _coerce_forget_request(request)
-        return self.forgetting_engine.forget(forget_request, store=self.store, policy=self.policy)
+        started = perf_counter()
+        operation = self._start_operation_trace(
+            operation_type="forget",
+            metadata={
+                "memory_ids": list(forget_request.memory_ids),
+                "filters": dict(forget_request.filters),
+                "hard_delete": forget_request.hard_delete,
+                "actor": forget_request.actor,
+                "run_id": forget_request.run_id,
+                "reason": forget_request.reason,
+            },
+        )
+        decision = memory_policy_decision("memory.forget")
+        if not decision.allowed:
+            candidate_count = len(forget_request.memory_ids)
+            operation = self._finish_forget_trace(
+                operation,
+                started=started,
+                policy_decision=decision.to_dict(),
+                forgotten_ids=[],
+                candidate_count=candidate_count,
+                skipped_count=candidate_count,
+            )
+            result = MemoryForgetResult(
+                forgotten_count=0,
+                skipped_count=candidate_count,
+                warnings=[decision.reason],
+                policy_decision=decision.to_dict(),
+                operation_trace=operation,
+            )
+            self._record_operation_trace(operation)
+            return result
+        result = self.forgetting_engine.forget(
+            forget_request,
+            store=self.store,
+            policy=self.policy,
+        )
+        operation = self._finish_forget_trace(
+            operation,
+            started=started,
+            policy_decision=decision.to_dict(),
+            forgotten_ids=result.memory_ids,
+            candidate_count=result.forgotten_count + result.skipped_count,
+            skipped_count=result.skipped_count,
+        )
+        result = replace(
+            result,
+            policy_decision=decision.to_dict(),
+            operation_trace=operation,
+        )
+        self._record_operation_trace(operation)
+        return result
 
     def consolidate(
         self,
@@ -238,26 +295,143 @@ class MemoryRuntime:
         self,
         memory_id: str,
         *,
-        target_scope: MemoryScope | None = None,
-        target_kind: MemoryKind | None = None,
+        target_scope: MemoryScope | str | None = None,
+        target_kind: MemoryKind | str | None = None,
         reason: str | None = None,
+        policy: MemoryPolicy | None = None,
     ) -> MemoryWriteResult:
-        return self.promotion_engine.promote(
-            memory_id,
-            store=self.store,
-            target_scope=target_scope,
-            target_kind=target_kind,
-            reason=reason,
+        del policy  # mutation authorization is owned by this runtime instance
+        target_scope = (
+            None if target_scope is None else MemoryScope.from_value(target_scope)
+        )
+        target_kind = (
+            None if target_kind is None else MemoryKind.from_value(target_kind)
+        )
+        record = self.store.get(memory_id)
+        return self._run_memory_write_mutation(
+            operation_type="promote",
+            accepted_count=1,
+            namespace=None if record is None else record.namespace,
+            tenant_id=None if record is None else record.tenant_id,
+            metadata={
+                "memory_ids": [memory_id],
+                "target_scope": None if target_scope is None else target_scope.value,
+                "target_kind": None if target_kind is None else target_kind.value,
+                "reason": reason,
+            },
+            invoke=lambda runtime_policy: self.promotion_engine.promote(
+                memory_id,
+                store=self.store,
+                target_scope=target_scope,
+                target_kind=target_kind,
+                reason=reason,
+                policy=runtime_policy,
+            ),
         )
 
-    def invalidate(self, memory_id: str, *, reason: str) -> MemoryWriteResult:
-        return self.invalidation_engine.invalidate(memory_id, store=self.store, reason=reason)
+    def invalidate(
+        self,
+        memory_id: str,
+        *,
+        reason: str,
+        policy: MemoryPolicy | None = None,
+    ) -> MemoryWriteResult:
+        del policy  # mutation authorization is owned by this runtime instance
+        record = self.store.get(memory_id)
+        return self._run_memory_write_mutation(
+            operation_type="invalidate",
+            accepted_count=1,
+            namespace=None if record is None else record.namespace,
+            tenant_id=None if record is None else record.tenant_id,
+            metadata={"memory_ids": [memory_id], "reason": reason},
+            invoke=lambda runtime_policy: self.invalidation_engine.invalidate(
+                memory_id,
+                store=self.store,
+                reason=reason,
+                policy=runtime_policy,
+            ),
+        )
 
-    def invalidate_many(self, memory_ids: list[str], *, reason: str) -> MemoryWriteResult:
-        return self.invalidation_engine.invalidate_many(memory_ids, store=self.store, reason=reason)
+    def invalidate_many(
+        self,
+        memory_ids: list[str],
+        *,
+        reason: str,
+        policy: MemoryPolicy | None = None,
+    ) -> MemoryWriteResult:
+        del policy  # mutation authorization is owned by this runtime instance
+        normalized_ids = list(memory_ids)
+        return self._run_memory_write_mutation(
+            operation_type="invalidate",
+            accepted_count=len(normalized_ids),
+            metadata={"memory_ids": normalized_ids, "reason": reason},
+            invoke=lambda runtime_policy: self.invalidation_engine.invalidate_many(
+                normalized_ids,
+                store=self.store,
+                reason=reason,
+                policy=runtime_policy,
+            ),
+        )
 
     def lifecycle(self) -> dict[str, Any]:
         return self.lifecycle_manager.run(store=self.store, policy=self.policy)
+
+    def _run_memory_write_mutation(
+        self,
+        *,
+        operation_type: str,
+        accepted_count: int,
+        metadata: dict[str, Any],
+        invoke: Callable[[MemoryPolicy], MemoryWriteResult],
+        namespace: str | None = None,
+        tenant_id: str | None = None,
+    ) -> MemoryWriteResult:
+        started = perf_counter()
+        operation = self._start_operation_trace(
+            operation_type=operation_type,
+            namespace=namespace,
+            metadata=metadata,
+        )
+        decision = memory_policy_decision(
+            f"memory.{operation_type}",
+            namespace=namespace,
+            tenant_id=tenant_id,
+        )
+        if not decision.allowed:
+            operation = self._finish_write_trace(
+                operation,
+                started=started,
+                policy_decision=decision.to_dict(),
+                accepted_count=accepted_count,
+                written_ids=[],
+                skipped_count=accepted_count,
+            )
+            result = MemoryWriteResult(
+                accepted_count=accepted_count,
+                skipped_count=accepted_count,
+                errors=[decision.reason],
+                policy_decision=decision.to_dict(),
+                operation_trace=operation,
+            )
+            self._record_operation_trace(operation)
+            return result
+
+        result = invoke(self.policy)
+        operation = self._finish_write_trace(
+            operation,
+            started=started,
+            policy_decision=decision.to_dict(),
+            accepted_count=result.accepted_count,
+            written_ids=result.memory_ids,
+            skipped_count=result.skipped_count,
+        )
+        result = replace(
+            result,
+            policy_decision=decision.to_dict(),
+            operation_trace=operation,
+        )
+        self._record_operation_trace(operation)
+        return result
 
     def _start_operation_trace(
         self,
@@ -334,6 +508,35 @@ class MemoryRuntime:
             metadata={**operation.metadata, "written_ids": list(written_ids)},
         )
 
+    def _finish_forget_trace(
+        self,
+        operation: MemoryOperationTrace,
+        *,
+        started: float,
+        policy_decision: dict[str, Any],
+        forgotten_ids: list[str],
+        candidate_count: int,
+        skipped_count: int,
+    ) -> MemoryOperationTrace:
+        return MemoryOperationTrace(
+            operation_id=operation.operation_id,
+            operation_type=operation.operation_type,
+            namespace=operation.namespace,
+            query=operation.query,
+            policy_decision=policy_decision,
+            candidate_count=candidate_count,
+            selected_count=len(forgotten_ids),
+            filtered_count=skipped_count,
+            scores=[],
+            duration_ms=round((perf_counter() - started) * 1000, 3),
+            trace_id=operation.trace_id,
+            span_id=operation.span_id,
+            metadata={
+                **operation.metadata,
+                "forgotten_ids": list(forgotten_ids),
+            },
+        )
+
     def _operation_trace_context(self, operation_id: str) -> TraceContext | None:
         if self.trace_context is None:
             return None
@@ -367,6 +570,14 @@ def _coerce_query(value: MemoryQuery | dict[str, Any] | str) -> MemoryQuery:
     if isinstance(value, dict):
         return MemoryQuery.from_dict(value)
     return MemoryQuery(query=str(value))
+
+
+def _memory_write_operation(mode: MemoryWriteMode) -> str:
+    if mode is MemoryWriteMode.PROMOTE:
+        return "promote"
+    if mode is MemoryWriteMode.INVALIDATE:
+        return "invalidate"
+    return "write"
 
 
 def memory_policy_decision(

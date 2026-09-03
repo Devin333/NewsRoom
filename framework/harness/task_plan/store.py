@@ -62,6 +62,7 @@ TASK_PLAN_EVENT_TYPES = (
     "TASK_FAILED",
     "TASK_BLOCKED",
     "TASK_SKIPPED",
+    "TASK_REPLACED",
     "PLAN_PATCH_PROPOSED",
     "PLAN_PATCH_REJECTED",
     "PLAN_PATCH_ACCEPTED",
@@ -919,6 +920,7 @@ class InMemoryTaskPlanStore:
         _require_live_graph_only(patch, "patch")
         _require_live_graph_only(plan, "plan")
         skip_ids = tuple(sorted(set(identifier(item, "skipped_task_ids") for item in skipped_task_ids)))
+        replacements = _replacement_mapping(patch)
         with self._lock:
             current = self._current_plan(patch.run_id, patch.stage_id)
             if current is None or not patch.matches_plan_identity(current):
@@ -945,6 +947,19 @@ class InMemoryTaskPlanStore:
                     "patched plan source does not match patch checksum",
                     code="task_plan_patch_checksum_mismatch",
                 )
+            current_projection = self._projections.get((patch.run_id, patch.stage_id))
+            if current_projection is None:
+                raise HarnessValidationError(
+                    "patched plan base projection is missing",
+                    code="task_plan_projection_missing",
+                )
+            _validate_patch_transition_targets(
+                current,
+                plan,
+                current_projection=current_projection,
+                replacements=replacements,
+                skipped_task_ids=skip_ids,
+            )
             existing = self._plans.get((plan.run_id, plan.stage_id, plan.version))
             if existing is not None:
                 if existing.plan_checksum != plan.plan_checksum:
@@ -971,6 +986,43 @@ class InMemoryTaskPlanStore:
                 previous=previous_projection,
             )
             events = [patch_event, plan_event]
+            for replaced_task_id, replacement_task_id in sorted(replacements.items()):
+                old_state = next((item for item in next_projection.tasks if item.task_id == replaced_task_id), None)
+                new_state = next((item for item in next_projection.tasks if item.task_id == replacement_task_id), None)
+                if old_state is None or new_state is None:
+                    raise HarnessValidationError(
+                        "patched plan replacement references unknown task",
+                        code="task_plan_unknown_task",
+                        details={"replaced_task_id": replaced_task_id, "replacement_task_id": replacement_task_id},
+                    )
+                next_projection = replace(
+                    next_projection,
+                    tasks=tuple(
+                        replace(
+                            item,
+                            status=TaskLifecycle.SKIPPED,
+                            active_instance_id=None,
+                            failure_reason_code="plan_patch_replaced",
+                        )
+                        if item.task_id == replaced_task_id else item
+                        for item in next_projection.tasks
+                    ),
+                    last_sequence=next_projection.last_sequence + 1,
+                )
+                events.append(
+                    TaskPlanEvent.for_plan(
+                        "TASK_REPLACED",
+                        plan,
+                        task_id=replaced_task_id,
+                        reason_code="plan_patch_replaced",
+                        input_checksum=plan.plan_checksum,
+                        payload={
+                            "replaced_task_id": replaced_task_id,
+                            "replacement_task_id": replacement_task_id,
+                        },
+                        sequence=next_projection.last_sequence,
+                    )
+                )
             for task_id in skip_ids:
                 state = next((item for item in next_projection.tasks if item.task_id == task_id), None)
                 if state is None:
@@ -1144,6 +1196,8 @@ class InMemoryTaskPlanStore:
     def results_for(self, run_id: str, stage_id: str, plan_id: str, plan_version: int) -> tuple[TaskResultRecord, ...]:
         with self._lock:
             current_plan = self._plans.get((run_id, stage_id, plan_version))
+            if current_plan is None or current_plan.plan_id != plan_id:
+                return ()
             valid_task_ids = {
                 item.task_id
                 for item in (self._projections.get((run_id, stage_id)).tasks if self._projections.get((run_id, stage_id)) else ())
@@ -1155,10 +1209,15 @@ class InMemoryTaskPlanStore:
                 if item.run_id == run_id
                 and item.stage_id == stage_id
                 and item.task_id in valid_task_ids
+                and item.status is TaskLifecycle.SUCCEEDED
                 and (item.plan_id == plan_id and item.plan_version == plan_version or current_plan is not None and _plan_contains_task_version(self._plans, current_plan, item))
             ]
             unique: dict[str, TaskResultRecord] = {}
-            for item in matching:
+            for item in sorted(
+                matching,
+                key=lambda value: (value.task_id, value.attempt, value.result_checksum),
+                reverse=True,
+            ):
                 unique.setdefault(item.task_id, item)
             return tuple(sorted(unique.values(), key=lambda item: (item.task_id, item.attempt, item.result_checksum)))
 
@@ -1308,6 +1367,118 @@ def _projection_for_plan(plan: ValidatedTaskPlan, *, sequence: int, previous: Ta
         schema_version=GRAPH_ONLY_TASK_PLAN_PROJECTION_SCHEMA,
         **graph_identity,
     )
+
+
+def _replacement_mapping(patch: PlanPatch) -> dict[str, str]:
+    """Return the explicit old-to-new task mapping carried by a patch."""
+
+    mapping: dict[str, str] = {}
+    for operation in patch.operations:
+        if operation.operation.value != "ADD_REPLACEMENT_TASK":
+            continue
+        if operation.target_task_id is None or operation.replacement_task is None:
+            raise HarnessValidationError(
+                "replacement operation is incomplete",
+                code="task_plan_patch_operation_not_allowed",
+            )
+        if operation.target_task_id in mapping:
+            raise HarnessValidationError(
+                "a patch may replace each task only once",
+                code="task_plan_patch_duplicate_target",
+                details={"task_id": operation.target_task_id},
+            )
+        mapping[operation.target_task_id] = operation.replacement_task.task_id
+    return mapping
+
+
+def _validate_patch_transition_targets(
+    current: ValidatedTaskPlan,
+    next_plan: ValidatedTaskPlan,
+    *,
+    current_projection: TaskPlanProjection,
+    replacements: Mapping[str, str],
+    skipped_task_ids: tuple[str, ...],
+) -> None:
+    """Keep direct store callers inside the same patch state boundary.
+
+    The runner performs full patch graph validation.  The store is still an
+    independent mutation boundary, so it must not allow callers to skip a
+    terminal/active task or replace a required output through a forged API
+    call.
+    """
+
+    if not current_projection.matches_plan_identity(current):
+        raise HarnessValidationError(
+            "patched plan base projection does not match the accepted plan",
+            code="task_plan_projection_identity_mismatch",
+        )
+    current_states = {item.task_id: item for item in current_projection.tasks}
+    current_definitions = {item.task_id: item for item in current.tasks}
+    next_definitions = {item.task_id: item for item in next_plan.tasks}
+    allowed_states = {
+        TaskLifecycle.PENDING,
+        TaskLifecycle.READY,
+        TaskLifecycle.FAILED,
+    }
+    if set(replacements).intersection(skipped_task_ids):
+        raise HarnessValidationError(
+            "a patch cannot replace and skip the same task",
+            code="task_plan_patch_duplicate_target",
+        )
+    for task_id in skipped_task_ids:
+        definition = current_definitions.get(task_id)
+        state = current_states.get(task_id)
+        if definition is None or state is None:
+            raise HarnessValidationError(
+                "patched plan skip references unknown task",
+                code="task_plan_unknown_task",
+                details={"task_id": task_id},
+            )
+        if state.status not in allowed_states:
+            raise HarnessValidationError(
+                "only pending tasks may be skipped",
+                code="task_plan_patch_task_not_pending",
+                details={"task_id": task_id, "status": state.status.value},
+            )
+        if definition.output_role in current.required_output_roles:
+            raise HarnessValidationError(
+                "required output task cannot be skipped",
+                code="task_plan_patch_required_role",
+                details={"task_id": task_id, "output_role": definition.output_role},
+            )
+    for replaced_task_id, replacement_task_id in replacements.items():
+        old_definition = current_definitions.get(replaced_task_id)
+        old_state = current_states.get(replaced_task_id)
+        replacement = next_definitions.get(replacement_task_id)
+        if old_definition is None or old_state is None or replacement is None:
+            raise HarnessValidationError(
+                "patched plan replacement references unknown task",
+                code="task_plan_unknown_task",
+                details={
+                    "replaced_task_id": replaced_task_id,
+                    "replacement_task_id": replacement_task_id,
+                },
+            )
+        if old_state.status not in allowed_states:
+            raise HarnessValidationError(
+                "replacement may only target an unstarted or failed task",
+                code="task_plan_patch_task_not_pending",
+                details={
+                    "task_id": replaced_task_id,
+                    "status": old_state.status.value,
+                },
+            )
+        if replacement.output_role != old_definition.output_role:
+            raise HarnessValidationError(
+                "replacement task must preserve the target output role",
+                code="task_plan_replacement_output_role_mismatch",
+                details={
+                    "target_task_id": replaced_task_id,
+                    "target_role": old_definition.output_role,
+                    "replacement_task_id": replacement_task_id,
+                    "replacement_role": replacement.output_role,
+                },
+            )
 
 
 def _plan_contains_task_version(plans: Mapping[tuple[str, str, int], ValidatedTaskPlan], current: ValidatedTaskPlan, result: TaskResultRecord) -> bool:

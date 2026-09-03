@@ -58,6 +58,8 @@ class _Worker:
 
 
 class _AcceptingResultVerifier:
+    registered_gate_refs = ("gate@1",)
+
     def verify(self, result, *, task, request):
         instance = request.instance
         return TaskResultRecord.for_plan(
@@ -75,6 +77,26 @@ class _AcceptingResultVerifier:
                 for index, _gate_ref in enumerate(task.gate_refs, start=1)
             ),
         )
+
+
+class _FailOnceResultVerifier(_AcceptingResultVerifier):
+    def __init__(self, *, failure_code: str = "task_worker_failed") -> None:
+        self.calls = 0
+        self.failure_code = failure_code
+
+    def verify(self, result, *, task, request):
+        self.calls += 1
+        if self.calls == 1:
+            instance = request.instance
+            return TaskResultRecord.for_plan(
+                request.plan,
+                task_id=instance.task_id,
+                task_instance_id=instance.task_instance_id,
+                attempt=instance.attempt,
+                status=TaskLifecycle.FAILED,
+                error_code=self.failure_code,
+            )
+        return super().verify(result, task=task, request=request)
 
 
 def _setup(*, roles=("role",), capabilities=("cap",)):
@@ -233,6 +255,117 @@ def test_ready_task_is_durably_committed_before_worker_invocation() -> None:
     ]
 
 
+def test_runner_fails_closed_when_verifier_has_no_gate_registry() -> None:
+    graph, policy, registry = _setup()
+    candidate = _candidate(graph, (_task("a"),))
+    calls: list[str] = []
+
+    class _VerifierWithoutRegistry:
+        def verify(self, result, *, task, request):
+            return _AcceptingResultVerifier().verify(
+                result,
+                task=task,
+                request=request,
+            )
+
+    def execute(_binding, request):
+        calls.append(request.task_id)
+        return HarnessWorkerResult(status="succeeded", output={"value": "unexpected"})
+
+    result = TaskPlanStageRunner(
+        candidate_builder=FakePlanCandidateBuilder(candidate),
+        capability_registry=registry,
+        store=InMemoryTaskPlanStore(),
+        result_verifier=_VerifierWithoutRegistry(),
+        worker_executor=execute,
+    ).run(
+        TaskPlanStageRequest(
+            run_id="run",
+            stage_binding=graph,
+            context_refs={"document": "document"},
+            policy=policy,
+            policy_ref=policy.exact_ref,
+            candidate=candidate,
+            accepted_at="2026-08-01T00:00:00Z",
+        )
+    )
+
+    assert result.status.value == "blocked"
+    assert result.diagnostics["reason_code"] == "task_plan_candidate_rejected"
+    assert calls == []
+
+
+def test_replacement_failure_is_skipped_and_runner_reaches_verified() -> None:
+    graph, policy, registry = _setup()
+    candidate = _candidate(graph, (_task("helper"),))
+    store = InMemoryTaskPlanStore()
+    verifier = _FailOnceResultVerifier()
+    calls: list[str] = []
+
+    def execute(_binding, request):
+        calls.append(request.task_id)
+        return HarnessWorkerResult(status="succeeded", output={"value": request.task_id})
+
+    request = TaskPlanStageRequest(
+        run_id="run",
+        stage_binding=graph,
+        context_refs={"document": "document"},
+        policy=policy,
+        policy_ref=policy.exact_ref,
+        candidate=candidate,
+        accepted_at="2026-08-01T00:00:00Z",
+    )
+    first = TaskPlanStageRunner(
+        candidate_builder=FakePlanCandidateBuilder(candidate),
+        capability_registry=registry,
+        store=store,
+        result_verifier=verifier,
+        worker_executor=execute,
+    ).run(request)
+    assert first.status.value == "blocked"
+    assert first.diagnostics["reason_code"] == "task_plan_retry_not_allowed"
+    assert calls == ["helper"]
+
+    plan = store.plan("run", "dynamic_stage")
+    assert plan is not None
+    replacement = PlanPatch.for_plan(
+        plan,
+        patch_id="replacement-patch",
+        reason_code="repair",
+        source_candidate_ref="candidate://replacement",
+        operations=(
+            PlanPatchOperation(
+                PlanPatchOperationType.ADD_REPLACEMENT_TASK,
+                target_task_id="helper",
+                replacement_task=_task("helper-replacement"),
+            ),
+        ),
+    )
+    next_plan = TaskPlanStageRunner(
+        candidate_builder=FakePlanCandidateBuilder(candidate),
+        capability_registry=registry,
+        store=store,
+        result_verifier=verifier,
+        worker_executor=execute,
+    ).apply_patch(request, replacement)
+    assert next_plan.version == 2
+    assert next(item for item in store.load_projection("run", "dynamic_stage").tasks if item.task_id == "helper").status is TaskLifecycle.SKIPPED
+
+    final = TaskPlanStageRunner(
+        candidate_builder=FakePlanCandidateBuilder(candidate),
+        capability_registry=registry,
+        store=store,
+        result_verifier=verifier,
+        worker_executor=execute,
+    ).run(request)
+    assert final.status.value == "succeeded"
+    assert calls == ["helper", "helper-replacement"]
+    assert [event.event_type for event in store.read_events("run", "dynamic_stage")][-2:] == [
+        "STAGE_OUTPUT_AGGREGATED",
+        "TASK_PLAN_VERIFIED",
+    ]
+
+
 def test_store_accepts_duplicate_identical_result_once():
     graph, policy, registry = _setup()
     candidate = _candidate(graph, (_task("a"),))
@@ -264,6 +397,8 @@ def test_store_accepts_duplicate_identical_result_once():
     )
     assert store.append_result(result) == store.append_result(result)
     assert len(store.results_for("run", "dynamic_stage", plan.plan_id, 1)) == 1
+    assert store.results_for("run", "dynamic_stage", "sha256:" + "0" * 64, 1) == ()
+    assert store.results_for("run", "dynamic_stage", plan.plan_id, 999) == ()
 
 
 def validator_context(stage_binding):
@@ -309,6 +444,88 @@ class _HaltFailingStore(InMemoryTaskPlanStore):
             self.halt_attempts += 1
             raise OSError("event store unavailable")
         return super().append_event(event)
+
+
+class _SimulatedProcessCrash(BaseException):
+    pass
+
+
+class _RetryEventCrashStore(InMemoryTaskPlanStore):
+    def __init__(self) -> None:
+        super().__init__()
+        self.crash_on_retry_event = True
+
+    def commit_event(self, event, projection):
+        if self.crash_on_retry_event and event.event_type == "TASK_RETRY_SCHEDULED":
+            self.crash_on_retry_event = False
+            raise _SimulatedProcessCrash()
+        return super().commit_event(event, projection)
+
+
+def test_runner_recovers_failed_result_before_retry_event_without_redispatching_attempt_one():
+    graph, policy, registry = _setup()
+    candidate = _candidate(
+        graph,
+        (
+            replace(
+                _task("a"),
+                retry_policy={
+                    "max_attempts": 2,
+                    "retryable_reason_codes": ("transport",),
+                },
+            ),
+        ),
+    )
+    store = _RetryEventCrashStore()
+    verifier = _FailOnceResultVerifier(failure_code="transport")
+    calls: list[str] = []
+
+    def execute(_binding, request):
+        calls.append(request.task_id)
+        return HarnessWorkerResult(status="succeeded", output={"value": request.task_id})
+
+    request = TaskPlanStageRequest(
+        run_id="run",
+        stage_binding=graph,
+        context_refs={"document": "document"},
+        policy=policy,
+        policy_ref=policy.exact_ref,
+        candidate=candidate,
+        accepted_at="2026-08-01T00:00:00Z",
+    )
+    runner = TaskPlanStageRunner(
+        candidate_builder=FakePlanCandidateBuilder(candidate),
+        capability_registry=registry,
+        store=store,
+        result_verifier=verifier,
+        worker_executor=execute,
+    )
+
+    with pytest.raises(_SimulatedProcessCrash):
+        runner.run(request)
+
+    failed_projection = store.load_projection("run", "dynamic_stage")
+    assert failed_projection.tasks[0].status is TaskLifecycle.FAILED
+    assert failed_projection.tasks[0].failure_reason_code == "transport"
+    assert "TASK_RETRY_SCHEDULED" not in {
+        event.event_type for event in store.read_events("run", "dynamic_stage")
+    }
+    assert calls == ["a"]
+
+    recovered = TaskPlanStageRunner(
+        candidate_builder=FakePlanCandidateBuilder(candidate),
+        capability_registry=registry,
+        store=store,
+        result_verifier=verifier,
+        worker_executor=execute,
+    ).run(request)
+
+    assert recovered.status.value == "succeeded"
+    assert calls == ["a", "a"]
+    assert any(
+        event.event_type == "TASK_RETRY_SCHEDULED"
+        for event in store.read_events("run", "dynamic_stage")
+    )
 
 
 def test_authorized_inspection_exposes_only_task_plan_control_projection() -> None:

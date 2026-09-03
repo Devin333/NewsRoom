@@ -15,6 +15,7 @@ from framework.harness.task_plan.canonical import (
     non_negative_int,
     reference,
     stable_text_tuple,
+    task_reference_producer,
     thaw_mapping,
 )
 from framework.harness.task_plan.models import (
@@ -274,6 +275,7 @@ class TaskPlanReplayReducer:
         instances: dict[str, TaskInstance] = {}
         ready_sequences: dict[str, int] = {}
         pending_results: dict[tuple[str, int, int], TaskResultRecord] = {}
+        failed_result_checksums: dict[tuple[str, int, int], str] = {}
         retry_counts: dict[str, int] = {}
         aggregate_ref: str | None = None
         aggregate_checksum: str | None = None
@@ -432,14 +434,35 @@ class TaskPlanReplayReducer:
                     result,
                     plan=task_plan,
                 )
+                if result.status is TaskLifecycle.FAILED:
+                    failed_result_checksums[
+                        (instance.task_instance_id, instance.attempt, task_plan.version)
+                    ] = result.result_checksum
                 ready_sequences.pop(instance.task_instance_id, None)
             elif event.event_type == "TASK_RETRY_SCHEDULED":
                 projection = _require_projection(projection, event)
                 task_plan = _task_plan_for_event(event, plans_by_version)
                 instance = _instance_for_event(event, task_plan)
-                projection = _schedule_retry(projection, event, instance)
+                projection = _schedule_retry(
+                    projection,
+                    event,
+                    instance,
+                    task_plan,
+                    failed_result_checksum=failed_result_checksums.get(
+                        (instance.task_instance_id, instance.attempt, task_plan.version)
+                    ),
+                )
                 ready_sequences.pop(instance.task_instance_id, None)
                 retry_counts[instance.task_id] = retry_counts.get(instance.task_id, 0) + 1
+            elif event.event_type == "TASK_REPLACED":
+                projection = _require_projection(projection, event)
+                task_plan = _task_plan_for_event(event, plans_by_version)
+                projection = _apply_replacement(
+                    projection,
+                    event,
+                    task_plan,
+                    base_plan=plans_by_version.get(task_plan.version - 1),
+                )
             elif event.event_type in {"TASK_BLOCKED", "TASK_SKIPPED"}:
                 projection = _require_projection(projection, event)
                 projection = _apply_non_result_terminal(projection, event)
@@ -1134,6 +1157,9 @@ def _schedule_retry(
     projection: TaskPlanProjection,
     event: TaskPlanEvent,
     instance: TaskInstance,
+    plan: ValidatedTaskPlan,
+    *,
+    failed_result_checksum: str | None,
 ) -> TaskPlanProjection:
     state = next((item for item in projection.tasks if item.task_id == instance.task_id), None)
     if (
@@ -1147,6 +1173,42 @@ def _schedule_retry(
             code="task_plan_replay_retry_mismatch",
             details={"task_id": instance.task_id},
         )
+    definition = next((item for item in plan.tasks if item.task_id == instance.task_id), None)
+    if definition is None:
+        raise HarnessValidationError(
+            "TaskPlan retry event references an unknown task",
+            code="task_plan_replay_unknown_task",
+            details={"task_id": instance.task_id},
+        )
+    reason_code = event.reason_code
+    if (
+        reason_code is None
+        or reason_code not in definition.normalized_retry_policy.retryable_reason_codes
+    ):
+        raise HarnessValidationError(
+            "TaskPlan retry event is outside the task retry policy",
+            code="task_plan_replay_retry_policy_mismatch",
+            details={"task_id": instance.task_id, "reason_code": reason_code},
+        )
+    if instance.attempt >= definition.normalized_retry_policy.max_attempts:
+        raise HarnessValidationError(
+            "TaskPlan retry event exceeds the task retry policy",
+            code="task_plan_replay_retry_exhausted",
+            details={"task_id": instance.task_id, "attempt": instance.attempt},
+        )
+    if (
+        failed_result_checksum is None
+        or event.input_checksum != failed_result_checksum
+    ):
+        raise HarnessValidationError(
+            "TaskPlan retry event is not bound to the failed result evidence",
+            code="task_plan_replay_retry_checksum_mismatch",
+            details={
+                "task_id": instance.task_id,
+                "expected": failed_result_checksum,
+                "actual": event.input_checksum,
+            },
+        )
     updated = replace(
         state,
         status=TaskLifecycle.PENDING,
@@ -1156,6 +1218,126 @@ def _schedule_retry(
     return replace(
         projection,
         tasks=tuple(updated if item.task_id == instance.task_id else item for item in projection.tasks),
+    )
+
+
+def _apply_replacement(
+    projection: TaskPlanProjection,
+    event: TaskPlanEvent,
+    plan: ValidatedTaskPlan,
+    *,
+    base_plan: ValidatedTaskPlan | None,
+) -> TaskPlanProjection:
+    if event.plan_id != projection.plan_id or event.plan_version != projection.plan_version:
+        raise HarnessValidationError(
+            "TaskPlan replacement event references a stale plan",
+            code="task_plan_replay_plan_mismatch",
+        )
+    payload = thaw_mapping(event.payload)
+    replaced_task_id = payload.get("replaced_task_id")
+    replacement_task_id = payload.get("replacement_task_id")
+    if (
+        not isinstance(replaced_task_id, str)
+        or not isinstance(replacement_task_id, str)
+        or event.task_id != replaced_task_id
+        or event.input_checksum != plan.plan_checksum
+        or event.reason_code != "plan_patch_replaced"
+        or base_plan is None
+        or base_plan.plan_id != plan.parent_plan_id
+        or not any(item.task_id == replaced_task_id for item in base_plan.tasks)
+        or any(item.task_id == replacement_task_id for item in base_plan.tasks)
+        or not any(item.task_id == replaced_task_id for item in plan.tasks)
+        or not any(item.task_id == replacement_task_id for item in plan.tasks)
+    ):
+        raise HarnessValidationError(
+            "TaskPlan replacement event mapping is invalid",
+            code="task_plan_replay_replacement_mismatch",
+        )
+    state = next((item for item in projection.tasks if item.task_id == replaced_task_id), None)
+    replacement_state = next((item for item in projection.tasks if item.task_id == replacement_task_id), None)
+    if state is None or replacement_state is None:
+        raise HarnessValidationError(
+            "TaskPlan replacement event references an unknown task",
+            code="task_plan_replay_unknown_task",
+        )
+    if state.status not in {
+        TaskLifecycle.PENDING,
+        TaskLifecycle.READY,
+        TaskLifecycle.FAILED,
+    }:
+        raise HarnessValidationError(
+            "TaskPlan replacement event targets a terminal or active task",
+            code="task_plan_replay_replacement_mismatch",
+        )
+    base_definitions = {item.task_id: item for item in base_plan.tasks}
+    new_definitions = {item.task_id: item for item in plan.tasks}
+    old_definition = base_definitions[replaced_task_id]
+    replacement = new_definitions[replacement_task_id]
+    if replacement.output_role != old_definition.output_role:
+        raise HarnessValidationError(
+            "TaskPlan replacement changes the target output role",
+            code="task_plan_replay_replacement_mismatch",
+            details={
+                "replaced_task_id": replaced_task_id,
+                "replacement_task_id": replacement_task_id,
+            },
+        )
+    if replaced_task_id in replacement.depends_on:
+        raise HarnessValidationError(
+            "TaskPlan replacement depends on the task it replaces",
+            code="task_plan_replay_replacement_mismatch",
+            details={
+                "replaced_task_id": replaced_task_id,
+                "replacement_task_id": replacement_task_id,
+            },
+        )
+    for task_id, definition in new_definitions.items():
+        if replaced_task_id in definition.depends_on:
+            raise HarnessValidationError(
+                "TaskPlan replacement leaves a dependency on the replaced task",
+                code="task_plan_replay_replacement_mismatch",
+                details={"task_id": task_id, "replaced_task_id": replaced_task_id},
+            )
+        base_definition = base_definitions.get(task_id)
+        if base_definition is None:
+            continue
+        if replaced_task_id in base_definition.depends_on and replacement_task_id not in definition.depends_on:
+            raise HarnessValidationError(
+                "TaskPlan replacement did not rewire a dependency",
+                code="task_plan_replay_replacement_mismatch",
+                details={"task_id": task_id, "replacement_task_id": replacement_task_id},
+            )
+        for input_ref in definition.task.input_refs:
+            producer = task_reference_producer(input_ref, tuple(new_definitions))
+            if producer == replaced_task_id:
+                raise HarnessValidationError(
+                    "TaskPlan replacement leaves an input reference to the replaced task",
+                    code="task_plan_replay_replacement_mismatch",
+                    details={"task_id": task_id, "input_ref": input_ref},
+                )
+        base_producers = {
+            task_reference_producer(input_ref, tuple(base_definitions))
+            for input_ref in base_definition.task.input_refs
+        }
+        new_producers = {
+            task_reference_producer(input_ref, tuple(new_definitions))
+            for input_ref in definition.task.input_refs
+        }
+        if replaced_task_id in base_producers and replacement_task_id not in new_producers:
+            raise HarnessValidationError(
+                "TaskPlan replacement did not rewire an input reference",
+                code="task_plan_replay_replacement_mismatch",
+                details={"task_id": task_id, "replacement_task_id": replacement_task_id},
+            )
+    updated = replace(
+        state,
+        status=TaskLifecycle.SKIPPED,
+        active_instance_id=None,
+        failure_reason_code="plan_patch_replaced",
+    )
+    return replace(
+        projection,
+        tasks=tuple(updated if item.task_id == replaced_task_id else item for item in projection.tasks),
     )
 
 

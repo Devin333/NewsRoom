@@ -52,6 +52,8 @@ from framework.harness.task_plan.store import (
     _plan_contains_task_version,
     _plan_event,
     _projection_for_plan,
+    _replacement_mapping,
+    _validate_patch_transition_targets,
     _require_event_matches_plan,
     _require_live_graph_only,
     _require_subagent_result_evidence,
@@ -489,6 +491,18 @@ class DurableTaskPlanStore:
             raise HarnessValidationError("patched plan version is not monotonic", code="task_plan_version_conflict")
         if plan.source_candidate_ref != patch.patch_checksum:
             raise HarnessValidationError("patched plan source does not match patch", code="task_plan_patch_checksum_mismatch")
+        current_projection = self.load_projection(patch.run_id, patch.stage_id)
+        skip_ids = tuple(
+            sorted(set(identifier(item, "skipped_task_id") for item in skipped_task_ids))
+        )
+        replacements = _replacement_mapping(patch)
+        _validate_patch_transition_targets(
+            current,
+            plan,
+            current_projection=current_projection,
+            replacements=replacements,
+            skipped_task_ids=skip_ids,
+        )
         existing = self.plan(plan.run_id, plan.stage_id, plan.version)
         if existing is not None:
             if existing.plan_checksum != plan.plan_checksum:
@@ -525,8 +539,45 @@ class DurableTaskPlanStore:
             {"plan": plan_ref, "projection": self._put_projection(projection)},
         ]
         events_to_publish: list[TaskPlanEvent] = [patch_event, plan_event]
-        for raw_task_id in sorted(set(skipped_task_ids)):
-            task_id = identifier(raw_task_id, "skipped_task_id")
+        for replaced_task_id, replacement_task_id in sorted(replacements.items()):
+            old_state = next((item for item in projection.tasks if item.task_id == replaced_task_id), None)
+            new_state = next((item for item in projection.tasks if item.task_id == replacement_task_id), None)
+            if old_state is None or new_state is None:
+                raise HarnessValidationError(
+                    "patched plan replacement references unknown task",
+                    code="task_plan_unknown_task",
+                    details={"replaced_task_id": replaced_task_id, "replacement_task_id": replacement_task_id},
+                )
+            projection = replace(
+                projection,
+                tasks=tuple(
+                    replace(
+                        item,
+                        status=TaskLifecycle.SKIPPED,
+                        active_instance_id=None,
+                        failure_reason_code="plan_patch_replaced",
+                    )
+                    if item.task_id == replaced_task_id else item
+                    for item in projection.tasks
+                ),
+                last_sequence=projection.last_sequence + 1,
+            )
+            events_to_publish.append(
+                TaskPlanEvent.for_plan(
+                    "TASK_REPLACED",
+                    plan,
+                    task_id=replaced_task_id,
+                    input_checksum=plan.plan_checksum,
+                    reason_code="plan_patch_replaced",
+                    payload={
+                        "replaced_task_id": replaced_task_id,
+                        "replacement_task_id": replacement_task_id,
+                    },
+                    sequence=projection.last_sequence,
+                )
+            )
+            references.append({"projection": self._put_projection(projection)})
+        for task_id in skip_ids:
             state = next((item for item in projection.tasks if item.task_id == task_id), None)
             if state is None:
                 raise HarnessValidationError("skip target is unknown", code="task_plan_unknown_task")
@@ -869,7 +920,15 @@ class DurableTaskPlanStore:
                 record.plan_id == plan_id and record.plan_version == plan_version
             ) and not _plan_contains_task_version(plans, requested_plan, record):
                 continue
-            records.setdefault(record.task_id, record)
+            existing = records.get(record.task_id)
+            if existing is None or (
+                record.attempt,
+                record.result_checksum,
+            ) > (
+                existing.attempt,
+                existing.result_checksum,
+            ):
+                records[record.task_id] = record
         return tuple(
             sorted(
                 records.values(),

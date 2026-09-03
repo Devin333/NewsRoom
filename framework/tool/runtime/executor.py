@@ -1198,10 +1198,7 @@ class ToolExecutor:
             raise
 
     def _approval_gate(self, call: ToolCall, definition: Any, policy: ToolPolicy) -> ToolResult | None:
-        if not (
-            policy.require_approval_for_side_effects
-            and (definition.requires_approval or _has_side_effects(_side_effect_value(definition)))
-        ):
+        if not policy.requires_approval(definition):
             return None
 
         reason = f"Tool requires approval before execution: {definition.name}"
@@ -1527,13 +1524,7 @@ def _risk_level(definition: Any) -> str:
 
 
 def _requires_approval(definition: Any, policy: ToolPolicy) -> bool:
-    return bool(
-        policy.require_approval_for_side_effects
-        and (
-            getattr(definition, "requires_approval", False)
-            or _has_side_effects(_side_effect_value(definition))
-        )
-    )
+    return policy.requires_approval(definition)
 
 
 class _ToolPolicyTraceBuilder:

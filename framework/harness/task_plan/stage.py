@@ -185,7 +185,10 @@ class TaskPlanStageRunner(TaskPlanStageRunnerPort):
             run_id=request.run_id,
             stage_binding=request.stage_binding,
             available_input_refs=tuple(request.context_refs.values()),
-            registered_gate_refs=request.policy.allowed_gate_refs,
+            registered_gate_refs=_registered_gate_refs(
+                self.result_verifier,
+                fallback=request.policy.allowed_gate_refs,
+            ),
             registered_aggregator_refs=self.aggregator.registry.refs,
         )
         missing_aggregators = sorted({ref for ref in request.policy.deterministic_aggregator_refs.values() if not self.aggregator.registry.contains(ref)})
@@ -216,6 +219,8 @@ class TaskPlanStageRunner(TaskPlanStageRunnerPort):
         for _ in range(max_rounds):
             projection = self.store.load_projection(request.run_id, request.stage_id)
             if self._recover_committed_subagent_results(request, plan, projection):
+                continue
+            if self._recover_failed_task_retries(request, plan, projection):
                 continue
             decision = self.scheduler.next_task_plan_decision(
                 projection,
@@ -274,7 +279,11 @@ class TaskPlanStageRunner(TaskPlanStageRunnerPort):
                 self.store.append_result(result)
                 if result.status is TaskLifecycle.FAILED:
                     resolved = next(item for item in plan.tasks if item.task_id == result.task_id)
-                    if result.attempt < resolved.normalized_retry_policy.max_attempts:
+                    retryable_codes = set(resolved.normalized_retry_policy.retryable_reason_codes)
+                    if (
+                        result.error_code in retryable_codes
+                        and result.attempt < resolved.normalized_retry_policy.max_attempts
+                    ):
                         current = self.store.load_projection(request.run_id, request.stage_id)
                         retry_tasks = tuple(replace(item, status=TaskLifecycle.PENDING, active_instance_id=None, failure_reason_code=None) if item.task_id == result.task_id else item for item in current.tasks)
                         sequence = self._next_sequence(request)
@@ -288,9 +297,108 @@ class TaskPlanStageRunner(TaskPlanStageRunnerPort):
                             task_id=result.task_id, task_instance_id=result.task_instance_id, attempt=result.attempt,
                             input_checksum=result.result_checksum, reason_code=result.error_code, sequence=sequence,
                         ), retry_projection)
+                    elif result.error_code not in retryable_codes:
+                        raise HarnessValidationError(
+                            "task failure is outside the task retry policy",
+                            code="task_plan_retry_not_allowed",
+                            details={
+                                "task_id": result.task_id,
+                                "attempt": result.attempt,
+                                "error_code": result.error_code,
+                                "retryable_reason_codes": sorted(retryable_codes),
+                            },
+                        )
                     else:
                         raise HarnessValidationError("task retry budget exhausted", code="task_plan_retry_exhausted", details={"task_id": result.task_id})
         raise HarnessValidationError("TaskPlan execution exceeded bounded rounds", code="task_plan_execution_bound_exceeded")
+
+    def _recover_failed_task_retries(
+        self,
+        request: TaskPlanStageRequest,
+        plan: ValidatedTaskPlan,
+        projection: Any,
+    ) -> bool:
+        """Complete a retry decision interrupted after result persistence.
+
+        ``append_result`` durably records a failed attempt before the retry
+        decision event is appended.  A process restart in that small window
+        must re-use the same policy decision instead of treating the failed
+        projection as an opaque blocker or invoking the worker directly.
+        """
+
+        definitions = {item.task_id: item for item in plan.tasks}
+        for state in projection.tasks:
+            if state.status is not TaskLifecycle.FAILED:
+                continue
+            definition = definitions[state.task_id]
+            retryable_codes = set(
+                definition.normalized_retry_policy.retryable_reason_codes
+            )
+            reason_code = state.failure_reason_code
+            if reason_code not in retryable_codes:
+                raise HarnessValidationError(
+                    "task failure is outside the task retry policy",
+                    code="task_plan_retry_not_allowed",
+                    details={
+                        "task_id": state.task_id,
+                        "attempt": state.attempts,
+                        "error_code": reason_code,
+                        "retryable_reason_codes": sorted(retryable_codes),
+                    },
+                )
+            if state.attempts >= definition.normalized_retry_policy.max_attempts:
+                raise HarnessValidationError(
+                    "task retry budget exhausted",
+                    code="task_plan_retry_exhausted",
+                    details={
+                        "task_id": state.task_id,
+                        "attempt": state.attempts,
+                    },
+                )
+            result_checksum = _failed_result_checksum(
+                self.store.read_events(request.run_id, request.stage_id),
+                task_id=state.task_id,
+                task_instance_id=state.active_instance_id,
+                attempt=state.attempts,
+            )
+            if result_checksum is None:
+                raise HarnessValidationError(
+                    "failed TaskPlan retry is missing durable result evidence",
+                    code="task_plan_retry_evidence_missing",
+                    details={"task_id": state.task_id, "attempt": state.attempts},
+                )
+            current = self.store.load_projection(request.run_id, request.stage_id)
+            retry_tasks = tuple(
+                replace(
+                    item,
+                    status=TaskLifecycle.PENDING,
+                    active_instance_id=None,
+                    failure_reason_code=None,
+                )
+                if item.task_id == state.task_id
+                else item
+                for item in current.tasks
+            )
+            sequence = self._next_sequence(request)
+            self.store.commit_event(
+                TaskPlanEvent.for_plan(
+                    "TASK_RETRY_SCHEDULED",
+                    plan,
+                    task_id=state.task_id,
+                    task_instance_id=state.active_instance_id,
+                    attempt=state.attempts,
+                    input_checksum=result_checksum,
+                    reason_code=reason_code,
+                    sequence=sequence,
+                ),
+                replace(
+                    current,
+                    tasks=retry_tasks,
+                    last_sequence=sequence,
+                ),
+            )
+            return True
+        return False
 
     def _recover_committed_subagent_results(
         self,
@@ -495,6 +603,44 @@ def _required_observation_time(request: TaskPlanStageRequest) -> str:
             code="task_plan_observation_time_required",
         )
     return value
+
+
+def _registered_gate_refs(
+    verifier: TaskPlanResultVerifierPort,
+    *,
+    fallback: tuple[str, ...] = (),
+) -> tuple[str, ...]:
+    """Return only gate refs exposed by the concrete verifier registry.
+
+    ``fallback`` remains a source-compatible argument for older callers, but
+    policy allowlists are never treated as executable gate registration.
+    """
+
+    del fallback
+    refs = getattr(verifier, "registered_gate_refs", None)
+    if refs is None:
+        return ()
+    return tuple(refs)
+
+
+def _failed_result_checksum(
+    events: tuple[TaskPlanEvent, ...],
+    *,
+    task_id: str,
+    task_instance_id: str | None,
+    attempt: int,
+) -> str | None:
+    for event in reversed(events):
+        if (
+            event.event_type != "TASK_RESULT_REJECTED"
+            or event.task_id != task_id
+            or event.task_instance_id != task_instance_id
+            or event.attempt != attempt
+        ):
+            continue
+        value = event.payload.get("result_checksum")
+        return value if isinstance(value, str) else None
+    return None
 
 
 def _require_plan_stage_binding(

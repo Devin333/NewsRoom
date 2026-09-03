@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from framework.harness import SkillEvalReplayRunner, SkillPromotionDecider, SkillPromotionStatus
+from framework.harness import SkillEvalReplayRunner, SkillEvaluationResult, SkillPromotionDecider, SkillPromotionStatus
 from tests.framework.harness.skills.evolution.test_static_gates import _candidate
 
 
@@ -37,3 +37,21 @@ def test_promotion_gate_requires_approval_for_high_risk_tools() -> None:
     decision = SkillPromotionDecider().decide(candidate, evaluation)
 
     assert decision.status == SkillPromotionStatus.NEEDS_HUMAN_APPROVAL
+
+
+def test_promotion_gate_rejects_evaluation_without_held_out_evidence() -> None:
+    candidate = _candidate()
+    evaluation = SkillEvaluationResult(
+        candidate_id=candidate.candidate_id,
+        passed=True,
+        score=0.9,
+        baseline_score=0.7,
+        held_out_score=None,
+        eval_case_count=1,
+        case_results=(),
+    )
+
+    decision = SkillPromotionDecider().decide(candidate, evaluation)
+
+    assert decision.status == SkillPromotionStatus.REJECT
+    assert any("evaluation_unavailable" in reason for reason in decision.reasons)

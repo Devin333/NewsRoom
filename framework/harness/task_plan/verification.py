@@ -257,6 +257,13 @@ class TaskPlanResultVerifier:
             )
         self._artifact_reference_verifier = artifact_reference_verifier
 
+    @property
+    def registered_gate_refs(self) -> tuple[str, ...]:
+        """Expose the concrete gate registry for PLAN preflight validation."""
+
+        refs = getattr(self._gates, "refs", ())
+        return tuple(refs)
+
     def verify(
         self,
         result: HarnessWorkerResult,

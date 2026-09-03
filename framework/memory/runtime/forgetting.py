@@ -6,17 +6,36 @@ from framework.memory.stores import MemoryStore
 
 
 class MemoryForgettingEngine:
-    def forget(self, request: MemoryForgetRequest, *, store: MemoryStore, policy: MemoryPolicy) -> MemoryForgetResult:
+    def forget(
+        self,
+        request: MemoryForgetRequest,
+        *,
+        store: MemoryStore,
+        policy: MemoryPolicy,
+    ) -> MemoryForgetResult:
         memory_ids = self._resolve_memory_ids(request, store)
+        allowed_ids: list[str] = []
+        warnings: list[str] = []
+        for memory_id in memory_ids:
+            record = store.get(memory_id)
+            if record is None:
+                continue
+            try:
+                policy.validate_operation("forget", record=record)
+            except Exception as exc:
+                warnings.append(str(exc))
+                continue
+            allowed_ids.append(memory_id)
         if request.hard_delete:
-            forgotten = self._hard_delete(memory_ids, store=store)
+            forgotten = self._hard_delete(allowed_ids, store=store)
         else:
-            forgotten = self._soft_delete(memory_ids, store=store, reason=request.reason)
+            forgotten = self._soft_delete(allowed_ids, store=store, reason=request.reason)
         skipped_count = max(0, len(memory_ids) - len(forgotten))
         return MemoryForgetResult(
             forgotten_count=len(forgotten),
             memory_ids=forgotten,
             skipped_count=skipped_count,
+            warnings=warnings,
         )
 
     def _resolve_memory_ids(self, request: MemoryForgetRequest, store: MemoryStore) -> list[str]:

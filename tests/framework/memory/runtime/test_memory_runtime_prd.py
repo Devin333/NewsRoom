@@ -1,4 +1,5 @@
 from framework.memory import (
+    DEFAULT_ADMIN_MEMORY_POLICY,
     InMemoryMemoryStore,
     MemoryKind,
     MemoryRecord,
@@ -9,7 +10,7 @@ from framework.shared.graph_identity import GraphExecutionIdentity
 
 
 def test_runtime_write_recall_promote_and_invalidate() -> None:
-    runtime = MemoryRuntime(InMemoryMemoryStore())
+    runtime = MemoryRuntime(InMemoryMemoryStore(), policy=DEFAULT_ADMIN_MEMORY_POLICY)
     identity = GraphExecutionIdentity(
         run_id="run-1",
         graph_id="graph-1",

@@ -73,6 +73,7 @@ TASK_PLAN_EVENT_TYPES = (
     "TASK_FAILED",
     "TASK_BLOCKED",
     "TASK_SKIPPED",
+    "TASK_REPLACED",
     "PLAN_PATCH_PROPOSED",
     "PLAN_PATCH_REJECTED",
     "PLAN_PATCH_ACCEPTED",
@@ -1193,6 +1194,8 @@ def _task_plan_event_payload_schema(
                 "items": {"type": "object", "maxProperties": 16},
                 "maxItems": 128,
             },
+            "replaced_task_id": _TEXT,
+            "replacement_task_id": _TEXT,
         },
     }
     graph_identity_required = [

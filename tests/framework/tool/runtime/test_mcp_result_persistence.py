@@ -42,6 +42,9 @@ def test_outbound_mcp_propagates_result_contract_into_tool_materialization_model
     remote = {
         "name": "search",
         "version": "2.3.4",
+        "side_effect": "read_only",
+        "is_dangerous": False,
+        "requires_approval": False,
         "inputSchema": {"type": "object", "properties": {}},
         "outputSchema": {
             "type": "object",
@@ -106,6 +109,31 @@ def test_outbound_mcp_preserves_explicit_empty_output_schema() -> None:
 
     assert definition.input_schema == {}
     assert definition.output_schema == {}
+
+
+def test_outbound_mcp_missing_risk_metadata_is_fail_closed() -> None:
+    remote = {
+        "name": "unclassified",
+        "inputSchema": {"type": "object"},
+    }
+    client = _RemoteClient(remote, {"ok": True})
+    registry = ToolRegistry()
+    definition = MCPToolAdapter(client).register_tools(registry, _server())[0]
+
+    assert definition.metadata["risk_metadata_valid"] is False
+    assert definition.requires_approval is True
+    assert definition.is_dangerous is True
+
+    observation = ToolExecutor(registry).execute(
+        ToolCall(tool_name=definition.name, call_id="unclassified-call"),
+        ToolPolicy(
+            allowed_tools=[definition.name],
+            allow_mcp_tools=True,
+        ),
+    )
+
+    assert observation.status.value in {"blocked", "approval_required"}
+    assert client.calls == 0
 
 
 def test_outbound_mcp_rejects_conflicting_schema_aliases() -> None:

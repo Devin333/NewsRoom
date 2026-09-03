@@ -51,6 +51,7 @@ class TaskPlanPatchValidator:
         states = {item.task_id: item for item in projection.tasks}
         next_definitions = dict(definitions)
         skipped: set[str] = set()
+        replacements: dict[str, str] = {}
         targeted: set[str] = set()
         for operation in patch.operations:
             if operation.target_task_id in targeted:
@@ -68,12 +69,17 @@ class TaskPlanPatchValidator:
                 if operation.target_task_id is None or operation.target_task_id not in definitions:
                     raise HarnessValidationError("replacement target is unknown", code="task_plan_patch_unknown_task")
                 target_state = states[operation.target_task_id]
-                if target_state.status in {TaskLifecycle.RUNNING, TaskLifecycle.DISPATCHED, TaskLifecycle.SUCCEEDED}:
+                if target_state.status not in {
+                    TaskLifecycle.PENDING,
+                    TaskLifecycle.READY,
+                    TaskLifecycle.FAILED,
+                }:
                     raise HarnessValidationError("replacement may only target an unstarted or failed task", code="task_plan_patch_task_not_pending")
                 if replacement.task_id in next_definitions:
                     raise HarnessValidationError("replacement task id already exists", code="task_plan_duplicate_task_id")
                 binding = capability_registry.resolve(replacement.worker_capability, policy)
                 next_definitions[replacement.task_id] = binding.resolve_task(replacement, policy)
+                replacements[operation.target_task_id] = replacement.task_id
             elif operation.operation is PlanPatchOperationType.SKIP_PENDING_TASK:
                 target = operation.target_task_id
                 if target is None or target not in next_definitions:
@@ -102,6 +108,54 @@ class TaskPlanPatchValidator:
             {task_id: definition.depends_on for task_id, definition in next_definitions.items()},
             max_depth=policy.max_depth,
         )
+        for target_task_id, replacement_task_id in replacements.items():
+            target_definition = definitions[target_task_id]
+            replacement = next_definitions[replacement_task_id]
+            if replacement.output_role != target_definition.output_role:
+                raise HarnessValidationError(
+                    "replacement task must preserve the target output role",
+                    code="task_plan_replacement_output_role_mismatch",
+                    details={
+                        "target_task_id": target_task_id,
+                        "target_role": target_definition.output_role,
+                        "replacement_task_id": replacement_task_id,
+                        "replacement_role": replacement.output_role,
+                    },
+                )
+            if target_task_id in replacement.depends_on:
+                raise HarnessValidationError(
+                    "replacement task cannot depend on the task it replaces",
+                    code="task_plan_replacement_dependency_invalid",
+                    details={"target_task_id": target_task_id, "replacement_task_id": replacement_task_id},
+                )
+        if replacements:
+            rewired: dict[str, ResolvedTaskSpec] = {}
+            for task_id, resolved in next_definitions.items():
+                dependencies = tuple(
+                    replacements.get(dependency, dependency)
+                    for dependency in resolved.depends_on
+                )
+                input_refs = tuple(
+                    _rewire_task_reference(input_ref, replacements)
+                    for input_ref in resolved.task.input_refs
+                )
+                if dependencies != resolved.depends_on or input_refs != resolved.task.input_refs:
+                    rewired[task_id] = _with_task_graph(
+                        resolved,
+                        depends_on=dependencies,
+                        input_refs=input_refs,
+                    )
+            next_definitions.update(rewired)
+            # Re-run the graph validator after rewriting references.  A
+            # replacement can change edge direction even when the original
+            # plan was acyclic, so the pre-rewire check is not sufficient.
+            task_dependency_depths(
+                {
+                    task_id: definition.depends_on
+                    for task_id, definition in next_definitions.items()
+                },
+                max_depth=policy.max_depth,
+            )
         available = frozenset(
             reference(item, "available_input_refs") for item in available_input_refs
         )
@@ -110,7 +164,10 @@ class TaskPlanPatchValidator:
         for task_id, resolved in next_definitions.items():
             for name, value in resolved.normalized_budget.to_dict().items():
                 totals[name] += value
-            if states.get(task_id, None) is None or states[task_id].status is not TaskLifecycle.FAILED:
+            if task_id not in replacements and (
+                states.get(task_id, None) is None
+                or states[task_id].status is not TaskLifecycle.FAILED
+            ):
                 producers.setdefault(resolved.output_role, []).append(task_id)
             if resolved.task.output_contract.schema_ref not in policy.allowed_output_schema_refs:
                 raise HarnessValidationError("patch output schema is outside policy", code="task_plan_output_schema_not_allowed")
@@ -219,8 +276,21 @@ class TaskPlanPatchValidator:
 
 
 def _with_dependencies(task: ResolvedTaskSpec, depends_on: tuple[str, ...]) -> ResolvedTaskSpec:
+    return _with_task_graph(task, depends_on=depends_on)
+
+
+def _with_task_graph(
+    task: ResolvedTaskSpec,
+    *,
+    depends_on: tuple[str, ...] | None = None,
+    input_refs: tuple[str, ...] | None = None,
+) -> ResolvedTaskSpec:
     return ResolvedTaskSpec(
-        task=replace(task.task, depends_on=depends_on),
+        task=replace(
+            task.task,
+            depends_on=task.depends_on if depends_on is None else depends_on,
+            input_refs=task.task.input_refs if input_refs is None else input_refs,
+        ),
         worker_ref=task.worker_ref,
         worker_contract_ref=task.worker_contract_ref,
         allowed_tools=task.allowed_tools,
@@ -230,6 +300,22 @@ def _with_dependencies(task: ResolvedTaskSpec, depends_on: tuple[str, ...]) -> R
         normalized_retry_policy=task.normalized_retry_policy,
         subagent_id=task.subagent_id,
     )
+
+
+def _rewire_task_reference(value: str, replacements: dict[str, str]) -> str:
+    producer = task_reference_producer(value, tuple(replacements))
+    if producer is None or producer not in replacements:
+        return value
+    replacement = replacements[producer]
+    if value.startswith("task://"):
+        prefix, remainder = "task://", value.removeprefix("task://")
+        suffix = remainder[len(producer):]
+        return f"{prefix}{replacement}{suffix}"
+    if value.startswith("task:"):
+        prefix, remainder = "task:", value.removeprefix("task:")
+        suffix = remainder[len(producer):]
+        return f"{prefix}{replacement}{suffix}"
+    return replacement
 
 
 __all__ = ["TaskPlanPatchValidator"]

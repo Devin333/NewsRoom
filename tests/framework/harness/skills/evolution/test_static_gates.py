@@ -35,6 +35,15 @@ def test_static_gates_reject_high_risk_tools_without_approval() -> None:
     assert result.details["high_risk_tools"] == ["shell"]
 
 
+def test_static_gate_does_not_trust_candidate_owned_approval_metadata() -> None:
+    candidate = replace(_candidate(allowed_tools=("shell",)), metadata={"approval_ref": "sha256:" + "a" * 64})
+
+    result = SkillStaticGateSuite().allowed_tools.evaluate(candidate)
+
+    assert result.passed is False
+    assert result.details["approval_ref"] is None
+
+
 def test_static_gates_reject_quality_gate_removal() -> None:
     candidate = _candidate(
         operations=(

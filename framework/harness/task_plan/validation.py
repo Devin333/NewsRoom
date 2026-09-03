@@ -345,7 +345,7 @@ class TaskPlanValidator:
         unknown_gates = set(task.acceptance_criteria.gate_refs) - set(policy.allowed_gate_refs)
         if unknown_gates:
             diagnostics.append(_diag("gate_not_allowed", "task requests a gate outside policy", "policy", task_id=task.task_id, details={"gates": sorted(unknown_gates)}))
-        if context.registered_gate_refs and not set(task.acceptance_criteria.gate_refs).issubset(context.registered_gate_refs):
+        if not set(task.acceptance_criteria.gate_refs).issubset(context.registered_gate_refs):
             diagnostics.append(_diag("gate_unregistered", "task references an unregistered gate", "binding", task_id=task.task_id))
         for ref in task.input_refs:
             if ref in context.future_stage_input_refs:

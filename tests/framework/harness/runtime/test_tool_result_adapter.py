@@ -505,6 +505,9 @@ def test_restart_after_mcp_materialization_does_not_recall_remote_server() -> No
             return [
                 {
                     "name": "lookup",
+                    "side_effect": "read_only",
+                    "is_dangerous": False,
+                    "requires_approval": False,
                     "inputSchema": {"type": "object", "properties": {}},
                     "resultPersistence": {"required_for_replay": True},
                 }

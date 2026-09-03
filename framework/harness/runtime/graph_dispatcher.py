@@ -35,7 +35,11 @@ from framework.harness.runtime.activity_executor import (
     HarnessGraphPhysicalActivityExecutionResult,
     HarnessGraphPhysicalActivityExecutor,
 )
-from framework.harness.workers.result import HarnessWorkerResult, HarnessWorkerStatus
+from framework.harness.workers.result import (
+    HarnessWorkerEvidence,
+    HarnessWorkerResult,
+    HarnessWorkerStatus,
+)
 
 
 GraphActivityAccept = Callable[
@@ -100,12 +104,21 @@ class _ResultCommitter:
         if worker_result is None:
             candidate = getattr(node_output_commit, "candidate", None)
             payload = getattr(candidate, "worker_result", None)
-            if not isinstance(payload, Mapping):
+            if isinstance(payload, Mapping):
+                worker_result = HarnessWorkerResult.from_dict(payload)
+            elif result.status is not HarnessGraphActivityResultStatus.SUCCEEDED:
+                # A started terminal failure is authoritative even when the
+                # worker never returned a candidate. Preserve the Graph result
+                # identity as typed Worker evidence for durable replay.
+                worker_result = _terminal_worker_result_for_graph_result(
+                    activity,
+                    result,
+                )
+            else:
                 raise HarnessValidationError(
                     "physical Graph recovery requires embedded Worker evidence",
                     code="graph_physical_result_worker_evidence_missing",
                 )
-            worker_result = HarnessWorkerResult.from_dict(payload)
         event = self.record(
             activity,
             self.graph_resolver(activity),
@@ -143,6 +156,7 @@ class HarnessGraphPhysicalActivityDispatcher:
         record_result: GraphActivityResultRecord,
         apply_result: GraphActivityResultApply,
         capabilities_resolver: Callable[[Any], Any] | None = None,
+        durable_recovery_resolver: Callable[[str], Any] | None = None,
     ) -> None:
         if not isinstance(executor, HarnessGraphPhysicalActivityExecutor):
             raise TypeError("executor must be HarnessGraphPhysicalActivityExecutor")
@@ -159,6 +173,10 @@ class HarnessGraphPhysicalActivityDispatcher:
         ):
             if not callable(callback):
                 raise TypeError(f"{name} must be callable")
+        if durable_recovery_resolver is not None and not callable(
+            durable_recovery_resolver
+        ):
+            raise TypeError("durable_recovery_resolver must be callable")
         self._executor = executor
         self._graph_resolver = graph_resolver
         self._input_resolver = input_resolver
@@ -167,9 +185,11 @@ class HarnessGraphPhysicalActivityDispatcher:
         self._record_result = record_result
         self._apply_result = apply_result
         self._capabilities_resolver = capabilities_resolver
+        self._durable_recovery_resolver = durable_recovery_resolver
         self._events: dict[str, HarnessEvent] = {}
         self._lock = Lock()
         self._active_cancellations: dict[str, _ActiveGraphCancellation] = {}
+        self._indeterminate_activities: dict[str, HarnessGraphActivity] = {}
         self._pending_cancellations: dict[
             str,
             HarnessGraphActivityCancellationRequest,
@@ -279,12 +299,27 @@ class HarnessGraphPhysicalActivityDispatcher:
                     if commit is None
                     else commit.candidate.worker_result
                 )
-                if not isinstance(payload, Mapping):
+                if isinstance(payload, Mapping):
+                    worker_result = HarnessWorkerResult.from_dict(payload)
+                elif physical.graph_result.status is not HarnessGraphActivityResultStatus.SUCCEEDED:
+                    worker_result = _terminal_worker_result_for_graph_result(
+                        activity,
+                        physical.graph_result,
+                    )
+                else:
                     raise HarnessValidationError(
                         "physical Graph recovery lost its durable Worker evidence",
                         code="graph_physical_worker_result_missing",
                     )
-                worker_result = HarnessWorkerResult.from_dict(payload)
+            with self._lock:
+                if physical.graph_result.termination_confirmed:
+                    self._indeterminate_activities.pop(activity.activity_id, None)
+                else:
+                    # Preserve a process-local quarantine even if the durable
+                    # result projection fails after physical execution. A
+                    # recovery loop must never turn termination uncertainty
+                    # into an automatic second invocation.
+                    self._indeterminate_activities[activity.activity_id] = activity
             self._apply_result(activity, worker_result, physical.graph_result)
         finally:
             self._finish_cancellation(activity, cancel_event)
@@ -319,7 +354,55 @@ class HarnessGraphPhysicalActivityDispatcher:
 
         if not isinstance(activity, HarnessGraphActivity):
             raise TypeError("activity must be HarnessGraphActivity")
-        return not self.is_dispatching(activity.activity_id)
+        with self._lock:
+            uncertain = self._indeterminate_activities.get(activity.activity_id)
+            if uncertain is not None:
+                if uncertain != activity:
+                    raise HarnessValidationError(
+                        "Graph activity identity conflicts with its indeterminate quarantine",
+                        code="graph_activity_indeterminate_conflict",
+                        details={"activity_id": activity.activity_id},
+                    )
+                return False
+            if activity.activity_id in self._active_cancellations:
+                return False
+
+        # A worker-call marker is durable ownership evidence, not completion
+        # evidence.  After a process restart the local quarantine is gone, so
+        # consult the transition store before authorizing another invocation.
+        # The fail-closed result is intentional: an unresolved marker requires
+        # explicit operator repair rather than an automatic duplicate call.
+        resolver = self._durable_recovery_resolver
+        if resolver is None:
+            return True
+        recovery = resolver(activity.run_id)
+        if recovery is None:
+            raise HarnessValidationError(
+                "Graph recovery resolver returned no durable recovery",
+                code="graph_activity_recovery_invalid",
+                details={"run_id": activity.run_id},
+            )
+        recovery_run_id = getattr(recovery, "run_id", activity.run_id)
+        if recovery_run_id != activity.run_id:
+            raise HarnessValidationError(
+                "Graph recovery resolver returned another run",
+                code="graph_activity_recovery_invalid",
+                details={
+                    "run_id": activity.run_id,
+                    "recovery_run_id": recovery_run_id,
+                },
+            )
+        result_ids = {
+            item.result.activity_id
+            for item in getattr(recovery, "activity_result_commits", ())
+            if getattr(item, "result", None) is not None
+        }
+        if activity.activity_id in result_ids:
+            return True
+        dispatched_ids = set(
+            getattr(recovery, "dispatched_activity_ids", ()) or ()
+        )
+        return activity.activity_id not in dispatched_ids
 
     def request_cancellation(self, request: Any) -> None:
         if not isinstance(request, HarnessGraphActivityCancellationRequest):
@@ -416,6 +499,28 @@ def _recovered_graph_result(
 ) -> HarnessGraphActivityResult:
     from framework.events.canonical import checksum_for
 
+    terminal = worker_result.diagnostics.get("graph_activity_terminal")
+    if isinstance(terminal, Mapping):
+        raw_status = terminal.get("graph_result_status")
+        try:
+            status = HarnessGraphActivityResultStatus(raw_status)
+        except (TypeError, ValueError):
+            status = (
+                HarnessGraphActivityResultStatus.SUCCEEDED
+                if worker_result.status is HarnessWorkerStatus.SUCCEEDED
+                else HarnessGraphActivityResultStatus.FAILED
+            )
+        termination_confirmed = terminal.get("termination_confirmed")
+        if not isinstance(termination_confirmed, bool):
+            termination_confirmed = status is HarnessGraphActivityResultStatus.SUCCEEDED
+    else:
+        status = (
+            HarnessGraphActivityResultStatus.SUCCEEDED
+            if worker_result.status is HarnessWorkerStatus.SUCCEEDED
+            else HarnessGraphActivityResultStatus.FAILED
+        )
+        termination_confirmed = True
+
     return HarnessGraphActivityResult.for_activity(
         activity,
         evidence_ref=checksum_for(
@@ -426,12 +531,53 @@ def _recovered_graph_result(
             }
         ),
         payload_ref=worker_result.candidate_result_ref,
-        status=(
-            HarnessGraphActivityResultStatus.SUCCEEDED
-            if worker_result.status is HarnessWorkerStatus.SUCCEEDED
-            else HarnessGraphActivityResultStatus.FAILED
+        status=status,
+        termination_confirmed=termination_confirmed,
+    )
+
+
+def _terminal_worker_result_for_graph_result(
+    activity: HarnessGraphActivity,
+    result: HarnessGraphActivityResult,
+) -> HarnessWorkerResult:
+    """Preserve a terminal Graph fact when no worker candidate exists."""
+
+    if result.activity_id != activity.activity_id:
+        raise HarnessValidationError(
+            "terminal Graph result does not belong to its activity",
+            code="graph_physical_activity_result_invalid",
+        )
+    status = result.status
+    reason_code = {
+        HarnessGraphActivityResultStatus.CANCELLED: "activity_cancelled",
+        HarnessGraphActivityResultStatus.TIMEOUT: "activity_timeout",
+        HarnessGraphActivityResultStatus.INDETERMINATE: "activity_termination_uncertain",
+        HarnessGraphActivityResultStatus.FAILED: "activity_failed",
+    }.get(status, "activity_failed")
+    terminal_payload = {
+        "run_id": activity.run_id,
+        "graph_id": activity.graph_ref.graph_id,
+        "node_id": activity.node_id,
+        "activity_id": activity.activity_id,
+        "attempt_id": f"graph:{activity.activity_id}:{result.attempt}",
+        "attempt_state": status.value,
+        "reason_code": reason_code,
+        "termination_confirmed": bool(result.termination_confirmed),
+        "indeterminate": bool(
+            status is HarnessGraphActivityResultStatus.INDETERMINATE
+            or not result.termination_confirmed
         ),
-        termination_confirmed=True,
+        "graph_result_status": status.value,
+    }
+    evidence = HarnessWorkerEvidence(
+        evidence_type="graph_activity_terminal",
+        payload=terminal_payload,
+    )
+    return HarnessWorkerResult(
+        status=HarnessWorkerStatus.FAILED,
+        diagnostics={"graph_activity_terminal": terminal_payload},
+        evidence=(evidence,),
+        error=reason_code,
     )
 
 

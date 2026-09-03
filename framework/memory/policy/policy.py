@@ -41,19 +41,61 @@ class MemoryPolicy:
         if query.min_score is not None and query.min_score < self.min_confidence_to_recall:
             raise MemoryPolicyDenied("memory recall min_score is below policy minimum")
 
-    def validate_write(self, record: MemoryRecord) -> None:
-        if not self.allow_write:
-            raise MemoryPolicyDenied("memory write is disabled by policy")
-        if self.allowed_scopes and record.scope not in self.allowed_scopes:
-            raise MemoryPolicyDenied(f"memory write scope is not allowed: {record.scope.value}")
-        if self.allowed_kinds and record.kind not in self.allowed_kinds:
-            raise MemoryPolicyDenied(f"memory write kind is not allowed: {record.kind.value}")
-        if record.scope == MemoryScope.GLOBAL and not self.allow_global_write:
-            raise MemoryPolicyDenied("global memory writes are disabled by policy")
+    def validate_write(
+        self,
+        record: MemoryRecord,
+        *,
+        operation: str = "write",
+    ) -> None:
+        self.validate_operation(operation, record=record)
         if self.require_refs and not record.refs:
             raise MemoryValidationError("memory refs are required by policy")
         if record.confidence is not None and record.confidence < self.min_confidence_to_write:
             raise MemoryPolicyDenied("memory write confidence is below policy minimum")
+
+    def validate_operation(
+        self,
+        operation: str,
+        *,
+        record: MemoryRecord | None = None,
+        target_scope: MemoryScope | str | None = None,
+        target_kind: MemoryKind | str | None = None,
+    ) -> None:
+        """Validate a mutating memory operation against its effective target.
+
+        Promotion must validate the post-promotion target rather than the source
+        record. This keeps all mutation paths subject to the same scope/kind and
+        global-write controls.
+        """
+        operation_name = getattr(operation, "value", operation)
+        operation_name = str(operation_name).lower()
+        if operation_name not in {"write", "promote", "invalidate", "forget"}:
+            raise ValueError(f"unsupported memory policy operation: {operation_name}")
+        if not self.allow_write:
+            raise MemoryPolicyDenied(f"memory {operation_name} is disabled by policy")
+
+        effective_scope = (
+            _scope(target_scope)
+            if target_scope is not None
+            else (record.scope if record else None)
+        )
+        effective_kind = (
+            _kind(target_kind)
+            if target_kind is not None
+            else (record.kind if record else None)
+        )
+        if effective_scope is None or effective_kind is None:
+            raise MemoryValidationError(f"memory {operation_name} requires a target record")
+        if self.allowed_scopes and effective_scope not in self.allowed_scopes:
+            raise MemoryPolicyDenied(
+                f"memory {operation_name} scope is not allowed: {effective_scope.value}"
+            )
+        if self.allowed_kinds and effective_kind not in self.allowed_kinds:
+            raise MemoryPolicyDenied(
+                f"memory {operation_name} kind is not allowed: {effective_kind.value}"
+            )
+        if effective_scope == MemoryScope.GLOBAL and not self.allow_global_write:
+            raise MemoryPolicyDenied("global memory writes are disabled by policy")
 
     def filtered_query(self, query: MemoryQuery) -> MemoryQuery:
         scopes = query.scopes or list(self.allowed_scopes)

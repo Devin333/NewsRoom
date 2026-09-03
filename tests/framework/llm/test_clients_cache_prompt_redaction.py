@@ -67,8 +67,15 @@ def test_prompt_renderer_and_llm_redactor() -> None:
         PromptVariables({"name": "Ada"}),
     )
     redacted = LLMRedactor().redact_request(
-        LLMRequest(messages=[{"role": "user", "content": "secret"}], metadata={"api_key": "sk-test"})
+        LLMRequest(
+            messages=[{"role": "user", "content": "secret"}],
+            metadata={"api_key": "sk-test", "max_tokens": 128, "max_completion_tokens": 64},
+            max_tokens=256,
+        )
     )
 
     assert rendered == "Hello Ada"
     assert redacted.metadata["api_key"] == REDACTED_VALUE
+    assert redacted.metadata["max_tokens"] == 128
+    assert redacted.metadata["max_completion_tokens"] == 64
+    assert redacted.max_tokens == 256

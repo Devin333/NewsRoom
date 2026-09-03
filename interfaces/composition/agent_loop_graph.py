@@ -118,6 +118,7 @@ class AgentLoopGraphRuntimeComposition:
             record_call_marker=control_plane.record_graph_activity_call_marker,
             record_result=control_plane.record_graph_activity_result_event,
             apply_result=control_plane.commit_physical_graph_result,
+            durable_recovery_resolver=event_port.recover_graph,
             capabilities_resolver=lambda activity: bundle.authority.resolve_activity(
                 activity,
                 required_usage="serial",

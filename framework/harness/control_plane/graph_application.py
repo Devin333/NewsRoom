@@ -1564,8 +1564,12 @@ class HarnessGraphControlPlaneRuntime:
                 "graph activity dispatch requires an injected dispatcher",
                 code="graph_activity_dispatcher_missing",
             )
-        self._dispatcher.dispatch(activity)
+        # Persist physical ownership before entering the external call.  A
+        # process crash while the worker is in flight must leave a durable
+        # marker that recovery can reconcile or quarantine instead of treating
+        # the activity as never dispatched.
         self._port.mark_activity_dispatched(activity.activity_id)
+        self._dispatcher.dispatch(activity)
 
     def _dispatch_cancellation_after_commit(
         self,

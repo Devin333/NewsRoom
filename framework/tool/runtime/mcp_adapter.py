@@ -16,6 +16,24 @@ from framework.tool.registry import ToolRegistry
 from framework.tool.runtime.timeout import run_with_timeout
 
 
+_MISSING = object()
+_KNOWN_REMOTE_SIDE_EFFECTS = frozenset(
+    {
+        "none",
+        "read_only",
+        "network_access",
+        "writes_local_state",
+        "writes_external_state",
+        "external_write",
+        "application_service_write",
+        "publishing",
+        "dangerous",
+        "destructive",
+        "local_write",
+    }
+)
+
+
 @dataclass(frozen=True)
 class MCPServerConfig:
     server_id: str
@@ -158,6 +176,14 @@ class MCPToolAdapter:
                 "result persistence must be an object for MCP tool "
                 f"{remote_tool_name}"
             )
+        risk = _remote_risk_metadata(remote_tool)
+        metadata = remote_tool.get("metadata")
+        if metadata is None:
+            metadata = {}
+        if not isinstance(metadata, dict):
+            raise ValueError(
+                f"metadata must be an object for MCP tool {remote_tool_name}"
+            )
         return ToolDefinition(
             name=f"mcp.{_safe_name(server.server_id)}.{_safe_name(remote_tool_name)}",
             description=str(remote_tool.get("description") or ""),
@@ -165,9 +191,9 @@ class MCPToolAdapter:
             output_schema=(
                 dict(output_schema) if output_schema is not None else None
             ),
-            side_effect=str(remote_tool.get("side_effect") or "read_only"),
-            is_dangerous=bool(remote_tool.get("is_dangerous", False)),
-            requires_approval=bool(remote_tool.get("requires_approval", False)),
+            side_effect=risk["side_effect"],
+            is_dangerous=risk["is_dangerous"],
+            requires_approval=risk["requires_approval"],
             timeout_seconds=server.timeout_seconds,
             max_result_bytes=remote_tool.get("max_result_bytes", 1_000_000),
             concurrency_safe=bool(remote_tool.get("concurrency_safe", False)),
@@ -183,9 +209,52 @@ class MCPToolAdapter:
                 "server_id": server.server_id,
                 "server_name": server.name,
                 "remote_tool_name": remote_tool_name,
-                **dict(remote_tool.get("metadata") or {}),
+                **metadata,
+                "risk_metadata_valid": risk["valid"],
+                "risk_metadata_source": "remote_untrusted",
+                "risk_metadata_reason": risk["reason"],
             },
         )
+
+
+def _remote_risk_metadata(remote_tool: dict[str, Any]) -> dict[str, Any]:
+    """Normalize untrusted MCP risk metadata with a fail-closed default."""
+
+    side_effect = remote_tool.get("side_effect", _MISSING)
+    dangerous = remote_tool.get("is_dangerous", _MISSING)
+    approval = remote_tool.get("requires_approval", _MISSING)
+    missing = [
+        name
+        for name, value in (
+            ("side_effect", side_effect),
+            ("is_dangerous", dangerous),
+            ("requires_approval", approval),
+        )
+        if value is _MISSING
+    ]
+    valid = (
+        not missing
+        and isinstance(side_effect, str)
+        and side_effect.strip().casefold() in _KNOWN_REMOTE_SIDE_EFFECTS
+        and type(dangerous) is bool
+        and type(approval) is bool
+    )
+    if valid:
+        return {
+            "side_effect": side_effect.strip().casefold(),
+            "is_dangerous": dangerous,
+            "requires_approval": approval,
+            "valid": True,
+            "reason": "observed",
+        }
+    reason = "missing" if missing else "invalid"
+    return {
+        "side_effect": "dangerous",
+        "is_dangerous": True,
+        "requires_approval": True,
+        "valid": False,
+        "reason": reason,
+    }
 
 
 def _safe_name(value: str) -> str:

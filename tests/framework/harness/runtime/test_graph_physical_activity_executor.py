@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 import threading
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -376,6 +377,67 @@ def test_dispatcher_sets_active_cancellation_event_during_physical_execution() -
     assert isinstance(errors[0], RuntimeError)
 
 
+def test_dispatcher_maps_cooperative_cancel_to_cancelled_graph_result() -> None:
+    activity, task = _activity_and_task()
+    execution_input = _execution_input(activity, task)
+    started = threading.Event()
+    applied = []
+
+    def cooperative(_task):
+        context = current_attempt_context()
+        assert context is not None
+        started.set()
+        while not context.cancelled:
+            context.cancel_event.wait(timeout=0.01)
+        return HarnessWorkerResult(
+            status=HarnessWorkerStatus.SUCCEEDED,
+            output={"report": {"value": "cancelled"}},
+        )
+
+    executor = _executor(
+        execution_input=execution_input,
+        worker=_Worker(cooperative),
+        resource=InMemoryHarnessNodeOutputResource(),
+        committer=_ResultCommitter(),
+        supervisor=AttemptSupervisor(cancellation_grace_seconds=0.2),
+    )
+    dispatcher = _dispatcher_for(executor, execution_input)
+    dispatcher._result_committer.record = (
+        lambda activity, _graph, _worker: HarnessEvent(
+            event_type=HarnessEventType.GRAPH_WORKER_RESULT_RECORDED,
+            run_id=activity.run_id,
+            node_id=activity.node_id,
+        )
+    )
+    dispatcher._apply_result = lambda activity, worker_result, result: applied.append(
+        (activity, worker_result, result)
+    )
+    errors: list[BaseException] = []
+
+    def run_dispatch() -> None:
+        try:
+            dispatcher.dispatch(activity)
+        except BaseException as exc:  # thread assertions are reported below
+            errors.append(exc)
+
+    worker_thread = threading.Thread(target=run_dispatch)
+    worker_thread.start()
+    assert started.wait(timeout=2)
+    dispatcher.request_cancellation(_cancellation_request(activity))
+    worker_thread.join(timeout=2)
+
+    assert not worker_thread.is_alive()
+    assert errors == []
+    assert len(applied) == 1
+    _, worker_result, graph_result = applied[0]
+    assert worker_result.status is HarnessWorkerStatus.FAILED
+    assert graph_result.status is HarnessGraphActivityResultStatus.CANCELLED
+    assert graph_result.termination_confirmed is True
+    terminal = worker_result.diagnostics["graph_activity_terminal"]
+    assert terminal["reason_code"] == "activity_cancelled"
+    assert terminal["termination_confirmed"] is True
+
+
 def _dispatcher_for(
     executor: HarnessGraphPhysicalActivityExecutor,
     execution_input: HarnessGraphActivityExecutionInput,
@@ -537,11 +599,47 @@ def test_failed_worker_revokes_lease_and_commits_only_failed_graph_result() -> N
     assert receipt.node_output_commit is None
     assert receipt.graph_result is not None
     assert receipt.graph_result.status is HarnessGraphActivityResultStatus.FAILED
-    assert receipt.graph_result.payload_ref == worker_result.candidate_result_ref
+    assert receipt.graph_result.payload_ref != worker_result.candidate_result_ref
+    assert receipt.worker_result is not None
+    terminal = receipt.worker_result.diagnostics["graph_activity_terminal"]
+    assert terminal["activity_id"] == activity.activity_id
+    assert terminal["worker_candidate_ref"] == worker_result.candidate_result_ref
     assert resource.current_lease(identity) is None
     assert resource.committed_output(identity) is None
     assert len(committer.calls) == 1
     assert committer.calls[0]["node_output_commit"] is None
+
+
+def test_reconcile_fails_closed_on_durable_dispatch_marker_after_restart() -> None:
+    activity, task = _activity_and_task()
+    execution_input = _execution_input(activity, task)
+    worker = _Worker()
+    executor = _executor(
+        execution_input=execution_input,
+        worker=worker,
+        resource=InMemoryHarnessNodeOutputResource(),
+        committer=_ResultCommitter(),
+    )
+    recovery = SimpleNamespace(
+        run_id=activity.run_id,
+        dispatched_activity_ids=frozenset({activity.activity_id}),
+        activity_result_commits=(),
+    )
+    dispatcher = HarnessGraphPhysicalActivityDispatcher(
+        executor=executor,
+        graph_resolver=lambda _activity: HarnessGraphCompiler().compile(
+            build_paper_analysis_graph_definition()
+        ).graph,
+        input_resolver=_InputResolver(execution_input),
+        accept=lambda _activity, _input: None,
+        record_call_marker=lambda _activity, _input: None,
+        record_result=lambda _activity, _graph, _worker: None,
+        apply_result=lambda _activity, _worker, _result: None,
+        durable_recovery_resolver=lambda _run_id: recovery,
+    )
+
+    assert dispatcher.reconcile(activity) is False
+    assert worker.calls == []
 
 
 def test_indeterminate_attempt_never_commits_normal_node_output() -> None:
@@ -579,6 +677,92 @@ def test_indeterminate_attempt_never_commits_normal_node_output() -> None:
     )
     assert resource.current_lease(identity) is None
     assert resource.committed_output(identity) is None
+
+
+def test_unconfirmed_timeout_commits_terminal_worker_evidence_without_output() -> None:
+    activity, task = _activity_and_task()
+    started = threading.Event()
+    release = threading.Event()
+
+    def hanging(_task):
+        started.set()
+        release.wait(timeout=2)
+        return HarnessWorkerResult(
+            status=HarnessWorkerStatus.SUCCEEDED,
+            output={"report": {"value": "late"}},
+        )
+
+    worker = _Worker(hanging)
+    resource = InMemoryHarnessNodeOutputResource()
+    committer = _ResultCommitter()
+    executor = _executor(
+        execution_input=_execution_input(activity, task, timeout_seconds=0.02),
+        worker=worker,
+        resource=resource,
+        committer=committer,
+        supervisor=AttemptSupervisor(cancellation_grace_seconds=0.01),
+    )
+
+    receipt = executor.execute(activity, attempt_id="physical-timeout-1")
+    release.set()
+
+    assert started.is_set()
+    assert receipt.worker_result is not None
+    assert receipt.worker_result.status is HarnessWorkerStatus.FAILED
+    terminal = receipt.worker_result.diagnostics["graph_activity_terminal"]
+    assert terminal["run_id"] == activity.run_id
+    assert terminal["graph_id"] == activity.graph_ref.graph_id
+    assert terminal["node_id"] == activity.node_id
+    assert terminal["activity_id"] == activity.activity_id
+    assert terminal["attempt_id"] == "physical-timeout-1"
+    assert terminal["attempt_state"] == AttemptState.TIMED_OUT.value
+    assert terminal["termination_confirmed"] is False
+    assert terminal["indeterminate"] is True
+    assert receipt.graph_result is not None
+    assert receipt.graph_result.status is HarnessGraphActivityResultStatus.TIMEOUT
+    assert receipt.graph_result.termination_confirmed is False
+    assert receipt.node_output_commit is None
+    assert resource.committed_output(HarnessNodeOutputResourceIdentity.for_activity(activity)) is None
+
+
+def test_dispatcher_quarantines_unconfirmed_result_when_apply_fails() -> None:
+    activity, task = _activity_and_task()
+    execution_input = _execution_input(activity, task)
+    executor = _executor(
+        execution_input=execution_input,
+        worker=_Worker(),
+        resource=InMemoryHarnessNodeOutputResource(),
+        committer=_ResultCommitter(),
+    )
+    started = threading.Event()
+    release = threading.Event()
+
+    def hanging(_task):
+        started.set()
+        release.wait(timeout=2)
+        return HarnessWorkerResult(status=HarnessWorkerStatus.SUCCEEDED)
+
+    source = _executor(
+        execution_input=_execution_input(activity, task, timeout_seconds=0.02),
+        worker=_Worker(hanging),
+        resource=InMemoryHarnessNodeOutputResource(),
+        committer=_ResultCommitter(),
+        supervisor=AttemptSupervisor(cancellation_grace_seconds=0.01),
+    )
+    unconfirmed = source.execute(activity, attempt_id="physical-timeout-2")
+    release.set()
+    assert started.is_set()
+    assert unconfirmed.graph_result is not None
+    assert unconfirmed.graph_result.termination_confirmed is False
+
+    executor.execute = lambda _activity, **_kwargs: unconfirmed
+    dispatcher = _dispatcher_for(executor, execution_input)
+    dispatcher._apply_result = lambda *_args: (_ for _ in ()).throw(RuntimeError("projection unavailable"))
+
+    with pytest.raises(RuntimeError, match="projection unavailable"):
+        dispatcher.dispatch(activity)
+
+    assert dispatcher.reconcile(activity) is False
 
 
 def test_superseded_physical_attempt_cannot_commit_output_or_graph_result() -> None:

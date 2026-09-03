@@ -898,6 +898,18 @@ def test_graph_only_task_lifecycle_and_result_round_trip_through_durable_store()
         plan.plan_id,
         plan.version,
     ) == (result,)
+    assert reopened.results_for(
+        plan.run_id,
+        plan.stage_id,
+        "sha256:" + "0" * 64,
+        plan.version,
+    ) == ()
+    assert reopened.results_for(
+        plan.run_id,
+        plan.stage_id,
+        plan.plan_id,
+        plan.version + 99,
+    ) == ()
     report = TaskPlanReplayReducer().replay(
         (plan,),
         events,
@@ -1582,9 +1594,9 @@ def test_patch_and_terminal_result_are_recoverable_from_event_and_artifact_refs(
     assert reopened.plan(plan.run_id, plan.stage_id, 2) == next_plan
     recovered = reopened.load_projection(plan.run_id, plan.stage_id)
     assert next(item for item in recovered.tasks if item.task_id == "structure").status is TaskLifecycle.SUCCEEDED
-    assert next(item for item in recovered.tasks if item.task_id == "helper").status is TaskLifecycle.FAILED
+    assert next(item for item in recovered.tasks if item.task_id == "helper").status is TaskLifecycle.SKIPPED
     assert next(item for item in recovered.tasks if item.task_id == "helper-replacement").status is TaskLifecycle.PENDING
     assert reopened.results_for(plan.run_id, plan.stage_id, next_plan.plan_id, 2) == (structure_result,)
     event_types = [event.event_type for event in reopened.read_events(plan.run_id, plan.stage_id)]
     assert "PLAN_PATCH_ACCEPTED" in event_types
-    assert event_types[-2:] == ["PLAN_PATCH_ACCEPTED", "PLAN_ACCEPTED"]
+    assert event_types[-1] == "TASK_REPLACED"

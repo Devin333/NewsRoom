@@ -32,7 +32,13 @@ class MemoryWriter:
                 tenant_id=request.tenant_id,
             )
             try:
-                policy.validate_write(candidate)
+                if request.mode == MemoryWriteMode.PROMOTE:
+                    candidate = _promoted_record(candidate)
+                    policy.validate_write(candidate, operation="promote")
+                elif request.mode == MemoryWriteMode.INVALIDATE:
+                    policy.validate_operation("invalidate", record=candidate)
+                else:
+                    policy.validate_write(candidate)
             except Exception as exc:
                 errors.append(str(exc))
                 continue
@@ -50,7 +56,7 @@ class MemoryWriter:
         elif request.mode == MemoryWriteMode.PROMOTE:
             result = _write_promote(records, store=store)
         elif request.mode == MemoryWriteMode.INVALIDATE:
-            result = _write_invalidate(records, store=store)
+            result = _write_invalidate(records, store=store, policy=policy)
         else:
             result = store.write_many(records)
         return MemoryWriteResult(
@@ -164,11 +170,19 @@ def _write_merge(records: list[MemoryRecord], *, store: MemoryStore) -> MemoryWr
 
 
 def _write_promote(records: list[MemoryRecord], *, store: MemoryStore) -> MemoryWriteResult:
-    promoted = [replace(record, scope=_promoted_scope(record.scope)) for record in records]
-    return _write_upsert(promoted, store=store)
+    return _write_upsert(records, store=store)
 
 
-def _write_invalidate(records: list[MemoryRecord], *, store: MemoryStore) -> MemoryWriteResult:
+def _promoted_record(record: MemoryRecord) -> MemoryRecord:
+    return replace(record, scope=_promoted_scope(record.scope))
+
+
+def _write_invalidate(
+    records: list[MemoryRecord],
+    *,
+    store: MemoryStore,
+    policy: MemoryPolicy,
+) -> MemoryWriteResult:
     written_count = 0
     skipped_count = 0
     memory_ids: list[str] = []
@@ -177,6 +191,12 @@ def _write_invalidate(records: list[MemoryRecord], *, store: MemoryStore) -> Mem
         existing = store.get(record.memory_id)
         if existing is None:
             skipped_count += 1
+            continue
+        try:
+            policy.validate_operation("invalidate", record=existing)
+        except Exception as exc:
+            skipped_count += 1
+            errors.append(str(exc))
             continue
         invalidated = existing.mark_invalidated("invalidated by write mode")
         try:

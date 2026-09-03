@@ -1487,26 +1487,38 @@ class AttemptSupervisor:
                 finalize=None,
             )
         remaining_after_prepare = context.remaining_seconds
-        if remaining_after_prepare is not None and remaining_after_prepare <= 0:
+        deadline_expired = bool(
+            remaining_after_prepare is not None and remaining_after_prepare <= 0
+        )
+        if deadline_expired:
             context.cancel()
         start_gate.set()
 
         completed_before_deadline = False
+        cancellation_requested = False
         while True:
             if completed.is_set():
                 completion_time = finished_at[0]
+                deadline_expired = bool(
+                    context.deadline is not None
+                    and completion_time > context.deadline
+                )
+                cancellation_requested = bool(
+                    context.cancelled and not deadline_expired
+                )
                 completed_before_deadline = (
                     not context.cancelled
-                    and (
-                        context.deadline is None
-                        or completion_time <= context.deadline
-                    )
+                    and not deadline_expired
                 )
                 break
             if context.cancelled:
+                cancellation_requested = True
                 context.cancel()
             remaining = context.remaining_seconds
-            if (remaining is not None and remaining <= 0) or context.cancelled:
+            if remaining is not None and remaining <= 0:
+                deadline_expired = True
+                break
+            if cancellation_requested:
                 break
             wait_seconds = 0.05 if remaining is None else min(remaining, 0.05)
             completed.wait(wait_seconds)
@@ -1539,14 +1551,38 @@ class AttemptSupervisor:
         if not termination_confirmed:
             context.mark_descendant_unconfirmed()
         self._propagate_descendant_state(context, parent_context)
-        outcome = AttemptOutcome(
-            context=context,
-            state=AttemptState.TIMED_OUT,
-            timed_out=True,
-            termination_confirmed=termination_confirmed,
-            indeterminate=indeterminate,
-            elapsed_seconds=self.clock() - started,
-        )
+        if cancellation_requested and not deadline_expired:
+            if termination_confirmed:
+                outcome = AttemptOutcome(
+                    context=context,
+                    state=AttemptState.TIMED_OUT,
+                    error=AttemptCancelledError(context.attempt_id),
+                    timed_out=False,
+                    termination_confirmed=True,
+                    indeterminate=False,
+                    elapsed_seconds=self.clock() - started,
+                    reason_code="attempt_cancelled",
+                )
+            else:
+                outcome = AttemptOutcome(
+                    context=context,
+                    state=AttemptState.INDETERMINATE,
+                    error=AttemptIndeterminateError(context.attempt_id),
+                    timed_out=False,
+                    termination_confirmed=False,
+                    indeterminate=True,
+                    elapsed_seconds=self.clock() - started,
+                    reason_code="attempt_cancellation_unconfirmed",
+                )
+        else:
+            outcome = AttemptOutcome(
+                context=context,
+                state=AttemptState.TIMED_OUT,
+                timed_out=True,
+                termination_confirmed=termination_confirmed,
+                indeterminate=indeterminate,
+                elapsed_seconds=self.clock() - started,
+            )
         return self._finalize_started_outcome(
             outcome,
             parent_context=parent_context,

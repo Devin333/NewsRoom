@@ -41,3 +41,19 @@ def test_redaction_rule_matches_case_insensitive_key_tokens() -> None:
 
     assert rule.matches_key("X-API-Key")
     assert not rule.matches_key("topic")
+
+
+def test_secret_pattern_preserves_normal_text_and_requires_token_boundary() -> None:
+    payload = redact_sensitive_values(
+        {
+            "task": "task-plan-helper",
+            "risk": "risk-assessment",
+            "title": "desk-lamp-holder",
+            "message": "prefixsk-1234567890abcdef and sk-1234567890abcdef suffix",
+        }
+    )
+
+    assert payload["task"] == "task-plan-helper"
+    assert payload["risk"] == "risk-assessment"
+    assert payload["title"] == "desk-lamp-holder"
+    assert payload["message"] == "prefixsk-1234567890abcdef and ***REDACTED*** suffix"

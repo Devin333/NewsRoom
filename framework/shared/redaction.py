@@ -22,7 +22,7 @@ DEFAULT_SENSITIVE_KEY_TOKENS = (
 
 _SECRET_PREFIX = "sk" + "-"
 _SECRET_PATTERNS = (
-    re.compile(rf"{_SECRET_PREFIX}[A-Za-z0-9_-]{{8,}}"),
+    re.compile(rf"(?<![A-Za-z0-9_-]){_SECRET_PREFIX}[A-Za-z0-9_-]{{8,}}(?![A-Za-z0-9_-])"),
     re.compile(r"Bearer\s+[A-Za-z0-9._~+/=-]{8,}", re.IGNORECASE),
     re.compile(r"([a-z][a-z0-9+.-]*://)([^/\s:@?#]+):([^@\s/?#]+)@", re.IGNORECASE),
 )

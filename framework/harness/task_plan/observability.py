@@ -278,6 +278,7 @@ def _event_task_status(event_type: str) -> str | None:
         "TASK_FAILED": "failed",
         "TASK_BLOCKED": "blocked",
         "TASK_SKIPPED": "skipped",
+        "TASK_REPLACED": "replaced",
     }.get(event_type)
 
 

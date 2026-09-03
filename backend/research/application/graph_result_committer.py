@@ -513,6 +513,13 @@ class ResearchTaskPlanResultMaterializer(TaskPlanResultVerifierPort):
         self._tenant_scope_ref = tenant_scope_ref
         self._invocation_factory = invocation_factory
 
+    @property
+    def registered_gate_refs(self) -> tuple[str, ...]:
+        """Expose the wrapped deterministic gate registry to PLAN preflight."""
+
+        refs = getattr(self._verifier, "registered_gate_refs", None)
+        return tuple(refs) if refs is not None else ()
+
     def verify(
         self,
         result: HarnessWorkerResult,

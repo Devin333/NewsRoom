@@ -39,10 +39,15 @@ class SkillPromotionDecider:
             for item in result.details.get("gate_results", ())
         )
         status = SkillPromotionStatus.NEEDS_HUMAN_APPROVAL if needs_approval else SkillPromotionStatus.REJECT
+        nested_reasons = tuple(
+            str(item.get("reason"))
+            for item in result.details.get("gate_results", ())
+            if isinstance(item, dict) and item.get("reason")
+        )
         return SkillPromotionDecision(
             candidate_id=candidate.candidate_id,
             status=status,
-            reasons=(result.reason or "candidate failed promotion gate",),
+            reasons=(nested_reasons[0] if nested_reasons else (result.reason or "candidate failed promotion gate"),),
             gate_results=(result.to_dict(),),
             approval_ref=approval_ref,
         )
