@@ -85,7 +85,7 @@ export function DesignDemoPage() {
       </header>
 
       <main>
-        <section id="workspace" className="mx-auto max-w-[1080px] px-10 pb-24 pt-28">
+        <section id="workspace" className="mx-auto max-w-[1080px] px-10 pb-24 pt-36">
           <h1 className="mx-auto mb-14 max-w-[900px] text-center text-[40px] font-semibold leading-[1.35] tracking-normal [font-family:'STXinwei','STKaiti','KaiTi','Microsoft_YaHei',serif]">
             <span className="text-[#35274f]">从一个问题开始，</span><span className="text-[#7c3aed]">找到值得深入的研究线索。</span>
           </h1>
