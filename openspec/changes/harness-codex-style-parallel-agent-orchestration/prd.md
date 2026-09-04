@@ -491,16 +491,9 @@ PRD 不预设脱离实际 workload 的绝对加速倍数。上线门槛是：并
 - 回滚后新请求可回到 legacy single-child path，但旧 group 的历史 projection 仍必须可 inspection/replay。
 - 回滚原因、影响的 capability/stage、最后一个 accepted plan version 和未结算 reservation 必须进入运营记录。
 
-## 关联 OpenSpec 工件（索引）
-
-- `proposal.md`：变更动机、影响面与完成定义。
-- `design.md`：架构决策、状态机、预算/容量合同、恢复与上线策略。
-- `specs/`：Harness、TaskPlan、AgentLoop 和 Research 的可验证行为要求。
-- `tasks.md`：实施任务与验证清单。
-
 ## 12. 产品范围与优先级
 
-### 13.1 P0 交付范围
+### 12.1 P0 交付范围
 
 P0 是能够被称为 Codex 式并行编排的完整闭环。以下能力缺一不可：
 
@@ -513,7 +506,7 @@ P0 是能够被称为 Codex 式并行编排的完整闭环。以下能力缺一�
 | 失败恢复 | retry、cancel、lease expiry、crash recovery、bounded replan 均有明确终态 | 无限重试、静默跳过或猜测结果 |
 | 可回放 | 仅用 durable evidence 重建 projection，禁止触发 live 依赖 | replay 重新调用 LLM、工具或 worker |
 
-### 13.2 P1/P2 后续范围
+### 12.2 P1/P2 后续范围
 
 - P1：跨 run 配额看板、人工暂停/恢复、按 capability 的调度公平性和更丰富的诊断 artifact。
 - P2：跨进程或跨机器 transport、持久队列、worker autoscaling、exactly-once 外部副作用协议。
@@ -536,7 +529,7 @@ P0 是能够被称为 Codex 式并行编排的完整闭环。以下能力缺一�
 
 ## 14. 端到端产品流程
 
-### 15.1 正常路径
+### 14.1 正常路径
 
 1. Parent 读取当前 stage 输入和已有 observation，生成带 `plan_id`、`plan_version`、`parent_turn_id` 的 `delegate_batch`。
 2. Harness 检查任务数量、字段边界、依赖闭包、输入 refs、输出 roles、capability binding、side-effect class 和 budget hint。
@@ -548,17 +541,17 @@ P0 是能够被称为 Codex 式并行编排的完整闭环。以下能力缺一�
 8. Parent 只收到一次 `ParentObservation`，其中包含安全摘要、refs、diagnostics、预算和恢复事实。
 9. Parent 可继续生成下一轮 candidate，但不得把 observation 中的诊断字段直接当成 routing 或 quality 指令。
 
-### 15.2 容量不足路径
+### 14.2 容量不足路径
 
 READY 集合大于有效并发度时，未入当前 wave 的任务保持 durable READY。当前 wave 的 attempt 完成、取消、回收或进入明确终态并结算 reservation 后，才能创建下一 wave。所有 wave 共用同一 group join scope，不能提前汇聚或重新定义 required roles。
 
-### 15.3 失败与恢复路径
+### 14.3 失败与恢复路径
 
 失败必须先落事件再做控制动作。`fail_fast` 的取消顺序、`wait_all` 的等待规则、retry 次数、replan patch 类型和 lease expiry reclaim 行为必须从 pinned policy 读取，并且每一步都有 idempotency key。无法确认 child 是否产生外部副作用时，状态必须是 `INDETERMINATE` 或 `HALTED`，不得自动重放。
 
 ## 15. 产品数据契约
 
-### 16.1 `delegate_batch` 输入契约
+### 15.1 `delegate_batch` 输入契约
 
 每个 logical task 至少包含以下字段：
 
@@ -575,13 +568,13 @@ READY 集合大于有效并发度时，未入当前 wave 的任务保持 durable
 
 Candidate 可携带 token/cost 估算作为调度参考，但不得将估算值当作 worker 数量、授权或质量结论。
 
-### 16.2 `ParentObservation` 输出契约
+### 15.2 `ParentObservation` 输出契约
 
 Parent observation 必须是版本化、可校验、可脱敏的结构，至少包含 `run_id`、`stage_id`、`plan_version`、`group_id`、`group_state`；每个 wave 的 id、ordinal、状态和安全摘要；按稳定 task order 的 summary、result ref、checksum、terminal reason；required role 覆盖、aggregate ref/checksum、gate diagnostics；requested/effective parallelism、预算、retry/replan/recovery 计数；以及 `ParentObservationLimits` 的截断信息。
 
 不得包含 hidden prompt、secret、sibling 原始 transcript、未经授权的 tool payload、authorization token 或可直接驱动 Harness 的控制字段。
 
-### 16.3 稳定错误分类
+### 15.3 稳定错误分类
 
 对 parent、运维和 replay 使用稳定 typed reason code，而不是依赖异常文本：
 
@@ -601,15 +594,15 @@ Parent observation 必须是版本化、可校验、可脱敏的结构，至少�
 
 ## 16. 并发与资源策略
 
-### 17.1 并发判定
+### 16.1 并发判定
 
 Harness 根据依赖、side-effect class 和 `resource_conflict_key` 计算 ready 集合，再计算 `effective_parallelism = min(stage_limit, capability_capacity, supervisor_capacity, available_concurrency_reservation)`。当 ready 至少两个、有效并发度至少 2、每个任务 reservation 成功且未启用 `serial_fallback` 时，必须真实并发启动。并发度不能由 token/cost 估算直接推导，也不能由 child 在运行时提高。
 
-### 17.2 预算 reservation
+### 16.2 预算 reservation
 
 Group admission 锁定总预算 envelope，wave admission 锁定物理执行 reservation，attempt 结束后以 `CONSUMED` 或 `RELEASED` 结算。重试创建新 attempt reservation；取消、崩溃恢复和 lease reclaim 必须幂等结算。已启动但没有 reservation 记录的 child 视为协议违规并触发 halt。
 
-### 17.3 公平性与背压
+### 16.3 公平性与背压
 
 本期只保证单 run 内确定性 READY 顺序和 hard capacity 上限，不承诺跨 run 公平调度。超过上限的任务留在同一 group 等待，不得创建隐式 group、绕过 admission 或无限增加 wave。
 
@@ -649,18 +642,18 @@ Group admission 锁定总预算 envelope，wave admission 锁定物理执行 res
 
 ## 20. 上线门禁与回滚
 
-### 21.1 上线前门禁
+### 20.1 上线前门禁
 
 必须同时满足：strict OpenSpec validation 通过；所有 P0 task 有测试证据；generic `AgentLoop` 使用真实 supervisor、worker registry、event store、artifact verifier；并发 overlap、multi-wave join、failure、replay、legacy compatibility 通过；Research publication parity 和 static regression 通过；指标、审计、告警可查询；feature flag 关闭、serial adapter 和运行中 group recovery 已演练。
 
-### 21.2 分阶段发布
+### 20.2 分阶段发布
 
 - 阶段 0：schema 和代码默认关闭，只运行 validator/replay。
 - 阶段 1：generic AgentLoop 仅在受控测试 run 开启。
 - 阶段 2：Research dynamic 只对 allowlisted run opt-in，static 仍是默认。
 - 阶段 3：根据稳定性、预算、失败率和 replay evidence 扩大范围，不自动切换默认路径。
 
-### 21.3 回滚
+### 20.3 回滚
 
 只允许关闭 feature flag 或切换显式 serial adapter。运行中的 group 使用创建时 pinned policy 完成恢复、取消或 halt；不得改写同一 run、重新生成 candidate 或清除证据。
 
@@ -674,3 +667,10 @@ Group admission 锁定总预算 envelope，wave admission 锁定物理执行 res
 - 跨进程 transport、autoscaling、exactly-once 外部副作用和跨 run 公平性不属于本期。
 
 实现前需由产品/架构负责人确认 stage-specific policy 数值，例如 `max_tasks_per_group`、`max_parallelism`、`max_group_runtime_seconds`、`ParentObservationLimits` 和 capability capacity。没有显式配置时使用 design 中的 bounded defaults，并在 inspection 中显示使用了默认值。
+
+## 22. 关联 OpenSpec 工件（索引）
+
+- `proposal.md`：变更动机、影响面与完成定义。
+- `design.md`：架构决策、状态机、预算/容量合同、恢复与上线策略。
+- `specs/`：Harness、TaskPlan、AgentLoop 和 Research 的可验证行为要求。
+- `tasks.md`：实施任务与验证清单。
