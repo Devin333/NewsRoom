@@ -704,6 +704,7 @@ class _GroupSession:
     reserved: set[str] = field(default_factory=set)
     degraded_reason: str | None = None
     active_children: dict[str, tuple[ChildAgentHandle, "_SupervisorTaskWorker"]] = field(default_factory=dict)
+    spawn_receipts: dict[str, tuple[str, str | None]] = field(default_factory=dict)
     quarantined_task_ids: set[str] = field(default_factory=set)
     next_wave_ordinal: int = 1
     started_at: float = field(default_factory=monotonic)
@@ -925,6 +926,7 @@ class ParallelAgentCoordinator:
         request: ParallelDispatchRequest,
         *,
         event_sink: Callable[[Mapping[str, Any]], Any] | None = None,
+        check_capacity: bool = True,
     ) -> DispatchGroup:
         group_parallelism = self._group_parallelism_limit(request)
         if group_parallelism < 1:
@@ -951,7 +953,11 @@ class ParallelAgentCoordinator:
         with self._lock:
             if group.group_id in self._sessions:
                 return self._sessions[group.group_id].group
-            admitted_parallelism, _ = self._dispatch_parallelism(request)
+            admitted_parallelism = (
+                self._dispatch_parallelism(request)[0]
+                if check_capacity
+                else group.max_parallelism
+            )
             self._sessions[group.group_id] = _GroupSession(group=group, request=request)
         self._emit(
             "TASK_GROUP_ADMITTED",
@@ -1000,7 +1006,9 @@ class ParallelAgentCoordinator:
                 "parallel recovery has invalid historical wave ordinals",
                 code="TASK_GROUP_RECOVERY_WAVE_INVALID",
             )
-        group = self.create_group(request, event_sink=event_sink)
+        # Recovery must not re-run admission against current live capacity:
+        # a confirmed child may itself occupy the last supervisor slot.
+        group = self.create_group(request, event_sink=event_sink, check_capacity=False)
         by_task: dict[str, TaskResultRecord] = {}
         for result in results:
             if (
@@ -1131,6 +1139,111 @@ class ParallelAgentCoordinator:
                 idempotency_key=recovery_checksum,
             )
             return self._result_for_session(session, request, limits=limits)
+
+    def reconcile_spawn_intents(
+        self,
+        request: ParallelDispatchRequest,
+        intents: tuple[Mapping[str, Any], ...],
+        invoke: Callable[[TaskInstance], TaskResultRecord],
+        *,
+        event_sink: Callable[[Mapping[str, Any]], Any] | None = None,
+    ) -> ParallelDispatchResult:
+        """Reconcile durable spawn intents using supervisor status only.
+
+        An intent without a receipt is not evidence that no child started. The
+        supervisor operation is queried by its immutable key; confirmed
+        handles are indexed for later waiting, while unknown outcomes remain
+        fail-closed and are never retried implicitly.
+        """
+        if self.child_supervisor is None:
+            raise HarnessValidationError(
+                "spawn reconciliation requires a supervisor",
+                code="TASK_GROUP_RECOVERY_SUPERVISOR_REQUIRED",
+            )
+        group = self.create_group(request, event_sink=event_sink, check_capacity=False)
+        with self._lock:
+            session = self._sessions[group.group_id]
+        task_by_id = {item.task_id: item for item in request.task_instances}
+        if not intents:
+            return self._result_for_session(session, request, limits=None)
+        intent_wave_ids = {
+            identifier(raw.get("wave_id"), "wave_id")
+            for raw in intents
+            if isinstance(raw, Mapping)
+        }
+        if len(intent_wave_ids) != 1:
+            raise HarnessValidationError(
+                "spawn reconciliation must cover one wave at a time",
+                code="TASK_GROUP_RECOVERY_INTENT_INVALID",
+            )
+        for raw in intents:
+            if not isinstance(raw, Mapping):
+                raise HarnessValidationError("spawn intent is invalid", code="TASK_GROUP_RECOVERY_INTENT_INVALID")
+            task_id = identifier(raw.get("task_id"), "task_id")
+            item = task_by_id.get(task_id)
+            wave_id = identifier(raw.get("wave_id"), "wave_id")
+            task_instance_id = identifier(raw.get("task_instance_id"), "task_instance_id")
+            attempt = raw.get("attempt")
+            if item is None or item.task_instance_id != task_instance_id or item.attempt != attempt:
+                raise HarnessValidationError("spawn intent does not match task instance", code="TASK_GROUP_RECOVERY_INTENT_INVALID")
+            operation_key = raw.get("operation_key")
+            expected_key = spawn_operation_key(group.group_id, wave_id, task_instance_id, attempt)
+            if operation_key != expected_key:
+                raise HarnessValidationError("spawn intent operation key is invalid", code="TASK_GROUP_RECOVERY_INTENT_INVALID")
+            wave = next((value for value in session.waves if value.wave_id == wave_id), None)
+            if wave is None or task_id not in wave.task_ids:
+                raise HarnessValidationError("spawn intent wave scope is invalid", code="TASK_GROUP_RECOVERY_INTENT_INVALID")
+            with self._lock:
+                prior = session.spawn_receipts.get(operation_key)
+            if prior is not None:
+                continue
+            child_id = f"parallel-{task_instance_id}"
+            try:
+                handle = self.child_supervisor.status(child_id, operation_id=operation_key)
+            except ChildAgentSupervisorError:
+                with self._lock:
+                    session.spawn_receipts[operation_key] = ("SPAWN_UNKNOWN", None)
+                self._emit(
+                    "TASK_ATTEMPT_SPAWN_UNKNOWN", event_sink=event_sink,
+                    group_id=group.group_id, wave_id=wave_id, task_id=task_id,
+                    task_instance_id=task_instance_id, attempt=attempt,
+                    operation_key=operation_key, spawn_status="SPAWN_UNKNOWN",
+                    idempotency_key=operation_key,
+                )
+                continue
+            worker = _SupervisorTaskWorker(invoke, item)
+            with self._lock:
+                session.active_children[task_id] = (handle, worker)
+                session.reserved.add(task_id)
+                session.spawn_receipts[operation_key] = ("SPAWN_CONFIRMED", handle.child_id)
+            self._emit(
+                "TASK_ATTEMPT_SPAWN_CONFIRMED", event_sink=event_sink,
+                group_id=group.group_id, wave_id=wave_id, task_id=task_id,
+                task_instance_id=task_instance_id, attempt=attempt,
+                operation_key=operation_key, spawn_status="SPAWN_CONFIRMED",
+                child_id=handle.child_id, idempotency_key=operation_key,
+            )
+        intent_task_ids = {identifier(raw.get("task_id"), "task_id") for raw in intents}
+        if len(intent_task_ids) != len(intents):
+            raise HarnessValidationError(
+                "spawn reconciliation contains duplicate task intents",
+                code="TASK_GROUP_RECOVERY_INTENT_INVALID",
+            )
+        with self._lock:
+            confirmed = intent_task_ids.intersection(session.active_children)
+            wave_states = {value.wave_id: value for value in session.waves}
+        if confirmed == intent_task_ids:
+            wave_id = identifier(intents[0].get("wave_id"), "wave_id")
+            wave = wave_states[wave_id]
+            # ``dispatch`` marks a group INDETERMINATE when the process dies
+            # after child receipts but before the dispatch event.  Reopening
+            # that audited boundary is specific to this reconciliation path;
+            # ordinary callers still cannot transition terminal groups.
+            with self._lock:
+                if session.group.state is DispatchGroupState.INDETERMINATE:
+                    session.group = replace(session.group, state=DispatchGroupState.DISPATCHING)
+            self._mark_wave_dispatched(session, wave, event_sink=event_sink)
+        return self._result_for_session(session, request, limits=None)
 
     def dispatch(
         self,
@@ -1764,9 +1877,15 @@ class ParallelAgentCoordinator:
                     continue
                 with self._lock:
                     session.active_children[item.task_id] = (handle, worker)
+                    session.spawn_receipts[spawn_request.operation_id] = (
+                        "SPAWN_CONFIRMED",
+                        handle.child_id,
+                    )
                 reconciled.append((item, spawn_request, handle))
             for item, spawn_request, handle in reconciled:
                 if handle is None:
+                    with self._lock:
+                        session.spawn_receipts[spawn_request.operation_id] = ("SPAWN_UNKNOWN", None)
                     self._emit(
                         "TASK_ATTEMPT_SPAWN_UNKNOWN",
                         event_sink=event_sink,
@@ -1804,6 +1923,10 @@ class ParallelAgentCoordinator:
             children.append((item, worker, handle))
             with self._lock:
                 session.active_children[item.task_id] = (handle, worker)
+                session.spawn_receipts[_spawn_request.operation_id] = (
+                    "SPAWN_CONFIRMED",
+                    handle.child_id,
+                )
         for (item, _worker, _spawn_request), handle in zip(pending_children, handles, strict=True):
             self._emit(
                 "TASK_ATTEMPT_SPAWN_CONFIRMED",
@@ -2017,6 +2140,12 @@ class ParallelAgentCoordinator:
         updated: list[DispatchWave] = []
         for wave in session.waves:
             if not (pending & set(wave.task_ids)):
+                updated.append(wave)
+                continue
+            if reason_code == "child_runtime_indeterminate" and wave.state is not DispatchWaveState.TERMINAL:
+                # Keep the admitted wave and reservations addressable after a
+                # process crash.  A terminal INDETERMINATE wave cannot carry
+                # the later audited receipt-to-dispatch transition.
                 updated.append(wave)
                 continue
             reservations = tuple(

@@ -422,6 +422,71 @@ def test_supervised_capacity_two_runs_three_tasks_in_two_waves_with_overlap() ->
         supervisor.shutdown()
 
 
+def test_reconcile_spawn_intents_reuses_confirmed_children_without_spawn() -> None:
+    """A crash after receipts but before dispatch must be status-only on recovery."""
+    plan = _accepted_parallel_plan(("task-1", "task-2"))
+    request = _request(plan)
+    durable_events: list[dict[str, object]] = []
+    supervisor = ChildAgentSupervisor(max_children=2)
+    fail_once = True
+
+    def event_sink(event):
+        nonlocal fail_once
+        durable_events.append(dict(event))
+        if event["event_type"] == "TASK_WAVE_DISPATCHED" and fail_once:
+            fail_once = False
+            raise RuntimeError("simulated process crash at dispatch receipt")
+
+    coordinator = ParallelAgentCoordinator(
+        max_workers=2,
+        child_supervisor=supervisor,
+        event_sink=ParallelEventSink(
+            event_sink,
+            lambda batch: durable_events.extend(dict(item) for item in batch),
+        ),
+    )
+
+    def invoke(instance):
+        return _result(plan, instance)
+
+    try:
+        with pytest.raises(RuntimeError, match="simulated process crash"):
+            coordinator.dispatch(request, invoke)
+        intents = tuple(
+            event for event in durable_events
+            if event["event_type"] == "TASK_ATTEMPT_SPAWN_INTENT"
+        )
+        assert len(intents) == 2
+        group_id = intents[0]["group_id"]
+        session = coordinator._sessions[group_id]
+        with coordinator._lock:
+            # Model a lost receipt projection while retaining the supervisor's
+            # authoritative child handles and the admitted wave.
+            session.spawn_receipts.clear()
+
+        def must_not_spawn(*_args, **_kwargs):
+            raise AssertionError("recovery must not invoke spawn_batch")
+
+        supervisor.spawn_batch = must_not_spawn
+        recovery_events: list[dict[str, object]] = []
+        recovered = coordinator.reconcile_spawn_intents(
+            request,
+            intents,
+            invoke,
+            event_sink=recovery_events.append,
+        )
+
+        assert recovered.group.state is DispatchGroupState.RUNNING
+        assert any(event["event_type"] == "TASK_WAVE_DISPATCHED" for event in recovery_events)
+        assert {
+            event["spawn_status"]
+            for event in recovery_events
+            if event["event_type"] == "TASK_ATTEMPT_SPAWN_CONFIRMED"
+        } == {"SPAWN_CONFIRMED"}
+    finally:
+        supervisor.shutdown()
+
+
 def test_fail_fast_isolates_late_child_and_releases_unstarted_wave() -> None:
     plan = _accepted_parallel_plan()
     request = _request(plan, join_policy=JoinPolicy.FAIL_FAST)
