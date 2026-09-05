@@ -1549,6 +1549,7 @@ class TaskLifecycle(StrEnum):
     FAILED = "failed"
     SKIPPED = "skipped"
     BLOCKED = "blocked"
+    BLOCKED_DEPENDENCY = "blocked_dependency"
 
 
 @dataclass(frozen=True, slots=True)

@@ -33,7 +33,12 @@ from framework.harness.task_plan.canonical import (
     stable_text_tuple,
     thaw_mapping,
 )
-from framework.harness.task_plan.models import TaskInstance, TaskLifecycle, ValidatedTaskPlan
+from framework.harness.task_plan.models import (
+    TaskInstance,
+    TaskLifecycle,
+    TaskPlanProjection,
+    ValidatedTaskPlan,
+)
 from framework.harness.task_plan.parallel_lifecycle import (
     DispatchGroupState,
     DispatchWaveState,
@@ -653,6 +658,9 @@ class _GroupSession:
     request: ParallelDispatchRequest
     waves: list[DispatchWave] = field(default_factory=list)
     results: dict[str, TaskResultRecord] = field(default_factory=dict)
+    blocked_task_ids: set[str] = field(default_factory=set)
+    blocked_task_checksums: dict[str, str] = field(default_factory=dict)
+    failed_task_ids: set[str] = field(default_factory=set)
     reserved: set[str] = field(default_factory=set)
     degraded_reason: str | None = None
     active_children: dict[str, tuple[ChildAgentHandle, "_SupervisorTaskWorker"]] = field(default_factory=dict)
@@ -1337,7 +1345,7 @@ class ParallelAgentCoordinator:
             if session.join_started_at is None:
                 session.join_started_at = monotonic()
             expected = set(group.task_ids)
-            received = set(session.results)
+            received = set(session.results) | session.blocked_task_ids | session.failed_task_ids
             missing = sorted(expected - received)
             previous_state = session.group.state
             if session.group.state in {
@@ -1403,6 +1411,46 @@ class ParallelAgentCoordinator:
                 idempotency_key=session.group.group_id,
             )
             return result
+
+    def sync_task_terminals(
+        self,
+        request: ParallelDispatchRequest,
+        projection: TaskPlanProjection,
+        *,
+        event_sink: Callable[[Mapping[str, Any]], Any] | None = None,
+    ) -> None:
+        """Hydrate deterministic task terminal facts for a wait-all join.
+
+        Blocked tasks have no attempt or worker result by contract. Their
+        projection is therefore tracked separately from accepted results;
+        failed task ids are tracked only to close the group with a typed
+        partial-failure outcome.
+        """
+
+        group = self.create_group(request, event_sink=event_sink)
+        if not projection.matches_plan_identity(request.plan):
+            raise HarnessValidationError(
+                "parallel terminal projection does not match dispatch group",
+                code="TASK_GROUP_SCOPE_MISMATCH",
+            )
+        task_ids = set(group.task_ids)
+        with self._lock:
+            session = self._sessions[group.group_id]
+            for state in projection.tasks:
+                if state.task_id not in task_ids:
+                    continue
+                if state.status is TaskLifecycle.BLOCKED_DEPENDENCY:
+                    session.blocked_task_ids.add(state.task_id)
+                    session.blocked_task_checksums[state.task_id] = state.task_definition_checksum
+                elif state.status is TaskLifecycle.FAILED:
+                    session.failed_task_ids.add(state.task_id)
+            unknown = (session.blocked_task_ids | session.failed_task_ids) - task_ids
+            if unknown:
+                raise HarnessValidationError(
+                    "parallel terminal projection is outside group scope",
+                    code="TASK_GROUP_SCOPE_MISMATCH",
+                    details={"task_ids": sorted(unknown)},
+                )
 
     def cancel(
         self,
@@ -1887,8 +1935,10 @@ class ParallelAgentCoordinator:
     def _terminal_state(self, session: _GroupSession) -> tuple[DispatchGroupState, tuple[str, ...]]:
         results = tuple(session.results.values())
         failed = [item for item in results if item.status is TaskLifecycle.FAILED]
-        if failed:
+        if failed or session.failed_task_ids:
             return DispatchGroupState.FAILED, ("TASK_FAILED",)
+        if session.blocked_task_ids:
+            return DispatchGroupState.FAILED, ("DEPENDENCY_BLOCKED", "REQUIRED_ROLE_MISSING")
         roles = [item.output_roles for item in results if item.status is TaskLifecycle.SUCCEEDED]
         output_roles = [role for values in roles for role in values]
         if len(output_roles) != len(set(output_roles)):
@@ -1909,6 +1959,22 @@ class ParallelAgentCoordinator:
         diagnostics: tuple[str, ...] | None = None,
     ) -> ParallelDispatchResult:
         ordered = tuple(session.results[key] for key in sorted(session.results))
+        blocked_summaries = tuple(
+            {
+                "task_id": task_id,
+                "status": TaskLifecycle.BLOCKED_DEPENDENCY.value,
+                "attempt": 0,
+                "output_roles": [],
+                "result_ref": None,
+                "checksum": session.blocked_task_checksums[task_id],
+            }
+            for task_id in sorted(session.blocked_task_ids)
+        )
+        # Blocked summaries are intentionally not TaskResultRecord instances;
+        # they are projection facts and must not imply a fabricated attempt.
+        blocked_summary_by_id = {
+            item["task_id"]: item for item in blocked_summaries
+        }
         aggregate_checksum: str | None = None
         aggregate_ref: str | None = None
         if session.group.state is DispatchGroupState.SUCCEEDED:
@@ -1921,7 +1987,13 @@ class ParallelAgentCoordinator:
             session.group.plan_version,
             session.group.group_id,
             session.group.state.value,
-            tuple({"task_id": item.task_id, "status": item.status.value, "attempt": item.attempt, "output_roles": list(item.output_roles), "result_ref": item.result_ref, "checksum": item.result_checksum} for item in ordered),
+            tuple(
+                [
+                    {"task_id": item.task_id, "status": item.status.value, "attempt": item.attempt, "output_roles": list(item.output_roles), "result_ref": item.result_ref, "checksum": item.result_checksum}
+                    for item in ordered
+                ]
+                + list(blocked_summary_by_id.values())
+            ),
             aggregate_ref=aggregate_ref,
             aggregate_checksum=aggregate_checksum,
             diagnostics=diagnostics or (

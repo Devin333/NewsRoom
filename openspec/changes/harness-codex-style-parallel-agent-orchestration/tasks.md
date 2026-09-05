@@ -27,7 +27,7 @@ only unchanged, focused surfaces; each gate requires all its own exit evidence.
 - [ ] 2.5 Reconcile crashes around admission/intent/receipt/dispatch using audited supervisor status; never duplicate confirmed children or treat missing receipts as proof of no spawn.
 - [ ] 2.6 Route each child through the real `SubAgentRuntime`/`AgentRunner` and `ToolExecutor`/`ToolBatchExecutor`, with isolated refs/context/tool/memory/budget/lease and attributable durable tool receipts.
 - [ ] 2.7 Verify every child result against group/wave/plan/task/attempt/binding, readable transcript/output/artifact/tool receipts, schema, memory/budget and deterministic gates before acceptance.
-- [ ] 2.8 Propagate terminal upstream failure to unadmitted transitive `BLOCKED_DEPENDENCY` descendants, release allocations and finish wait-all without spawning blocked tasks.
+- [x] 2.8 Propagate terminal upstream failure to unadmitted transitive `BLOCKED_DEPENDENCY` descendants, release allocations and finish wait-all without spawning blocked tasks.
 - [ ] 2.9 Complete stable multi-wave join, required-role completeness, deterministic merge/conflict checks, aggregate gate and one final group result independent of completion order.
 - [ ] 2.10 Complete bounded new-attempt retry, wave exhaustion and legal replacement replan with new plan/group/correlation identity; quarantine old-group late receipts.
 - [ ] 2.11 Complete fail-fast admission closure, sibling cancel receipt/lease waiting, reclaim, resource-scoped fence loss and indeterminate handling without unconfirmed side-effect replay.

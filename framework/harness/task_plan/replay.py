@@ -30,6 +30,12 @@ from framework.harness.task_plan.scheduler import (
     TaskPlanScheduler,
     task_instance_for_attempt,
 )
+from framework.harness.task_plan.dependency import (
+    TASK_BLOCKED_UPSTREAM_FAILURE,
+    block_dependency_task,
+    dependency_blocked_task_ids,
+    dependency_blocking_predecessor_ids,
+)
 from framework.harness.task_plan.store import (
     TaskPlanEvent,
     TaskResultRecord,
@@ -605,9 +611,14 @@ class TaskPlanReplayReducer:
                     task_plan,
                     base_plan=plans_by_version.get(task_plan.version - 1),
                 )
-            elif event.event_type in {"TASK_BLOCKED", "TASK_SKIPPED"}:
+            elif event.event_type in {
+                "TASK_BLOCKED",
+                "TASK_BLOCKED_UPSTREAM_FAILURE",
+                "TASK_SKIPPED",
+            }:
                 projection = _require_projection(projection, event)
-                projection = _apply_non_result_terminal(projection, event)
+                task_plan = _task_plan_for_event(event, plans_by_version)
+                projection = _apply_non_result_terminal(projection, event, plan=task_plan)
             elif event.event_type == "STAGE_OUTPUT_AGGREGATED":
                 projection = _require_projection(projection, event)
                 aggregate_projection_checksum = projection.projection_checksum
@@ -2409,6 +2420,8 @@ def _apply_replacement(
 def _apply_non_result_terminal(
     projection: TaskPlanProjection,
     event: TaskPlanEvent,
+    *,
+    plan: ValidatedTaskPlan | None = None,
 ) -> TaskPlanProjection:
     if event.plan_id != projection.plan_id or event.plan_version != projection.plan_version:
         raise HarnessValidationError(
@@ -2427,6 +2440,39 @@ def _apply_non_result_terminal(
             code="task_plan_replay_unknown_task",
             details={"task_id": event.task_id},
         )
+    if event.event_type == "TASK_BLOCKED_UPSTREAM_FAILURE":
+        if plan is None:
+            raise HarnessValidationError(
+                "dependency block replay is missing its accepted plan",
+                code="task_plan_replay_plan_missing",
+            )
+        if event.reason_code != TASK_BLOCKED_UPSTREAM_FAILURE:
+            raise HarnessValidationError(
+                "dependency block replay has an invalid reason code",
+                code="task_plan_replay_dependency_block_invalid",
+            )
+        payload = thaw_mapping(event.payload)
+        if payload.get("projection_checksum") != projection.projection_checksum:
+            raise HarnessValidationError(
+                "dependency block replay has a stale causal projection",
+                code="task_plan_replay_dependency_block_causality",
+            )
+        expected_targets = dependency_blocked_task_ids(plan, projection)
+        if event.task_id not in expected_targets or event.task_id != expected_targets[0]:
+            raise HarnessValidationError(
+                "dependency block replay violates stable closure order",
+                code="task_plan_replay_dependency_block_order",
+                details={"task_id": event.task_id, "expected": list(expected_targets)},
+            )
+        expected_predecessors = dependency_blocking_predecessor_ids(plan, projection, event.task_id)
+        actual_predecessors = tuple(payload.get("blocking_predecessor_ids", ()))
+        if actual_predecessors != expected_predecessors:
+            raise HarnessValidationError(
+                "dependency block replay has invalid predecessor evidence",
+                code="task_plan_replay_dependency_block_cause",
+                details={"task_id": event.task_id},
+            )
+        return block_dependency_task(plan, projection, event.task_id)
     target = TaskLifecycle.BLOCKED if event.event_type == "TASK_BLOCKED" else TaskLifecycle.SKIPPED
     updated = replace(
         state,

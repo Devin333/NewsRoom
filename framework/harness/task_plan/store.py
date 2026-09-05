@@ -1490,7 +1490,7 @@ def _projection_for_plan(plan: ValidatedTaskPlan, *, sequence: int, previous: Ta
     states = []
     for item in plan.tasks:
         old = previous_by_id.get(item.task_id)
-        if old is not None and old.task_definition_checksum == item.task_definition_checksum and old.status in {TaskLifecycle.SUCCEEDED, TaskLifecycle.FAILED, TaskLifecycle.SKIPPED}:
+        if old is not None and old.task_definition_checksum == item.task_definition_checksum and old.status in {TaskLifecycle.SUCCEEDED, TaskLifecycle.FAILED, TaskLifecycle.SKIPPED, TaskLifecycle.BLOCKED_DEPENDENCY}:
             states.append(old)
         else:
             states.append(

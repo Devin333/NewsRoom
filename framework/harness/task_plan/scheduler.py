@@ -116,7 +116,12 @@ class TaskPlanScheduler:
                 continue
             dependency_states = tuple(states[dependency].status for dependency in definition.depends_on)
             if any(
-                status in {TaskLifecycle.FAILED, TaskLifecycle.BLOCKED, TaskLifecycle.SKIPPED}
+                status in {
+                    TaskLifecycle.FAILED,
+                    TaskLifecycle.BLOCKED,
+                    TaskLifecycle.BLOCKED_DEPENDENCY,
+                    TaskLifecycle.SKIPPED,
+                }
                 for status in dependency_states
             ):
                 blocked.append(task_id)

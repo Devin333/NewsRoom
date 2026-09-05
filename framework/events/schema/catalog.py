@@ -79,6 +79,7 @@ TASK_PLAN_EVENT_TYPES = (
     "TASK_COMPLETED",
     "TASK_FAILED",
     "TASK_BLOCKED",
+    "TASK_BLOCKED_UPSTREAM_FAILURE",
     "TASK_SKIPPED",
     "TASK_REPLACED",
     "PLAN_PATCH_PROPOSED",
@@ -1259,7 +1260,7 @@ def _parallel_task_plan_details_schema(event_type: str) -> dict[str, Any]:
         }
     ]
     task_summary = object_schema({
-        "task_id": _TEXT, "status": _TEXT, "attempt": _POSITIVE_INTEGER,
+        "task_id": _TEXT, "status": _TEXT, "attempt": _NONNEGATIVE_INTEGER,
         "result_ref": nullable_text, "checksum": _CHECKSUM_TEXT,
         "output_roles": _ARRAY_OF_TEXT,
         "summary": {"type": "string", "maxLength": 65536},
@@ -1369,6 +1370,7 @@ def _task_plan_event_payload_schema(
             },
             "replaced_task_id": _TEXT,
             "replacement_task_id": _TEXT,
+            "blocking_predecessor_ids": _ARRAY_OF_TEXT,
         },
     }
     if event_type == "PLAN_CANDIDATE_BUILT":

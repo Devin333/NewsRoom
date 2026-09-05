@@ -39,6 +39,12 @@ from framework.harness.task_plan.submission_result import submission_result_from
 from framework.harness.task_plan.validation import TaskPlanValidationContext, TaskPlanValidator
 from framework.harness.workers.result import HarnessWorkerResult, HarnessWorkerStatus
 from framework.harness.task_plan.canonical import canonical_payload_checksum
+from framework.harness.task_plan.dependency import (
+    TASK_BLOCKED_UPSTREAM_FAILURE,
+    block_dependency_task,
+    dependency_blocked_task_ids,
+    dependency_blocking_predecessor_ids,
+)
 from framework.harness.task_plan.parallel import (
     JoinPolicy,
     ParallelAgentCoordinator,
@@ -500,6 +506,8 @@ class TaskPlanStageRunner(TaskPlanStageRunnerPort):
             projection = self.store.load_projection(request.run_id, request.stage_id)
             if self._recover_committed_subagent_results(request, plan, projection):
                 continue
+            if self._propagate_dependency_blocks(request, plan, projection):
+                continue
             if self._recover_failed_task_retries(request, plan, projection):
                 continue
             decision = self.scheduler.next_task_plan_decision(
@@ -578,6 +586,12 @@ class TaskPlanStageRunner(TaskPlanStageRunnerPort):
                             input_checksum=result.result_checksum, reason_code=result.error_code, sequence=sequence,
                         ), retry_projection)
                     elif result.error_code not in retryable_codes:
+                        while self._propagate_dependency_blocks(
+                            request,
+                            plan,
+                            self.store.load_projection(request.run_id, request.stage_id),
+                        ):
+                            pass
                         raise HarnessValidationError(
                             "task failure is outside the task retry policy",
                             code="task_plan_retry_not_allowed",
@@ -589,6 +603,12 @@ class TaskPlanStageRunner(TaskPlanStageRunnerPort):
                             },
                         )
                     else:
+                        while self._propagate_dependency_blocks(
+                            request,
+                            plan,
+                            self.store.load_projection(request.run_id, request.stage_id),
+                        ):
+                            pass
                         raise HarnessValidationError("task retry budget exhausted", code="task_plan_retry_exhausted", details={"task_id": result.task_id})
         raise HarnessValidationError("TaskPlan execution exceeded bounded rounds", code="task_plan_execution_bound_exceeded")
 
@@ -612,6 +632,16 @@ class TaskPlanStageRunner(TaskPlanStageRunnerPort):
                 plan,
                 projection,
             )
+            projection = self.store.load_projection(request.run_id, request.stage_id)
+            blocked_now = self._propagate_dependency_blocks(request, plan, projection)
+            if blocked_now:
+                projection = self.store.load_projection(request.run_id, request.stage_id)
+                self.parallel_coordinator.sync_task_terminals(
+                    admission,
+                    projection,
+                    event_sink=event_sink,
+                )
+                continue
             durable_results = self.store.results_for(
                 request.run_id,
                 request.stage_id,
@@ -631,6 +661,27 @@ class TaskPlanStageRunner(TaskPlanStageRunnerPort):
                 )
             if recovered_any:
                 continue
+            if (
+                any(item.status is TaskLifecycle.BLOCKED_DEPENDENCY for item in projection.tasks)
+                and any(item.status is TaskLifecycle.FAILED for item in projection.tasks)
+            ):
+                self.parallel_coordinator.sync_task_terminals(
+                    admission,
+                    projection,
+                    event_sink=event_sink,
+                )
+                joined = self.parallel_coordinator.join(
+                    admission,
+                    limits=limits,
+                    event_sink=event_sink,
+                )
+                if not joined.succeeded:
+                    raise HarnessValidationError(
+                        "parallel TaskPlan group did not satisfy join",
+                        code="task_plan_parallel_join_failed",
+                        details={"group_id": joined.group.group_id, "diagnostics": list(joined.observation.diagnostics)},
+                    )
+                return
             dispatch_capacity = self.parallel_coordinator.dispatch_parallelism(admission)
             if self._recover_failed_task_retries(request, plan, projection):
                 continue
@@ -659,6 +710,24 @@ class TaskPlanStageRunner(TaskPlanStageRunnerPort):
                     if item.status is TaskLifecycle.FAILED
                 ]
                 if pending or failed:
+                    if any(item.status is TaskLifecycle.BLOCKED_DEPENDENCY for item in projection.tasks):
+                        self.parallel_coordinator.sync_task_terminals(
+                            admission,
+                            projection,
+                            event_sink=event_sink,
+                        )
+                        joined = self.parallel_coordinator.join(
+                            admission,
+                            limits=limits,
+                            event_sink=event_sink,
+                        )
+                        if not joined.succeeded:
+                            raise HarnessValidationError(
+                                "parallel TaskPlan group did not satisfy join",
+                                code="task_plan_parallel_join_failed",
+                                details={"group_id": joined.group.group_id, "diagnostics": list(joined.observation.diagnostics)},
+                            )
+                        return
                     raise HarnessValidationError(
                         "TaskPlan cannot make further progress",
                         code="task_plan_task_blocked",
@@ -722,11 +791,50 @@ class TaskPlanStageRunner(TaskPlanStageRunnerPort):
             )
             for result in dispatched.results:
                 self.store.append_result(result)
+            for result in dispatched.results:
                 self._handle_parallel_result(request, plan, result)
         raise HarnessValidationError(
             "parallel TaskPlan execution exceeded bounded rounds",
             code="task_plan_execution_bound_exceeded",
         )
+
+    def _propagate_dependency_blocks(
+        self,
+        request: TaskPlanStageRequest,
+        plan: ValidatedTaskPlan,
+        projection: Any,
+    ) -> bool:
+        """Atomically close the next deterministic dependency-block target.
+
+        One event/projection pair is committed per target so a crash between
+        targets can resume from the same causal DAG closure without inventing
+        an attempt or result for the blocked task.
+        """
+
+        targets = dependency_blocked_task_ids(plan, projection)
+        if not targets:
+            return False
+        task_id = targets[0]
+        predecessors = dependency_blocking_predecessor_ids(plan, projection, task_id)
+        next_projection = block_dependency_task(plan, projection, task_id)
+        sequence = self._next_sequence(request)
+        self.store.commit_event(
+            TaskPlanEvent.for_plan(
+                "TASK_BLOCKED_UPSTREAM_FAILURE",
+                plan,
+                task_id=task_id,
+                input_checksum=projection.projection_checksum,
+                reason_code=TASK_BLOCKED_UPSTREAM_FAILURE,
+                payload={
+                    "blocking_predecessor_ids": list(predecessors),
+                    "projection_checksum": projection.projection_checksum,
+                },
+                sequence=sequence,
+            ),
+            replace(next_projection, last_sequence=sequence),
+        )
+        self._persist_checkpoint(request, plan)
+        return True
 
     def _handle_parallel_result(
         self,
@@ -767,6 +875,12 @@ class TaskPlanStageRunner(TaskPlanStageRunnerPort):
             )
             return
         if result.error_code not in retryable_codes:
+            while self._propagate_dependency_blocks(
+                request,
+                plan,
+                self.store.load_projection(request.run_id, request.stage_id),
+            ):
+                pass
             raise HarnessValidationError(
                 "task failure is outside the task retry policy",
                 code="task_plan_retry_not_allowed",
@@ -777,6 +891,12 @@ class TaskPlanStageRunner(TaskPlanStageRunnerPort):
                     "retryable_reason_codes": sorted(retryable_codes),
                 },
             )
+        while self._propagate_dependency_blocks(
+            request,
+            plan,
+            self.store.load_projection(request.run_id, request.stage_id),
+        ):
+            pass
         raise HarnessValidationError(
             "task retry budget exhausted",
             code="task_plan_retry_exhausted",

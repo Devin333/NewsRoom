@@ -389,6 +389,61 @@ def test_replacement_failure_is_skipped_and_runner_reaches_verified() -> None:
     ]
 
 
+def test_terminal_failure_closes_unadmitted_dependency_chain_without_child_calls() -> None:
+    graph, policy, registry = _setup(
+        roles=("role_a", "role_b", "role_c", "role_d"),
+        capabilities=("cap_a", "cap_b", "cap_c", "cap_d"),
+    )
+    candidate = _candidate(
+        graph,
+        (
+            _task("a", "cap_a", "role_a"),
+            _task("b", "cap_b", "role_b", depends_on=("a",)),
+            _task("c", "cap_c", "role_c", depends_on=("b",)),
+            _task("d", "cap_d", "role_d"),
+        ),
+        roles=("role_a", "role_b", "role_c", "role_d"),
+    )
+    store = InMemoryTaskPlanStore()
+    calls: list[str] = []
+
+    def execute(_binding, instance):
+        calls.append(instance.task_id)
+        return HarnessWorkerResult(status="succeeded", output={"value": instance.task_id})
+
+    request = TaskPlanStageRequest(
+        run_id="run",
+        stage_binding=graph,
+        context_refs={"document": "document"},
+        policy=policy,
+        policy_ref=policy.exact_ref,
+        candidate=candidate,
+        accepted_at="2026-08-01T00:00:00Z",
+    )
+    result = TaskPlanStageRunner(
+        candidate_builder=FakePlanCandidateBuilder(candidate),
+        capability_registry=registry,
+        store=store,
+        result_verifier=_FailOnceResultVerifier(failure_code="fatal"),
+        worker_executor=execute,
+        parallel_coordinator=ParallelAgentCoordinator(
+            max_workers=2,
+            allow_test_executor=True,
+        ),
+    ).run(request)
+
+    projection = store.load_projection("run", "dynamic_stage")
+    statuses = {item.task_id: item.status for item in projection.tasks}
+    assert result.status.value == "blocked"
+    assert sorted(calls) == ["a", "d"]
+    assert statuses["b"] is TaskLifecycle.BLOCKED_DEPENDENCY
+    assert statuses["c"] is TaskLifecycle.BLOCKED_DEPENDENCY
+    assert statuses["d"] is TaskLifecycle.SUCCEEDED
+    assert [event.event_type for event in store.read_events("run", "dynamic_stage")].count(
+        "TASK_BLOCKED_UPSTREAM_FAILURE"
+    ) == 2
+
+
 def test_store_accepts_duplicate_identical_result_once():
     graph, policy, registry = _setup()
     candidate = _candidate(graph, (_task("a"),))
