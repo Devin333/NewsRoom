@@ -38,6 +38,8 @@ from framework.harness.task_plan.ports import TaskPlanStageRequest
 from framework.harness.task_plan.stage import TaskPlanStageRunner
 from framework.harness.task_plan.stage_binding import TaskPlanStageBinding
 from framework.harness.task_plan.store import TaskPlanStorePort
+from framework.harness.task_plan.submission import CandidateDedupIdentity
+from framework.harness.task_plan.canonical import canonical_payload_checksum
 from framework.shared.graph_identity import GraphExecutionIdentity
 from framework.shared.time import utc_now
 
@@ -190,6 +192,19 @@ class HarnessAgentOrchestrationRuntime:
             stage_id=self._stage_binding.stage_id,
         )
         self._require_policy(policy, request)
+        submission_identity = CandidateDedupIdentity(
+            run_id=request.run_id,
+            stage_id=self._stage_binding.stage_id,
+            parent_turn_id=request.parent_turn_id,
+            action_correlation_id=request.candidate.correlation_id,
+        )
+        source_checksum = canonical_payload_checksum(request.candidate.to_dict())
+        original = self._store.candidate_submission(submission_identity)
+        if original is not None and original.candidate_checksum != source_checksum:
+            raise HarnessValidationError(
+                "candidate checksum conflicts with the original submission",
+                code="CANDIDATE_IDEMPOTENCY_CONFLICT",
+            )
         candidate = self._materialize_candidate(request, policy)
         stage_identity = self._task_plan_execution_identity(parent_identity, request.candidate)
         context_refs = _context_refs_for_candidate(request.candidate)
@@ -202,6 +217,8 @@ class HarnessAgentOrchestrationRuntime:
                 policy_ref=policy.exact_ref,
                 accepted_at=utc_now().isoformat().replace("+00:00", "Z"),
                 candidate=candidate,
+                submission_identity=submission_identity,
+                source_candidate_checksum=source_checksum,
                 execution_identity=stage_identity,
                 metadata={
                     "parent_agent_id": request.parent_agent_id,
@@ -210,6 +227,17 @@ class HarnessAgentOrchestrationRuntime:
                 },
             )
         )
+        if _reason_from_worker_result(run_result, "") in {
+            "CANDIDATE_IDEMPOTENCY_CONFLICT",
+            "task_plan_submission_binding_conflict",
+            "task_plan_submission_scope_unavailable",
+            "task_plan_submission_identity_required",
+            "task_plan_candidate_conflict",
+            "task_plan_submission_result_invalid",
+        }:
+            return _rejected_orchestration_result(
+                request, _reason_from_worker_result(run_result, "")
+            )
         return self._joined_result(request, run_result)
 
     def _require_parent_graph(self, identity: GraphExecutionIdentity) -> None:

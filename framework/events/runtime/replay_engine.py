@@ -2162,12 +2162,21 @@ def _audit_function_dependencies(function: FunctionType, *, seen: set[int]) -> N
         return
     seen.add(identity)
     closure = inspect.getclosurevars(function)
+    global_reads = {
+        instruction.argval
+        for instruction in dis.get_instructions(function)
+        if instruction.opname in {"LOAD_GLOBAL", "LOAD_NAME"}
+    }
     for name in closure.builtins:
         if name not in _ALLOWED_REDUCER_BUILTINS:
             raise ReplayReducerRegistrationError(
                 f"replay reducer uses forbidden builtin: {name}"
             )
-    for name, value in {**closure.globals, **closure.nonlocals}.items():
+    # getclosurevars also reports import/attribute names that match globals.
+    dependencies = {
+        name: value for name, value in closure.globals.items() if name in global_reads
+    }
+    for name, value in {**dependencies, **closure.nonlocals}.items():
         if isinstance(value, ModuleType) or not _is_immutable_constant(value):
             raise ReplayReducerRegistrationError(
                 f"replay reducer captures forbidden dependency: {name}"

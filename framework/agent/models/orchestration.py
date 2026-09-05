@@ -9,7 +9,7 @@ from framework.shared.graph_identity import GraphExecutionIdentity
 from framework.shared.redaction import redact_sensitive_values
 
 
-AGENT_ORCHESTRATION_REQUEST_SCHEMA = "newsroom.agent-orchestration-request/v1"
+AGENT_ORCHESTRATION_REQUEST_SCHEMA = "newsroom.agent-orchestration-request/v2"
 AGENT_ORCHESTRATION_RESULT_SCHEMA = "newsroom.agent-orchestration-result/v1"
 PARENT_OBSERVATION_SCHEMA = "newsroom.parent-observation/v1"
 
@@ -367,6 +367,7 @@ class ParentObservation:
 @dataclass(frozen=True, slots=True)
 class AgentOrchestrationRequest:
     parent_agent_id: str
+    parent_turn_id: str
     run_id: str | None
     execution_identity: GraphExecutionIdentity | None
     graph_checkpoint_ref: str | None
@@ -379,6 +380,13 @@ class AgentOrchestrationRequest:
     def __post_init__(self) -> None:
         if not isinstance(self.parent_agent_id, str) or not self.parent_agent_id.strip():
             raise ValueError("parent_agent_id must be a non-empty string")
+        if (
+            not isinstance(self.parent_turn_id, str)
+            or not self.parent_turn_id
+            or self.parent_turn_id != self.parent_turn_id.strip()
+            or len(self.parent_turn_id) > 512
+        ):
+            raise ValueError("parent_turn_id must be a bounded non-empty identifier")
         if self.run_id is not None and (not isinstance(self.run_id, str) or not self.run_id.strip()):
             raise ValueError("run_id must be a canonical string or None")
         if self.execution_identity is not None and not isinstance(self.execution_identity, GraphExecutionIdentity):
@@ -405,6 +413,7 @@ class AgentOrchestrationRequest:
         return {
             "schema_version": self.schema_version,
             "parent_agent_id": self.parent_agent_id,
+            "parent_turn_id": self.parent_turn_id,
             "run_id": self.run_id,
             "execution_identity": (
                 self.execution_identity.to_dict()

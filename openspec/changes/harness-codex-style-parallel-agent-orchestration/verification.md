@@ -37,6 +37,9 @@ the expanded golden/replay matrix. No feature flag was enabled by this update.
 
 ## Checks
 
+The checks in this section precede the candidate-submission foundation below.
+They remain historical evidence, not validation of subsequent edits.
+
 - Combined TaskPlan, AgentLoop, dynamic Research, composition and architecture
   regression: 467 passed, 4 deprecation warnings.
 - Agent, tool, and orchestration composition regression, including new parent
@@ -61,6 +64,57 @@ These are checks of the current partial implementation, not proof of unchecked
 G1-G5 scenarios. No production enablement, external-provider qualification or
 rollback rehearsal is claimed. The current checklist has 10/46 completed items.
 
+## Candidate Submission Foundation
+
+This increment implements a scoped part of 1.4; 1.4 remains unchecked.
+
+- `AgentOrchestrationRequest` v2 requires a trusted `parent_turn_id`. AgentLoop
+  derives it from agent/activity/iteration identity, independently of the model's
+  action correlation. Missing fields, old schema and unknown aliases are rejected.
+- `CandidateSubmission` pins run/stage/parent-turn/action-correlation, the source
+  action checksum, immutable candidate reference, original acceptance time and
+  stable submission/plan identities. The record is committed in the canonical
+  candidate-built event; an unreferenced artifact is not authoritative admission.
+- Memory and durable stores atomically reuse equal admissions. Durable admission
+  rechecks dedup using the same history snapshot used to allocate its sequence,
+  then relies on event-stream CAS. Tests force a second writer to win between
+  the first lookup and artifact completion; only one submission event survives.
+- The stage binds the initial plan to the submitted candidate and original time.
+  Restart after candidate admission but before plan acceptance reads that candidate
+  without calling the candidate builder again.
+- Accepted-plan success and failure outcomes are recorded with checksums and
+  reused after reopening the runtime/store, without new events or worker calls.
+  Reuse validates the complete history, causal admission, gated aggregate and
+  terminal plan/projection identity. Conflicting payloads return
+  `CANDIDATE_IDEMPOTENCY_CONFLICT` without old result refs or projection mutation.
+- The canonical catalog now registers the existing group/wave event vocabulary
+  with closed nested payload schemas. TaskPlan imports that vocabulary rather
+  than maintaining a second list. Real durable lifecycle payloads, missing fields
+  and forbidden nested control fields are tested.
+- Expanded event regression exposed a reducer-audit classification defect:
+  `inspect.getclosurevars` includes import/attribute names matching module globals.
+  Dependency checks now examine actual global reads. Forbidden imports and
+  captured capabilities remain rejected with the existing strict assertions.
+
+Increment checks:
+
+- Submission/store/replay/runtime/schema regression: 104 passed.
+- Events, AgentLoop and orchestration composition regression: 538 passed.
+- Strict OpenSpec validation: passed.
+- Required full `python -m scripts.dev smoke`: exit 0. Compile passed; the
+  Harness/Research/API/service/composition/architecture suite reported
+  `2527 passed, 23 deselected, 23 warnings` in 900.02 seconds. The offline
+  AgentLoop smoke produced 3 fixture LLM calls, 1 tool call and 0 network calls;
+  source validation reported `is_valid=true`, 0 errors and 0 warnings.
+
+The store can distinguish multiple submission identities, but stage execution
+still owns one plan chain per run/stage. A different turn or correlation is
+therefore rejected as `task_plan_submission_scope_unavailable`, never aliased to
+old results. Multiple submission execution scopes, concurrent active-execution
+coalescing, pre-plan rejection outcome reuse, `PENDING` receipts and durable
+same-parent-turn continuation are still acceptance work. No G1/G3/G5 gate or
+production readiness is claimed by these focused checks.
+
 ## Remaining Acceptance Work
 
 - Route generic children through the real controlled Agent runtime and persist
@@ -68,7 +122,7 @@ rollback rehearsal is claimed. The current checklist has 10/46 completed items.
 - Bind group/wave identity into task-result verification and durable child
   evidence, not only coordinator events.
 - Complete bounded planning retries, failure accounting, and crash handling.
-- Add durable candidate dedup and RefAuthority, per-task spawn intent/receipt
+- Complete durable candidate dedup and RefAuthority, per-task spawn intent/receipt
   reconciliation, multi-pool capacity and versioned budget reservations, and
   terminal dependency blocking under the revised PRD.
 - Replace synchronous-only parent dispatch with durable submission and

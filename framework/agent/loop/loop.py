@@ -57,6 +57,7 @@ from framework.agent.subagents import (
 )
 from framework.agent.models.trace import AgentLoopTrace, IterationTrace
 from framework.events import TraceContext, W3CTracePropagator
+from framework.events.canonical import checksum_for
 from framework.llm.budget import (
     GlobalBudgetCheck,
     GlobalBudgetExceededError,
@@ -1008,6 +1009,9 @@ class AgentLoop:
             policy_ref, max_tasks, limits = _orchestration_policy(agent)
             request = AgentOrchestrationRequest(
                 parent_agent_id=agent.agent_id,
+                parent_turn_id=_orchestration_parent_turn_id(
+                    agent.agent_id, execution_identity, iteration_trace.iteration
+                ),
                 run_id=run_id,
                 execution_identity=execution_identity,
                 graph_checkpoint_ref=graph_checkpoint_ref,
@@ -1175,6 +1179,9 @@ class AgentLoop:
             )
             request = AgentOrchestrationRequest(
                 parent_agent_id=agent.agent_id,
+                parent_turn_id=_orchestration_parent_turn_id(
+                    agent.agent_id, execution_identity, iteration_trace.iteration
+                ),
                 run_id=run_id,
                 execution_identity=execution_identity,
                 graph_checkpoint_ref=graph_checkpoint_ref,
@@ -2519,6 +2526,19 @@ def _orchestration_policy(agent: AgentSpec) -> tuple[str, int, ParentObservation
     )
     limits = ParentObservationLimits.from_dict(limit_values)
     return str(policy_ref), max_tasks, limits
+
+
+def _orchestration_parent_turn_id(
+    agent_id: str,
+    identity: GraphExecutionIdentity | None,
+    iteration: int,
+) -> str:
+    return "parent-turn:" + checksum_for({
+        "agent_id": agent_id,
+        "run_id": identity.run_id if identity is not None else None,
+        "activity_id": identity.activity_id if identity is not None else None,
+        "iteration": iteration,
+    }).removeprefix("sha256:")
 
 
 def _legacy_delegate_mapping(

@@ -58,6 +58,13 @@ _BUSINESS_CONTEXT_FIELDS = (
 # result bodies stay in their dedicated stores.
 TASK_PLAN_EVENT_SCHEMA_V2 = "newsroom.harness-task-plan-event/v2"
 TASK_PLAN_EVENT_SCHEMA = TASK_PLAN_EVENT_SCHEMA_V2
+TASK_PLAN_PARALLEL_EVENT_TYPES = (
+    "TASK_GROUP_ADMITTED", "TASK_WAVE_ADMITTED", "TASK_WAVE_DISPATCHED",
+    "TASK_WAVE_COMPLETED", "TASK_GROUP_JOIN_WAITING", "TASK_GROUP_JOINED",
+    "TASK_GROUP_FAILED", "TASK_GROUP_REPLAN_PENDING", "TASK_GROUP_CANCEL_REQUESTED",
+    "TASK_GROUP_CANCELLED", "TASK_GROUP_INDETERMINATE", "TASK_GROUP_HALTED",
+    "TASK_GROUP_SUPERSEDED", "TASK_GROUP_RECLAIMED", "TASK_GROUP_RECOVERY", "DEGRADED_SERIAL",
+)
 TASK_PLAN_EVENT_TYPES = (
     "PLAN_CANDIDATE_BUILT",
     "PLAN_CANDIDATE_REJECTED",
@@ -80,6 +87,7 @@ TASK_PLAN_EVENT_TYPES = (
     "STAGE_OUTPUT_AGGREGATED",
     "TASK_PLAN_VERIFIED",
     "TASK_PLAN_HALTED",
+    *TASK_PLAN_PARALLEL_EVENT_TYPES,
 )
 
 # Runtime execution facts share one versioned payload schema.  The canonical
@@ -1143,6 +1151,158 @@ def _harness_graph_transition_payload_schema(data_schema: str) -> dict[str, Any]
     }
 
 
+def _candidate_submission_schema() -> dict[str, Any]:
+    identity_fields = {
+        "schema_version": {"const": "newsroom.harness-candidate-dedup-identity/v1"},
+        **{name: _TEXT for name in ("run_id", "stage_id", "parent_turn_id", "action_correlation_id")},
+        "dedup_key": _CHECKSUM_TEXT,
+    }
+    fields = {
+        "schema_version": {"const": "newsroom.harness-candidate-submission/v1"},
+        "identity": {
+            "type": "object", "additionalProperties": False,
+            "required": list(identity_fields), "properties": identity_fields,
+        },
+        "candidate_checksum": _CHECKSUM_TEXT,
+        "candidate_ref": _CHECKSUM_TEXT,
+        "accepted_at": _TEXT,
+        "submission_id": _TEXT,
+        "plan_id": _TEXT,
+        "record_checksum": _CHECKSUM_TEXT,
+    }
+    return {
+        "type": "object", "additionalProperties": False,
+        "required": list(fields), "properties": fields,
+    }
+
+
+def _task_plan_terminal_result_schema() -> dict[str, Any]:
+    fields = {
+        "status": {"enum": ["succeeded", "failed", "blocked"]},
+        "output": {
+            "type": "object", "additionalProperties": False,
+            "properties": {
+                "aggregate_ref": _TEXT,
+                "aggregate_checksum": _CHECKSUM_TEXT,
+                "output_refs_by_role": {
+                    "type": "object", "additionalProperties": _TEXT, "maxProperties": 128,
+                },
+                "analysis_branch_refs": {
+                    "type": "array", "items": {"type": "object", "maxProperties": 16}, "maxItems": 128,
+                },
+            },
+        },
+        "artifacts": {"type": "array", "maxItems": 0},
+        "metrics": {"type": "object", "maxProperties": 0},
+        "diagnostics": {
+            "type": "object", "additionalProperties": False,
+            "properties": {
+                "plan_id": _TEXT, "plan_version": _POSITIVE_INTEGER,
+                "projection_checksum": _CHECKSUM_TEXT, "reason_code": _TEXT,
+            },
+        },
+        "error": {"anyOf": [_TEXT, {"type": "null"}]},
+    }
+    return {
+        "type": "object", "additionalProperties": False,
+        "required": list(fields), "properties": fields,
+    }
+
+
+def _parallel_task_plan_details_schema(event_type: str) -> dict[str, Any]:
+    def object_schema(fields: dict[str, Any], required=None) -> dict[str, Any]:
+        return {
+            "type": "object", "additionalProperties": False,
+            "properties": fields, "required": list(fields) if required is None else required,
+        }
+
+    non_negative = {"type": "integer", "minimum": 0}
+    budget = {"type": "object", "additionalProperties": non_negative, "maxProperties": 16}
+    nullable_text = {"anyOf": [_TEXT, {"type": "null"}]}
+    nullable_checksum = {"anyOf": [_CHECKSUM_TEXT, {"type": "null"}]}
+    group_state = {"enum": [
+        "PLANNED", "ADMITTED", "DISPATCHING", "RUNNING", "JOINING", "REPLAN_PENDING",
+        "SUCCEEDED", "FAILED", "CANCELLED", "INDETERMINATE", "HALTED", "SUPERSEDED",
+    ]}
+    reservation_state = {"enum": ["RESERVED", "CONSUMED", "RELEASED"]}
+    reservation = object_schema({
+        "schema_version": {"const": "agora.harness-task-reservation/v1"},
+        "task_id": _TEXT, "idempotency_key": _TEXT, "budget": budget,
+        "state": reservation_state, "reservation_checksum": _CHECKSUM_TEXT,
+    })
+    group = object_schema({
+        "schema_version": {"const": "agora.harness-dispatch-group/v1"},
+        "group_id": _TEXT, "group_checksum": _CHECKSUM_TEXT,
+        "run_id": _TEXT, "stage_id": _TEXT, "plan_id": _TEXT,
+        "plan_version": _POSITIVE_INTEGER, "task_ids": _ARRAY_OF_TEXT,
+        "required_output_roles": _ARRAY_OF_TEXT, "join_policy": {"enum": ["wait_all", "fail_fast"]},
+        "max_waves": _POSITIVE_INTEGER, "max_parallelism": _POSITIVE_INTEGER,
+        "budget_envelope": budget, "correlation_id": _TEXT, "state": group_state,
+    })
+    wave = object_schema({
+        "schema_version": {"const": "agora.harness-dispatch-wave/v1"},
+        "wave_id": _TEXT, "group_id": _TEXT, "ordinal": _POSITIVE_INTEGER,
+        "task_ids": _ARRAY_OF_TEXT, "effective_parallelism": _POSITIVE_INTEGER,
+        "reservations": {"type": "array", "items": reservation, "maxItems": 128},
+        "state": {"enum": ["PLANNED", "ADMITTED", "DISPATCHING", "RUNNING", "TERMINAL"]},
+    })
+    task_summary = object_schema({
+        "task_id": _TEXT, "status": _TEXT, "attempt": _POSITIVE_INTEGER,
+        "result_ref": nullable_text, "checksum": _CHECKSUM_TEXT,
+        "output_roles": _ARRAY_OF_TEXT,
+        "summary": {"type": "string", "maxLength": 65536},
+        "summary_truncated": {"type": "boolean"}, "summary_checksum": _CHECKSUM_TEXT,
+    }, required=["task_id", "status", "attempt", "result_ref", "checksum", "output_roles"])
+    wave_summary = object_schema({
+        "wave_id": _TEXT, "ordinal": _POSITIVE_INTEGER, "task_ids": _ARRAY_OF_TEXT,
+        "status": {"enum": ["PLANNED", "ADMITTED", "DISPATCHING", "RUNNING", "TERMINAL"]},
+    })
+    observation = object_schema({
+        "group_id": _TEXT, "group_status": group_state, "plan_version": _POSITIVE_INTEGER,
+        "waves": {"type": "array", "items": wave_summary, "maxItems": 128},
+        "tasks": {"type": "array", "items": task_summary, "maxItems": 128},
+        "aggregate_ref": nullable_text, "aggregate_checksum": nullable_checksum,
+        "diagnostics": _ARRAY_OF_TEXT, "result_refs": _ARRAY_OF_TEXT,
+        "truncated": {"type": "boolean"},
+    })
+    recovered_result = object_schema({
+        "task_id": _TEXT, "task_instance_id": _TEXT, "attempt": _POSITIVE_INTEGER,
+        "status": {"enum": ["succeeded", "failed"]}, "result_checksum": _CHECKSUM_TEXT,
+    })
+    fields = {
+        "event_type": {"const": event_type}, "parallel_event_idempotency_key": _TEXT,
+        "idempotency_key": _TEXT, "group": group, "wave": wave,
+        "group_id": _TEXT, "wave_id": _TEXT, "task_ids": _ARRAY_OF_TEXT,
+        "task_instance_id": _TEXT, "attempt": _POSITIVE_INTEGER, "child_id": _TEXT,
+        "requested_parallelism": non_negative, "effective_parallelism": non_negative,
+        "queue_wait_ms": non_negative, "run_duration_ms": non_negative,
+        "join_duration_ms": non_negative, "group_duration_ms": non_negative,
+        "reason_code": _TEXT, "diagnostics": _ARRAY_OF_TEXT,
+        "quarantined_task_ids": _ARRAY_OF_TEXT, "retry_eligible": {"type": "boolean"},
+        "reservation_state": reservation_state,
+        "reservation_states": {"type": "object", "additionalProperties": reservation_state, "maxProperties": 128},
+        "child_states": {"type": "object", "additionalProperties": _TEXT, "maxProperties": 128},
+        "recovery_outcome": _TEXT,
+        "recovered_results": {"type": "array", "items": recovered_result, "maxItems": 128},
+        "observation": observation,
+    }
+    required_by_type = {
+        "TASK_GROUP_ADMITTED": ["group", "requested_parallelism", "effective_parallelism", "idempotency_key"],
+        "TASK_WAVE_ADMITTED": ["group", "wave", "idempotency_key"],
+        "TASK_WAVE_DISPATCHED": ["group_id", "wave_id", "task_ids", "idempotency_key"],
+        "TASK_WAVE_COMPLETED": ["group_id", "wave_id", "task_ids"],
+        "TASK_GROUP_JOIN_WAITING": ["group", "observation", "idempotency_key"],
+        "TASK_GROUP_JOINED": ["group", "observation", "idempotency_key"],
+        "TASK_GROUP_RECOVERY": ["group", "group_id", "recovered_results", "recovery_outcome", "idempotency_key"],
+        "TASK_GROUP_RECLAIMED": ["group_id", "wave_id", "task_ids", "task_instance_id", "attempt", "child_id", "retry_eligible"],
+        "DEGRADED_SERIAL": ["group_id", "reason_code"],
+    }
+    required = ["event_type", "parallel_event_idempotency_key", *required_by_type.get(event_type, ["reason_code"])]
+    result = object_schema(fields, required=required)
+    result["anyOf"] = [{"required": ["group"]}, {"required": ["group_id"]}]
+    return result
+
+
 def _task_plan_event_payload_schema(
     event_type: str,
     *,
@@ -1198,6 +1358,19 @@ def _task_plan_event_payload_schema(
             "replacement_task_id": _TEXT,
         },
     }
+    if event_type == "PLAN_CANDIDATE_BUILT":
+        safe_payload["properties"]["submission"] = _candidate_submission_schema()
+    if event_type in {"TASK_PLAN_VERIFIED", "TASK_PLAN_HALTED"}:
+        terminal_fields = ("submission_key", "terminal_result", "terminal_result_checksum")
+        safe_payload["properties"].update({
+            "submission_key": _CHECKSUM_TEXT,
+            "terminal_result": _task_plan_terminal_result_schema(),
+            "terminal_result_checksum": _CHECKSUM_TEXT,
+        })
+        safe_payload["dependentRequired"] = {
+            name: [other for other in terminal_fields if other != name]
+            for name in terminal_fields
+        }
     graph_identity_required = [
         "graph_id",
         "graph_version",
@@ -1265,7 +1438,10 @@ def _task_plan_event_payload_schema(
                 "uniqueItems": True,
             },
             "reason_code": nullable_text,
-            "details": safe_payload,
+            "details": (
+                _parallel_task_plan_details_schema(event_type)
+                if event_type in TASK_PLAN_PARALLEL_EVENT_TYPES else safe_payload
+            ),
             "sequence": _POSITIVE_INTEGER,
             "event_checksum": _CHECKSUM_TEXT,
         },

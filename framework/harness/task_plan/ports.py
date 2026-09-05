@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING, Any, Mapping, Protocol, runtime_checkable
 from framework.harness.control_plane.errors import HarnessValidationError
 from framework.harness.control_plane.policy import HarnessBudgetSnapshot
 from framework.harness.task_plan.canonical import (
+    checksum,
     exact_reference,
     frozen_mapping,
     identifier,
@@ -17,6 +18,7 @@ from framework.harness.task_plan.identity import TaskPlanStageIdentity
 from framework.harness.task_plan.models import PlanCandidate, ResolvedTaskSpec
 from framework.harness.task_plan.policy import TaskPlanPolicy
 from framework.harness.task_plan.stage_binding import TaskPlanStageBinding
+from framework.harness.task_plan.submission import CandidateDedupIdentity
 from framework.harness.task_plan.store import TaskResultRecord
 from framework.harness.workers.result import HarnessWorkerResult
 from framework.shared.graph_identity import GraphExecutionIdentity
@@ -235,6 +237,8 @@ class TaskPlanStageRequest:
     execution_identity: GraphExecutionIdentity | None = None
     metadata: Mapping[str, Any] = field(default_factory=dict)
     policy_ref: str | None = None
+    submission_identity: CandidateDedupIdentity | None = None
+    source_candidate_checksum: str | None = None
     stage_identity: TaskPlanStageIdentity = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
@@ -345,6 +349,25 @@ class TaskPlanStageRequest:
                     details={"mismatches": list(mismatches)},
                 )
         object.__setattr__(self, "metadata", frozen_mapping(self.metadata, "task_plan.metadata"))
+        if self.submission_identity is not None:
+            if not isinstance(self.submission_identity, CandidateDedupIdentity):
+                raise TypeError("submission_identity must be CandidateDedupIdentity")
+            if (self.submission_identity.run_id, self.submission_identity.stage_id) != (
+                self.run_id, self.stage_id
+            ):
+                raise HarnessValidationError(
+                    "candidate submission is outside the frozen stage",
+                    code="task_plan_submission_scope_mismatch",
+                )
+        if self.source_candidate_checksum is not None:
+            if self.submission_identity is None:
+                raise HarnessValidationError(
+                    "source candidate checksum requires submission identity",
+                    code="task_plan_submission_identity_required",
+                )
+            object.__setattr__(self, "source_candidate_checksum", checksum(
+                self.source_candidate_checksum, "source_candidate_checksum"
+            ))
 
     @property
     def graph_id(self) -> str:

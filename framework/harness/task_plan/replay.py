@@ -37,6 +37,8 @@ from framework.harness.task_plan.store import (
     _settle_result_budget,
 )
 from framework.harness.task_plan.models import PlanPatch
+from framework.harness.task_plan.submission import CandidateSubmission, submissions_from_events
+from framework.harness.task_plan.submission_result import submission_result_from_event
 
 
 TASK_PLAN_REPLAY_REDUCER_VERSION_V2 = "newsroom.harness-task-plan-replay/v2"
@@ -388,6 +390,8 @@ class TaskPlanReplayReducer:
         )
         results_by_attempt = _validated_results(results, plan_history)
         patches_by_checksum = _validated_patches(patches, plan_history)
+        submissions = submissions_from_events(ordered_events)
+        admitted_submissions: dict[str, CandidateSubmission] = {}
 
         projection: TaskPlanProjection | None = None
         current_plan: ValidatedTaskPlan | None = None
@@ -399,6 +403,9 @@ class TaskPlanReplayReducer:
         aggregate_ref: str | None = None
         aggregate_checksum: str | None = None
         aggregate_output_refs: tuple[str, ...] = ()
+        aggregate_output_refs_by_role: dict[str, Any] = {}
+        aggregate_branch_refs: tuple[Any, ...] = ()
+        aggregate_projection_checksum: str | None = None
         accepted_patch: tuple[TaskPlanEvent, PlanPatch] | None = None
         parallel_groups: dict[str, dict[str, Any]] = {}
         parallel_waves: dict[str, dict[str, Any]] = {}
@@ -415,6 +422,19 @@ class TaskPlanReplayReducer:
                 )
             if event.event_type == "PLAN_ACCEPTED":
                 accepted = _accepted_plan_for_event(event, plans_by_version)
+                if accepted.version == 1 and submissions:
+                    matching = [
+                        item for item in admitted_submissions.values()
+                        if item.plan_id == accepted.plan_id
+                    ]
+                    if len(matching) != 1 or (
+                        matching[0].candidate_ref != accepted.source_candidate_ref
+                        or matching[0].accepted_at != accepted.accepted_at
+                    ):
+                        raise HarnessValidationError(
+                            "accepted plan does not match its candidate submission",
+                            code="task_plan_replay_candidate_mismatch",
+                        )
                 if current_plan is not None and accepted.version != current_plan.version + 1:
                     raise HarnessValidationError(
                         "TaskPlan replay plan versions are not monotonic",
@@ -452,6 +472,11 @@ class TaskPlanReplayReducer:
                 "PLAN_VALIDATION_FAILED",
             }:
                 _validate_candidate_event(event)
+                if event.event_type == "PLAN_CANDIDATE_BUILT":
+                    raw_submission = event.payload.get("submission")
+                    if raw_submission is not None:
+                        submission = CandidateSubmission.from_dict(raw_submission)
+                        admitted_submissions[submission.identity.dedup_key] = submission
             elif event.event_type in {
                 "PLAN_PATCH_PROPOSED",
                 "PLAN_PATCH_REJECTED",
@@ -592,6 +617,7 @@ class TaskPlanReplayReducer:
                 projection = _apply_non_result_terminal(projection, event)
             elif event.event_type == "STAGE_OUTPUT_AGGREGATED":
                 projection = _require_projection(projection, event)
+                aggregate_projection_checksum = projection.projection_checksum
                 if (
                     event.plan_id != projection.plan_id
                     or event.plan_version != projection.plan_version
@@ -605,9 +631,32 @@ class TaskPlanReplayReducer:
                     aggregate_checksum,
                     aggregate_output_refs,
                     _aggregate_result_refs,
-                    _aggregate_branch_refs,
+                    aggregate_branch_refs,
                 ) = _aggregate_for_event(event)
+                aggregate_output_refs_by_role = thaw_mapping(event.payload["output_refs_by_role"])
             elif event.event_type == "TASK_PLAN_VERIFIED":
+                if submissions or any(key in event.payload for key in ("submission_key", "terminal_result", "terminal_result_checksum")):
+                    _require_terminal_submission(event, admitted_submissions, plan_history[0])
+                    terminal = submission_result_from_event(event)
+                    expected_output = {
+                        "aggregate_ref": aggregate_ref,
+                        "aggregate_checksum": aggregate_checksum,
+                        "output_refs_by_role": aggregate_output_refs_by_role,
+                        "analysis_branch_refs": list(aggregate_branch_refs),
+                    }
+                    expected_diagnostics = {
+                        "plan_id": event.plan_id,
+                        "plan_version": event.plan_version,
+                        "projection_checksum": aggregate_projection_checksum,
+                    }
+                    if (
+                        terminal.output != expected_output
+                        or terminal.diagnostics != expected_diagnostics
+                    ):
+                        raise HarnessValidationError(
+                            "recorded submission result differs from the gated aggregate",
+                            code="task_plan_submission_result_invalid",
+                        )
                 projection = _require_projection(projection, event)
                 if (
                     event.plan_id != projection.plan_id
@@ -635,7 +684,11 @@ class TaskPlanReplayReducer:
                     parallel_diagnostics,
                 )
                 parallel_event_sequence = event.sequence
-            elif event.event_type != "TASK_PLAN_HALTED":
+            elif event.event_type == "TASK_PLAN_HALTED":
+                if submissions or any(key in event.payload for key in ("submission_key", "terminal_result", "terminal_result_checksum")):
+                    _require_terminal_submission(event, admitted_submissions, plan_history[0])
+                    submission_result_from_event(event)
+            else:
                 raise HarnessValidationError(
                     "TaskPlan replay encountered an unsupported event",
                     code="task_plan_replay_unknown_event",
@@ -1416,6 +1469,20 @@ def _accepted_plan_for_event(
     return plan
 
 
+def _require_terminal_submission(
+    event: TaskPlanEvent,
+    submissions: Mapping[str, CandidateSubmission],
+    initial_plan: ValidatedTaskPlan,
+) -> None:
+    key = event.payload.get("submission_key")
+    submission = submissions.get(key) if isinstance(key, str) else None
+    if submission is None or submission.plan_id != initial_plan.plan_id:
+        raise HarnessValidationError(
+            "terminal outcome belongs to another candidate submission",
+            code="task_plan_submission_result_invalid",
+        )
+
+
 def _validate_candidate_event(event: TaskPlanEvent) -> None:
     payload = thaw_mapping(event.payload)
     candidate_ref = payload.get("candidate_ref")
@@ -1425,6 +1492,18 @@ def _validate_candidate_event(event: TaskPlanEvent) -> None:
             code="task_plan_replay_candidate_mismatch",
             details={"sequence": event.sequence},
         )
+    raw_submission = payload.get("submission")
+    if raw_submission is not None:
+        submission = CandidateSubmission.from_dict(raw_submission)
+        if (
+            submission.identity.run_id != event.run_id
+            or submission.identity.stage_id != event.stage_id
+            or submission.candidate_ref != candidate_ref
+        ):
+            raise HarnessValidationError(
+                "candidate submission does not match its canonical event",
+                code="task_plan_replay_candidate_mismatch",
+            )
 
 
 def _validate_patch_event(event: TaskPlanEvent) -> None:

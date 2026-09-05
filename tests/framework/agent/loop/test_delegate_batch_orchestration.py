@@ -176,6 +176,48 @@ def test_agent_loop_returns_deferred_when_orchestration_is_unavailable() -> None
     assert any("agent_orchestration_unavailable" in str(event) for event in result.events)
 
 
+def test_parent_turn_identity_is_stable_and_distinct_from_model_correlation() -> None:
+    recorded = []
+    for _ in range(2):
+        port = _RecordingOrchestrationPort(_result())
+        loop = AgentLoop(
+            llm_client=FakeLLMClient([_batch_action(), _batch_action()]),
+            tool_executor=ToolExecutor(ToolRegistry()),
+            orchestration_port=port,
+            orchestration_enabled=True,
+        )
+        loop.run(_agent(), {"run_id": "run-1"}, [], run_id="run-1", standalone=True)
+        assert len(port.requests) == 2
+        assert len({request.candidate.correlation_id for request in port.requests}) == 1
+        turns = tuple(request.parent_turn_id for request in port.requests)
+        assert turns[0] != turns[1]
+        recorded.append(turns)
+    assert recorded[0] == recorded[1]
+
+
+@pytest.mark.parametrize("change", ["missing", "blank", "untrimmed", "too_long", "v1", "unknown"])
+def test_orchestration_request_requires_strict_versioned_parent_turn(change: str) -> None:
+    request = AgentOrchestrationRequest(
+        parent_agent_id="parent", parent_turn_id="parent-turn-1", run_id="run-1",
+        execution_identity=None, graph_checkpoint_ref=None, policy_ref="parent-policy@1",
+        max_tasks_per_group=3, parent_observation_limits=ParentObservationLimits(),
+        candidate=AgentActionParser().parse(_batch_action()).delegate_batch,
+    )
+    payload = request.to_dict()
+    assert AgentOrchestrationRequest.from_dict(payload) == request
+    assert payload["schema_version"] == "newsroom.agent-orchestration-request/v2"
+    if change == "missing":
+        del payload["parent_turn_id"]
+    elif change == "v1":
+        payload["schema_version"] = "newsroom.agent-orchestration-request/v1"
+    elif change == "unknown":
+        payload["turn_alias"] = "parent-turn-1"
+    else:
+        payload["parent_turn_id"] = {"blank": "", "untrimmed": " turn ", "too_long": "t" * 513}[change]
+    with pytest.raises(ValueError):
+        AgentOrchestrationRequest.from_dict(payload)
+
+
 @pytest.mark.parametrize("field", ["max_total_bytes", "max_observaton_bytes"])
 def test_agent_loop_rejects_noncanonical_observation_policy_before_dispatch(field: str) -> None:
     port = _RecordingOrchestrationPort(_result())

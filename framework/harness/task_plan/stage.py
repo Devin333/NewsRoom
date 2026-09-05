@@ -23,7 +23,7 @@ from framework.harness.task_plan.checkpoint import (
     TaskPlanCheckpoint,
     TaskPlanCheckpointStorePort,
 )
-from framework.harness.task_plan.replay import TaskPlanReplayReducer
+from framework.harness.task_plan.replay import TaskPlanReplayReducer, TaskPlanReplayReport
 from framework.harness.task_plan.scheduler import (
     TaskPlanReadyDecision,
     task_instance_for_attempt,
@@ -34,6 +34,8 @@ from framework.harness.task_plan.store import (
     TaskResultRecord,
     _task_plan_event_identity_kwargs,
 )
+from framework.harness.task_plan.submission import CandidateSubmission
+from framework.harness.task_plan.submission_result import submission_result_from_event
 from framework.harness.task_plan.validation import TaskPlanValidationContext, TaskPlanValidator
 from framework.harness.workers.result import HarnessWorkerResult, HarnessWorkerStatus
 from framework.harness.task_plan.canonical import canonical_payload_checksum
@@ -210,6 +212,9 @@ class TaskPlanStageRunner(TaskPlanStageRunnerPort):
         plan: ValidatedTaskPlan | None = None
         try:
             plan = self._ensure_plan(request)
+            recorded_result = self._recorded_submission_result(request, plan)
+            if recorded_result is not None:
+                return recorded_result
             self._execute_plan(request, plan)
             projection = self.store.load_projection(request.run_id, request.stage_id)
             results = self.store.results_for(request.run_id, request.stage_id, plan.plan_id, plan.version)
@@ -229,14 +234,6 @@ class TaskPlanStageRunner(TaskPlanStageRunnerPort):
                 sequence=self._next_sequence(request),
             ))
             self._persist_checkpoint(request, plan)
-            self.store.append_event(TaskPlanEvent.for_plan(
-                "TASK_PLAN_VERIFIED",
-                plan,
-                input_checksum=aggregate.aggregate_checksum,
-                output_refs=tuple(aggregate.output_refs_by_role.values()),
-                sequence=self._next_sequence(request),
-            ))
-            self._persist_checkpoint(request, plan)
             result = HarnessWorkerResult(
                 status=HarnessWorkerStatus.SUCCEEDED,
                 output={
@@ -247,16 +244,45 @@ class TaskPlanStageRunner(TaskPlanStageRunnerPort):
                 },
                 diagnostics={"plan_id": plan.plan_id, "plan_version": plan.version, "projection_checksum": projection.projection_checksum},
             )
+            self.store.append_event(TaskPlanEvent.for_plan(
+                "TASK_PLAN_VERIFIED",
+                plan,
+                input_checksum=aggregate.aggregate_checksum,
+                output_refs=tuple(aggregate.output_refs_by_role.values()),
+                payload=self._submission_result_payload(request, result),
+                sequence=self._next_sequence(request),
+            ))
+            self._persist_checkpoint(request, plan)
             self._publish_metrics(plan)
             return result
         except HarnessValidationError as exc:
-            self._halt(request, exc.code or "task_plan_failure")
+            reason_code = exc.code or "task_plan_failure"
+            result = HarnessWorkerResult(
+                status=HarnessWorkerStatus.BLOCKED,
+                error=reason_code if request.submission_identity is not None else str(exc),
+                diagnostics={"reason_code": reason_code},
+            )
+            if exc.code in {
+                "CANDIDATE_IDEMPOTENCY_CONFLICT",
+                "task_plan_submission_binding_conflict",
+                "task_plan_submission_scope_unavailable",
+                "task_plan_submission_identity_required",
+                "task_plan_candidate_conflict",
+                "task_plan_submission_result_invalid",
+            }:
+                return result
+            self._halt(request, exc.code or "task_plan_failure", result=result)
             self._publish_metrics(plan or self.store.plan(request.run_id, request.stage_id))
-            return HarnessWorkerResult(status=HarnessWorkerStatus.BLOCKED, error=str(exc), diagnostics={"reason_code": exc.code})
+            return result
         except Exception as exc:
-            self._halt(request, "task_plan_stage_failure")
+            result = HarnessWorkerResult(
+                status=HarnessWorkerStatus.FAILED,
+                error="task_plan_stage_failure" if request.submission_identity is not None else str(exc),
+                diagnostics={"reason_code": "task_plan_stage_failure"},
+            )
+            self._halt(request, "task_plan_stage_failure", result=result)
             self._publish_metrics(plan or self.store.plan(request.run_id, request.stage_id))
-            return HarnessWorkerResult(status=HarnessWorkerStatus.FAILED, error=str(exc), diagnostics={"reason_code": "task_plan_stage_failure"})
+            return result
 
     def _ensure_plan(self, request: TaskPlanStageRequest) -> ValidatedTaskPlan:
         if request.policy_ref is not None and request.policy_ref != request.policy.exact_ref:
@@ -265,18 +291,59 @@ class TaskPlanStageRunner(TaskPlanStageRunnerPort):
         if existing is not None:
             _require_plan_stage_binding(existing, request)
             self.patch_validator.require_policy_identity(existing, request.policy)
+        submission = self._existing_submission(request, existing)
+        if existing is not None:
+            initial = self.store.plan(request.run_id, request.stage_id, version=1)
+            candidate_ref = (
+                submission.candidate_ref if submission is not None
+                else request.candidate.candidate_checksum if request.candidate is not None
+                else None
+            )
+            if candidate_ref is not None and (
+                initial is None or initial.source_candidate_ref != candidate_ref
+            ):
+                raise HarnessValidationError(
+                    "submitted candidate differs from the accepted stage candidate",
+                    code="task_plan_candidate_conflict",
+                )
             return existing
-        candidate = request.candidate or self.candidate_builder.build_candidate(PlanBuildRequest(
-            run_id=request.run_id,
-            stage_binding=request.stage_binding,
-            context_refs=request.context_refs,
-            policy=request.policy,
-            budget=request.budget,
-            metadata=request.metadata,
-            execution_identity=request.execution_identity,
-        ))
+        candidate = request.candidate
+        if candidate is None and submission is not None:
+            candidate = self.store.candidate_for(
+                request.run_id, request.stage_id, submission.candidate_ref
+            )
+            if candidate is None:
+                raise HarnessValidationError(
+                    "persisted submission candidate is unavailable",
+                    code="task_plan_artifact_missing",
+                )
+        if candidate is None:
+            candidate = self.candidate_builder.build_candidate(PlanBuildRequest(
+                run_id=request.run_id,
+                stage_binding=request.stage_binding,
+                context_refs=request.context_refs,
+                policy=request.policy,
+                budget=request.budget,
+                metadata=request.metadata,
+                execution_identity=request.execution_identity,
+            ))
+        if not candidate.matches_stage_identity(request.stage_identity):
+            raise HarnessValidationError(
+                "candidate does not match the frozen stage",
+                code="task_plan_candidate_scope_mismatch",
+            )
+        if request.submission_identity is not None:
+            submission = self.store.admit_candidate_submission(
+                candidate,
+                request.submission_identity,
+                accepted_at=request.accepted_at,
+                candidate_checksum=request.source_candidate_checksum or (
+                    submission.candidate_checksum if submission is not None else None
+                ),
+            )
         self._validate_planning_observations(request, candidate)
-        self.store.append_candidate(candidate)
+        if submission is None:
+            self.store.append_candidate(candidate)
         context = TaskPlanValidationContext(
             run_id=request.run_id,
             stage_binding=request.stage_binding,
@@ -296,7 +363,10 @@ class TaskPlanStageRunner(TaskPlanStageRunnerPort):
             result.require_valid()
         plan = ValidatedTaskPlan.from_candidate(
             candidate,
-            plan_id=canonical_payload_checksum({"candidate_checksum": candidate.candidate_checksum, "stage_id": request.stage_id}),
+            plan_id=(
+                submission.plan_id if submission is not None else
+                canonical_payload_checksum({"candidate_checksum": candidate.candidate_checksum, "stage_id": request.stage_id})
+            ),
             version=1,
             parent_plan_id=None,
             source_candidate_ref=candidate.candidate_checksum,
@@ -305,10 +375,83 @@ class TaskPlanStageRunner(TaskPlanStageRunnerPort):
             tasks=result.resolved_tasks,
             required_output_roles=request.policy.required_output_roles,
             limits=request.policy.limits,
-            accepted_at=_required_observation_time(request),
+            accepted_at=submission.accepted_at if submission is not None else _required_observation_time(request),
         )
         self.store.accept_plan(plan)
         return plan
+
+    def _existing_submission(
+        self, request: TaskPlanStageRequest, existing: ValidatedTaskPlan | None
+    ) -> CandidateSubmission | None:
+        identity = request.submission_identity
+        if identity is None:
+            if self.store.submissions_for(request.run_id, request.stage_id):
+                raise HarnessValidationError(
+                    "stage admission requires its original candidate submission identity",
+                    code="task_plan_submission_identity_required",
+                )
+            return None
+        submissions = self.store.submissions_for(request.run_id, request.stage_id)
+        matching = next((item for item in submissions if item.identity == identity), None)
+        if matching is None:
+            if existing is not None or submissions:
+                raise HarnessValidationError(
+                    "stage execution scope is already bound to another submission",
+                    code="task_plan_submission_scope_unavailable",
+                )
+            return None
+        if request.candidate is not None:
+            matching = self.store.admit_candidate_submission(
+                request.candidate,
+                identity,
+                accepted_at=request.accepted_at,
+                candidate_checksum=request.source_candidate_checksum,
+            )
+        elif request.source_candidate_checksum is not None and (
+            request.source_candidate_checksum != matching.candidate_checksum
+        ):
+            raise HarnessValidationError(
+                "candidate checksum conflicts with the original submission",
+                code="CANDIDATE_IDEMPOTENCY_CONFLICT",
+            )
+        return matching
+
+    def _submission_result_payload(
+        self, request: TaskPlanStageRequest, result: HarnessWorkerResult
+    ) -> dict[str, Any]:
+        if request.submission_identity is None:
+            return {}
+        return {
+            "submission_key": request.submission_identity.dedup_key,
+            "terminal_result": result.to_dict(),
+            "terminal_result_checksum": result.candidate_result_ref,
+        }
+
+    def _recorded_submission_result(
+        self, request: TaskPlanStageRequest, plan: ValidatedTaskPlan
+    ) -> HarnessWorkerResult | None:
+        if request.submission_identity is None:
+            return None
+        for event in reversed(self.store.read_events(request.run_id, request.stage_id)):
+            if event.plan_id != plan.plan_id or event.plan_version != plan.version:
+                continue
+            if event.event_type not in {"TASK_PLAN_VERIFIED", "TASK_PLAN_HALTED"}:
+                continue
+            payload = event.payload
+            if payload.get("submission_key") != request.submission_identity.dedup_key:
+                raise HarnessValidationError(
+                    "recorded terminal outcome lost its submission identity",
+                    code="task_plan_submission_result_invalid",
+                )
+            try:
+                self._replay_history(request, plan)
+                return submission_result_from_event(event)
+            except HarnessValidationError as exc:
+                raise HarnessValidationError(
+                    "recorded submission outcome has unverifiable history",
+                    code="task_plan_submission_result_invalid",
+                ) from exc
+        return None
 
     def _validate_planning_observations(
         self,
@@ -668,7 +811,11 @@ class TaskPlanStageRunner(TaskPlanStageRunnerPort):
             available_concurrency_reservations=policy.available_concurrency_reservations,
             serial_fallback=policy.serial_fallback,
             join_policy=JoinPolicy(policy.join_policy),
-            correlation_id=f"{request.run_id}-{request.stage_id}-plan-{plan.version}",
+            correlation_id=(
+                request.submission_identity.dedup_key
+                if request.submission_identity is not None else
+                f"{request.run_id}-{request.stage_id}-plan-{plan.version}"
+            ),
             group_task_ids=tuple(item.task_id for item in plan.tasks),
             side_effect_class=SideEffectClass(policy.side_effect_class),
             resource_conflict_key=policy.resource_conflict_key,
@@ -1023,6 +1170,18 @@ class TaskPlanStageRunner(TaskPlanStageRunnerPort):
 
         if self.checkpoint_store is None:
             return
+        report = self._replay_history(request, plan)
+        checkpoint = TaskPlanCheckpoint.from_replay(
+            f"checkpoint-{plan.plan_id}-{report.projection.last_sequence}",
+            plan,
+            report,
+            created_at=_required_observation_time(request),
+        )
+        self.checkpoint_store.save(checkpoint)
+
+    def _replay_history(
+        self, request: TaskPlanStageRequest, plan: ValidatedTaskPlan
+    ) -> TaskPlanReplayReport:
         events = self.store.read_events(request.run_id, request.stage_id)
         results = self.store.result_history_for(
             request.run_id,
@@ -1037,14 +1196,17 @@ class TaskPlanStageRunner(TaskPlanStageRunnerPort):
             is not None
         )
         if not plan_history:
-            return
+            raise HarnessValidationError(
+                "TaskPlan history is missing its accepted plan",
+                code="task_plan_replay_plan_missing",
+            )
         patch_reader = getattr(self.store, "patches_for", None)
         patches = (
             tuple(patch_reader(request.run_id, request.stage_id))
             if callable(patch_reader)
             else ()
         )
-        report = TaskPlanReplayReducer().replay(
+        return TaskPlanReplayReducer().replay(
             plan_history,
             events,
             results=results,
@@ -1053,24 +1215,23 @@ class TaskPlanStageRunner(TaskPlanStageRunnerPort):
             require_latest_plan=False,
             apply_unterminated_results=False,
         )
-        checkpoint = TaskPlanCheckpoint.from_replay(
-            f"checkpoint-{plan.plan_id}-{report.projection.last_sequence}",
-            plan,
-            report,
-            created_at=_required_observation_time(request),
-        )
-        self.checkpoint_store.save(checkpoint)
 
-    def _halt(self, request: TaskPlanStageRequest, reason_code: str) -> None:
+    def _halt(
+        self, request: TaskPlanStageRequest, reason_code: str,
+        *, result: HarnessWorkerResult | None = None,
+    ) -> None:
         try:
             plan = self.store.plan(request.run_id, request.stage_id)
             diagnostic_ref = canonical_payload_checksum({"reason_code": reason_code})
+            payload = {"diagnostic_ref": diagnostic_ref}
+            if result is not None:
+                payload.update(self._submission_result_payload(request, result))
             event = (
                 TaskPlanEvent.for_plan(
                     "TASK_PLAN_HALTED",
                     plan,
                     reason_code=reason_code,
-                    payload={"diagnostic_ref": diagnostic_ref},
+                    payload=payload,
                     sequence=self._next_sequence(request),
                 )
                 if plan is not None
@@ -1078,7 +1239,7 @@ class TaskPlanStageRunner(TaskPlanStageRunnerPort):
                     "TASK_PLAN_HALTED",
                     **_task_plan_event_identity_kwargs(request.stage_identity),
                     reason_code=reason_code,
-                    payload={"diagnostic_ref": diagnostic_ref},
+                    payload=payload,
                     sequence=self._next_sequence(request),
                 )
             )

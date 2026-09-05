@@ -35,6 +35,11 @@ from framework.harness.task_plan.canonical import (
     checksum,
     identifier,
 )
+from framework.harness.task_plan.submission import (
+    CandidateDedupIdentity,
+    CandidateSubmission,
+    submissions_from_events,
+)
 from framework.harness.task_plan.models import (
     PlanCandidate,
     PlanPatch,
@@ -59,6 +64,9 @@ from framework.harness.task_plan.store import (
     _require_subagent_result_evidence,
     _require_projection_transition_identity,
     _result_event,
+    _require_same_submission,
+    _require_submission_scope,
+    _require_initial_plan_submission_binding,
     _settle_result_budget,
     _terminal_result_event,
     _validate_result_usage,
@@ -284,6 +292,169 @@ class DurableTaskPlanStore:
         self._publish((event,), (refs,))
         return candidate.candidate_checksum
 
+    def admit_candidate_submission(
+        self,
+        candidate: PlanCandidate,
+        identity: CandidateDedupIdentity,
+        *,
+        accepted_at: str,
+        candidate_checksum: str | None = None,
+    ) -> CandidateSubmission:
+        if not isinstance(candidate, PlanCandidate):
+            raise TypeError("candidate must be PlanCandidate")
+        if not isinstance(identity, CandidateDedupIdentity):
+            raise TypeError("identity must be CandidateDedupIdentity")
+        _require_live_graph_only(candidate, "candidate")
+        _require_submission_scope(candidate, identity)
+        submitted = CandidateSubmission(
+            identity=identity,
+            candidate_checksum=(
+                candidate.candidate_checksum
+                if candidate_checksum is None
+                else candidate_checksum
+            ),
+            candidate_ref=candidate.candidate_checksum,
+            accepted_at=accepted_at,
+        )
+        existing = self.candidate_submission(identity)
+        if existing is not None:
+            _require_same_submission(existing, submitted)
+            return existing
+
+        candidate_ref = self._put_document(
+            "candidate",
+            candidate.run_id,
+            candidate.stage_id,
+            candidate.candidate_checksum,
+            candidate.to_dict(),
+        )
+        events = self.read_events(candidate.run_id, candidate.stage_id)
+        persisted = next(
+            (
+                item
+                for item in submissions_from_events(events)
+                if item.identity.dedup_key == identity.dedup_key
+            ),
+            None,
+        )
+        if persisted is not None:
+            _require_same_submission(persisted, submitted)
+            if self.candidate_for(
+                candidate.run_id,
+                candidate.stage_id,
+                persisted.candidate_ref,
+            ) is None:
+                raise HarnessValidationError(
+                    "candidate submission references unavailable candidate evidence",
+                    code="task_plan_artifact_missing",
+                    details={"candidate_ref": persisted.candidate_ref},
+                )
+            return persisted
+        sequence = len(events) + 1
+        event = _candidate_event(
+            candidate,
+            "PLAN_CANDIDATE_BUILT",
+            sequence,
+            submission=submitted,
+        )
+        refs: dict[str, _DocumentReference] = {"candidate": candidate_ref}
+        current = self._optional_projection(candidate.run_id, candidate.stage_id)
+        if current is not None:
+            _require_projection_matches_event(current, event)
+            refs["projection"] = self._put_projection(
+                replace(current, last_sequence=sequence)
+            )
+        try:
+            self._publish((event,), (refs,))
+        except HarnessValidationError as exc:
+            if exc.code not in {
+                "task_plan_sequence_conflict",
+                "task_plan_event_history_conflict",
+                "task_plan_event_store_contention",
+            }:
+                raise
+            existing = self.candidate_submission(identity)
+            if existing is None:
+                raise
+            _require_same_submission(existing, submitted)
+            return existing
+        return submitted
+
+    def candidate_submission(
+        self,
+        identity: CandidateDedupIdentity,
+    ) -> CandidateSubmission | None:
+        if not isinstance(identity, CandidateDedupIdentity):
+            raise TypeError("identity must be CandidateDedupIdentity")
+        submissions = self.submissions_for(identity.run_id, identity.stage_id)
+        matches = [
+            submission
+            for submission in submissions
+            if submission.identity.dedup_key == identity.dedup_key
+        ]
+        if len(matches) > 1:
+            raise HarnessValidationError(
+                "candidate submission history contains duplicate dedup identity",
+                code="CANDIDATE_IDEMPOTENCY_CONFLICT",
+                details={"dedup_key": identity.dedup_key},
+            )
+        return matches[0] if matches else None
+
+    def submissions_for(
+        self,
+        run_id: str,
+        stage_id: str,
+    ) -> tuple[CandidateSubmission, ...]:
+        run = identifier(run_id, "run_id")
+        stage = identifier(stage_id, "stage_id")
+        submissions = submissions_from_events(self.read_events(run, stage))
+        for submission in submissions:
+            candidate = self.candidate_for(run, stage, submission.candidate_ref)
+            if candidate is None:
+                raise HarnessValidationError(
+                    "candidate submission references unavailable candidate evidence",
+                    code="task_plan_artifact_missing",
+                    details={"candidate_ref": submission.candidate_ref},
+                )
+        return submissions
+
+    def candidate_for(
+        self,
+        run_id: str,
+        stage_id: str,
+        candidate_ref: str,
+    ) -> PlanCandidate | None:
+        run = identifier(run_id, "run_id")
+        stage = identifier(stage_id, "stage_id")
+        ref = checksum(candidate_ref, "candidate_ref")
+        matches = [
+            event
+            for event in self.read_events(run, stage)
+            if event.event_type == "PLAN_CANDIDATE_BUILT" and event.input_checksum == ref
+        ]
+        if not matches:
+            return None
+        if any(event.payload.get("candidate_ref") != ref for event in matches):
+            raise HarnessValidationError(
+                "candidate event does not reference its immutable candidate",
+                code="candidate_submission_event_invalid",
+            )
+        candidate = self._load_document("candidate", run, stage, ref, PlanCandidate)
+        if (
+            candidate.candidate_checksum != ref
+            or candidate.run_id != run
+            or candidate.stage_id != stage
+            or any(
+                not event.matches_contract_identity(candidate)
+                for event in matches
+            )
+        ):
+            raise HarnessValidationError(
+                "candidate artifact conflicts with durable event evidence",
+                code="candidate_submission_event_invalid",
+            )
+        return candidate
+
     def append_rejected_candidate(
         self,
         candidate: PlanCandidate,
@@ -353,6 +524,10 @@ class DurableTaskPlanStore:
         if not isinstance(plan, ValidatedTaskPlan):
             raise TypeError("plan must be ValidatedTaskPlan")
         _require_live_graph_only(plan, "plan")
+        _require_initial_plan_submission_binding(
+            plan,
+            self.submissions_for(plan.run_id, plan.stage_id),
+        )
         events = self.read_events(plan.run_id, plan.stage_id)
         accepted = [item for item in events if item.event_type == "PLAN_ACCEPTED"]
         same_version = [item for item in accepted if item.plan_version == plan.version]

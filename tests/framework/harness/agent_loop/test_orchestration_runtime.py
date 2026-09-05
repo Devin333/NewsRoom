@@ -58,7 +58,7 @@ class _BoundWorker:
         return HarnessWorkerResult(status="succeeded", output={"summary": "completed"})
 
 
-def _runtime() -> tuple[HarnessAgentOrchestrationRuntime, GraphExecutionIdentity]:
+def _runtime(*, store=None, worker_executor=None, result_verifier=None) -> tuple[HarnessAgentOrchestrationRuntime, GraphExecutionIdentity]:
     policy = TaskPlanPolicy(
         policy_id="agent.loop.delegate",
         version="1",
@@ -121,18 +121,18 @@ def _runtime() -> tuple[HarnessAgentOrchestrationRuntime, GraphExecutionIdentity
             )
         )
     capability_registry = TaskCapabilityRegistry(registrations)
-    store = InMemoryTaskPlanStore()
+    store = store if store is not None else InMemoryTaskPlanStore()
     checkpoint_store = InMemoryTaskPlanCheckpointStore()
     supervisor = ChildAgentSupervisor(max_children=2)
     runner = TaskPlanStageRunner(
         candidate_builder=object(),
         capability_registry=capability_registry,
         store=store,
-        result_verifier=_AcceptingResultVerifier(),
-        worker_executor=lambda _binding, _task, _identity: HarnessWorkerResult(
+        result_verifier=result_verifier or _AcceptingResultVerifier(),
+        worker_executor=worker_executor or (lambda _binding, _task, _identity: HarnessWorkerResult(
             status="succeeded",
             output={"summary": "completed"},
-        ),
+        )),
         parallel_coordinator=ParallelAgentCoordinator(
             max_workers=2,
             child_supervisor=supervisor,
@@ -181,6 +181,7 @@ def _runtime() -> tuple[HarnessAgentOrchestrationRuntime, GraphExecutionIdentity
 def _request(identity: GraphExecutionIdentity) -> AgentOrchestrationRequest:
     return AgentOrchestrationRequest(
         parent_agent_id="parent",
+        parent_turn_id="parent-turn-1",
         run_id=identity.run_id,
         execution_identity=identity,
         graph_checkpoint_ref="graph-checkpoint://run-1/1/checksum",

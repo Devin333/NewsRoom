@@ -151,6 +151,7 @@ def _factory_kwargs(*, candidate_builder=None, result_verifier=None, planning_ob
 def _request() -> AgentOrchestrationRequest:
     return AgentOrchestrationRequest(
         parent_agent_id="parent",
+        parent_turn_id="parent-turn-1",
         run_id=None,
         execution_identity=None,
         graph_checkpoint_ref=None,

@@ -4,6 +4,7 @@ from dataclasses import dataclass, field, replace
 from threading import RLock
 from typing import Any, Mapping, Protocol, runtime_checkable
 
+from framework.events.schema.catalog import TASK_PLAN_EVENT_TYPES
 from framework.harness.graph.versioning import (
     GRAPH_ONLY_NORMALIZED_HARNESS_GRAPH_SCHEMA,
     HARNESS_CONDITION_POLICY_VERSION,
@@ -35,6 +36,10 @@ from framework.harness.task_plan.models import (
     ValidatedTaskPlan,
 )
 from framework.harness.task_plan.identity import TaskPlanStageIdentity
+from framework.harness.task_plan.submission import (
+    CandidateDedupIdentity,
+    CandidateSubmission,
+)
 from framework.harness.task_plan.schema import (
     GRAPH_ONLY_TASK_PLAN_PROJECTION_SCHEMA,
     GRAPH_ONLY_TASK_PROJECTION_SCHEMA,
@@ -47,48 +52,6 @@ from framework.harness.task_plan.schema import (
 # Graph v2 is the sole TaskPlan event contract.
 TASK_PLAN_EVENT_SCHEMA = TASK_PLAN_EVENT_SCHEMA_V2
 TASK_PLAN_RESULT_SCHEMA_V3 = "newsroom.harness-task-plan-result/v3"
-TASK_PLAN_EVENT_TYPES = (
-    "PLAN_CANDIDATE_BUILT",
-    "PLAN_CANDIDATE_REJECTED",
-    "PLAN_VALIDATION_FAILED",
-    "PLAN_ACCEPTED",
-    "TASK_READY",
-    "TASK_DISPATCHED",
-    "TASK_STARTED",
-    "TASK_RETRY_SCHEDULED",
-    "TASK_RESULT_ACCEPTED",
-    "TASK_RESULT_REJECTED",
-    "TASK_COMPLETED",
-    "TASK_FAILED",
-    "TASK_BLOCKED",
-    "TASK_SKIPPED",
-    "TASK_REPLACED",
-    "PLAN_PATCH_PROPOSED",
-    "PLAN_PATCH_REJECTED",
-    "PLAN_PATCH_ACCEPTED",
-    "STAGE_OUTPUT_AGGREGATED",
-    "TASK_PLAN_VERIFIED",
-    "TASK_PLAN_HALTED",
-    # Parallel dispatch lifecycle facts.  These events carry group/wave
-    # admission and join evidence while task projection remains reduced by the
-    # existing task/result events.
-    "TASK_GROUP_ADMITTED",
-    "TASK_WAVE_ADMITTED",
-    "TASK_WAVE_DISPATCHED",
-    "TASK_WAVE_COMPLETED",
-    "TASK_GROUP_JOIN_WAITING",
-    "TASK_GROUP_JOINED",
-    "TASK_GROUP_FAILED",
-    "TASK_GROUP_REPLAN_PENDING",
-    "TASK_GROUP_CANCEL_REQUESTED",
-    "TASK_GROUP_CANCELLED",
-    "TASK_GROUP_INDETERMINATE",
-    "TASK_GROUP_HALTED",
-    "TASK_GROUP_SUPERSEDED",
-    "TASK_GROUP_RECLAIMED",
-    "TASK_GROUP_RECOVERY",
-    "DEGRADED_SERIAL",
-)
 
 
 @dataclass(frozen=True, slots=True)
@@ -757,6 +720,17 @@ class TaskPlanEvent:
 @runtime_checkable
 class TaskPlanStorePort(Protocol):
     def append_candidate(self, candidate: PlanCandidate, *, event_type: str = "PLAN_CANDIDATE_BUILT") -> str: ...
+    def admit_candidate_submission(
+        self,
+        candidate: PlanCandidate,
+        identity: CandidateDedupIdentity,
+        *,
+        accepted_at: str,
+        candidate_checksum: str | None = None,
+    ) -> CandidateSubmission: ...
+    def candidate_submission(self, identity: CandidateDedupIdentity) -> CandidateSubmission | None: ...
+    def submissions_for(self, run_id: str, stage_id: str) -> tuple[CandidateSubmission, ...]: ...
+    def candidate_for(self, run_id: str, stage_id: str, candidate_ref: str) -> PlanCandidate | None: ...
     def append_rejected_candidate(self, candidate: PlanCandidate, *, reason_code: str) -> str: ...
     def accept_plan(self, plan: ValidatedTaskPlan) -> str: ...
     def append_patch(self, patch: PlanPatch, *, accepted: bool = False) -> str: ...
@@ -785,6 +759,7 @@ class InMemoryTaskPlanStore:
     def __init__(self) -> None:
         self._lock = RLock()
         self._candidates: dict[str, PlanCandidate] = {}
+        self._submissions: dict[str, CandidateSubmission] = {}
         self._plans: dict[tuple[str, str, int], ValidatedTaskPlan] = {}
         self._patches: dict[str, PlanPatch] = {}
         self._results: dict[tuple[str, str, str, int, int], TaskResultRecord] = {}
@@ -812,6 +787,100 @@ class InMemoryTaskPlanStore:
             self._candidates[candidate.candidate_checksum] = candidate
             self._append_event(event)
         return candidate.candidate_checksum
+
+    def admit_candidate_submission(
+        self,
+        candidate: PlanCandidate,
+        identity: CandidateDedupIdentity,
+        *,
+        accepted_at: str,
+        candidate_checksum: str | None = None,
+    ) -> CandidateSubmission:
+        if not isinstance(candidate, PlanCandidate):
+            raise TypeError("candidate must be PlanCandidate")
+        if not isinstance(identity, CandidateDedupIdentity):
+            raise TypeError("identity must be CandidateDedupIdentity")
+        _require_live_graph_only(candidate, "candidate")
+        _require_submission_scope(candidate, identity)
+        action_checksum = (
+            candidate.candidate_checksum
+            if candidate_checksum is None
+            else candidate_checksum
+        )
+        submission = CandidateSubmission(
+            identity=identity,
+            candidate_checksum=action_checksum,
+            candidate_ref=candidate.candidate_checksum,
+            accepted_at=accepted_at,
+        )
+        with self._lock:
+            existing = self._submissions.get(identity.dedup_key)
+            if existing is not None:
+                _require_same_submission(existing, submission)
+                return existing
+            existing_candidate = self._candidates.get(candidate.candidate_checksum)
+            if existing_candidate is not None and existing_candidate != candidate:
+                raise HarnessValidationError(
+                    "candidate checksum identity conflict",
+                    code="task_plan_checksum_conflict",
+                )
+            event = _candidate_event(
+                candidate,
+                "PLAN_CANDIDATE_BUILT",
+                self._next_sequence(candidate.run_id, candidate.stage_id),
+                submission=submission,
+            )
+            current = self._current_plan(candidate.run_id, candidate.stage_id)
+            if current is not None:
+                _require_event_matches_plan(event, current)
+            self._candidates.setdefault(candidate.candidate_checksum, candidate)
+            self._submissions[identity.dedup_key] = submission
+            self._append_event(event)
+            return submission
+
+    def candidate_submission(
+        self,
+        identity: CandidateDedupIdentity,
+    ) -> CandidateSubmission | None:
+        if not isinstance(identity, CandidateDedupIdentity):
+            raise TypeError("identity must be CandidateDedupIdentity")
+        with self._lock:
+            return self._submissions.get(identity.dedup_key)
+
+    def submissions_for(
+        self,
+        run_id: str,
+        stage_id: str,
+    ) -> tuple[CandidateSubmission, ...]:
+        run = identifier(run_id, "run_id")
+        stage = identifier(stage_id, "stage_id")
+        with self._lock:
+            records = tuple(
+                record
+                for record in self._submissions.values()
+                if record.identity.run_id == run and record.identity.stage_id == stage
+            )
+            return tuple(sorted(records, key=lambda item: item.submission_id))
+
+    def candidate_for(
+        self,
+        run_id: str,
+        stage_id: str,
+        candidate_ref: str,
+    ) -> PlanCandidate | None:
+        run = identifier(run_id, "run_id")
+        stage = identifier(stage_id, "stage_id")
+        ref = checksum(candidate_ref, "candidate_ref")
+        with self._lock:
+            candidate = self._candidates.get(ref)
+            if candidate is None:
+                return None
+            if candidate.run_id != run or candidate.stage_id != stage:
+                raise HarnessValidationError(
+                    "candidate reference is outside the requested TaskPlan scope",
+                    code="candidate_submission_event_invalid",
+                )
+            return candidate
 
     def append_rejected_candidate(self, candidate: PlanCandidate, *, reason_code: str) -> str:
         if not isinstance(candidate, PlanCandidate):
@@ -858,6 +927,15 @@ class InMemoryTaskPlanStore:
         _require_live_graph_only(plan, "plan")
         key = (plan.run_id, plan.stage_id, plan.version)
         with self._lock:
+            _require_initial_plan_submission_binding(
+                plan,
+                tuple(
+                    submission
+                    for submission in self._submissions.values()
+                    if submission.identity.run_id == plan.run_id
+                    and submission.identity.stage_id == plan.stage_id
+                ),
+            )
             current = self._current_plan(plan.run_id, plan.stage_id)
             if current is not None:
                 if plan.version != current.version + 1 or plan.parent_plan_id != current.plan_id:
@@ -1566,13 +1644,29 @@ def _plan_contains_task_version(plans: Mapping[tuple[str, str, int], ValidatedTa
     return any(item.task_id == result.task_id and item.task_definition_checksum == result.task_checksum for item in ancestor.tasks)
 
 
-def _candidate_event(candidate: PlanCandidate, event_type: str, sequence: int, *, reason_code: str | None = None) -> TaskPlanEvent:
+def _candidate_event(
+    candidate: PlanCandidate,
+    event_type: str,
+    sequence: int,
+    *,
+    reason_code: str | None = None,
+    submission: CandidateSubmission | None = None,
+) -> TaskPlanEvent:
+    payload: dict[str, Any] = {"candidate_ref": candidate.candidate_checksum}
+    if submission is not None:
+        _require_submission_scope(candidate, submission.identity)
+        if submission.candidate_ref != candidate.candidate_checksum:
+            raise HarnessValidationError(
+                "candidate submission reference does not match candidate",
+                code="CANDIDATE_IDEMPOTENCY_CONFLICT",
+            )
+        payload["submission"] = submission.to_dict()
     return TaskPlanEvent(
         event_type,
         **_task_plan_event_identity_kwargs(candidate),
         input_checksum=candidate.candidate_checksum,
         reason_code=reason_code,
-        payload={"candidate_ref": candidate.candidate_checksum},
+        payload=payload,
         sequence=sequence,
     )
 
@@ -1818,6 +1912,62 @@ def _require_event_matches_plan(
         raise HarnessValidationError(
             "TaskPlan event plan version does not match the accepted plan",
             code="task_plan_event_identity_mismatch",
+        )
+
+
+def _require_submission_scope(
+    candidate: PlanCandidate,
+    identity: CandidateDedupIdentity,
+) -> None:
+    if (candidate.run_id, candidate.stage_id) != (
+        identity.run_id,
+        identity.stage_id,
+    ):
+        raise HarnessValidationError(
+            "candidate submission identity is outside the candidate scope",
+            code="candidate_submission_event_invalid",
+        )
+
+
+def _require_same_submission(
+    existing: CandidateSubmission,
+    submitted: CandidateSubmission,
+) -> None:
+    if (
+        existing.candidate_checksum != submitted.candidate_checksum
+        or existing.candidate_ref != submitted.candidate_ref
+    ):
+        raise HarnessValidationError(
+            "candidate submission dedup identity was reused with a different payload",
+            code="CANDIDATE_IDEMPOTENCY_CONFLICT",
+            details={"dedup_key": existing.identity.dedup_key},
+        )
+
+
+def _require_initial_plan_submission_binding(
+    plan: ValidatedTaskPlan,
+    submissions: tuple[CandidateSubmission, ...],
+) -> None:
+    """Bind a submitted initial plan to its exact durable parent action."""
+
+    if plan.version != 1 or not submissions:
+        return
+    source_matches = tuple(
+        item for item in submissions if item.candidate_ref == plan.source_candidate_ref
+    )
+    exact_matches = tuple(
+        item
+        for item in source_matches
+        if item.plan_id == plan.plan_id and item.accepted_at == plan.accepted_at
+    )
+    if len(exact_matches) != 1:
+        raise HarnessValidationError(
+            "initial TaskPlan does not match its durable candidate submission",
+            code="task_plan_submission_binding_conflict",
+            details={
+                "source_candidate_ref": plan.source_candidate_ref,
+                "plan_id": plan.plan_id,
+            },
         )
 
 
