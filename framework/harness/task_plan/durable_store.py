@@ -69,6 +69,8 @@ from framework.harness.task_plan.store import (
     _require_initial_plan_submission_binding,
     _settle_result_budget,
     _terminal_result_event,
+    _classify_atomic_event_batch_history,
+    _validate_atomic_event_batch,
     _validate_result_usage,
 )
 from framework.shared.time import utc_now
@@ -1177,6 +1179,40 @@ class DurableTaskPlanStore:
             )
         self._publish((event,), (refs,))
         return event.event_checksum
+
+    def append_events(self, events: tuple[TaskPlanEvent, ...]) -> tuple[str, ...]:
+        """Atomically append a contiguous batch with per-event projections.
+
+        The projection snapshots are written before the canonical event batch,
+        but become reachable only through their corresponding committed event.
+        This preserves a readable checkpoint for every committed prefix.
+        """
+
+        batch = _validate_atomic_event_batch(events)
+        run_id = batch[0].run_id
+        stage_id = batch[0].stage_id
+        history = self.read_events(run_id, stage_id)
+        if _classify_atomic_event_batch_history(batch, history):
+            return tuple(event.event_checksum for event in batch)
+
+        plan = self.plan(run_id, stage_id)
+        if plan is not None:
+            for event in batch:
+                _require_event_matches_plan(event, plan)
+
+        current = self._optional_projection(run_id, stage_id)
+        refs: list[dict[str, _DocumentReference]] = []
+        for event in batch:
+            event_refs: dict[str, _DocumentReference] = {}
+            if current is not None:
+                _require_projection_matches_event(current, event)
+                event_refs["projection"] = self._put_projection(
+                    replace(current, last_sequence=event.sequence)
+                )
+            refs.append(event_refs)
+
+        self._publish(batch, tuple(refs))
+        return tuple(event.event_checksum for event in batch)
 
     def commit_event(
         self,

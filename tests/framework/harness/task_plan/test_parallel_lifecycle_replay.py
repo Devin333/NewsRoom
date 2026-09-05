@@ -10,6 +10,7 @@ from framework.harness.task_plan import TaskLifecycle
 from framework.harness.task_plan.parallel import (
     JoinPolicy,
     ParallelAgentCoordinator,
+    ParallelEventSink,
     SerialTaskExecutorAdapter,
 )
 from framework.harness.task_plan.replay import (
@@ -39,7 +40,7 @@ def _coordinator_events(*, status: TaskLifecycle = TaskLifecycle.SUCCEEDED):
     coordinator = ParallelAgentCoordinator(
         max_workers=1,
         serial_executor=SerialTaskExecutorAdapter(),
-        event_sink=events.append,
+        event_sink=ParallelEventSink(events.append, events.extend),
     )
     coordinator.dispatch(request, lambda instance: _result(plan, instance, status=status))
     return plan, events

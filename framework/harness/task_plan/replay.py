@@ -414,14 +414,6 @@ class TaskPlanReplayReducer:
         parallel_reservations: dict[str, dict[str, Any]] = {}
         parallel_diagnostics: list[dict[str, Any]] = []
         parallel_spawn_operations: dict[str, dict[str, Any]] = {}
-        parallel_spawn_protocol = any(
-            event.event_type in {
-                "TASK_ATTEMPT_SPAWN_INTENT",
-                "TASK_ATTEMPT_SPAWN_CONFIRMED",
-                "TASK_ATTEMPT_SPAWN_UNKNOWN",
-            }
-            for event in ordered_events
-        )
         parallel_event_sequence = 0
 
         for event in ordered_events:
@@ -698,7 +690,7 @@ class TaskPlanReplayReducer:
                     parallel_waves,
                     parallel_reservations,
                     parallel_diagnostics,
-                    parallel_spawn_operations if parallel_spawn_protocol else None,
+                    parallel_spawn_operations,
                 )
                 parallel_event_sequence = event.sequence
             elif event.event_type == "TASK_PLAN_HALTED":
@@ -901,7 +893,6 @@ def _apply_parallel_event(
     supply the durable admission/join/reservation history needed to explain
     and safely recover a parallel dispatch group.
     """
-    require_spawn_receipts = spawn_operations is not None
     spawn_operations = spawn_operations if spawn_operations is not None else {}
     payload = thaw_mapping(event.payload)
     group_payload = payload.get("group")
@@ -933,6 +924,8 @@ def _apply_parallel_event(
         wave = waves.get(wave_id)
         if wave is None or wave["group_id"] != group_id:
             _parallel_error("spawn event references an unknown wave", event)
+        if wave["execution_mode"] != "SUPERVISED":
+            _parallel_error("serial wave cannot contain supervisor spawn events", event)
         task_id = _parallel_identifier(payload.get("task_id"), "task_id", event)
         if task_id not in wave["task_ids"]:
             _parallel_error("spawn event task is outside wave scope", event)
@@ -943,22 +936,36 @@ def _apply_parallel_event(
         operation_key = payload.get("operation_key")
         if not isinstance(operation_key, str) or not operation_key.strip():
             _parallel_error("spawn event operation key is missing", event)
+        from framework.harness.task_plan.parallel import spawn_operation_key
+
+        if operation_key != spawn_operation_key(group_id, wave_id, task_instance_id, attempt):
+            _parallel_error("spawn operation key differs from its attempt identity", event)
+        if payload.get("idempotency_key") != operation_key:
+            _parallel_error("spawn idempotency key differs from its operation key", event)
         key = f"{wave_id}:{task_instance_id}:{attempt}"
         existing = spawn_operations.get(key)
+        identity = {
+            "group_id": group_id, "wave_id": wave_id, "task_id": task_id,
+            "task_instance_id": task_instance_id, "attempt": attempt,
+            "operation_key": operation_key,
+        }
         if event.event_type == "TASK_ATTEMPT_SPAWN_INTENT":
             if existing is not None:
-                _parallel_error("spawn intent was recorded more than once", event)
+                if any(existing[name] != value for name, value in identity.items()):
+                    _parallel_error("spawn intent conflicts with recorded identity", event)
+                return
+            _require_parallel_state(wave["state"], {DispatchWaveState.ADMITTED.value}, event)
+            task = next((item for item in projection.tasks if item.task_id == task_id), None)
+            if task is None or task.active_instance_id != task_instance_id or task.attempts != attempt:
+                _parallel_error("spawn intent differs from admitted task attempt", event)
+            if any(item["wave_id"] == wave_id and item["task_id"] == task_id for item in spawn_operations.values()):
+                _parallel_error("wave task has multiple spawn attempts", event)
             spawn_operations[key] = {
-                "group_id": group_id,
-                "wave_id": wave_id,
-                "task_id": task_id,
-                "task_instance_id": task_instance_id,
-                "attempt": attempt,
-                "operation_key": operation_key,
+                **identity,
                 "status": "INTENT",
             }
             return
-        if existing is None or existing["operation_key"] != operation_key:
+        if existing is None or any(existing[name] != value for name, value in identity.items()):
             _parallel_error("spawn receipt has no matching intent", event)
         status = payload.get("spawn_status")
         expected_status = (
@@ -968,10 +975,14 @@ def _apply_parallel_event(
         )
         if status != expected_status:
             _parallel_error("spawn receipt status does not match event type", event)
-        if event.event_type == "TASK_ATTEMPT_SPAWN_CONFIRMED" and not isinstance(payload.get("child_id"), str):
-            _parallel_error("confirmed spawn receipt is missing child id", event)
+        if status == "SPAWN_CONFIRMED":
+            _parallel_identifier(payload.get("child_id"), "child_id", event)
+        elif payload.get("child_id") is not None:
+            _parallel_error("unknown spawn receipt must not invent a child id", event)
         if existing["status"] != "INTENT":
-            _parallel_error("spawn receipt was recorded more than once", event)
+            if existing["status"] == status and existing.get("child_id") == payload.get("child_id"):
+                return
+            _parallel_error("spawn receipt conflicts with recorded evidence", event)
         existing["status"] = status
         existing["child_id"] = payload.get("child_id")
         return
@@ -1008,17 +1019,18 @@ def _apply_parallel_event(
         if tuple(event_tasks) != tuple(wave["task_ids"]):
             _parallel_error("parallel wave task scope differs from admission", event)
         if event.event_type == "TASK_WAVE_DISPATCHED":
-            for task_id in wave["task_ids"] if require_spawn_receipts else ():
+            for task_id in wave["task_ids"] if wave["execution_mode"] == "SUPERVISED" else ():
                 matching = [
                     item
                     for item in spawn_operations.values()
                     if item.get("group_id") == group_id
                     and item.get("wave_id") == wave_id
                     and item.get("task_id") == task_id
-                    and item.get("status") in {"SPAWN_CONFIRMED", "SPAWN_UNKNOWN"}
+                    and item.get("status") == "SPAWN_CONFIRMED"
+                    and item.get("child_id")
                 ]
                 if len(matching) != 1:
-                    _parallel_error("wave dispatch is missing a per-task spawn receipt", event)
+                    _parallel_error("wave dispatch is missing a confirmed per-task spawn receipt", event)
             _require_parallel_state(wave["state"], {DispatchWaveState.ADMITTED.value}, event)
             _transition_parallel_wave(wave, DispatchWaveState.RUNNING, event)
             _transition_parallel_group(group, DispatchGroupState.RUNNING, event)
@@ -1303,12 +1315,12 @@ def _normalize_parallel_wave(
     required = {
         "schema_version",
         "wave_id", "group_id", "ordinal", "task_ids", "effective_parallelism",
-        "reservations", "state", "terminal_outcome",
+        "reservations", "state", "terminal_outcome", "execution_mode",
     }
     if (
         not required.issubset(value)
         or set(value) - required
-        or value.get("schema_version") != "agora.harness-dispatch-wave/v2"
+        or value.get("schema_version") != "agora.harness-dispatch-wave/v3"
         or value.get("group_id") != group["group_id"]
     ):
         _parallel_error("parallel wave identity is invalid", event)
@@ -1322,6 +1334,10 @@ def _normalize_parallel_wave(
         _parallel_error("parallel wave capacity is invalid", event)
     if value["effective_parallelism"] > group["max_parallelism"]:
         _parallel_error("parallel wave exceeds group capacity", event)
+    if value["execution_mode"] not in {"SUPERVISED", "SERIAL", "INLINE_TEST"}:
+        _parallel_error("parallel wave execution mode is invalid", event)
+    if value["execution_mode"] == "SERIAL" and (value["effective_parallelism"] != 1 or len(task_ids) != 1):
+        _parallel_error("serial wave must have one task and slot", event)
     if value.get("state") not in _PARALLEL_WAVE_STATES or not isinstance(value.get("reservations"), list):
         _parallel_error("parallel wave snapshot is invalid", event)
     wave_outcome = value.get("terminal_outcome")
@@ -1343,6 +1359,7 @@ def _normalize_parallel_wave(
             "ordinal": value["ordinal"],
             "task_ids": value["task_ids"],
             "effective_parallelism": value["effective_parallelism"],
+            "execution_mode": value["execution_mode"],
             "reservations": [
                 {
                     "task_id": item["task_id"],

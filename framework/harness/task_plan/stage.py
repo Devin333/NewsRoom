@@ -49,6 +49,7 @@ from framework.harness.task_plan.parallel import (
     JoinPolicy,
     ParallelAgentCoordinator,
     ParallelDispatchRequest,
+    ParallelEventSink,
     ParentObservationLimits,
     SideEffectClass,
 )
@@ -981,39 +982,55 @@ class TaskPlanStageRunner(TaskPlanStageRunnerPort):
         return tuple(sorted(ordinals))
 
     def _parallel_event_sink(self, request: TaskPlanStageRequest, plan: ValidatedTaskPlan):
-        return lambda event: self._record_parallel_event(request, plan, event)
+        return ParallelEventSink(
+            append=lambda event: self._record_parallel_events(request, plan, (event,)),
+            append_batch=lambda events: self._record_parallel_events(request, plan, events),
+        )
 
-    def _record_parallel_event(
+    def _record_parallel_events(
         self,
         request: TaskPlanStageRequest,
         plan: ValidatedTaskPlan,
-        event: Any,
+        events: tuple[Mapping[str, Any], ...],
     ) -> None:
-        if not isinstance(event, dict):
-            raise HarnessValidationError("parallel event must be an object", code="task_plan_parallel_event_invalid")
-        event_type = event.get("event_type")
-        if not isinstance(event_type, str):
-            raise HarnessValidationError("parallel event type is missing", code="task_plan_parallel_event_invalid")
-        idempotency_key = event.get("idempotency_key")
-        durable_idempotency_key = f"{event_type}:{idempotency_key or canonical_payload_checksum(event)}"
-        if any(
-            item.payload.get("parallel_event_idempotency_key") == durable_idempotency_key
-            for item in self.store.read_events(request.run_id, request.stage_id)
-        ):
-            return
-        payload = dict(event)
-        payload["parallel_event_idempotency_key"] = durable_idempotency_key
-        event_checksum = canonical_payload_checksum(event)
-        self.store.append_event(
-            TaskPlanEvent.for_plan(
-                event_type,
-                plan,
-                input_checksum=event_checksum,
-                reason_code=event.get("reason_code") if isinstance(event.get("reason_code"), str) else None,
-                payload=payload,
-                sequence=self._next_sequence(request),
+        history = self.store.read_events(request.run_id, request.stage_id)
+        recorded = {
+            item.payload.get("parallel_event_idempotency_key"): item
+            for item in history
+            if "parallel_event_idempotency_key" in item.payload
+        }
+        batch: list[TaskPlanEvent] = []
+        reused = 0
+        for event in events:
+            if not isinstance(event, Mapping) or not isinstance(event.get("event_type"), str):
+                raise HarnessValidationError("parallel event type is missing", code="task_plan_parallel_event_invalid")
+            event_type = event["event_type"]
+            event_checksum = canonical_payload_checksum(event)
+            idempotency_key = event.get("idempotency_key")
+            durable_key = f"{event_type}:{idempotency_key or event_checksum}"
+            existing = recorded.get(durable_key)
+            if existing is not None:
+                if existing.input_checksum != event_checksum:
+                    raise HarnessValidationError(
+                        "parallel event idempotency key has conflicting content",
+                        code="task_plan_event_history_conflict",
+                    )
+                reused += 1
+                continue
+            batch.append(
+                TaskPlanEvent.for_plan(
+                    event_type, plan,
+                    input_checksum=event_checksum,
+                    reason_code=event.get("reason_code") if isinstance(event.get("reason_code"), str) else None,
+                    payload={**event, "parallel_event_idempotency_key": durable_key},
+                    sequence=len(history) + len(batch) + 1,
+                )
             )
-        )
+        if reused:
+            if batch:
+                raise HarnessValidationError("atomic admission is partially present", code="task_plan_event_history_conflict")
+            return
+        self.store.append_events(tuple(batch))
         self._persist_checkpoint(request, plan)
 
     def _recover_failed_task_retries(

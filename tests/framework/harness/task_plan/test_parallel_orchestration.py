@@ -39,6 +39,7 @@ from framework.harness.task_plan.parallel import (
     JoinPolicy,
     ParallelAgentCoordinator,
     ParallelDispatchRequest,
+    ParallelEventSink,
     ParentObservation,
     ParentObservationLimits,
     ReservationState,
@@ -324,7 +325,7 @@ def test_serial_fallback_requires_explicit_adapter_and_preserves_group_waves() -
     coordinator = ParallelAgentCoordinator(
         max_workers=2,
         serial_executor=SerialTaskExecutorAdapter(),
-        event_sink=events.append,
+        event_sink=ParallelEventSink(events.append, events.extend),
     )
 
     def invoke(instance):
@@ -349,7 +350,7 @@ def test_serial_fallback_flag_does_not_disable_healthy_supervised_parallelism() 
     coordinator = ParallelAgentCoordinator(
         max_workers=2,
         child_supervisor=supervisor,
-        event_sink=events.append,
+        event_sink=ParallelEventSink(events.append, events.extend),
     )
     barrier = Barrier(2)
 
@@ -375,7 +376,7 @@ def test_supervised_capacity_two_runs_three_tasks_in_two_waves_with_overlap() ->
     coordinator = ParallelAgentCoordinator(
         max_workers=2,
         child_supervisor=supervisor,
-        event_sink=events.append,
+        event_sink=ParallelEventSink(events.append, events.extend),
     )
     barrier = Barrier(2)
     intervals: dict[str, tuple[float, float]] = {}
@@ -429,7 +430,7 @@ def test_fail_fast_isolates_late_child_and_releases_unstarted_wave() -> None:
     coordinator = ParallelAgentCoordinator(
         max_workers=2,
         child_supervisor=supervisor,
-        event_sink=events.append,
+        event_sink=ParallelEventSink(events.append, events.extend),
     )
     sibling_started = Event()
     release_sibling = Event()

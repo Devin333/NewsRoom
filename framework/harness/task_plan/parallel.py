@@ -55,7 +55,7 @@ from framework.shared.graph_identity import GraphExecutionIdentity
 PARALLEL_DISPATCH_REQUEST_SCHEMA = "agora.harness-parallel-dispatch-request/v1"
 PARALLEL_DISPATCH_RESULT_SCHEMA = "agora.harness-parallel-dispatch-result/v1"
 DISPATCH_GROUP_SCHEMA = "agora.harness-dispatch-group/v1"
-DISPATCH_WAVE_SCHEMA = "agora.harness-dispatch-wave/v2"
+DISPATCH_WAVE_SCHEMA = "agora.harness-dispatch-wave/v3"
 TASK_RESERVATION_SCHEMA = "agora.harness-task-reservation/v1"
 PARENT_OBSERVATION_SCHEMA = "agora.harness-parent-observation/v1"
 
@@ -63,6 +63,21 @@ PARENT_OBSERVATION_SCHEMA = "agora.harness-parent-observation/v1"
 class JoinPolicy(StrEnum):
     WAIT_ALL = "wait_all"
     FAIL_FAST = "fail_fast"
+
+
+@dataclass(frozen=True, slots=True)
+class ParallelEventSink:
+    """Canonical event writer with an explicit atomic admission boundary."""
+
+    append: Callable[[Mapping[str, Any]], Any]
+    append_batch: Callable[[tuple[Mapping[str, Any], ...]], Any]
+
+    def __call__(self, event: Mapping[str, Any]) -> Any:
+        return self.append(event)
+
+
+def spawn_operation_key(group_id: str, wave_id: str, task_instance_id: str, attempt: int) -> str:
+    return f"parallel:{group_id}:{wave_id}:{task_instance_id}:{attempt}"
 
 
 @dataclass(frozen=True, slots=True)
@@ -273,6 +288,7 @@ class DispatchWave:
     state: DispatchWaveState | str = DispatchWaveState.PLANNED
     terminal_outcome: DispatchWaveTerminalOutcome | str | None = None
     schema_version: str = DISPATCH_WAVE_SCHEMA
+    execution_mode: str = "SUPERVISED"
     wave_id: str = field(init=False)
 
     def __post_init__(self) -> None:
@@ -306,6 +322,10 @@ class DispatchWave:
             )
         if self.schema_version != DISPATCH_WAVE_SCHEMA:
             raise HarnessValidationError("unsupported dispatch wave schema", code="PLAN_SCHEMA_INVALID")
+        if self.execution_mode not in {"SUPERVISED", "SERIAL", "INLINE_TEST"}:
+            raise HarnessValidationError("unsupported wave execution mode", code="PLAN_SCHEMA_INVALID")
+        if self.execution_mode == "SERIAL" and (self.effective_parallelism != 1 or len(ids) != 1):
+            raise HarnessValidationError("serial wave must have one task and slot", code="TASK_GROUP_SERIAL_WAVE_INVALID")
         digest = canonical_payload_checksum(
             {
                 "schema_version": self.schema_version,
@@ -313,6 +333,7 @@ class DispatchWave:
                 "ordinal": self.ordinal,
                 "task_ids": list(self.task_ids),
                 "effective_parallelism": self.effective_parallelism,
+        "execution_mode": self.execution_mode,
                 "reservations": [
                     {
                         "task_id": item.task_id,
@@ -333,6 +354,7 @@ class DispatchWave:
             "ordinal": self.ordinal,
             "task_ids": list(self.task_ids),
             "effective_parallelism": self.effective_parallelism,
+            "execution_mode": self.execution_mode,
             "reservations": [item.to_dict() for item in self.reservations],
             "state": self.state.value,
             "terminal_outcome": (
@@ -346,7 +368,7 @@ class DispatchWave:
             value,
             required=frozenset({
                 "schema_version", "wave_id", "group_id", "ordinal", "task_ids",
-                "effective_parallelism", "reservations", "state", "terminal_outcome",
+                "effective_parallelism", "reservations", "state", "terminal_outcome", "execution_mode",
             }),
             model=cls.__name__,
         )
@@ -1191,19 +1213,42 @@ class ParallelAgentCoordinator:
                         for item in batch
                     ),
                     DispatchWaveState.ADMITTED,
+                    execution_mode=(
+                        "SERIAL" if self._requires_serial_fallback_transport()
+                        else "INLINE_TEST" if self.child_supervisor is None
+                        else "SUPERVISED"
+                    ),
                 )
+                spawn_requests = (
+                    tuple(self._spawn_request(request, wave, item) for item in batch)
+                    if wave.execution_mode == "SUPERVISED" else ()
+                )
+                admission = {
+                    "event_type": "TASK_WAVE_ADMITTED",
+                    "group": session.group.to_dict(), "wave": wave.to_dict(),
+                    "requested_parallelism": request.requested_parallelism or group.max_parallelism,
+                    "effective_parallelism": wave.effective_parallelism,
+                    "queue_wait_ms": _elapsed_ms(session.started_at),
+                    "idempotency_key": wave.wave_id,
+                }
+                intents = tuple(
+                    {
+                        "event_type": "TASK_ATTEMPT_SPAWN_INTENT",
+                        "group_id": group.group_id, "wave_id": wave.wave_id,
+                        "task_id": item.task_id, "task_instance_id": item.task_instance_id,
+                        "attempt": item.attempt,
+                        "operation_key": item.operation_id,
+                        "idempotency_key": item.operation_id,
+                    }
+                    for item in spawn_requests
+                )
+                # The embedded reservations and every spawn intent are one
+                # durable commit. No local admission or child precedes it.
+                self._emit_batch((admission, *intents), event_sink=event_sink)
                 session.next_wave_ordinal += 1
                 session.reserved.update(wave.task_ids)
                 session.waves.append(wave)
                 session.wave_admitted_at[wave.wave_id] = monotonic()
-                self._emit(
-                    "TASK_WAVE_ADMITTED", event_sink=event_sink,
-                    group=session.group.to_dict(), wave=wave.to_dict(),
-                    requested_parallelism=request.requested_parallelism or group.max_parallelism,
-                    effective_parallelism=wave.effective_parallelism,
-                    queue_wait_ms=_elapsed_ms(session.started_at),
-                    idempotency_key=wave.wave_id,
-                )
                 session.group = session.group.transitioned(DispatchGroupState.DISPATCHING)
             if monotonic() - session.started_at > request.max_group_runtime_seconds:
                 self._mark_indeterminate(group.group_id, reason_code="group_runtime_deadline_exceeded", event_sink=event_sink)
@@ -1212,20 +1257,6 @@ class ParallelAgentCoordinator:
                 current_session = self._sessions[group.group_id]
                 if not _GROUP_TRANSITIONS[current_session.group.state]:
                     break
-                current_session.group = current_session.group.transitioned(DispatchGroupState.RUNNING)
-                wave = wave.transitioned(DispatchWaveState.DISPATCHING).transitioned(
-                    DispatchWaveState.RUNNING
-                )
-                current_session.waves = [
-                    wave if item.wave_id == wave.wave_id else item
-                    for item in current_session.waves
-                ]
-                dispatched_at = monotonic()
-                current_session.wave_dispatched_at[wave.wave_id] = dispatched_at
-                queued_at = current_session.wave_admitted_at.get(
-                    wave.wave_id,
-                    current_session.started_at,
-                )
             try:
                 outcome = self._run_wave(
                     session,
@@ -1234,6 +1265,7 @@ class ParallelAgentCoordinator:
                     batch,
                     invoke,
                     event_sink=event_sink,
+                    spawn_requests=spawn_requests,
                 )
             except BaseException as exc:
                 self._mark_indeterminate(
@@ -1247,19 +1279,6 @@ class ParallelAgentCoordinator:
                     diagnostics=(type(exc).__name__,),
                 )
                 raise
-            # A wave is durably dispatched only after every task attempt has
-            # a spawn receipt.  This ordering lets replay distinguish an
-            # admitted wave from work that was never confirmed by the
-            # supervisor.
-            self._emit(
-                "TASK_WAVE_DISPATCHED",
-                event_sink=event_sink,
-                group_id=group.group_id,
-                wave_id=wave.wave_id,
-                task_ids=list(wave.task_ids),
-                queue_wait_ms=_elapsed_ms(queued_at, now=dispatched_at),
-                idempotency_key=wave.wave_id,
-            )
             with self._lock:
                 session = self._sessions[group.group_id]
                 if not _GROUP_TRANSITIONS[session.group.state]:
@@ -1507,6 +1526,64 @@ class ParallelAgentCoordinator:
             )
             return self._result_for_session(session, request, limits=limits, diagnostics=(reason_code,))
 
+    @staticmethod
+    def _spawn_request(
+        request: ParallelDispatchRequest,
+        wave: DispatchWave,
+        item: TaskInstance,
+    ) -> ChildAgentSpawnRequest:
+        if request.parent_graph_identity is None:
+            raise HarnessValidationError(
+                "supervised parallel dispatch requires parent Graph identity",
+                code="TASK_GROUP_PARENT_IDENTITY_REQUIRED",
+            )
+        definition = next((task for task in request.plan.tasks if task.task_id == item.task_id), None)
+        if definition is None or not definition.allowed_tools or not definition.allowed_memory_namespaces:
+            raise HarnessValidationError(
+                "supervised task is missing concrete capability admission",
+                code="CHILD_CAPABILITY_ADMISSION_REQUIRED",
+            )
+        return ChildAgentSpawnRequest(
+            parent_graph_identity=request.parent_graph_identity,
+            stage_id=request.plan.stage_id,
+            task_id=item.task_id,
+            task_instance_id=item.task_instance_id,
+            attempt=item.attempt,
+            allowed_tools=tuple(definition.allowed_tools),
+            allowed_memory_namespaces=tuple(definition.allowed_memory_namespaces),
+            budget=_child_budget_reservation(
+                item.budget_snapshot.to_dict(),
+                request.plan.limits.aggregate_task_budget.to_dict(),
+            ),
+            operation_id=spawn_operation_key(wave.group_id, wave.wave_id, item.task_instance_id, item.attempt),
+            child_id=f"parallel-{item.task_instance_id}",
+            lease_seconds=min(request.max_group_runtime_seconds, 3600.0),
+        )
+
+    def _mark_wave_dispatched(
+        self,
+        session: _GroupSession,
+        wave: DispatchWave,
+        *,
+        event_sink: Callable[[Mapping[str, Any]], Any] | None,
+    ) -> None:
+        with self._lock:
+            if not _GROUP_TRANSITIONS[session.group.state]:
+                raise HarnessValidationError("group closed before dispatch", code="TASK_GROUP_DISPATCH_CLOSED")
+            dispatched_at = monotonic()
+            queued_at = session.wave_admitted_at.get(wave.wave_id, session.started_at)
+            self._emit(
+                "TASK_WAVE_DISPATCHED", event_sink=event_sink,
+                group_id=wave.group_id, wave_id=wave.wave_id,
+                task_ids=list(wave.task_ids),
+                queue_wait_ms=_elapsed_ms(queued_at, now=dispatched_at),
+                idempotency_key=wave.wave_id,
+            )
+            session.group = session.group.transitioned(DispatchGroupState.RUNNING)
+            running = wave.transitioned(DispatchWaveState.DISPATCHING).transitioned(DispatchWaveState.RUNNING)
+            session.waves = [running if item.wave_id == wave.wave_id else item for item in session.waves]
+            session.wave_dispatched_at[wave.wave_id] = dispatched_at
+
     def _run_wave(
         self,
         session: _GroupSession,
@@ -1516,6 +1593,7 @@ class ParallelAgentCoordinator:
         invoke: Callable[[TaskInstance], TaskResultRecord],
         *,
         event_sink: Callable[[Mapping[str, Any]], Any] | None,
+        spawn_requests: tuple[ChildAgentSpawnRequest, ...],
     ) -> _WaveRunOutcome:
         if self._requires_serial_fallback_transport():
             if self.serial_executor is None:
@@ -1529,6 +1607,7 @@ class ParallelAgentCoordinator:
                     code="TASK_GROUP_SERIAL_WAVE_INVALID",
                 )
             item = batch[0]
+            self._mark_wave_dispatched(session, wave, event_sink=event_sink)
             result = _validated_task_result(
                 self.serial_executor.execute(item, invoke),
                 item,
@@ -1539,6 +1618,11 @@ class ParallelAgentCoordinator:
             )
 
         if self.child_supervisor is None:
+            if not self._allow_test_executor:
+                raise HarnessValidationError(
+                    "parallel wave transport is unavailable",
+                    code="TASK_GROUP_WAVE_ADAPTER_REQUIRED",
+                )
             results: list[TaskResultRecord] = []
             released: set[str] = set()
             consumed: set[str] = set()
@@ -1603,59 +1687,14 @@ class ParallelAgentCoordinator:
                 frozenset(quarantined),
             )
 
-        if request.parent_graph_identity is None:
-            raise HarnessValidationError(
-                "supervised parallel dispatch requires parent Graph identity",
-                code="TASK_GROUP_PARENT_IDENTITY_REQUIRED",
-            )
         definitions = {item.task_id: item for item in request.plan.tasks}
         children: list[tuple[TaskInstance, _SupervisorTaskWorker, ChildAgentHandle]] = []
-        pending_children: list[
-            tuple[TaskInstance, _SupervisorTaskWorker, ChildAgentSpawnRequest]
-        ] = []
+        pending_children = [
+            (item, _SupervisorTaskWorker(invoke, item), spawn_request)
+            for item, spawn_request in zip(batch, spawn_requests, strict=True)
+        ]
         # Spawn the entire wave before waiting. This is the point at which the
         # supervisor, rather than a second executor, establishes overlap.
-        for item in batch:
-            definition = definitions.get(item.task_id)
-            if definition is None or not definition.allowed_tools or not definition.allowed_memory_namespaces:
-                raise HarnessValidationError(
-                    "supervised task is missing concrete capability admission",
-                    code="CHILD_CAPABILITY_ADMISSION_REQUIRED",
-                )
-            worker = _SupervisorTaskWorker(invoke, item)
-            budget = _child_budget_reservation(
-                item.budget_snapshot.to_dict(),
-                request.plan.limits.aggregate_task_budget.to_dict(),
-            )
-            operation_id = f"parallel:{request.plan.run_id}:{request.plan.stage_id}:{request.plan.version}:{wave.wave_id}:{item.task_instance_id}:{item.attempt}"
-            spawn_request = ChildAgentSpawnRequest(
-                parent_graph_identity=request.parent_graph_identity,
-                stage_id=request.plan.stage_id,
-                task_id=item.task_id,
-                task_instance_id=item.task_instance_id,
-                attempt=item.attempt,
-                allowed_tools=tuple(definition.allowed_tools),
-                allowed_memory_namespaces=tuple(definition.allowed_memory_namespaces),
-                budget=budget,
-                operation_id=operation_id,
-                child_id=f"parallel-{item.task_instance_id}",
-                lease_seconds=min(request.max_group_runtime_seconds, 3600.0),
-            )
-            pending_children.append((item, worker, spawn_request))
-        # The durable intent is written before the supervisor call. The
-        # operation id is the immutable idempotency key used by both layers.
-        for item, _worker, spawn_request in pending_children:
-            self._emit(
-                "TASK_ATTEMPT_SPAWN_INTENT",
-                event_sink=event_sink,
-                group_id=session.group.group_id,
-                wave_id=wave.wave_id,
-                task_id=item.task_id,
-                task_instance_id=item.task_instance_id,
-                attempt=item.attempt,
-                operation_key=spawn_request.operation_id,
-                idempotency_key=spawn_request.operation_id,
-            )
         try:
             handles = self.child_supervisor.spawn_batch(
                 tuple(item[2] for item in pending_children),
@@ -1666,6 +1705,7 @@ class ParallelAgentCoordinator:
             # still fail after an earlier child became durable. Recover those
             # deterministic handles so cancellation/reconciliation remains
             # possible from the indeterminate group.
+            reconciled = []
             for item, worker, spawn_request in pending_children:
                 if spawn_request.child_id is None:
                     continue
@@ -1675,6 +1715,13 @@ class ParallelAgentCoordinator:
                         operation_id=spawn_request.operation_id,
                     )
                 except ChildAgentSupervisorError:
+                    reconciled.append((item, spawn_request, None))
+                    continue
+                with self._lock:
+                    session.active_children[item.task_id] = (handle, worker)
+                reconciled.append((item, spawn_request, handle))
+            for item, spawn_request, handle in reconciled:
+                if handle is None:
                     self._emit(
                         "TASK_ATTEMPT_SPAWN_UNKNOWN",
                         event_sink=event_sink,
@@ -1688,8 +1735,6 @@ class ParallelAgentCoordinator:
                         idempotency_key=spawn_request.operation_id,
                     )
                     continue
-                with self._lock:
-                    session.active_children[item.task_id] = (handle, worker)
                 self._emit(
                     "TASK_ATTEMPT_SPAWN_CONFIRMED",
                     event_sink=event_sink,
@@ -1704,6 +1749,8 @@ class ParallelAgentCoordinator:
                     idempotency_key=spawn_request.operation_id,
                 )
             raise
+        # Retain all handles before writing any receipt so a failed write
+        # cannot hide a sibling that the supervisor already started.
         for (item, worker, _spawn_request), handle in zip(
             pending_children,
             handles,
@@ -1712,6 +1759,7 @@ class ParallelAgentCoordinator:
             children.append((item, worker, handle))
             with self._lock:
                 session.active_children[item.task_id] = (handle, worker)
+        for (item, _worker, _spawn_request), handle in zip(pending_children, handles, strict=True):
             self._emit(
                 "TASK_ATTEMPT_SPAWN_CONFIRMED",
                 event_sink=event_sink,
@@ -1725,6 +1773,7 @@ class ParallelAgentCoordinator:
                 child_id=handle.child_id,
                 idempotency_key=_spawn_request.operation_id,
             )
+        self._mark_wave_dispatched(session, wave, event_sink=event_sink)
         results: list[TaskResultRecord] = []
         released: set[str] = set()
         consumed: set[str] = set()
@@ -2087,6 +2136,22 @@ class ParallelAgentCoordinator:
         sink = event_sink or self.event_sink
         if sink is not None:
             sink({"event_type": event_type, **payload})
+
+    def _emit_batch(
+        self,
+        events: tuple[Mapping[str, Any], ...],
+        *,
+        event_sink: Callable[[Mapping[str, Any]], Any] | None,
+    ) -> None:
+        sink = event_sink or self.event_sink
+        if sink is None:
+            return
+        if not isinstance(sink, ParallelEventSink):
+            raise HarnessValidationError(
+                "wave admission requires an atomic event batch sink",
+                code="TASK_WAVE_ATOMIC_SINK_REQUIRED",
+            )
+        sink.append_batch(events)
 
 
 def _elapsed_ms(started_at: float, *, now: float | None = None) -> int:

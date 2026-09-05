@@ -748,6 +748,7 @@ class TaskPlanStorePort(Protocol):
     def results_for(self, run_id: str, stage_id: str, plan_id: str, plan_version: int) -> tuple[TaskResultRecord, ...]: ...
     def result_history_for(self, run_id: str, stage_id: str, plan_id: str, plan_version: int) -> tuple[TaskResultRecord, ...]: ...
     def append_event(self, event: TaskPlanEvent) -> str: ...
+    def append_events(self, events: tuple[TaskPlanEvent, ...]) -> tuple[str, ...]: ...
     def commit_event(self, event: TaskPlanEvent, projection: TaskPlanProjection) -> str: ...
     def plan(self, run_id: str, stage_id: str, version: int | None = None) -> ValidatedTaskPlan | None: ...
     def patches_for(self, run_id: str, stage_id: str) -> tuple[PlanPatch, ...]: ...
@@ -1373,6 +1374,35 @@ class InMemoryTaskPlanStore:
                 )
             return event.event_checksum
 
+    def append_events(self, events: tuple[TaskPlanEvent, ...]) -> tuple[str, ...]:
+        """Atomically append one contiguous, single-plan event batch."""
+
+        batch = _validate_atomic_event_batch(events)
+        run_id = batch[0].run_id
+        stage_id = batch[0].stage_id
+        key = (run_id, stage_id)
+        with self._lock:
+            history = tuple(self._events.get(key, ()))
+            replayed = _classify_atomic_event_batch_history(batch, history)
+            if replayed:
+                return tuple(event.event_checksum for event in batch)
+
+            plan = self._current_plan(run_id, stage_id)
+            if plan is not None:
+                for event in batch:
+                    _require_event_matches_plan(event, plan)
+
+            # Every validation above runs before the visible event list or its
+            # causal projection is changed.
+            self._events.setdefault(key, []).extend(batch)
+            projection = self._projections.get(key)
+            if projection is not None:
+                self._projections[key] = replace(
+                    projection,
+                    last_sequence=batch[-1].sequence,
+                )
+            return tuple(event.event_checksum for event in batch)
+
     def commit_event(
         self,
         event: TaskPlanEvent,
@@ -1471,6 +1501,114 @@ class InMemoryTaskPlanStore:
 
     def _append_event(self, event: TaskPlanEvent) -> None:
         self._events.setdefault((event.run_id, event.stage_id), []).append(event)
+
+
+def _validate_atomic_event_batch(
+    events: tuple[TaskPlanEvent, ...],
+) -> tuple[TaskPlanEvent, ...]:
+    """Validate the immutable identity and sequence shape of one batch."""
+
+    if not isinstance(events, tuple):
+        raise TypeError("events must be a tuple of TaskPlanEvent values")
+    if not events:
+        raise HarnessValidationError(
+            "TaskPlan atomic event batch must not be empty",
+            code="task_plan_event_batch_invalid",
+        )
+    if any(not isinstance(event, TaskPlanEvent) for event in events):
+        raise TypeError("events must contain only TaskPlanEvent values")
+    for event in events:
+        _require_live_graph_only(event, "event")
+
+    first = events[0]
+    scope = (
+        first.run_id,
+        first.stage_id,
+        first.graph_checksum,
+        first.graph_id,
+        first.graph_version,
+        first.graph_ref,
+        first.graph_schema_version,
+        first.compiler_version,
+        first.condition_policy_version,
+        first.stage_binding_checksum,
+        first.stage_identity_schema,
+        first.stage_identity_checksum,
+        first.plan_id,
+        first.plan_version,
+    )
+    for offset, event in enumerate(events):
+        event_scope = (
+            event.run_id,
+            event.stage_id,
+            event.graph_checksum,
+            event.graph_id,
+            event.graph_version,
+            event.graph_ref,
+            event.graph_schema_version,
+            event.compiler_version,
+            event.condition_policy_version,
+            event.stage_binding_checksum,
+            event.stage_identity_schema,
+            event.stage_identity_checksum,
+            event.plan_id,
+            event.plan_version,
+        )
+        if event_scope != scope:
+            raise HarnessValidationError(
+                "TaskPlan atomic event batch cannot cross a run, stage, graph, or plan",
+                code="task_plan_event_scope_mismatch",
+            )
+        expected_sequence = first.sequence + offset
+        if event.sequence != expected_sequence:
+            raise HarnessValidationError(
+                "TaskPlan atomic event batch sequence is not contiguous",
+                code="task_plan_sequence_conflict",
+                details={"expected": expected_sequence, "actual": event.sequence},
+            )
+    return events
+
+
+def _classify_atomic_event_batch_history(
+    events: tuple[TaskPlanEvent, ...],
+    history: Sequence[TaskPlanEvent],
+) -> bool:
+    """Return whether a complete matching batch is already durable.
+
+    A mixed batch, where only a prefix is present, is never safe to extend:
+    it is evidence of an interrupted or conflicting prior transaction.
+    """
+
+    existing_count = len(history)
+    present = False
+    missing = False
+    for event in events:
+        if event.sequence <= existing_count:
+            current = history[event.sequence - 1]
+            if current.event_checksum != event.event_checksum:
+                raise HarnessValidationError(
+                    "TaskPlan sequence already contains different content",
+                    code="task_plan_sequence_conflict",
+                )
+            present = True
+        else:
+            missing = True
+    if present and missing:
+        raise HarnessValidationError(
+            "TaskPlan atomic event batch is only partially present",
+            code="task_plan_event_history_conflict",
+        )
+    if present:
+        return True
+
+    expected_sequence = existing_count + 1
+    if events[0].sequence != expected_sequence:
+        raise HarnessValidationError(
+            "TaskPlan event sequence is not monotonic",
+            code="task_plan_sequence_conflict",
+            details={"expected": expected_sequence, "actual": events[0].sequence},
+        )
+    return False
 
 
 def _require_live_graph_only(value: Any, model: str) -> None:

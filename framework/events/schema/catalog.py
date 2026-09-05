@@ -1247,9 +1247,10 @@ def _parallel_task_plan_details_schema(event_type: str) -> dict[str, Any]:
         "budget_envelope": budget, "correlation_id": _TEXT, "state": group_state,
     })
     wave = object_schema({
-        "schema_version": {"const": "agora.harness-dispatch-wave/v2"},
+        "schema_version": {"const": "agora.harness-dispatch-wave/v3"},
         "wave_id": _TEXT, "group_id": _TEXT, "ordinal": _POSITIVE_INTEGER,
         "task_ids": _ARRAY_OF_TEXT, "effective_parallelism": _POSITIVE_INTEGER,
+        "execution_mode": {"enum": ["SUPERVISED", "SERIAL", "INLINE_TEST"]},
         "reservations": {"type": "array", "items": reservation, "maxItems": 128},
         "state": {"enum": ["PLANNED", "ADMITTED", "DISPATCHING", "RUNNING", "TERMINAL"]},
         "terminal_outcome": {"anyOf": [wave_terminal_outcome, {"type": "null"}]},
@@ -1308,9 +1309,9 @@ def _parallel_task_plan_details_schema(event_type: str) -> dict[str, Any]:
     required_by_type = {
         "TASK_GROUP_ADMITTED": ["group", "requested_parallelism", "effective_parallelism", "idempotency_key"],
         "TASK_WAVE_ADMITTED": ["group", "wave", "idempotency_key"],
-        "TASK_ATTEMPT_SPAWN_INTENT": ["group_id", "wave_id", "task_instance_id", "attempt", "operation_key", "idempotency_key"],
-        "TASK_ATTEMPT_SPAWN_CONFIRMED": ["group_id", "wave_id", "task_instance_id", "attempt", "operation_key", "spawn_status", "child_id", "idempotency_key"],
-        "TASK_ATTEMPT_SPAWN_UNKNOWN": ["group_id", "wave_id", "task_instance_id", "attempt", "operation_key", "spawn_status", "idempotency_key"],
+        "TASK_ATTEMPT_SPAWN_INTENT": ["group_id", "wave_id", "task_id", "task_instance_id", "attempt", "operation_key", "idempotency_key"],
+        "TASK_ATTEMPT_SPAWN_CONFIRMED": ["group_id", "wave_id", "task_id", "task_instance_id", "attempt", "operation_key", "spawn_status", "child_id", "idempotency_key"],
+        "TASK_ATTEMPT_SPAWN_UNKNOWN": ["group_id", "wave_id", "task_id", "task_instance_id", "attempt", "operation_key", "spawn_status", "idempotency_key"],
         "TASK_WAVE_DISPATCHED": ["group_id", "wave_id", "task_ids", "idempotency_key"],
         "TASK_WAVE_COMPLETED": ["group_id", "wave_id", "task_ids", "terminal_outcome"],
         "TASK_GROUP_JOIN_WAITING": ["group", "observation", "idempotency_key"],
@@ -1322,6 +1323,12 @@ def _parallel_task_plan_details_schema(event_type: str) -> dict[str, Any]:
     required = ["event_type", "parallel_event_idempotency_key", *required_by_type.get(event_type, ["reason_code"])]
     result = object_schema(fields, required=required)
     result["anyOf"] = [{"required": ["group"]}, {"required": ["group_id"]}]
+    if event_type in {"TASK_ATTEMPT_SPAWN_CONFIRMED", "TASK_ATTEMPT_SPAWN_UNKNOWN"}:
+        result["properties"]["spawn_status"] = {
+            "const": "SPAWN_CONFIRMED" if event_type.endswith("CONFIRMED") else "SPAWN_UNKNOWN"
+        }
+    if event_type == "TASK_ATTEMPT_SPAWN_UNKNOWN":
+        result["properties"]["child_id"] = False
     return result
 
 
