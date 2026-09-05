@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import re
-from pathlib import Path, PurePosixPath, PureWindowsPath
+from pathlib import Path, PurePath, PurePosixPath, PureWindowsPath
 
 from framework.agent.artifacts.observability import emit_artifact_path_rejected
 
@@ -15,6 +15,44 @@ _DOS_DEVICE_NAME = re.compile(
 
 class ArtifactPathError(ValueError):
     """Raised before an artifact path can escape or become ambiguous."""
+
+
+def artifact_path_key(path: PurePath) -> PurePath:
+    """Compare filesystem paths without changing their operational namespace."""
+
+    if not path.is_absolute() or ".." in path.parts:
+        raise ValueError("artifact path comparison requires an absolute path without '..'")
+    if isinstance(path, PureWindowsPath):
+        _validate_resolved_artifact_path_parts(path)
+        drive = path.drive
+        if re.fullmatch(r"\\\\\?\\[A-Za-z]:", drive):
+            drive = drive[4:]
+        elif drive.upper().startswith("\\\\?\\UNC\\"):
+            drive = "\\\\" + drive[8:]
+        return PureWindowsPath(drive + path.root, *path.parts[1:])
+    return path
+
+
+def _validate_resolved_artifact_path_parts(path: PurePath) -> None:
+    """Reject ambiguous non-anchor segments before namespace comparison."""
+
+    for part in path.parts[1:]:
+        if (
+            not part
+            or _has_control_character(part)
+            or any(character in _WINDOWS_RESERVED_CHARACTERS for character in part)
+            or part.endswith((".", " "))
+            or _DOS_DEVICE_NAME.fullmatch(part)
+        ):
+            raise ValueError("artifact path comparison contains an ambiguous segment")
+
+
+def artifact_path_relative_to(path: PurePath, root: PurePath) -> PurePath:
+    """Return relative components, allowing equivalent Windows namespaces."""
+
+    relative = artifact_path_key(path).relative_to(artifact_path_key(root))
+    # Preserve filename case and the original I/O path, including long-path prefixes.
+    return type(path)(*path.parts[len(path.parts) - len(relative.parts):])
 
 
 def validate_artifact_path_segment(value: str, *, field: str) -> str:
@@ -138,7 +176,7 @@ def _resolve_artifact_descendant(
         raise ArtifactPathError(f"{field} is required")
     candidate = canonical_root.joinpath(*normalized_parts).resolve(strict=False)
     try:
-        candidate.relative_to(canonical_root)
+        artifact_path_relative_to(candidate, canonical_root)
     except ValueError as exc:
         raise ArtifactPathError(f"{field} must stay within the artifact root") from exc
     return candidate
@@ -150,6 +188,8 @@ def _has_control_character(value: str) -> bool:
 
 __all__ = [
     "ArtifactPathError",
+    "artifact_path_key",
+    "artifact_path_relative_to",
     "resolve_artifact_descendant",
     "validate_artifact_path_segment",
     "validate_relative_artifact_path",

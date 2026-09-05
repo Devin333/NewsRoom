@@ -6,14 +6,18 @@ import tempfile
 import threading
 from collections.abc import Iterator
 from contextlib import contextmanager
-from pathlib import Path
+from pathlib import Path, PurePath
 
+from framework.agent.artifacts.paths import (
+    artifact_path_key,
+    artifact_path_relative_to,
+)
 from framework.agent.artifacts.stores.errors import ArtifactStoreMetadataError
 
 
 _REPARSE_POINT_FLAG = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x0400)
 _FILE_LOCKS_GUARD = threading.Lock()
-_FILE_LOCKS: dict[Path, threading.RLock] = {}
+_FILE_LOCKS: dict[PurePath, threading.RLock] = {}
 
 
 def is_link_or_reparse_point(info: os.stat_result) -> bool:
@@ -33,7 +37,11 @@ def verified_exclusive_file_lock(
     """Serialize one filesystem lifecycle operation without following links."""
 
     canonical_root = root.resolve(strict=False)
-    path = _lexical_descendant(path, root=canonical_root, identity=identity)
+    path, canonical_root, _ = _lexical_descendant(
+        path,
+        root=canonical_root,
+        identity=identity,
+    )
     _ensure_directory_chain(path.parent, root=canonical_root, identity=identity)
     thread_lock = _file_lock(path)
     with thread_lock:
@@ -81,7 +89,7 @@ def verified_exclusive_file_lock(
 
 
 def _file_lock(path: Path) -> threading.RLock:
-    key = path.resolve(strict=False)
+    key = artifact_path_key(path.resolve(strict=False))
     with _FILE_LOCKS_GUARD:
         lock = _FILE_LOCKS.get(key)
         if lock is None:
@@ -134,7 +142,11 @@ def verified_atomic_write(
     """Atomically replace one regular file without traversing untrusted links."""
 
     canonical_root = root.resolve(strict=False)
-    target = _lexical_descendant(target, root=canonical_root, identity=identity)
+    target, canonical_root, _ = _lexical_descendant(
+        target,
+        root=canonical_root,
+        identity=identity,
+    )
     _ensure_directory_chain(
         target.parent,
         root=canonical_root,
@@ -263,7 +275,11 @@ def verified_atomic_create(
     """
 
     canonical_root = root.resolve(strict=False)
-    target = _lexical_descendant(target, root=canonical_root, identity=identity)
+    target, canonical_root, _ = _lexical_descendant(
+        target,
+        root=canonical_root,
+        identity=identity,
+    )
     _ensure_directory_chain(target.parent, root=canonical_root, identity=identity)
     parent_before = _verified_directory(target.parent, identity=identity, role="parent")
     existing = _regular_file_or_missing(target, identity=identity)
@@ -334,21 +350,25 @@ def reject_link_chain(
     role: str,
 ) -> None:
     canonical_root = root.resolve(strict=False)
-    path = _lexical_descendant(path, root=canonical_root, identity=identity)
+    path, canonical_root, relative_parts = _lexical_descendant(
+        path,
+        root=canonical_root,
+        identity=identity,
+    )
     current = canonical_root
-    for index, part in enumerate(path.relative_to(canonical_root).parts):
+    for index, part in enumerate(relative_parts):
         current = current / part
         try:
             info = os.lstat(current)
         except FileNotFoundError:
-            if index == len(path.relative_to(canonical_root).parts) - 1:
+            if index == len(relative_parts) - 1:
                 return
             raise
         if is_link_or_reparse_point(info):
             raise ArtifactStoreMetadataError(
                 f"{role} path contains a symlink, junction, or reparse point: {identity}"
             )
-        if index < len(path.relative_to(canonical_root).parts) - 1:
+        if index < len(relative_parts) - 1:
             _require_directory(info, identity=identity, role=f"{role} parent")
 
 
@@ -358,7 +378,11 @@ def _ensure_directory_chain(
     root: Path,
     identity: str,
 ) -> None:
-    directory = _lexical_descendant(directory, root=root, identity=identity)
+    directory, root, relative_parts = _lexical_descendant(
+        directory,
+        root=root,
+        identity=identity,
+    )
     root.mkdir(parents=True, exist_ok=True)
     root_info = os.lstat(root)
     if is_link_or_reparse_point(root_info):
@@ -368,7 +392,7 @@ def _ensure_directory_chain(
     _require_directory(root_info, identity=identity, role="artifact root")
 
     current = root
-    for part in directory.relative_to(root).parts:
+    for part in relative_parts:
         current = current / part
         try:
             os.mkdir(current)
@@ -478,14 +502,26 @@ def _require_directory(
         )
 
 
-def _lexical_descendant(path: Path, *, root: Path, identity: str) -> Path:
+def _lexical_descendant(
+    path: Path,
+    *,
+    root: Path,
+    identity: str,
+) -> tuple[Path, Path, tuple[str, ...]]:
     try:
-        path.relative_to(root)
+        relative_parts = artifact_path_relative_to(path, root).parts
     except ValueError as exc:
         raise ArtifactStoreMetadataError(
             f"artifact path escapes the artifact root: {identity}"
         ) from exc
-    return path
+    # ``Path.resolve`` may return an extended DOS/UNC candidate while the
+    # configured root remains in the normal namespace. Rebase the root from
+    # the candidate so every subsequent filesystem operation retains the
+    # candidate's operational namespace and long-path capability.
+    operational_root = path
+    for _ in relative_parts:
+        operational_root = operational_root.parent
+    return path, operational_root, tuple(relative_parts)
 
 
 def _cleanup_owned_file(path: Path, owned: os.stat_result) -> None:

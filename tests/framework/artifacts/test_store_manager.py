@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import threading
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -31,10 +32,18 @@ from framework.agent.artifacts.observability import (
 from framework.agent.artifacts.stores import local as local_store_module
 from framework.agent.artifacts.stores import filesystem as filesystem_store_module
 from framework.agent.artifacts.stores import fs_safety as fs_safety_module
+from framework.agent.artifacts.stores.fs_safety import (
+    verified_atomic_write,
+    verified_exclusive_file_lock,
+)
 from framework.agent.artifacts.stores.errors import artifact_observability_was_emitted
 
 
 _MISSING = object()
+
+
+def _extended_windows_path(path: Path) -> Path:
+    return Path("\\\\?\\" + str(path))
 
 
 def test_artifact_manager_publishes_resolves_and_deletes(tmp_path) -> None:
@@ -104,6 +113,119 @@ def test_run_relative_write_is_atomic_and_cleans_owned_temp_on_replace_failure(
 
     assert target.read_text(encoding="utf-8") == "committed"
     assert list(target.parent.glob(".payload.txt.*.tmp")) == []
+
+
+@pytest.mark.skipif(os.name != "nt", reason="requires Windows path namespaces")
+def test_verified_atomic_write_preserves_extended_windows_long_path_namespace(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "artifacts"
+    nested = ("transcript",) * 40
+    normal_target = root.joinpath("run-1", *nested, "payload.json")
+    extended_target = _extended_windows_path(normal_target)
+
+    assert len(str(normal_target)) > 260
+    verified_atomic_write(
+        extended_target,
+        b'{"status":"ok"}',
+        root=root,
+        identity="run-1/transcript",
+    )
+
+    assert extended_target.read_bytes() == b'{"status":"ok"}'
+
+
+@pytest.mark.skipif(os.name != "nt", reason="requires Windows path namespaces")
+def test_windows_extended_and_dos_paths_share_the_same_artifact_lock(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "artifacts"
+    normal_lock_path = root / "run-1" / "_locks" / "entry.lock"
+    extended_lock_path = _extended_windows_path(normal_lock_path)
+    assert fs_safety_module._file_lock(normal_lock_path) is fs_safety_module._file_lock(
+        extended_lock_path
+    )
+    entered = threading.Event()
+    release = threading.Event()
+    second_entered = threading.Event()
+    failures: list[BaseException] = []
+
+    def hold_extended_lock() -> None:
+        try:
+            with verified_exclusive_file_lock(
+                extended_lock_path,
+                root=root,
+                identity="run-1/entry",
+            ):
+                entered.set()
+                assert release.wait(timeout=5)
+        except BaseException as exc:  # assertions are surfaced below
+            failures.append(exc)
+
+    def acquire_dos_lock() -> None:
+        try:
+            assert entered.wait(timeout=5)
+            with verified_exclusive_file_lock(
+                normal_lock_path,
+                root=root,
+                identity="run-1/entry",
+            ):
+                second_entered.set()
+        except BaseException as exc:  # assertions are surfaced below
+            failures.append(exc)
+
+    first = threading.Thread(target=hold_extended_lock)
+    second = threading.Thread(target=acquire_dos_lock)
+    first.start()
+    second.start()
+    assert entered.wait(timeout=5)
+    assert not second_entered.wait(timeout=0.2)
+    release.set()
+    first.join(timeout=5)
+    second.join(timeout=5)
+
+    assert not first.is_alive()
+    assert not second.is_alive()
+    assert failures == []
+    assert second_entered.is_set()
+
+
+@pytest.mark.skipif(os.name != "nt", reason="requires Windows path namespaces")
+def test_windows_concurrent_extended_transcript_directory_creation_is_safe(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "artifacts"
+    normal_target = root / "run-1" / "transcript" / "events" / "one.json"
+    extended_target = _extended_windows_path(
+        root / "run-1" / "transcript" / "events" / "two.json"
+    )
+    start = threading.Barrier(2)
+    failures: list[BaseException] = []
+
+    def write(target: Path, content: bytes) -> None:
+        try:
+            start.wait(timeout=5)
+            verified_atomic_write(
+                target,
+                content,
+                root=root,
+                identity=f"run-1/{target.name}",
+            )
+        except BaseException as exc:  # thread assertions are surfaced below
+            failures.append(exc)
+
+    first = threading.Thread(target=write, args=(normal_target, b"one"))
+    second = threading.Thread(target=write, args=(extended_target, b"two"))
+    first.start()
+    second.start()
+    first.join(timeout=10)
+    second.join(timeout=10)
+
+    assert not first.is_alive()
+    assert not second.is_alive()
+    assert failures == []
+    assert normal_target.read_bytes() == b"one"
+    assert extended_target.read_bytes() == b"two"
 
 
 @pytest.mark.parametrize("run_id", ["../escape", "C:\\escape", "run:stream", "NUL"])

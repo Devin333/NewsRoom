@@ -14,6 +14,7 @@ from framework.agent.artifacts.observability import (
 )
 from framework.agent.artifacts.paths import (
     ArtifactPathError,
+    artifact_path_relative_to,
     resolve_artifact_descendant,
     validate_artifact_path_segment,
 )
@@ -38,7 +39,10 @@ class LocalArtifactStore:
     def put(self, artifact: Artifact) -> ArtifactReference:
         path = self.path_for(artifact.artifact_id)
         metadata_path = self._metadata_path(artifact.artifact_id)
-        relative_uri = path.relative_to(self.root.resolve(strict=False)).as_posix()
+        relative_uri = artifact_path_relative_to(
+            path,
+            self.root.resolve(strict=False),
+        ).as_posix()
         data = artifact.content_bytes()
         checksum = compute_checksum(data)
         artifact_metadata = dict(artifact.metadata)
@@ -114,7 +118,10 @@ class LocalArtifactStore:
             )
 
         metadata = _load_metadata(metadata_path, artifact_id=artifact_id)
-        expected_uri = path.relative_to(self.root.resolve(strict=False)).as_posix()
+        expected_uri = artifact_path_relative_to(
+            path,
+            self.root.resolve(strict=False),
+        ).as_posix()
         parsed = _validate_metadata(
             metadata,
             artifact_id=artifact_id,
@@ -234,7 +241,10 @@ class LocalArtifactStore:
             raise ArtifactStoreMetadataError(
                 f"artifact metadata identity mismatch: {candidate_id}"
             )
-        expected_uri = object_path.relative_to(self.root.resolve(strict=False)).as_posix()
+        expected_uri = artifact_path_relative_to(
+            object_path,
+            self.root.resolve(strict=False),
+        ).as_posix()
         parsed = _validate_metadata(
             payload,
             artifact_id=safe_id,

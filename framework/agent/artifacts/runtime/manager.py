@@ -6,6 +6,7 @@ from typing import Any
 
 from framework.agent.artifacts.models import Artifact, ArtifactReference
 from framework.agent.artifacts.paths import (
+    artifact_path_relative_to,
     resolve_artifact_descendant,
     validate_artifact_path_segment,
     validate_relative_artifact_path,
@@ -91,7 +92,7 @@ class ArtifactManager:
         root = self.root.resolve(strict=False)
         path = root.joinpath(run_id, *PurePosixPath(relative).parts)
         try:
-            path.relative_to(root)
+            artifact_path_relative_to(path, root)
         except ValueError as exc:
             raise ArtifactStoreMetadataError(
                 "artifact path escapes the artifact root"

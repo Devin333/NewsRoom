@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import os
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 
 import pytest
 
@@ -10,6 +10,10 @@ from framework.agent.artifacts import (
     resolve_artifact_descendant,
     validate_artifact_path_segment,
     validate_relative_artifact_path,
+)
+from framework.agent.artifacts.paths import (
+    artifact_path_key,
+    artifact_path_relative_to,
 )
 
 
@@ -104,3 +108,85 @@ def test_resolve_artifact_descendant_rejects_link_escape(tmp_path: Path) -> None
 
     with pytest.raises(ArtifactPathError):
         resolve_artifact_descendant(root, "linked/secret.txt", field="artifact_path")
+
+
+@pytest.mark.parametrize(
+    ("candidate", "root", "expected"),
+    (
+        (r"\\?\C:\Artifacts\run-1\output.json", r"C:\Artifacts", "run-1/output.json"),
+        (r"C:\Artifacts\run-1\output.json", r"\\?\C:\Artifacts", "run-1/output.json"),
+        (
+            r"\\?\UNC\server\share\Artifacts\run-1\output.json",
+            r"\\server\share\Artifacts",
+            "run-1/output.json",
+        ),
+        (
+            r"\\server\share\Artifacts\run-1\output.json",
+            r"\\?\UNC\server\share\Artifacts",
+            "run-1/output.json",
+        ),
+    ),
+)
+def test_artifact_path_relative_to_unifies_known_windows_namespaces(
+    candidate: str,
+    root: str,
+    expected: str,
+) -> None:
+    relative = artifact_path_relative_to(
+        PureWindowsPath(candidate),
+        PureWindowsPath(root),
+    )
+
+    assert relative.as_posix() == expected
+
+
+@pytest.mark.parametrize(
+    ("candidate", "root"),
+    (
+        (r"\\?\D:\Artifacts\run-1", r"C:\Artifacts"),
+        (r"\\?\UNC\server\other\Artifacts\run-1", r"\\server\share\Artifacts"),
+        (r"\\?\C:\Artifacts-other\run-1", r"C:\Artifacts"),
+        (r"\\?\C:\Artifacts\..\outside", r"C:\Artifacts"),
+    ),
+)
+def test_artifact_path_relative_to_rejects_windows_escape_or_prefix_collision(
+    candidate: str,
+    root: str,
+) -> None:
+    with pytest.raises(ValueError):
+        artifact_path_relative_to(
+            PureWindowsPath(candidate),
+            PureWindowsPath(root),
+        )
+
+
+def test_artifact_path_key_leaves_unknown_windows_device_namespace_unchanged() -> None:
+    volume_path = PureWindowsPath(r"\\?\Volume{1234}\Artifacts\run-1")
+
+    assert artifact_path_key(volume_path) == volume_path
+
+
+def test_artifact_path_comparison_preserves_posix_root_names_and_case() -> None:
+    root = PurePosixPath("/srv/artifacts:archive/NUL")
+    candidate = root / "run-1" / "payload.json"
+
+    assert artifact_path_key(root) == root
+    assert artifact_path_relative_to(candidate, root) == PurePosixPath("run-1/payload.json")
+    with pytest.raises(ValueError):
+        artifact_path_relative_to(candidate, PurePosixPath("/srv/Artifacts:archive/NUL"))
+
+
+@pytest.mark.parametrize(
+    "path",
+    (
+        r"C:\Artifacts\name.\output.json",
+        r"C:\Artifacts\name \output.json",
+        r"C:\Artifacts\NUL\output.json",
+        r"C:\Artifacts\report.txt:stream",
+    ),
+)
+def test_artifact_path_key_rejects_ambiguous_resolved_windows_segment(
+    path: str,
+) -> None:
+    with pytest.raises(ValueError):
+        artifact_path_key(PureWindowsPath(path))

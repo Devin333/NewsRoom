@@ -8,6 +8,7 @@ from uuid import uuid4
 from framework.agent.artifacts.models import ArtifactRef, ArtifactWriteRequest, compute_checksum
 from framework.agent.artifacts.models.reference import canonical_artifact_relative_path
 from framework.agent.artifacts.paths import (
+    artifact_path_relative_to,
     resolve_artifact_descendant,
     validate_artifact_path_segment,
     validate_relative_artifact_path,
@@ -150,7 +151,7 @@ class FilesystemArtifactStore:
             return []
         paths: list[str] = []
         for candidate in run_dir.rglob("*"):
-            relative_path = candidate.relative_to(run_dir).as_posix()
+            relative_path = artifact_path_relative_to(candidate, run_dir).as_posix()
             if relative_path == "_locks" or relative_path.startswith("_locks/"):
                 continue
             path = resolve_artifact_descendant(
@@ -198,7 +199,7 @@ class FilesystemArtifactStore:
         root = self.root.resolve(strict=False)
         path = root.joinpath(run_id, *PurePosixPath(relative).parts)
         try:
-            path.relative_to(root)
+            artifact_path_relative_to(path, root)
         except ValueError as exc:
             raise ArtifactStoreMetadataError("artifact path escapes the artifact root") from exc
         return path
