@@ -328,6 +328,8 @@ def test_failed_quality_gate_retains_diagnostics_without_publication_refs() -> N
     assert lineage.inline_projection["worker_status"] == "failed"
     assert all(not item.required_for_publication for item in lineage.artifact_refs)
     assert "public_refs" not in lineage.inline_projection
+    committed = fixture.port.recover_graph(fixture.run_id).activity_result_commits[0]
+    assert committed.result.status.value == "failed"
 
 
 @pytest.mark.parametrize(

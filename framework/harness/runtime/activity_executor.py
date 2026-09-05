@@ -852,10 +852,17 @@ def _terminal_worker_result(
     )
     if original_ref is not None:
         terminal_payload["worker_candidate_ref"] = original_ref
+    if worker_result is not None:
+        terminal_payload["worker_diagnostics"] = worker_result.diagnostics
+        terminal_payload["worker_error"] = worker_result.error
+        terminal_payload["worker_status"] = worker_result.status.value
     evidence = HarnessWorkerEvidence(
         evidence_type="graph_activity_terminal",
         payload=terminal_payload,
     )
+    # Keep the original candidate channels available for a confirmed
+    # business FAILED result.  The terminal envelope is an execution fact,
+    # not a replacement for the Worker diagnostics that caused it.
     diagnostics = {
         "graph_activity_terminal": terminal_payload,
         "execution_error_type": None if error is None else type(error).__name__,
@@ -863,9 +870,28 @@ def _terminal_worker_result(
     }
     return HarnessWorkerResult(
         status=HarnessWorkerStatus.FAILED,
+        output=(
+            {} if worker_result is None else worker_result.output
+        ),
+        artifacts=(
+            () if worker_result is None else worker_result.artifacts
+        ),
         diagnostics=diagnostics,
-        evidence=(evidence,),
-        error=str(error) if error is not None else reason_code,
+        metrics=(
+            {} if worker_result is None else worker_result.metrics
+        ),
+        evidence=(
+            (() if worker_result is None else worker_result.evidence)
+            + (evidence,)
+        ),
+        error=(
+            worker_result.error
+            if worker_result is not None and worker_result.error is not None
+            else (str(error) if error is not None else reason_code)
+        ),
+        effect_intent=(
+            None if worker_result is None else worker_result.effect_intent
+        ),
     )
 
 

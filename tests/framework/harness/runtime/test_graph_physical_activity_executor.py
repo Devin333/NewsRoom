@@ -9,6 +9,10 @@ import pytest
 
 from framework.events.canonical import checksum_for
 from framework.harness.control_plane.errors import HarnessValidationError
+from framework.harness.control_plane.harness import (
+    _is_materializable_worker_failure,
+    _restore_original_worker_result,
+)
 from framework.harness.control_plane.event import HarnessEvent, HarnessEventType
 from framework.harness.control_plane.graph_application import (
     HarnessGraphActivityCancellationRequest,
@@ -436,6 +440,7 @@ def test_dispatcher_maps_cooperative_cancel_to_cancelled_graph_result() -> None:
     terminal = worker_result.diagnostics["graph_activity_terminal"]
     assert terminal["reason_code"] == "activity_cancelled"
     assert terminal["termination_confirmed"] is True
+    assert not _is_materializable_worker_failure(worker_result, graph_result)
 
 
 def _dispatcher_for(
@@ -579,6 +584,7 @@ def test_failed_worker_revokes_lease_and_commits_only_failed_graph_result() -> N
     activity, task = _activity_and_task()
     worker_result = HarnessWorkerResult(
         status=HarnessWorkerStatus.FAILED,
+        diagnostics={"gate_failures": [{"gate": "research_quality"}]},
         error="candidate generation failed",
     )
     worker = _Worker(lambda _task: worker_result)
@@ -604,6 +610,38 @@ def test_failed_worker_revokes_lease_and_commits_only_failed_graph_result() -> N
     terminal = receipt.worker_result.diagnostics["graph_activity_terminal"]
     assert terminal["activity_id"] == activity.activity_id
     assert terminal["worker_candidate_ref"] == worker_result.candidate_result_ref
+    assert terminal["worker_status"] == HarnessWorkerStatus.FAILED.value
+    assert terminal["worker_diagnostics"] == worker_result.diagnostics
+    assert terminal["worker_error"] == worker_result.error
+    assert _is_materializable_worker_failure(
+        receipt.worker_result,
+        receipt.graph_result,
+    )
+    restored = _restore_original_worker_result(
+        receipt.worker_result,
+        receipt.graph_result,
+    )
+    assert restored.candidate_result_ref == terminal["worker_candidate_ref"]
+    succeeded_worker_terminal = dict(terminal)
+    succeeded_worker_terminal["worker_status"] = HarnessWorkerStatus.SUCCEEDED.value
+    assert not _is_materializable_worker_failure(
+        HarnessWorkerResult(
+            status=HarnessWorkerStatus.FAILED,
+            diagnostics={"graph_activity_terminal": succeeded_worker_terminal},
+        ),
+        receipt.graph_result,
+    )
+    tampered_terminal = dict(terminal)
+    tampered_terminal["worker_candidate_ref"] = checksum_for("wrong-candidate")
+    with pytest.raises(HarnessValidationError) as mismatch:
+        _restore_original_worker_result(
+            HarnessWorkerResult(
+                status=HarnessWorkerStatus.FAILED,
+                diagnostics={"graph_activity_terminal": tampered_terminal},
+            ),
+            receipt.graph_result,
+        )
+    assert mismatch.value.code == "graph_terminal_worker_candidate_mismatch"
     assert resource.current_lease(identity) is None
     assert resource.committed_output(identity) is None
     assert len(committer.calls) == 1
@@ -721,6 +759,10 @@ def test_unconfirmed_timeout_commits_terminal_worker_evidence_without_output() -
     assert receipt.graph_result is not None
     assert receipt.graph_result.status is HarnessGraphActivityResultStatus.TIMEOUT
     assert receipt.graph_result.termination_confirmed is False
+    assert not _is_materializable_worker_failure(
+        receipt.worker_result,
+        receipt.graph_result,
+    )
     assert receipt.node_output_commit is None
     assert resource.committed_output(HarnessNodeOutputResourceIdentity.for_activity(activity)) is None
 

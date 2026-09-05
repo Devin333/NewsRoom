@@ -1416,31 +1416,48 @@ class HarnessControlPlane:
             run_spec,
             activity.causal_decision_sequence + 2,
         )
-        if (
-            self._graph_result_committer is None
-            or graph_result.status is not HarnessGraphActivityResultStatus.SUCCEEDED
-        ):
-            # Failure, timeout, cancellation and indeterminate outcomes are
-            # already canonical Harness facts. Business result materializers
-            # may enrich successful output, but must not collapse these
-            # terminal distinctions or assert termination confirmation.
+        materialize_result = (
+            self._graph_result_committer is not None
+            and (
+                graph_result.status is HarnessGraphActivityResultStatus.SUCCEEDED
+                or (
+                    graph_result.status is HarnessGraphActivityResultStatus.FAILED
+                    and graph_result.termination_confirmed is True
+                    and _is_materializable_worker_failure(
+                        worker_result,
+                        graph_result,
+                    )
+                )
+            )
+        )
+        if not materialize_result:
+            # Unconfirmed failures, timeouts, cancellations and indeterminate
+            # outcomes are already canonical Harness facts. Business result
+            # materializers may persist a confirmed Worker failure so its
+            # diagnostics remain durable, but must not collapse an uncertain
+            # terminal distinction or assert termination confirmation.
             state = self.accept_graph_activity_result(
                 run_spec,
                 graph_result,
                 occurred_at=result_at,
             )
         else:
+            materialized_worker_result = _restore_original_worker_result(
+                worker_result,
+                graph_result,
+            )
             state = self._graph_result_committer.commit_result(
                 activity=activity,
                 graph=graph,
                 run_spec_checksum=self._prepared_run_specs[activity.run_id],
-                worker_result=worker_result,
+                worker_result=materialized_worker_result,
                 occurred_at=result_at,
             )
             self._validate_materialized_graph_result_commit(
                 activity=activity,
                 graph=graph,
                 state=state,
+                expected_status=graph_result.status,
             )
         self._graph_worker_results.setdefault(activity.run_id, {})[
             activity.node_instance_id
@@ -3564,6 +3581,7 @@ class HarnessControlPlane:
         activity: HarnessGraphActivity,
         graph: NormalizedHarnessGraph,
         state: HarnessGraphState,
+        expected_status: HarnessGraphActivityResultStatus,
     ) -> None:
         if (
             not isinstance(state, HarnessGraphState)
@@ -3588,6 +3606,15 @@ class HarnessControlPlane:
                 code="graph_result_committer_lineage_missing",
             )
         cause = causes[0]
+        if cause.result.status is not expected_status:
+            raise HarnessValidationError(
+                "graph result committer changed the physical terminal status",
+                code="graph_result_committer_status_mismatch",
+                details={
+                    "expected_status": expected_status.value,
+                    "actual_status": cause.result.status.value,
+                },
+            )
         projections = tuple(
             item
             for item in recovery.projection_commits
@@ -6809,6 +6836,67 @@ def _bind_step_value(
             details={"code": code, "step_id": step_id},
         )
     bindings[step_id] = value
+
+
+def _is_materializable_worker_failure(
+    result: HarnessWorkerResult,
+    graph_result: HarnessGraphActivityResult,
+) -> bool:
+    terminal = result.diagnostics.get("graph_activity_terminal")
+    return (
+        isinstance(terminal, Mapping)
+        and terminal.get("worker_status")
+        == HarnessWorkerStatus.FAILED.value
+        and terminal.get("graph_result_status") == graph_result.status.value
+        and terminal.get("termination_confirmed") is True
+        and _is_checksum_ref(terminal.get("worker_candidate_ref"))
+    )
+
+
+def _restore_original_worker_result(
+    result: HarnessWorkerResult,
+    graph_result: HarnessGraphActivityResult,
+) -> HarnessWorkerResult:
+    """Remove executor-only terminal metadata before business materialization."""
+
+    if (
+        graph_result.status is not HarnessGraphActivityResultStatus.FAILED
+        or not _is_materializable_worker_failure(result, graph_result)
+    ):
+        return result
+    terminal = result.diagnostics.get("graph_activity_terminal")
+    diagnostics = (
+        dict(terminal["worker_diagnostics"])
+        if isinstance(terminal, Mapping)
+        and isinstance(terminal.get("worker_diagnostics"), Mapping)
+        else {}
+    )
+    evidence = tuple(
+        item
+        for item in result.evidence
+        if item.evidence_type != "graph_activity_terminal"
+    )
+    restored = HarnessWorkerResult(
+        status=HarnessWorkerStatus.FAILED,
+        output=result.output,
+        artifacts=result.artifacts,
+        diagnostics=diagnostics,
+        metrics=result.metrics,
+        evidence=evidence,
+        error=(
+            terminal.get("worker_error")
+            if isinstance(terminal, Mapping)
+            and "worker_error" in terminal
+            else result.error
+        ),
+        effect_intent=result.effect_intent,
+    )
+    if restored.candidate_result_ref != terminal.get("worker_candidate_ref"):
+        raise HarnessValidationError(
+            "terminal worker evidence does not match the restored candidate",
+            code="graph_terminal_worker_candidate_mismatch",
+        )
+    return restored
 
 
 def _coerce_worker_result(value: Any) -> HarnessWorkerResult:
