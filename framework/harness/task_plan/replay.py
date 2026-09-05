@@ -80,6 +80,9 @@ _PARALLEL_EVENT_TYPES = frozenset(
     {
         "TASK_GROUP_ADMITTED",
         "TASK_WAVE_ADMITTED",
+        "TASK_ATTEMPT_SPAWN_INTENT",
+        "TASK_ATTEMPT_SPAWN_CONFIRMED",
+        "TASK_ATTEMPT_SPAWN_UNKNOWN",
         "TASK_WAVE_DISPATCHED",
         "TASK_WAVE_COMPLETED",
         "TASK_GROUP_JOIN_WAITING",
@@ -410,6 +413,15 @@ class TaskPlanReplayReducer:
         parallel_waves: dict[str, dict[str, Any]] = {}
         parallel_reservations: dict[str, dict[str, Any]] = {}
         parallel_diagnostics: list[dict[str, Any]] = []
+        parallel_spawn_operations: dict[str, dict[str, Any]] = {}
+        parallel_spawn_protocol = any(
+            event.event_type in {
+                "TASK_ATTEMPT_SPAWN_INTENT",
+                "TASK_ATTEMPT_SPAWN_CONFIRMED",
+                "TASK_ATTEMPT_SPAWN_UNKNOWN",
+            }
+            for event in ordered_events
+        )
         parallel_event_sequence = 0
 
         for event in ordered_events:
@@ -686,6 +698,7 @@ class TaskPlanReplayReducer:
                     parallel_waves,
                     parallel_reservations,
                     parallel_diagnostics,
+                    parallel_spawn_operations if parallel_spawn_protocol else None,
                 )
                 parallel_event_sequence = event.sequence
             elif event.event_type == "TASK_PLAN_HALTED":
@@ -880,6 +893,7 @@ def _apply_parallel_event(
     waves: dict[str, dict[str, Any]],
     reservations: dict[str, dict[str, Any]],
     diagnostics: list[dict[str, Any]],
+    spawn_operations: dict[str, dict[str, Any]] | None = None,
 ) -> None:
     """Reduce orchestration facts without letting them mutate task outcomes.
 
@@ -887,6 +901,8 @@ def _apply_parallel_event(
     supply the durable admission/join/reservation history needed to explain
     and safely recover a parallel dispatch group.
     """
+    require_spawn_receipts = spawn_operations is not None
+    spawn_operations = spawn_operations if spawn_operations is not None else {}
     payload = thaw_mapping(event.payload)
     group_payload = payload.get("group")
     group_id = _parallel_group_id(payload, group_payload)
@@ -907,6 +923,58 @@ def _apply_parallel_event(
     if isinstance(group_payload, Mapping):
         snapshot = _normalize_parallel_group(group_payload, projection, event)
         _require_same_parallel_group(group, snapshot, event)
+
+    if event.event_type in {
+        "TASK_ATTEMPT_SPAWN_INTENT",
+        "TASK_ATTEMPT_SPAWN_CONFIRMED",
+        "TASK_ATTEMPT_SPAWN_UNKNOWN",
+    }:
+        wave_id = _parallel_identifier(payload.get("wave_id"), "wave_id", event)
+        wave = waves.get(wave_id)
+        if wave is None or wave["group_id"] != group_id:
+            _parallel_error("spawn event references an unknown wave", event)
+        task_id = _parallel_identifier(payload.get("task_id"), "task_id", event)
+        if task_id not in wave["task_ids"]:
+            _parallel_error("spawn event task is outside wave scope", event)
+        task_instance_id = _parallel_identifier(payload.get("task_instance_id"), "task_instance_id", event)
+        attempt = payload.get("attempt")
+        if isinstance(attempt, bool) or not isinstance(attempt, int) or attempt < 1:
+            _parallel_error("spawn event attempt is invalid", event)
+        operation_key = payload.get("operation_key")
+        if not isinstance(operation_key, str) or not operation_key.strip():
+            _parallel_error("spawn event operation key is missing", event)
+        key = f"{wave_id}:{task_instance_id}:{attempt}"
+        existing = spawn_operations.get(key)
+        if event.event_type == "TASK_ATTEMPT_SPAWN_INTENT":
+            if existing is not None:
+                _parallel_error("spawn intent was recorded more than once", event)
+            spawn_operations[key] = {
+                "group_id": group_id,
+                "wave_id": wave_id,
+                "task_id": task_id,
+                "task_instance_id": task_instance_id,
+                "attempt": attempt,
+                "operation_key": operation_key,
+                "status": "INTENT",
+            }
+            return
+        if existing is None or existing["operation_key"] != operation_key:
+            _parallel_error("spawn receipt has no matching intent", event)
+        status = payload.get("spawn_status")
+        expected_status = (
+            "SPAWN_CONFIRMED"
+            if event.event_type == "TASK_ATTEMPT_SPAWN_CONFIRMED"
+            else "SPAWN_UNKNOWN"
+        )
+        if status != expected_status:
+            _parallel_error("spawn receipt status does not match event type", event)
+        if event.event_type == "TASK_ATTEMPT_SPAWN_CONFIRMED" and not isinstance(payload.get("child_id"), str):
+            _parallel_error("confirmed spawn receipt is missing child id", event)
+        if existing["status"] != "INTENT":
+            _parallel_error("spawn receipt was recorded more than once", event)
+        existing["status"] = status
+        existing["child_id"] = payload.get("child_id")
+        return
 
     if event.event_type == "TASK_WAVE_ADMITTED":
         wave_payload = payload.get("wave")
@@ -940,6 +1008,17 @@ def _apply_parallel_event(
         if tuple(event_tasks) != tuple(wave["task_ids"]):
             _parallel_error("parallel wave task scope differs from admission", event)
         if event.event_type == "TASK_WAVE_DISPATCHED":
+            for task_id in wave["task_ids"] if require_spawn_receipts else ():
+                matching = [
+                    item
+                    for item in spawn_operations.values()
+                    if item.get("group_id") == group_id
+                    and item.get("wave_id") == wave_id
+                    and item.get("task_id") == task_id
+                    and item.get("status") in {"SPAWN_CONFIRMED", "SPAWN_UNKNOWN"}
+                ]
+                if len(matching) != 1:
+                    _parallel_error("wave dispatch is missing a per-task spawn receipt", event)
             _require_parallel_state(wave["state"], {DispatchWaveState.ADMITTED.value}, event)
             _transition_parallel_wave(wave, DispatchWaveState.RUNNING, event)
             _transition_parallel_group(group, DispatchGroupState.RUNNING, event)

@@ -40,9 +40,16 @@ def test_real_submission_and_parallel_lifecycle_payloads_validate(catalog, canon
     event_types = {event.event_type for event in canonical_events}
     assert {
         "PLAN_CANDIDATE_BUILT", "TASK_GROUP_ADMITTED", "TASK_WAVE_ADMITTED",
+        "TASK_ATTEMPT_SPAWN_INTENT", "TASK_ATTEMPT_SPAWN_CONFIRMED",
         "TASK_WAVE_DISPATCHED", "TASK_WAVE_COMPLETED", "TASK_GROUP_JOINED",
         "TASK_PLAN_VERIFIED",
     }.issubset(event_types)
+    event_type_sequence = [event.event_type for event in canonical_events]
+    first_dispatch = event_type_sequence.index("TASK_WAVE_DISPATCHED")
+    assert all(
+        event_type_sequence.index(event_type) < first_dispatch
+        for event_type in ("TASK_ATTEMPT_SPAWN_INTENT", "TASK_ATTEMPT_SPAWN_CONFIRMED")
+    )
     for event in canonical_events:
         catalog.validate(event.event_type, event.data_schema, event.payload)
 

@@ -59,7 +59,9 @@ _BUSINESS_CONTEXT_FIELDS = (
 TASK_PLAN_EVENT_SCHEMA_V2 = "newsroom.harness-task-plan-event/v2"
 TASK_PLAN_EVENT_SCHEMA = TASK_PLAN_EVENT_SCHEMA_V2
 TASK_PLAN_PARALLEL_EVENT_TYPES = (
-    "TASK_GROUP_ADMITTED", "TASK_WAVE_ADMITTED", "TASK_WAVE_DISPATCHED",
+    "TASK_GROUP_ADMITTED", "TASK_WAVE_ADMITTED", "TASK_ATTEMPT_SPAWN_INTENT",
+    "TASK_ATTEMPT_SPAWN_CONFIRMED", "TASK_ATTEMPT_SPAWN_UNKNOWN",
+    "TASK_WAVE_DISPATCHED",
     "TASK_WAVE_COMPLETED", "TASK_GROUP_JOIN_WAITING", "TASK_GROUP_JOINED",
     "TASK_GROUP_FAILED", "TASK_GROUP_REPLAN_PENDING", "TASK_GROUP_CANCEL_REQUESTED",
     "TASK_GROUP_CANCELLED", "TASK_GROUP_INDETERMINATE", "TASK_GROUP_HALTED",
@@ -1286,6 +1288,7 @@ def _parallel_task_plan_details_schema(event_type: str) -> dict[str, Any]:
         "event_type": {"const": event_type}, "parallel_event_idempotency_key": _TEXT,
         "idempotency_key": _TEXT, "group": group, "wave": wave,
         "group_id": _TEXT, "wave_id": _TEXT, "task_ids": _ARRAY_OF_TEXT,
+        "task_id": _TEXT,
         "task_instance_id": _TEXT, "attempt": _POSITIVE_INTEGER, "child_id": _TEXT,
         "requested_parallelism": non_negative, "effective_parallelism": non_negative,
         "queue_wait_ms": non_negative, "run_duration_ms": non_negative,
@@ -1296,6 +1299,8 @@ def _parallel_task_plan_details_schema(event_type: str) -> dict[str, Any]:
         "reservation_states": {"type": "object", "additionalProperties": reservation_state, "maxProperties": 128},
         "child_states": {"type": "object", "additionalProperties": _TEXT, "maxProperties": 128},
         "recovery_outcome": _TEXT,
+        "operation_key": _TEXT,
+        "spawn_status": {"enum": ["SPAWN_CONFIRMED", "SPAWN_UNKNOWN"]},
         "terminal_outcome": wave_terminal_outcome,
         "recovered_results": {"type": "array", "items": recovered_result, "maxItems": 128},
         "observation": observation,
@@ -1303,6 +1308,9 @@ def _parallel_task_plan_details_schema(event_type: str) -> dict[str, Any]:
     required_by_type = {
         "TASK_GROUP_ADMITTED": ["group", "requested_parallelism", "effective_parallelism", "idempotency_key"],
         "TASK_WAVE_ADMITTED": ["group", "wave", "idempotency_key"],
+        "TASK_ATTEMPT_SPAWN_INTENT": ["group_id", "wave_id", "task_instance_id", "attempt", "operation_key", "idempotency_key"],
+        "TASK_ATTEMPT_SPAWN_CONFIRMED": ["group_id", "wave_id", "task_instance_id", "attempt", "operation_key", "spawn_status", "child_id", "idempotency_key"],
+        "TASK_ATTEMPT_SPAWN_UNKNOWN": ["group_id", "wave_id", "task_instance_id", "attempt", "operation_key", "spawn_status", "idempotency_key"],
         "TASK_WAVE_DISPATCHED": ["group_id", "wave_id", "task_ids", "idempotency_key"],
         "TASK_WAVE_COMPLETED": ["group_id", "wave_id", "task_ids", "terminal_outcome"],
         "TASK_GROUP_JOIN_WAITING": ["group", "observation", "idempotency_key"],

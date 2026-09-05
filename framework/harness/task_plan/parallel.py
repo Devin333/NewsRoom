@@ -1226,15 +1226,6 @@ class ParallelAgentCoordinator:
                     wave.wave_id,
                     current_session.started_at,
                 )
-            self._emit(
-                "TASK_WAVE_DISPATCHED",
-                event_sink=event_sink,
-                group_id=group.group_id,
-                wave_id=wave.wave_id,
-                task_ids=list(wave.task_ids),
-                queue_wait_ms=_elapsed_ms(queued_at, now=dispatched_at),
-                idempotency_key=wave.wave_id,
-            )
             try:
                 outcome = self._run_wave(
                     session,
@@ -1256,6 +1247,19 @@ class ParallelAgentCoordinator:
                     diagnostics=(type(exc).__name__,),
                 )
                 raise
+            # A wave is durably dispatched only after every task attempt has
+            # a spawn receipt.  This ordering lets replay distinguish an
+            # admitted wave from work that was never confirmed by the
+            # supervisor.
+            self._emit(
+                "TASK_WAVE_DISPATCHED",
+                event_sink=event_sink,
+                group_id=group.group_id,
+                wave_id=wave.wave_id,
+                task_ids=list(wave.task_ids),
+                queue_wait_ms=_elapsed_ms(queued_at, now=dispatched_at),
+                idempotency_key=wave.wave_id,
+            )
             with self._lock:
                 session = self._sessions[group.group_id]
                 if not _GROUP_TRANSITIONS[session.group.state]:
@@ -1638,6 +1642,20 @@ class ParallelAgentCoordinator:
                 lease_seconds=min(request.max_group_runtime_seconds, 3600.0),
             )
             pending_children.append((item, worker, spawn_request))
+        # The durable intent is written before the supervisor call. The
+        # operation id is the immutable idempotency key used by both layers.
+        for item, _worker, spawn_request in pending_children:
+            self._emit(
+                "TASK_ATTEMPT_SPAWN_INTENT",
+                event_sink=event_sink,
+                group_id=session.group.group_id,
+                wave_id=wave.wave_id,
+                task_id=item.task_id,
+                task_instance_id=item.task_instance_id,
+                attempt=item.attempt,
+                operation_key=spawn_request.operation_id,
+                idempotency_key=spawn_request.operation_id,
+            )
         try:
             handles = self.child_supervisor.spawn_batch(
                 tuple(item[2] for item in pending_children),
@@ -1657,9 +1675,34 @@ class ParallelAgentCoordinator:
                         operation_id=spawn_request.operation_id,
                     )
                 except ChildAgentSupervisorError:
+                    self._emit(
+                        "TASK_ATTEMPT_SPAWN_UNKNOWN",
+                        event_sink=event_sink,
+                        group_id=session.group.group_id,
+                        wave_id=wave.wave_id,
+                        task_id=item.task_id,
+                        task_instance_id=item.task_instance_id,
+                        attempt=item.attempt,
+                        operation_key=spawn_request.operation_id,
+                        spawn_status="SPAWN_UNKNOWN",
+                        idempotency_key=spawn_request.operation_id,
+                    )
                     continue
                 with self._lock:
                     session.active_children[item.task_id] = (handle, worker)
+                self._emit(
+                    "TASK_ATTEMPT_SPAWN_CONFIRMED",
+                    event_sink=event_sink,
+                    group_id=session.group.group_id,
+                    wave_id=wave.wave_id,
+                    task_id=item.task_id,
+                    task_instance_id=item.task_instance_id,
+                    attempt=item.attempt,
+                    operation_key=spawn_request.operation_id,
+                    spawn_status="SPAWN_CONFIRMED",
+                    child_id=handle.child_id,
+                    idempotency_key=spawn_request.operation_id,
+                )
             raise
         for (item, worker, _spawn_request), handle in zip(
             pending_children,
@@ -1669,6 +1712,19 @@ class ParallelAgentCoordinator:
             children.append((item, worker, handle))
             with self._lock:
                 session.active_children[item.task_id] = (handle, worker)
+            self._emit(
+                "TASK_ATTEMPT_SPAWN_CONFIRMED",
+                event_sink=event_sink,
+                group_id=session.group.group_id,
+                wave_id=wave.wave_id,
+                task_id=item.task_id,
+                task_instance_id=item.task_instance_id,
+                attempt=item.attempt,
+                operation_key=_spawn_request.operation_id,
+                spawn_status="SPAWN_CONFIRMED",
+                child_id=handle.child_id,
+                idempotency_key=_spawn_request.operation_id,
+            )
         results: list[TaskResultRecord] = []
         released: set[str] = set()
         consumed: set[str] = set()
