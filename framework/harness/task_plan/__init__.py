@@ -164,6 +164,7 @@ from framework.harness.task_plan.planning_observation import (
 from framework.harness.task_plan.parallel import (
     SerialTaskExecutorAdapter,
     SerialTaskExecutorPort,
+    DispatchWaveTerminalOutcome,
 )
 from framework.harness.task_plan.observability import (
     TaskPlanMetricSample,
@@ -310,6 +311,7 @@ __all__ = [
     "PlanningObservationStorePort",
     "SerialTaskExecutorAdapter",
     "SerialTaskExecutorPort",
+    "DispatchWaveTerminalOutcome",
     "TaskPlanMetricSample",
     "TaskPlanTraceEvent",
     "task_plan_metric_samples",

@@ -103,9 +103,12 @@ Increment checks:
 - Strict OpenSpec validation: passed.
 - Required full `python -m scripts.dev smoke`: exit 0. Compile passed; the
   Harness/Research/API/service/composition/architecture suite reported
-  `2527 passed, 23 deselected, 23 warnings` in 900.02 seconds. The offline
+  `2537 passed, 23 deselected, 23 warnings` in 904.54 seconds. The offline
   AgentLoop smoke produced 3 fixture LLM calls, 1 tool call and 0 network calls;
   source validation reported `is_valid=true`, 0 errors and 0 warnings.
+- Parallel lifecycle/replay regression: 34 passed. This covers shared group/wave
+  transition validation, typed terminal outcomes, terminal reservation checksum
+  readback, failed-group event parity and rejection of corrupt durable transitions.
 
 The store can distinguish multiple submission identities, but stage execution
 still owns one plan chain per run/stage. A different turn or correlation is

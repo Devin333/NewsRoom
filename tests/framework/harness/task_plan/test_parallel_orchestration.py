@@ -31,8 +31,11 @@ from framework.harness.task_plan import (
     task_instance_for_attempt,
 )
 from framework.harness.task_plan.parallel import (
+    DispatchGroup,
     DispatchGroupState,
+    DispatchWave,
     DispatchWaveState,
+    DispatchWaveTerminalOutcome,
     JoinPolicy,
     ParallelAgentCoordinator,
     ParallelDispatchRequest,
@@ -40,6 +43,7 @@ from framework.harness.task_plan.parallel import (
     ParentObservationLimits,
     ReservationState,
     SerialTaskExecutorAdapter,
+    TaskReservation,
 )
 from framework.shared.graph_identity import GraphExecutionIdentity
 from tests.fixtures.task_plan import build_task_plan_stage_binding
@@ -499,3 +503,100 @@ def test_offline_recovery_uses_durable_results_without_live_worker_invocation() 
         assert supervisor.events.events == []
     finally:
         supervisor.shutdown()
+
+
+def test_parallel_contracts_round_trip_and_validate_derived_identity() -> None:
+    plan = _accepted_parallel_plan(("task-1",))
+    request = _request(plan)
+    coordinator = ParallelAgentCoordinator(
+        max_workers=1,
+        serial_executor=SerialTaskExecutorAdapter(),
+    )
+    group = coordinator.create_group(replace(request, serial_fallback=True))
+    restored_group = DispatchGroup.from_dict(group.to_dict())
+    assert restored_group == group
+
+    reservation = TaskReservation(
+        "task-1",
+        "reservation-key",
+        {"turns": 1},
+    )
+    wave = DispatchWave(
+        group.group_id,
+        1,
+        ("task-1",),
+        1,
+        (reservation,),
+        DispatchWaveState.ADMITTED,
+    )
+    assert DispatchWave.from_dict(wave.to_dict()) == wave
+    terminal = wave.transitioned(DispatchWaveState.DISPATCHING).transitioned(
+        DispatchWaveState.RUNNING
+    ).transitioned(
+        DispatchWaveState.TERMINAL,
+        terminal_outcome=DispatchWaveTerminalOutcome.SUCCEEDED,
+    )
+    assert DispatchWave.from_dict(terminal.to_dict()) == terminal
+
+
+@pytest.mark.parametrize(
+    "factory,field,mutator,code",
+    [
+        (TaskReservation.from_dict, "reservation_checksum", lambda value: "sha256:" + "0" * 64, "TASK_RESERVATION_CHECKSUM_MISMATCH"),
+        (DispatchGroup.from_dict, "group_checksum", lambda value: "sha256:" + "0" * 64, "TASK_GROUP_CHECKSUM_MISMATCH"),
+    ],
+)
+def test_parallel_contract_readback_rejects_tampered_checksums(factory, field, mutator, code) -> None:
+    plan = _accepted_parallel_plan(("task-1",))
+    request = _request(plan)
+    coordinator = ParallelAgentCoordinator(max_workers=1, serial_executor=SerialTaskExecutorAdapter())
+    group = coordinator.create_group(replace(request, serial_fallback=True))
+    if field == "reservation_checksum":
+        value = TaskReservation("task-1", "reservation-key", {"turns": 1}).to_dict()
+    else:
+        value = group.to_dict()
+    value[field] = mutator(value[field])
+    with pytest.raises(HarnessValidationError) as exc_info:
+        factory(value)
+    assert exc_info.value.code == code
+
+
+def test_parallel_contract_readback_rejects_unknown_fields() -> None:
+    reservation = TaskReservation("task-1", "reservation-key", {"turns": 1})
+    payload = reservation.to_dict()
+    payload["publication"] = True
+    with pytest.raises(HarnessValidationError) as exc_info:
+        TaskReservation.from_dict(payload)
+    assert exc_info.value.code == "invalid_task_plan_payload_fields"
+
+
+def test_parallel_replay_requires_versioned_wave_snapshot() -> None:
+    from framework.harness.task_plan.replay import _normalize_parallel_wave
+
+    reservation = TaskReservation("task-1", "reservation-key", {"turns": 1})
+    wave = DispatchWave(
+        "group-1", 1, ("task-1",), 1, (reservation,), DispatchWaveState.ADMITTED
+    )
+    payload = wave.to_dict()
+    payload.pop("schema_version")
+    group = {
+        "group_id": "group-1",
+        "task_ids": ["task-1"],
+        "max_parallelism": 1,
+    }
+    event = type("ReplayEvent", (), {"event_type": "TASK_WAVE_ADMITTED", "sequence": 1})()
+    with pytest.raises(HarnessValidationError):
+        _normalize_parallel_wave(payload, group, event)
+
+
+def test_parallel_contracts_reject_illegal_state_transitions_and_missing_wave_outcome() -> None:
+    reservation = TaskReservation("task-1", "reservation-key", {"turns": 1})
+    wave = DispatchWave("group-1", 1, ("task-1",), 1, (reservation,))
+    with pytest.raises(HarnessValidationError) as exc_info:
+        wave.transitioned(DispatchWaveState.RUNNING)
+    assert exc_info.value.code == "TASK_WAVE_INVALID_TRANSITION"
+    terminal_payload = wave.transitioned(DispatchWaveState.ADMITTED).to_dict()
+    terminal_payload["state"] = DispatchWaveState.TERMINAL.value
+    with pytest.raises(HarnessValidationError) as exc_info:
+        DispatchWave.from_dict(terminal_payload)
+    assert exc_info.value.code == "TASK_WAVE_TERMINAL_OUTCOME_REQUIRED"

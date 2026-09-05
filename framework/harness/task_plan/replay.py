@@ -37,6 +37,13 @@ from framework.harness.task_plan.store import (
     _settle_result_budget,
 )
 from framework.harness.task_plan.models import PlanPatch
+from framework.harness.task_plan.parallel_state import (
+    DispatchGroupState,
+    DispatchWaveState,
+    DispatchWaveTerminalOutcome,
+    validate_group_transition,
+    validate_wave_transition,
+)
 from framework.harness.task_plan.submission import CandidateSubmission, submissions_from_events
 from framework.harness.task_plan.submission_result import submission_result_from_event
 
@@ -83,24 +90,10 @@ _PARALLEL_EVENT_TYPES = frozenset(
         "DEGRADED_SERIAL",
     }
 )
-_PARALLEL_GROUP_STATES = frozenset(
-    {
-        "PLANNED",
-        "ADMITTED",
-        "DISPATCHING",
-        "RUNNING",
-        "JOINING",
-        "REPLAN_PENDING",
-        "SUCCEEDED",
-        "FAILED",
-        "CANCELLED",
-        "INDETERMINATE",
-        "HALTED",
-        "SUPERSEDED",
-    }
-)
-_PARALLEL_WAVE_STATES = frozenset(
-    {"PLANNED", "ADMITTED", "DISPATCHING", "RUNNING", "TERMINAL"}
+_PARALLEL_GROUP_STATES = frozenset(item.value for item in DispatchGroupState)
+_PARALLEL_WAVE_STATES = frozenset(item.value for item in DispatchWaveState)
+_PARALLEL_WAVE_TERMINAL_OUTCOMES = frozenset(
+    item.value for item in DispatchWaveTerminalOutcome
 )
 _PARALLEL_RESERVATION_STATES = frozenset({"RESERVED", "CONSUMED", "RELEASED"})
 
@@ -835,6 +828,18 @@ def _validate_parallel_report_projection(
                 "parallel wave projection has invalid state",
                 code="task_plan_replay_parallel_state_mismatch",
             )
+        outcome = payload.get("terminal_outcome")
+        if payload.get("state") == DispatchWaveState.TERMINAL.value:
+            if outcome not in _PARALLEL_WAVE_TERMINAL_OUTCOMES:
+                raise HarnessValidationError(
+                    "terminal parallel wave projection is missing typed outcome",
+                    code="task_plan_replay_parallel_state_mismatch",
+                )
+        elif outcome is not None:
+            raise HarnessValidationError(
+                "non-terminal parallel wave projection has terminal outcome",
+                code="task_plan_replay_parallel_state_mismatch",
+            )
     for reservation_id, reservation in reservations.items():
         payload = thaw_mapping(reservation)
         if payload.get("reservation_id") != reservation_id or payload.get("wave_id") not in waves:
@@ -847,6 +852,14 @@ def _validate_parallel_report_projection(
                 "parallel reservation projection has invalid state",
                 code="task_plan_replay_parallel_state_mismatch",
             )
+        if "reservation_checksum" in payload or "schema_version" in payload:
+            _validate_reservation_checksum(payload)
+    for wave in waves.values():
+        for embedded in thaw_mapping(wave).get("reservations", ()):
+            if isinstance(embedded, Mapping) and (
+                "reservation_checksum" in embedded or "schema_version" in embedded
+            ):
+                _validate_reservation_checksum(embedded)
 
 
 def _apply_parallel_event(
@@ -870,6 +883,8 @@ def _apply_parallel_event(
         if not isinstance(group_payload, Mapping):
             _parallel_error("group admission is missing its snapshot", event)
         group = _normalize_parallel_group(group_payload, projection, event)
+        if group["state"] != DispatchGroupState.ADMITTED.value:
+            _parallel_error("group admission snapshot is not admitted", event)
         if group_id in groups:
             _parallel_error("parallel group was admitted more than once", event)
         groups[group_id] = group
@@ -887,6 +902,8 @@ def _apply_parallel_event(
         if not isinstance(wave_payload, Mapping):
             _parallel_error("wave admission is missing its snapshot", event)
         wave = _normalize_parallel_wave(wave_payload, group, event)
+        if wave["state"] != DispatchWaveState.ADMITTED.value:
+            _parallel_error("wave admission snapshot is not admitted", event)
         wave_id = wave["wave_id"]
         if wave_id in waves:
             _parallel_error("parallel wave was admitted more than once", event)
@@ -900,7 +917,7 @@ def _apply_parallel_event(
         for reservation in wave_payload.get("reservations", ()):
             reservation_state = _normalize_parallel_reservation(reservation, wave, event)
             reservations[reservation_state["reservation_id"]] = reservation_state
-        group["state"] = "DISPATCHING"
+        _transition_parallel_group(group, DispatchGroupState.DISPATCHING, event)
         return
 
     if event.event_type in {"TASK_WAVE_DISPATCHED", "TASK_WAVE_COMPLETED"}:
@@ -912,11 +929,15 @@ def _apply_parallel_event(
         if tuple(event_tasks) != tuple(wave["task_ids"]):
             _parallel_error("parallel wave task scope differs from admission", event)
         if event.event_type == "TASK_WAVE_DISPATCHED":
-            _require_parallel_state(wave["state"], {"ADMITTED"}, event)
-            wave["state"] = "RUNNING"
-            group["state"] = "RUNNING"
+            _require_parallel_state(wave["state"], {DispatchWaveState.ADMITTED.value}, event)
+            _transition_parallel_wave(wave, DispatchWaveState.RUNNING, event)
+            _transition_parallel_group(group, DispatchGroupState.RUNNING, event)
             return
-        _require_parallel_state(wave["state"], {"ADMITTED", "RUNNING"}, event)
+        _require_parallel_state(
+            wave["state"],
+            {DispatchWaveState.ADMITTED.value, DispatchWaveState.RUNNING.value},
+            event,
+        )
         reservation_state = payload.get("reservation_state")
         reservation_states = payload.get("reservation_states")
         if reservation_states is not None:
@@ -928,52 +949,166 @@ def _apply_parallel_event(
                 _parallel_error("wave completion has invalid reservation states", event)
         elif reservation_state not in _PARALLEL_RESERVATION_STATES:
             _parallel_error("wave completion has invalid reservation state", event)
-        wave["state"] = "TERMINAL"
-        group["state"] = "RUNNING"
-        for reservation in reservations.values():
-            if reservation["wave_id"] == wave_id:
-                reservation["state"] = (
-                    reservation_states[reservation["task_id"]]
-                    if reservation_states is not None
-                    else reservation_state
-                )
+        terminal_outcome = payload.get("terminal_outcome")
+        if terminal_outcome not in _PARALLEL_WAVE_TERMINAL_OUTCOMES:
+            _parallel_error("wave completion is missing typed terminal outcome", event)
+        resolved_reservation_states = {
+            task_id: (
+                reservation_states[task_id]
+                if reservation_states is not None
+                else reservation_state
+            )
+            for task_id in wave["task_ids"]
+        }
+        _validate_parallel_terminal_outcome(
+            terminal_outcome,
+            wave,
+            resolved_reservation_states,
+            payload.get("child_states"),
+            event,
+        )
+        _transition_parallel_wave(wave, DispatchWaveState.TERMINAL, event)
+        wave["terminal_outcome"] = terminal_outcome
+        _transition_parallel_group(group, DispatchGroupState.RUNNING, event)
+        _update_parallel_wave_reservations(
+            wave,
+            reservations,
+            resolved_reservation_states,
+            event,
+        )
         return
 
     if event.event_type == "TASK_GROUP_JOIN_WAITING":
-        group["state"] = "JOINING"
-        _record_parallel_observation(payload, group_id, diagnostics, event)
+        _require_group_snapshot_target(
+            group_payload,
+            group,
+            DispatchGroupState.JOINING,
+            event,
+        )
+        _transition_parallel_group(group, DispatchGroupState.JOINING, event)
+        _record_parallel_observation(payload, group, diagnostics, event)
         return
     if event.event_type == "TASK_GROUP_JOINED":
+        _require_group_snapshot_target(
+            group_payload,
+            group,
+            DispatchGroupState.SUCCEEDED,
+            event,
+        )
         _require_parallel_terminal_waves(group_id, waves, event)
-        group["state"] = "SUCCEEDED"
-        _record_parallel_observation(payload, group_id, diagnostics, event)
+        _require_parallel_successful_tasks(group, projection, event)
+        if group["state"] is not DispatchGroupState.JOINING.value:
+            _transition_parallel_group(group, DispatchGroupState.JOINING, event)
+        _transition_parallel_group(
+            group,
+            DispatchGroupState.SUCCEEDED,
+            event,
+            allow_same=False,
+        )
+        _record_parallel_observation(payload, group, diagnostics, event)
         return
     if event.event_type == "TASK_GROUP_FAILED":
-        group["state"] = "FAILED"
+        _require_group_snapshot_target(
+            group_payload,
+            group,
+            DispatchGroupState.FAILED,
+            event,
+        )
+        _transition_parallel_group(
+            group,
+            DispatchGroupState.FAILED,
+            event,
+            allow_same=False,
+        )
     elif event.event_type == "TASK_GROUP_REPLAN_PENDING":
-        group["state"] = "REPLAN_PENDING"
+        _require_group_snapshot_target(
+            group_payload,
+            group,
+            DispatchGroupState.REPLAN_PENDING,
+            event,
+        )
+        _transition_parallel_group(
+            group,
+            DispatchGroupState.REPLAN_PENDING,
+            event,
+            allow_same=False,
+        )
     elif event.event_type == "TASK_GROUP_CANCEL_REQUESTED":
+        _require_parallel_state(
+            group["state"],
+            {
+                DispatchGroupState.ADMITTED.value,
+                DispatchGroupState.DISPATCHING.value,
+                DispatchGroupState.RUNNING.value,
+                DispatchGroupState.JOINING.value,
+            },
+            event,
+        )
         diagnostics.append(_parallel_diagnostic(event, group_id, payload))
         return
     elif event.event_type == "TASK_GROUP_CANCELLED":
-        group["state"] = "CANCELLED"
-        _release_parallel_group_reservations(group_id, reservations)
+        _require_group_snapshot_target(
+            group_payload,
+            group,
+            DispatchGroupState.CANCELLED,
+            event,
+        )
+        _transition_parallel_group(
+            group,
+            DispatchGroupState.CANCELLED,
+            event,
+            allow_same=False,
+        )
+        _release_parallel_group_reservations(group_id, waves, reservations, event)
     elif event.event_type == "TASK_GROUP_INDETERMINATE":
-        group["state"] = "INDETERMINATE"
-        _release_parallel_group_reservations(group_id, reservations)
+        _require_group_snapshot_target(
+            group_payload,
+            group,
+            DispatchGroupState.INDETERMINATE,
+            event,
+        )
+        _transition_parallel_group(
+            group,
+            DispatchGroupState.INDETERMINATE,
+            event,
+            allow_same=False,
+        )
+        _release_parallel_group_reservations(group_id, waves, reservations, event)
     elif event.event_type == "TASK_GROUP_HALTED":
-        group["state"] = "HALTED"
-        _release_parallel_group_reservations(group_id, reservations)
+        _require_group_snapshot_target(
+            group_payload,
+            group,
+            DispatchGroupState.HALTED,
+            event,
+        )
+        _transition_parallel_group(
+            group,
+            DispatchGroupState.HALTED,
+            event,
+            allow_same=False,
+        )
+        _release_parallel_group_reservations(group_id, waves, reservations, event)
     elif event.event_type == "TASK_GROUP_SUPERSEDED":
-        group["state"] = "SUPERSEDED"
-        _release_parallel_group_reservations(group_id, reservations)
+        _require_group_snapshot_target(
+            group_payload,
+            group,
+            DispatchGroupState.SUPERSEDED,
+            event,
+        )
+        _transition_parallel_group(
+            group,
+            DispatchGroupState.SUPERSEDED,
+            event,
+            allow_same=False,
+        )
+        _release_parallel_group_reservations(group_id, waves, reservations, event)
     elif event.event_type == "TASK_GROUP_RECLAIMED":
         task_ids = payload.get("task_ids")
         if task_ids is None:
             # Historical events predate per-attempt reclaim details and were
             # necessarily group-wide. New events are precise so a crash after
             # one reclaimed child cannot release a sibling reservation.
-            _release_parallel_group_reservations(group_id, reservations)
+            _release_parallel_group_reservations(group_id, waves, reservations, event)
         else:
             reclaimed_ids = set(_parallel_task_ids(task_ids, event))
             for reservation in reservations.values():
@@ -982,7 +1117,12 @@ def _apply_parallel_event(
                     and reservation["task_id"] in reclaimed_ids
                     and reservation["state"] == "RESERVED"
                 ):
-                    reservation["state"] = "RELEASED"
+                    _set_parallel_reservation_state(
+                        reservation,
+                        "RELEASED",
+                        waves,
+                        event,
+                    )
     elif event.event_type == "TASK_GROUP_RECOVERY":
         _apply_parallel_recovery(payload, group, projection, event)
         diagnostics.append(_parallel_diagnostic(event, group_id, payload))
@@ -1002,11 +1142,15 @@ def _normalize_parallel_group(
 ) -> dict[str, Any]:
     value = thaw_mapping(frozen_mapping(raw, "parallel_group"))
     required = {
-        "group_id", "group_checksum", "run_id", "stage_id", "plan_id",
+        "schema_version", "group_id", "group_checksum", "run_id", "stage_id", "plan_id",
         "plan_version", "task_ids", "required_output_roles", "join_policy",
         "max_waves", "max_parallelism", "budget_envelope", "correlation_id", "state",
     }
-    if not required.issubset(value) or set(value) - required - {"schema_version"}:
+    if (
+        not required.issubset(value)
+        or set(value) - required
+        or value.get("schema_version") != "agora.harness-dispatch-group/v1"
+    ):
         _parallel_error("parallel group snapshot has unexpected fields", event)
     for field_name, expected in (
         ("run_id", projection.run_id),
@@ -1066,8 +1210,17 @@ def _normalize_parallel_wave(
     event: TaskPlanEvent,
 ) -> dict[str, Any]:
     value = thaw_mapping(frozen_mapping(raw, "parallel_wave"))
-    required = {"wave_id", "group_id", "ordinal", "task_ids", "effective_parallelism", "reservations", "state"}
-    if not required.issubset(value) or set(value) - required - {"schema_version"} or value.get("group_id") != group["group_id"]:
+    required = {
+        "schema_version",
+        "wave_id", "group_id", "ordinal", "task_ids", "effective_parallelism",
+        "reservations", "state", "terminal_outcome",
+    }
+    if (
+        not required.issubset(value)
+        or set(value) - required
+        or value.get("schema_version") != "agora.harness-dispatch-wave/v2"
+        or value.get("group_id") != group["group_id"]
+    ):
         _parallel_error("parallel wave identity is invalid", event)
     wave_id = _parallel_identifier(value.get("wave_id"), "wave_id", event)
     task_ids = _parallel_task_ids(value.get("task_ids"), event)
@@ -1081,6 +1234,16 @@ def _normalize_parallel_wave(
         _parallel_error("parallel wave exceeds group capacity", event)
     if value.get("state") not in _PARALLEL_WAVE_STATES or not isinstance(value.get("reservations"), list):
         _parallel_error("parallel wave snapshot is invalid", event)
+    wave_outcome = value.get("terminal_outcome")
+    wave_outcomes = {
+        "SUCCEEDED", "PARTIAL_FAILED", "FAILED", "CANCELLED", "INDETERMINATE",
+        "RECLAIMED", "DEADLINE_EXCEEDED",
+    }
+    if value["state"] == "TERMINAL":
+        if wave_outcome not in wave_outcomes:
+            _parallel_error("terminal parallel wave is missing typed outcome", event)
+    elif wave_outcome is not None:
+        _parallel_error("non-terminal parallel wave has a terminal outcome", event)
     if {item.get("task_id") for item in value["reservations"] if isinstance(item, Mapping)} != set(task_ids) or len(value["reservations"]) != len(task_ids):
         _parallel_error("parallel wave reservations do not cover task scope", event)
     expected_wave_id = canonical_payload_checksum(
@@ -1102,7 +1265,13 @@ def _normalize_parallel_wave(
     )
     if wave_id != f"dw_{expected_wave_id.removeprefix('sha256:')[:32]}":
         _parallel_error("parallel wave id does not match its snapshot", event)
-    return {**value, "wave_id": wave_id, "task_ids": list(task_ids), "state": value["state"]}
+    return {
+        **value,
+        "wave_id": wave_id,
+        "task_ids": list(task_ids),
+        "state": value["state"],
+        "terminal_outcome": wave_outcome,
+    }
 
 
 def _apply_parallel_recovery(
@@ -1113,13 +1282,25 @@ def _apply_parallel_recovery(
 ) -> None:
     """Validate a recovery transition without replaying worker side effects."""
 
-    _require_parallel_state(
-        group["state"],
-        {"ADMITTED", "DISPATCHING", "RUNNING", "JOINING", "INDETERMINATE"},
-        event,
-    )
     if payload.get("recovery_outcome") != "receipts_reconciled":
         _parallel_error("parallel recovery outcome is invalid", event)
+    if group["state"] == DispatchGroupState.INDETERMINATE.value:
+        # A recovery event is the sole audited exception to terminal-state
+        # monotonicity: it proves a held supervisor receipt was reconciled.
+        group_payload_state = thaw_mapping(payload.get("group", {})).get("state")
+        if group_payload_state != DispatchGroupState.RUNNING.value:
+            _parallel_error("indeterminate recovery must target RUNNING", event)
+    else:
+        _require_parallel_state(
+            group["state"],
+            {
+                DispatchGroupState.ADMITTED.value,
+                DispatchGroupState.DISPATCHING.value,
+                DispatchGroupState.RUNNING.value,
+                DispatchGroupState.JOINING.value,
+            },
+            event,
+        )
     raw_results = payload.get("recovered_results")
     if not isinstance(raw_results, list):
         _parallel_error("parallel recovery is missing recovered results", event)
@@ -1162,7 +1343,10 @@ def _apply_parallel_recovery(
             or task.result.result_checksum != value["result_checksum"]
         ):
             _parallel_error("parallel recovery does not match task projection", event)
-    group["state"] = "RUNNING"
+    if group["state"] == DispatchGroupState.INDETERMINATE.value:
+        group["state"] = DispatchGroupState.RUNNING.value
+    else:
+        _transition_parallel_group(group, DispatchGroupState.RUNNING, event)
 
 
 def _normalize_parallel_reservation(
@@ -1173,8 +1357,12 @@ def _normalize_parallel_reservation(
     if not isinstance(raw, Mapping):
         _parallel_error("parallel reservation is invalid", event)
     value = thaw_mapping(frozen_mapping(raw, "parallel_reservation"))
-    required = {"task_id", "idempotency_key", "budget", "state"}
-    if not required.issubset(value) or set(value) - required - {"schema_version", "reservation_checksum"}:
+    required = {"schema_version", "task_id", "idempotency_key", "budget", "state", "reservation_checksum"}
+    if (
+        not required.issubset(value)
+        or set(value) - required
+        or value.get("schema_version") != "agora.harness-task-reservation/v1"
+    ):
         _parallel_error("parallel reservation has unexpected fields", event)
     task_id = _parallel_identifier(value.get("task_id"), "reservation.task_id", event)
     if task_id not in wave["task_ids"] or value.get("state") not in _PARALLEL_RESERVATION_STATES:
@@ -1231,6 +1419,161 @@ def _require_parallel_state(current: str, allowed: set[str], event: TaskPlanEven
         _parallel_error("parallel event has invalid state transition", event)
 
 
+def _transition_parallel_group(
+    group: dict[str, Any],
+    target: DispatchGroupState,
+    event: TaskPlanEvent,
+    *,
+    allow_same: bool = True,
+) -> None:
+    current = group.get("state")
+    if not allow_same and current == target.value:
+        _parallel_error("parallel group repeated a terminal transition", event)
+    try:
+        validate_group_transition(current, target)
+    except HarnessValidationError:
+        _parallel_error("parallel group has invalid state transition", event)
+    group["state"] = target.value
+
+
+def _transition_parallel_wave(
+    wave: dict[str, Any],
+    target: DispatchWaveState,
+    event: TaskPlanEvent,
+    *,
+    allow_same: bool = True,
+) -> None:
+    current = wave.get("state")
+    if not allow_same and current == target.value:
+        _parallel_error("parallel wave repeated a terminal transition", event)
+    try:
+        validate_wave_transition(current, target)
+    except HarnessValidationError:
+        _parallel_error("parallel wave has invalid state transition", event)
+    wave["state"] = target.value
+
+
+def _require_group_snapshot_target(
+    group_payload: Any,
+    group: Mapping[str, Any],
+    target: DispatchGroupState,
+    event: TaskPlanEvent,
+) -> None:
+    if not isinstance(group_payload, Mapping):
+        _parallel_error("stateful group event is missing its snapshot", event)
+    if group_payload.get("state") != target.value:
+        _parallel_error("group snapshot state does not match event target", event)
+
+
+def _require_parallel_successful_tasks(
+    group: Mapping[str, Any],
+    projection: TaskPlanProjection,
+    event: TaskPlanEvent,
+) -> None:
+    states = {item.task_id: item.status for item in projection.tasks}
+    if any(states.get(task_id) is not TaskLifecycle.SUCCEEDED for task_id in group["task_ids"]):
+        _parallel_error("parallel group joined successfully with unfinished or failed task", event)
+
+
+def _validate_parallel_terminal_outcome(
+    outcome: str,
+    wave: Mapping[str, Any],
+    reservation_states: Mapping[str, str],
+    child_states: Any,
+    event: TaskPlanEvent,
+) -> None:
+    if child_states is not None:
+        if not isinstance(child_states, Mapping) or not set(child_states).issubset(set(wave["task_ids"])):
+            _parallel_error("wave completion child states do not match task scope", event)
+        if any(value not in {item.value for item in TaskLifecycle} for value in child_states.values()):
+            _parallel_error("wave completion contains invalid child state", event)
+        succeeded = sum(value == TaskLifecycle.SUCCEEDED.value for value in child_states.values())
+        failed = sum(value == TaskLifecycle.FAILED.value for value in child_states.values())
+    else:
+        succeeded = failed = 0
+    released = sum(value == "RELEASED" for value in reservation_states.values())
+    consumed = sum(value == "CONSUMED" for value in reservation_states.values())
+    if outcome == DispatchWaveTerminalOutcome.SUCCEEDED.value:
+        if child_states is not None and succeeded != len(wave["task_ids"]):
+            _parallel_error("successful wave outcome disagrees with child states", event)
+        if consumed != len(wave["task_ids"]):
+            _parallel_error("successful wave outcome has unreconciled reservations", event)
+    elif outcome == DispatchWaveTerminalOutcome.PARTIAL_FAILED.value:
+        if child_states is not None and not (succeeded and failed):
+            _parallel_error("partial-failed outcome disagrees with child states", event)
+    elif outcome == DispatchWaveTerminalOutcome.FAILED.value:
+        if child_states is not None and (failed == 0 or succeeded):
+            _parallel_error("failed outcome disagrees with child states", event)
+    elif outcome == DispatchWaveTerminalOutcome.RECLAIMED.value:
+        if child_states is not None and failed != len(wave["task_ids"]):
+            _parallel_error("reclaimed outcome disagrees with child states", event)
+        if released != len(wave["task_ids"]):
+            _parallel_error("reclaimed outcome has unreleased reservations", event)
+    elif outcome in {
+        DispatchWaveTerminalOutcome.CANCELLED.value,
+        DispatchWaveTerminalOutcome.DEADLINE_EXCEEDED.value,
+    } and released != len(wave["task_ids"]):
+        _parallel_error("cancelled wave outcome has unreleased reservations", event)
+
+
+def _validate_reservation_checksum(payload: Mapping[str, Any]) -> None:
+    supplied = payload.get("reservation_checksum")
+    if not isinstance(supplied, str):
+        raise HarnessValidationError(
+            "parallel reservation checksum is missing",
+            code="task_plan_replay_parallel_state_mismatch",
+        )
+    expected = canonical_payload_checksum(
+        {
+            field_name: payload[field_name]
+            for field_name in ("schema_version", "task_id", "idempotency_key", "budget", "state")
+            if field_name in payload
+        }
+    )
+    if supplied != expected:
+        raise HarnessValidationError(
+            "parallel reservation checksum does not match state",
+            code="task_plan_replay_parallel_state_mismatch",
+        )
+
+
+def _set_parallel_reservation_state(
+    reservation: dict[str, Any],
+    state: str,
+    waves: Mapping[str, Mapping[str, Any]],
+    event: TaskPlanEvent,
+) -> None:
+    reservation["state"] = state
+    reservation["reservation_checksum"] = canonical_payload_checksum(
+        {
+            field_name: reservation[field_name]
+            for field_name in ("schema_version", "task_id", "idempotency_key", "budget", "state")
+        }
+    )
+    wave_id = reservation.get("wave_id")
+    wave = waves.get(wave_id)
+    if wave is None:
+        _parallel_error("parallel reservation references unknown wave", event)
+    for embedded in wave.get("reservations", ()):
+        if isinstance(embedded, dict) and embedded.get("task_id") == reservation.get("task_id"):
+            embedded["state"] = state
+            embedded["reservation_checksum"] = reservation["reservation_checksum"]
+
+
+def _update_parallel_wave_reservations(
+    wave: dict[str, Any],
+    reservations: Mapping[str, dict[str, Any]],
+    states: Mapping[str, str],
+    event: TaskPlanEvent,
+) -> None:
+    for task_id, state in states.items():
+        reservation_id = f"{wave['wave_id']}:{task_id}"
+        reservation = reservations.get(reservation_id)
+        if reservation is None:
+            _parallel_error("wave completion references an unknown reservation", event)
+        _set_parallel_reservation_state(reservation, state, {wave["wave_id"]: wave}, event)
+
+
 def _require_parallel_terminal_waves(
     group_id: str,
     waves: Mapping[str, Mapping[str, Any]],
@@ -1242,19 +1585,27 @@ def _require_parallel_terminal_waves(
 
 def _release_parallel_group_reservations(
     group_id: str,
+    waves: Mapping[str, Mapping[str, Any]],
     reservations: Mapping[str, dict[str, Any]],
+    event: TaskPlanEvent,
 ) -> None:
     for reservation in reservations.values():
         if reservation["group_id"] == group_id and reservation["state"] == "RESERVED":
-            reservation["state"] = "RELEASED"
+            _set_parallel_reservation_state(
+                reservation,
+                "RELEASED",
+                waves,
+                event,
+            )
 
 
 def _record_parallel_observation(
     payload: Mapping[str, Any],
-    group_id: str,
+    group: Mapping[str, Any],
     diagnostics: list[dict[str, Any]],
     event: TaskPlanEvent,
 ) -> None:
+    group_id = group["group_id"]
     observation = payload.get("observation")
     if observation is not None:
         if not isinstance(observation, Mapping) or observation.get("group_id") != group_id:

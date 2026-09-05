@@ -447,7 +447,7 @@ TASK_GROUP_INDETERMINATE / TASK_GROUP_HALTED
 RECOVERY_STATUS_READ / RECOVERY_RECONCILED / RECOVERY_HALTED
 ```
 
-每个 event 至少携带 `run_id`、`stage_id`、`plan_id`、`plan_version`、`group_id`、可选 `wave_id`、`task_instance_id`、attempt、correlation id、idempotency key 和 event sequence。缺少这些关联信息的 event 不能作为 replay 控制事实。
+每个 event 必须携带通用的 `run_id`、`stage_id`、correlation id、idempotency key 和 event sequence；其余身份字段按 event family 条件要求：candidate/planning 事件使用 `plan_id`/`plan_version`（尚未接纳时不得伪造 group 或 attempt），group 事件使用 `plan_id`/`plan_version`/`group_id`，wave 事件再增加 `wave_id` 与稳定 task membership，attempt/receipt 事件再增加 `task_instance_id` 与 attempt，recovery 事件必须带 recovery target 和 causal scope。缺少适用关联信息的 event 不能作为 replay 控制事实。
 
 Checkpoint 至少包含 graph/plan checksum、group/wave identity、join policy、task projection、完整 result history 索引、spawn intent/receipt、reservation ledger、aggregate/observation checksum 和 stream sequence。
 
@@ -565,7 +565,7 @@ ParentObservationLimits:
 10. online recovery 只进行有审计的 status/reconcile/受控 retry；offline replay 对 live dependency 的调用计数为零。
 11. ParentObservation summary、排序、脱敏和 truncation 在 replay 中保持 checksum 一致。
 12. legacy single delegate 的旧结果字段、错误、取消和诊断语义保持兼容。
-13. Research dynamic 只有三个 required role、既有 gates、`verify_claims` 和 quality gate 全通过后才生成 `analysis_branch_refs`。
+13. Research dynamic 只有三个 required role 的 deterministic role gates 与 aggregate 通过后才生成 `analysis_branch_refs`；随后 `verify_claims` 和 quality gate 仍必须通过，才允许进入 reader/card/artifact/publication。
 
 ### 20.2 证据矩阵
 

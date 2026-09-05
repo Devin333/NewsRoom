@@ -1225,6 +1225,10 @@ def _parallel_task_plan_details_schema(event_type: str) -> dict[str, Any]:
         "SUCCEEDED", "FAILED", "CANCELLED", "INDETERMINATE", "HALTED", "SUPERSEDED",
     ]}
     reservation_state = {"enum": ["RESERVED", "CONSUMED", "RELEASED"]}
+    wave_terminal_outcome = {"enum": [
+        "SUCCEEDED", "PARTIAL_FAILED", "FAILED", "CANCELLED", "INDETERMINATE",
+        "RECLAIMED", "DEADLINE_EXCEEDED",
+    ]}
     reservation = object_schema({
         "schema_version": {"const": "agora.harness-task-reservation/v1"},
         "task_id": _TEXT, "idempotency_key": _TEXT, "budget": budget,
@@ -1240,12 +1244,20 @@ def _parallel_task_plan_details_schema(event_type: str) -> dict[str, Any]:
         "budget_envelope": budget, "correlation_id": _TEXT, "state": group_state,
     })
     wave = object_schema({
-        "schema_version": {"const": "agora.harness-dispatch-wave/v1"},
+        "schema_version": {"const": "agora.harness-dispatch-wave/v2"},
         "wave_id": _TEXT, "group_id": _TEXT, "ordinal": _POSITIVE_INTEGER,
         "task_ids": _ARRAY_OF_TEXT, "effective_parallelism": _POSITIVE_INTEGER,
         "reservations": {"type": "array", "items": reservation, "maxItems": 128},
         "state": {"enum": ["PLANNED", "ADMITTED", "DISPATCHING", "RUNNING", "TERMINAL"]},
+        "terminal_outcome": {"anyOf": [wave_terminal_outcome, {"type": "null"}]},
     })
+    wave["allOf"] = [
+        {
+            "if": {"properties": {"state": {"const": "TERMINAL"}}},
+            "then": {"properties": {"terminal_outcome": wave_terminal_outcome}},
+            "else": {"properties": {"terminal_outcome": {"type": "null"}}},
+        }
+    ]
     task_summary = object_schema({
         "task_id": _TEXT, "status": _TEXT, "attempt": _POSITIVE_INTEGER,
         "result_ref": nullable_text, "checksum": _CHECKSUM_TEXT,
@@ -1283,6 +1295,7 @@ def _parallel_task_plan_details_schema(event_type: str) -> dict[str, Any]:
         "reservation_states": {"type": "object", "additionalProperties": reservation_state, "maxProperties": 128},
         "child_states": {"type": "object", "additionalProperties": _TEXT, "maxProperties": 128},
         "recovery_outcome": _TEXT,
+        "terminal_outcome": wave_terminal_outcome,
         "recovered_results": {"type": "array", "items": recovered_result, "maxItems": 128},
         "observation": observation,
     }
@@ -1290,7 +1303,7 @@ def _parallel_task_plan_details_schema(event_type: str) -> dict[str, Any]:
         "TASK_GROUP_ADMITTED": ["group", "requested_parallelism", "effective_parallelism", "idempotency_key"],
         "TASK_WAVE_ADMITTED": ["group", "wave", "idempotency_key"],
         "TASK_WAVE_DISPATCHED": ["group_id", "wave_id", "task_ids", "idempotency_key"],
-        "TASK_WAVE_COMPLETED": ["group_id", "wave_id", "task_ids"],
+        "TASK_WAVE_COMPLETED": ["group_id", "wave_id", "task_ids", "terminal_outcome"],
         "TASK_GROUP_JOIN_WAITING": ["group", "observation", "idempotency_key"],
         "TASK_GROUP_JOINED": ["group", "observation", "idempotency_key"],
         "TASK_GROUP_RECOVERY": ["group", "group_id", "recovered_results", "recovery_outcome", "idempotency_key"],

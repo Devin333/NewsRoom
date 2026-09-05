@@ -32,7 +32,7 @@ NewsRoom 已经有几块可以复用的能力：`PlanCandidate` 和 `TaskPlanPol
 
 ### 1. 以 group/wave contract 连接规划、执行和汇聚
 
-新增 versioned `ParallelDispatchRequest` 和 `ParallelDispatchResult` 作为 Harness 内部端口合同。request 为一个已接受的 plan version 创建一个 `DispatchGroup`，至少包含 `run_id`、`workflow_id`、`stage_id`、`plan_id`、`plan_version`、完整且稳定排序的逻辑 task ids、required output roles、`join_policy`、`group_deadline`、`max_waves`、`max_parallelism`、总预算 envelope 和 correlation id。group membership 在 admission 后不可变，其中可以包含尚未 ready 的依赖任务。每个实际派发的 `DispatchWave` 至少包含 `group_id`、当前 ready 的有序 task instance ids、wave ordinal、effective parallelism、逐任务 budget/capacity reservation 和 idempotency key。result 以 `group_id` 为最终 join 范围，至少包含每个 task 的终态/result ref/checksum/attempt、所有 wave 的完成证据、join 状态、aggregate ref/checksum、诊断和 recovery/degraded 信息。
+新增 versioned `ParallelDispatchRequest` 和 `ParallelDispatchResult` 作为 Harness 内部端口合同。request 为一个已接受的 plan version 创建一个 `DispatchGroup`，至少包含 `run_id`、graph identity、`stage_id`、`plan_id`、`plan_version`、完整且稳定排序的逻辑 task ids、required output roles、`join_policy`、`group_deadline`、`max_waves`、`max_parallelism`、总预算 envelope 和 correlation id。group membership 在 admission 后不可变，其中可以包含尚未 ready 的依赖任务。每个实际派发的 `DispatchWave` 至少包含 `group_id`、当前 ready 的有序 task instance ids、wave ordinal、effective parallelism、逐任务 budget/capacity reservation 和 idempotency key。result 以 `group_id` 为最终 join 范围，至少包含每个 task 的终态/result ref/checksum/attempt、所有 wave 的完成证据、join 状态、aggregate ref/checksum、诊断和 recovery/degraded 信息。
 
 `DispatchGroup` 覆盖一个 plan version 的完整逻辑 join 范围，负责 dependency closure、required-role、aggregate 和 parent continuation；`DispatchWave` 只表示在当前 readiness 与 capacity 下实际启动的一批 child。依赖尚未满足或 capacity 不足时，后续 wave 必须复用同一个 group，不能隐式创建新的 join 范围。`wait_all` 的终态条件是 group 内全部必要 task 到达终态；role-complete aggregation 只能在 group join 后执行。
 
@@ -105,7 +105,7 @@ predecessor 不可恢复失败后，coordinator 按 stable DAG order 将未 admi
 | `RUNNING -> JOINING` | `TASK_GROUP_JOIN_WAITING` | `TaskPlanBatchCoordinator` | 只在必要 task 已终态、达到 deadline 或 group 关闭后进入。 |
 | `JOINING -> SUCCEEDED` | `TASK_GROUP_JOINED` | deterministic aggregator | 仅在 required role、schema、gate 和 aggregate 全部通过后终态。 |
 | `JOINING -> REPLAN_PENDING` | `TASK_GROUP_REPLAN_PENDING` | replan coordinator | 非终态且不向 parent 发布；只能继续到 `SUPERSEDED`、`FAILED` 或 `HALTED`。 |
-| `JOINING/REPLAN_PENDING -> FAILED/CANCELLED/INDETERMINATE/HALTED` | `TASK_GROUP_FAILED`、`TASK_GROUP_CANCELLED`、`TASK_GROUP_INDETERMINATE`、`TASK_GROUP_HALTED` | `TaskPlanBatchCoordinator` | 终态后禁止新 wave；迟到 receipt 仅进入 quarantine/audit。 |
+| `JOINING/REPLAN_PENDING -> FAILED/INDETERMINATE/HALTED` | `TASK_GROUP_FAILED`、`TASK_GROUP_INDETERMINATE`、`TASK_GROUP_HALTED` | `TaskPlanBatchCoordinator` | 终态后禁止新 wave；迟到 receipt 仅进入 quarantine/audit。取消请求只能在 active state 关闭 admission 后进入 `CANCELLED`。 |
 | `REPLAN_PENDING -> SUPERSEDED` | `TASK_GROUP_SUPERSEDED` | replan coordinator | 仅在新 plan version/group 被接受后发生；旧 group 保留证据，不能接纳迟到结果。 |
 
 `TASK_GROUP_*` 与 `TASK_WAVE_*` 的 payload 必须包含 `run_id`、`stage_id`、`plan_id`、`plan_version`、`group_id`、适用时的 `wave_id`、`task_instance_id`、attempt、correlation id 和 idempotency key。child/tool receipt 可以有自己的生命周期事件，但必须携带可回溯到同一 group/wave 的因果引用。
@@ -114,7 +114,7 @@ predecessor 不可恢复失败后，coordinator 按 stable DAG order 将未 admi
 
 ### 8. Durable event 是执行和 replay 的事实源
 
-至少记录 `TASK_GROUP_ADMITTED`、`TASK_WAVE_ADMITTED`、`TASK_WAVE_DISPATCHED`、`TASK_GROUP_JOIN_WAITING`、`TASK_GROUP_JOINED` 以及每个 child 已有的 spawn/start/receipt/result/terminal/cancel/retry/reclaim 事件。每个 event 必须包含 group/wave/plan/task/attempt correlation 和幂等 key；checkpoint 必须包含 group/wave identity、budget reservation/release、join policy、每个 attempt 的 transcript/output refs 和 checksums、aggregate projection 及 stream sequence。`ToolRuntime` 不新增独立事件事实源，planning/child tool receipt 通过 adapter 关联到相同 attempt/group stream。
+至少记录 `TASK_GROUP_ADMITTED`、`TASK_WAVE_ADMITTED`、`TASK_WAVE_DISPATCHED`、`TASK_GROUP_JOIN_WAITING`、`TASK_GROUP_JOINED` 以及每个 child 已有的 spawn/start/receipt/result/terminal/cancel/retry/reclaim 事件。每个 event 按 event family 携带适用的 group/wave/plan/task/attempt correlation 和幂等 key；candidate/planning 事件不得填充尚不存在的 group 或 attempt 身份。checkpoint 必须包含 group/wave identity、budget reservation/release、join policy、每个 attempt 的 transcript/output refs 和 checksums、aggregate projection 及 stream sequence。`ToolRuntime` 不新增独立事件事实源，planning/child tool receipt 通过 adapter 关联到相同 attempt/group stream。
 
 在线 recovery 先读取 intent、supervisor operation status、receipt、result artifact 和 ledger，再补写缺失 transition。intent 存在但 receipt 缺失不是未启动的证据；unknown spawn 进入 `SPAWN_UNKNOWN`，不能盲目重复 spawn。confirmed child 不重复启动，缺 dispatch event 时复用 receipt 补事件；reservation 存在但 admission 缺失时按同一 key 补 admission 或 halt ledger conflict，不重复扣费。完全相同的 receipt 重投幂等复用；同 identity 不同 checksum/body 才是冲突，必须拒绝且保留审计。
 
@@ -126,7 +126,7 @@ online recovery 可执行已审计的 supervisor status/termination/reconcile，
 
 本变更必须完成通用 `AgentLoop` production composition：`delegate_batch` candidate、`AgentOrchestrationPort`、joined observation、配置/availability diagnostics、入口 smoke 和旧单 child compatibility。Research dynamic 是首个业务 opt-in，用于验证固定角色和 publication boundary；它不能替代通用 AgentLoop 的生产接线。
 
-第一生产接入点是现有 `build_dynamic_paper_analysis_workflow_spec()` 的 `dynamic_analysis_stage`。该 stage 继续只接收 `document` 和 `evidence_pack`，必须得到 `analysis.structure`、`analysis.contribution`、`analysis.experiments` 三个角色并通过既有 Research gates，之后才写入 `analysis_branch_refs` 并进入固定的 `verify_claims`。static workflow 仍为默认路径。
+第一生产接入点是现有 `build_dynamic_paper_analysis_graph_definition()` 的 `dynamic_analysis_stage`。该 stage 继续只接收 `document` 和 `evidence_pack`，必须得到 `analysis.structure`、`analysis.contribution`、`analysis.experiments` 三个角色并通过 deterministic role gates 与 aggregate，之后才写入 `analysis_branch_refs` 并进入固定的 `verify_claims` 与 quality gate。static workflow 仍为默认路径。
 
 生产组合必须解析真实 `ChildAgentSupervisor`、worker registry、durable run/event store、artifact verifier 和 tool ports；缺失任何 required binding 都返回稳定 unavailable error。fake worker、FakeLLM 和 in-memory store 仅用于测试。
 
