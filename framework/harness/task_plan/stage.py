@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 from dataclasses import replace
-from typing import Any
+from collections.abc import Mapping
+from typing import Any, Callable
 
 from framework.harness.control_plane.errors import HarnessValidationError
 from framework.harness.control_plane.scheduler import HarnessScheduler
@@ -17,6 +18,12 @@ from framework.harness.task_plan.ports import (
 )
 from framework.harness.task_plan.patches import TaskPlanPatchValidator
 from framework.harness.task_plan.models import PlanPatch
+from framework.harness.task_plan.observability import task_plan_metric_samples
+from framework.harness.task_plan.checkpoint import (
+    TaskPlanCheckpoint,
+    TaskPlanCheckpointStorePort,
+)
+from framework.harness.task_plan.replay import TaskPlanReplayReducer
 from framework.harness.task_plan.scheduler import (
     TaskPlanReadyDecision,
     task_instance_for_attempt,
@@ -30,6 +37,18 @@ from framework.harness.task_plan.store import (
 from framework.harness.task_plan.validation import TaskPlanValidationContext, TaskPlanValidator
 from framework.harness.workers.result import HarnessWorkerResult, HarnessWorkerStatus
 from framework.harness.task_plan.canonical import canonical_payload_checksum
+from framework.harness.task_plan.parallel import (
+    JoinPolicy,
+    ParallelAgentCoordinator,
+    ParallelDispatchRequest,
+    ParentObservationLimits,
+    SideEffectClass,
+)
+from framework.harness.task_plan.planning_observation import (
+    PlanningObservationPort,
+    PlanningObservationReceipt,
+    PlanningObservationRequest,
+)
 from framework.harness.task_plan.verification import (
     TaskPlanResultVerificationRequest,
     TaskPlanResultVerifier,
@@ -52,6 +71,11 @@ class TaskPlanStageRunner(TaskPlanStageRunnerPort):
         result_verifier: TaskPlanResultVerifierPort | None = None,
         worker_executor: Any | None = None,
         worker_result_recovery: Any | None = None,
+        parallel_coordinator: ParallelAgentCoordinator | None = None,
+        child_supervisor_capacity: int | None = None,
+        planning_observation_port: PlanningObservationPort | None = None,
+        metrics_sink: Callable[[tuple[Any, ...]], Any] | None = None,
+        checkpoint_store: TaskPlanCheckpointStorePort | None = None,
     ) -> None:
         if not isinstance(store, TaskPlanStorePort):
             raise TypeError("store must implement TaskPlanStorePort")
@@ -72,7 +96,71 @@ class TaskPlanStageRunner(TaskPlanStageRunnerPort):
         if worker_result_recovery is not None and not callable(worker_result_recovery):
             raise TypeError("worker_result_recovery must be callable")
         self.worker_result_recovery = worker_result_recovery
+        if parallel_coordinator is not None and not isinstance(
+            parallel_coordinator, ParallelAgentCoordinator
+        ):
+            raise TypeError("parallel_coordinator must be ParallelAgentCoordinator")
+        if child_supervisor_capacity is not None and (
+            isinstance(child_supervisor_capacity, bool)
+            or not isinstance(child_supervisor_capacity, int)
+            or child_supervisor_capacity < 0
+        ):
+            raise ValueError("child_supervisor_capacity must be a non-negative integer")
+        self.parallel_coordinator = parallel_coordinator
+        self.child_supervisor_capacity = child_supervisor_capacity
+        if planning_observation_port is not None and not isinstance(
+            planning_observation_port,
+            PlanningObservationPort,
+        ):
+            raise TypeError(
+                "planning_observation_port must implement PlanningObservationPort"
+            )
+        self.planning_observation_port = planning_observation_port
+        if metrics_sink is not None and not callable(metrics_sink):
+            raise TypeError("metrics_sink must be callable")
+        self.metrics_sink = metrics_sink
+        if checkpoint_store is not None and not isinstance(
+            checkpoint_store,
+            TaskPlanCheckpointStorePort,
+        ):
+            raise TypeError(
+                "checkpoint_store must implement TaskPlanCheckpointStorePort"
+            )
+        self.checkpoint_store = checkpoint_store
         self.patch_validator = TaskPlanPatchValidator()
+
+    def observe_for_planning(
+        self,
+        stage_request: TaskPlanStageRequest,
+        observation_request: PlanningObservationRequest,
+    ) -> PlanningObservationReceipt:
+        """Execute one Harness-admitted read-only fact request for a planner."""
+
+        if not isinstance(stage_request, TaskPlanStageRequest):
+            raise TypeError("stage_request must be TaskPlanStageRequest")
+        if not isinstance(observation_request, PlanningObservationRequest):
+            raise TypeError("observation_request must be PlanningObservationRequest")
+        if self.planning_observation_port is None:
+            raise HarnessValidationError(
+                "planning observation runtime is unavailable",
+                code="planning_observation_port_required",
+            )
+        expected = (
+            stage_request.run_id,
+            stage_request.stage_id,
+            stage_request.policy.policy_checksum,
+        )
+        actual = (
+            observation_request.run_id,
+            observation_request.stage_id,
+            observation_request.policy_checksum,
+        )
+        if actual != expected:
+            raise HarnessValidationError(
+                "planning observation request is outside the stage policy scope",
+                code="planning_observation_request_scope_mismatch",
+            )
+        return self.planning_observation_port.observe(observation_request)
 
     def apply_patch(self, request: TaskPlanStageRequest, patch: PlanPatch) -> ValidatedTaskPlan:
         """Validate and durably accept one immutable plan patch version."""
@@ -119,6 +207,7 @@ class TaskPlanStageRunner(TaskPlanStageRunnerPort):
         return next_plan
 
     def run(self, request: TaskPlanStageRequest) -> HarnessWorkerResult:
+        plan: ValidatedTaskPlan | None = None
         try:
             plan = self._ensure_plan(request)
             self._execute_plan(request, plan)
@@ -139,6 +228,7 @@ class TaskPlanStageRunner(TaskPlanStageRunnerPort):
                 },
                 sequence=self._next_sequence(request),
             ))
+            self._persist_checkpoint(request, plan)
             self.store.append_event(TaskPlanEvent.for_plan(
                 "TASK_PLAN_VERIFIED",
                 plan,
@@ -146,7 +236,8 @@ class TaskPlanStageRunner(TaskPlanStageRunnerPort):
                 output_refs=tuple(aggregate.output_refs_by_role.values()),
                 sequence=self._next_sequence(request),
             ))
-            return HarnessWorkerResult(
+            self._persist_checkpoint(request, plan)
+            result = HarnessWorkerResult(
                 status=HarnessWorkerStatus.SUCCEEDED,
                 output={
                     "aggregate_ref": aggregate.aggregate_ref,
@@ -156,11 +247,15 @@ class TaskPlanStageRunner(TaskPlanStageRunnerPort):
                 },
                 diagnostics={"plan_id": plan.plan_id, "plan_version": plan.version, "projection_checksum": projection.projection_checksum},
             )
+            self._publish_metrics(plan)
+            return result
         except HarnessValidationError as exc:
             self._halt(request, exc.code or "task_plan_failure")
+            self._publish_metrics(plan or self.store.plan(request.run_id, request.stage_id))
             return HarnessWorkerResult(status=HarnessWorkerStatus.BLOCKED, error=str(exc), diagnostics={"reason_code": exc.code})
         except Exception as exc:
             self._halt(request, "task_plan_stage_failure")
+            self._publish_metrics(plan or self.store.plan(request.run_id, request.stage_id))
             return HarnessWorkerResult(status=HarnessWorkerStatus.FAILED, error=str(exc), diagnostics={"reason_code": "task_plan_stage_failure"})
 
     def _ensure_plan(self, request: TaskPlanStageRequest) -> ValidatedTaskPlan:
@@ -180,6 +275,7 @@ class TaskPlanStageRunner(TaskPlanStageRunnerPort):
             metadata=request.metadata,
             execution_identity=request.execution_identity,
         ))
+        self._validate_planning_observations(request, candidate)
         self.store.append_candidate(candidate)
         context = TaskPlanValidationContext(
             run_id=request.run_id,
@@ -214,7 +310,48 @@ class TaskPlanStageRunner(TaskPlanStageRunnerPort):
         self.store.accept_plan(plan)
         return plan
 
+    def _validate_planning_observations(
+        self,
+        request: TaskPlanStageRequest,
+        candidate: Any,
+    ) -> None:
+        source_refs = tuple(getattr(candidate, "source_observation_refs", ()))
+        if not source_refs:
+            return
+        if self.planning_observation_port is None:
+            raise HarnessValidationError(
+                "planning observation receipts require a configured validation port",
+                code="planning_observation_port_required",
+            )
+        planner_turn_id = candidate.metadata.get("planner_turn_id")
+        if not isinstance(planner_turn_id, str) or not planner_turn_id.strip():
+            raise HarnessValidationError(
+                "candidate planning observation refs require planner_turn_id metadata",
+                code="planning_observation_planner_turn_missing",
+            )
+        self.planning_observation_port.validate_source_refs(
+            source_refs,
+            run_id=request.run_id,
+            stage_id=request.stage_id,
+            planner_turn_id=planner_turn_id,
+            policy_checksum=request.policy.policy_checksum,
+        )
+
     def _execute_plan(self, request: TaskPlanStageRequest, plan: ValidatedTaskPlan) -> None:
+        if self.parallel_coordinator is None:
+            if self._parallel_runtime_requested(request.policy, plan):
+                raise HarnessValidationError(
+                    "parallel TaskPlan runtime requires an explicit coordinator",
+                    code=(
+                        "TASK_GROUP_WAVE_ADAPTER_REQUIRED"
+                        if request.policy.serial_fallback
+                        else "task_plan_parallel_runtime_required"
+                    ),
+                )
+            return self._execute_plan_serial(request, plan)
+        return self._execute_plan_parallel(request, plan)
+
+    def _execute_plan_serial(self, request: TaskPlanStageRequest, plan: ValidatedTaskPlan) -> None:
         max_rounds = max(1, plan.limits.max_tasks * plan.limits.max_task_attempts + plan.limits.max_replans + 1)
         for _ in range(max_rounds):
             projection = self.store.load_projection(request.run_id, request.stage_id)
@@ -312,6 +449,306 @@ class TaskPlanStageRunner(TaskPlanStageRunnerPort):
                         raise HarnessValidationError("task retry budget exhausted", code="task_plan_retry_exhausted", details={"task_id": result.task_id})
         raise HarnessValidationError("TaskPlan execution exceeded bounded rounds", code="task_plan_execution_bound_exceeded")
 
+    def _execute_plan_parallel(self, request: TaskPlanStageRequest, plan: ValidatedTaskPlan) -> None:
+        policy = request.policy
+        limits = ParentObservationLimits(**dict(policy.parent_observation_limits))
+        admission = self._parallel_request(request, plan, task_instances=())
+        event_sink = self._parallel_event_sink(request, plan)
+        group = self.parallel_coordinator.create_group(admission, event_sink=event_sink)
+        max_rounds = max(
+            1,
+            plan.limits.max_tasks * plan.limits.max_task_attempts
+            + plan.limits.max_replans
+            + policy.max_waves
+            + 1,
+        )
+        for _ in range(max_rounds):
+            projection = self.store.load_projection(request.run_id, request.stage_id)
+            recovered_any = self._recover_committed_subagent_results(
+                request,
+                plan,
+                projection,
+            )
+            durable_results = self.store.results_for(
+                request.run_id,
+                request.stage_id,
+                plan.plan_id,
+                plan.version,
+            )
+            if durable_results:
+                self.parallel_coordinator.recover(
+                    admission,
+                    durable_results,
+                    historical_wave_ordinals=self._historical_parallel_wave_ordinals(
+                        request,
+                        group_id=group.group_id,
+                    ),
+                    limits=limits,
+                    event_sink=event_sink,
+                )
+            if recovered_any:
+                continue
+            dispatch_capacity = self.parallel_coordinator.dispatch_parallelism(admission)
+            if self._recover_failed_task_retries(request, plan, projection):
+                continue
+            decision = self.scheduler.next_task_plan_decision(
+                projection,
+                dispatch_capacity,
+                plan=plan,
+                policy=policy,
+                available_input_refs=tuple(request.context_refs.values()),
+            )
+            if not decision.task_requests:
+                pending = [
+                    item.task_id
+                    for item in projection.tasks
+                    if item.status
+                    in {
+                        TaskLifecycle.PENDING,
+                        TaskLifecycle.READY,
+                        TaskLifecycle.DISPATCHED,
+                        TaskLifecycle.RUNNING,
+                    }
+                ]
+                failed = [
+                    item.task_id
+                    for item in projection.tasks
+                    if item.status is TaskLifecycle.FAILED
+                ]
+                if pending or failed:
+                    raise HarnessValidationError(
+                        "TaskPlan cannot make further progress",
+                        code="task_plan_task_blocked",
+                        details={
+                            "pending": pending,
+                            "failed": failed,
+                            "blocked": list(decision.blocked_task_ids),
+                        },
+                    )
+                joined = self.parallel_coordinator.join(
+                    admission,
+                    limits=limits,
+                    event_sink=event_sink,
+                )
+                if not joined.succeeded:
+                    raise HarnessValidationError(
+                        "parallel TaskPlan group did not satisfy join",
+                        code="task_plan_parallel_join_failed",
+                        details={"group_id": joined.group.group_id, "diagnostics": list(joined.observation.diagnostics)},
+                    )
+                return
+
+            # Reserve and materialize every selected task before any worker is
+            # submitted. The coordinator then applies the physical capacity
+            # bound and creates one or more waves for this ready set.
+            for task_request in decision.task_requests:
+                current = self.store.load_projection(request.run_id, request.stage_id)
+                reserved = self.scheduler.reserve_task_plan_tasks(
+                    current,
+                    TaskPlanReadyDecision((task_request,)),
+                )
+                self._commit_task_transition(request, plan, task_request, "TASK_READY", reserved)
+            for task_request in decision.task_requests:
+                projection = self.scheduler.mark_task_plan_dispatched(
+                    self.store.load_projection(request.run_id, request.stage_id),
+                    task_request,
+                )
+                self._commit_task_transition(request, plan, task_request, "TASK_DISPATCHED", projection)
+            for task_request in decision.task_requests:
+                projection = self.scheduler.mark_task_plan_started(
+                    self.store.load_projection(request.run_id, request.stage_id),
+                    task_request,
+                )
+                self._commit_task_transition(request, plan, task_request, "TASK_STARTED", projection)
+
+            dispatched = self.parallel_coordinator.dispatch(
+                self._parallel_request(
+                    request,
+                    plan,
+                    task_instances=decision.task_requests,
+                ),
+                lambda instance: self._invoke(
+                    instance,
+                    plan,
+                    policy,
+                    execution_identity=request.execution_identity,
+                ),
+                limits=limits,
+                finalize=False,
+                event_sink=event_sink,
+            )
+            for result in dispatched.results:
+                self.store.append_result(result)
+                self._handle_parallel_result(request, plan, result)
+        raise HarnessValidationError(
+            "parallel TaskPlan execution exceeded bounded rounds",
+            code="task_plan_execution_bound_exceeded",
+        )
+
+    def _handle_parallel_result(
+        self,
+        request: TaskPlanStageRequest,
+        plan: ValidatedTaskPlan,
+        result: TaskResultRecord,
+    ) -> None:
+        if result.status is not TaskLifecycle.FAILED:
+            return
+        resolved = next(item for item in plan.tasks if item.task_id == result.task_id)
+        retryable_codes = set(resolved.normalized_retry_policy.retryable_reason_codes)
+        if result.error_code in retryable_codes and result.attempt < resolved.normalized_retry_policy.max_attempts:
+            current = self.store.load_projection(request.run_id, request.stage_id)
+            retry_tasks = tuple(
+                replace(
+                    item,
+                    status=TaskLifecycle.PENDING,
+                    active_instance_id=None,
+                    failure_reason_code=None,
+                )
+                if item.task_id == result.task_id
+                else item
+                for item in current.tasks
+            )
+            sequence = self._next_sequence(request)
+            self.store.commit_event(
+                TaskPlanEvent.for_plan(
+                    "TASK_RETRY_SCHEDULED",
+                    plan,
+                    task_id=result.task_id,
+                    task_instance_id=result.task_instance_id,
+                    attempt=result.attempt,
+                    input_checksum=result.result_checksum,
+                    reason_code=result.error_code,
+                    sequence=sequence,
+                ),
+                replace(current, tasks=retry_tasks, last_sequence=sequence),
+            )
+            return
+        if result.error_code not in retryable_codes:
+            raise HarnessValidationError(
+                "task failure is outside the task retry policy",
+                code="task_plan_retry_not_allowed",
+                details={
+                    "task_id": result.task_id,
+                    "attempt": result.attempt,
+                    "error_code": result.error_code,
+                    "retryable_reason_codes": sorted(retryable_codes),
+                },
+            )
+        raise HarnessValidationError(
+            "task retry budget exhausted",
+            code="task_plan_retry_exhausted",
+            details={"task_id": result.task_id},
+        )
+
+    @staticmethod
+    def _parallel_runtime_requested(policy: Any, plan: ValidatedTaskPlan) -> bool:
+        del plan
+        return any(
+            getattr(policy, name, None) is not None
+            for name in (
+                "capability_capacity",
+                "available_concurrency_reservations",
+            )
+        ) or bool(getattr(policy, "metadata", {}).get("parallel_orchestration", False))
+
+    def _parallel_request(
+        self,
+        request: TaskPlanStageRequest,
+        plan: ValidatedTaskPlan,
+        *,
+        task_instances: tuple[TaskInstance, ...],
+    ) -> ParallelDispatchRequest:
+        policy = request.policy
+        return ParallelDispatchRequest(
+            plan=plan,
+            task_instances=tuple(task_instances),
+            requested_parallelism=policy.max_parallelism,
+            capability_capacity=policy.capability_capacity,
+            supervisor_capacity=self.child_supervisor_capacity,
+            available_concurrency_reservations=policy.available_concurrency_reservations,
+            serial_fallback=policy.serial_fallback,
+            join_policy=JoinPolicy(policy.join_policy),
+            correlation_id=f"{request.run_id}-{request.stage_id}-plan-{plan.version}",
+            group_task_ids=tuple(item.task_id for item in plan.tasks),
+            side_effect_class=SideEffectClass(policy.side_effect_class),
+            resource_conflict_key=policy.resource_conflict_key,
+            max_waves=policy.max_waves,
+            max_tasks_per_group=policy.max_tasks_per_group,
+            max_group_runtime_seconds=policy.max_group_runtime_seconds,
+            max_join_wait_seconds=policy.max_join_wait_seconds,
+            parent_graph_identity=request.execution_identity,
+        )
+
+    def _parallel_group_id(self, request: TaskPlanStageRequest, plan: ValidatedTaskPlan) -> str:
+        return "dg_" + canonical_payload_checksum(
+            {"run_id": request.run_id, "stage_id": request.stage_id, "plan_id": plan.plan_id}
+        ).removeprefix("sha256:")[:32]
+
+    def _historical_parallel_wave_ordinals(
+        self,
+        request: TaskPlanStageRequest,
+        *,
+        group_id: str,
+    ) -> tuple[int, ...]:
+        """Read admitted wave ordinals without reconstructing live workers."""
+
+        ordinals: list[int] = []
+        for event in self.store.read_events(request.run_id, request.stage_id):
+            if event.event_type != "TASK_WAVE_ADMITTED":
+                continue
+            wave = event.payload.get("wave")
+            if not isinstance(wave, Mapping) or wave.get("group_id") != group_id:
+                continue
+            ordinal = wave.get("ordinal")
+            if isinstance(ordinal, bool) or not isinstance(ordinal, int) or ordinal < 1:
+                raise HarnessValidationError(
+                    "durable parallel wave ordinal is invalid",
+                    code="TASK_GROUP_RECOVERY_WAVE_INVALID",
+                )
+            ordinals.append(ordinal)
+        if len(ordinals) != len(set(ordinals)):
+            raise HarnessValidationError(
+                "durable parallel wave ordinals are duplicated",
+                code="TASK_GROUP_RECOVERY_WAVE_INVALID",
+            )
+        return tuple(sorted(ordinals))
+
+    def _parallel_event_sink(self, request: TaskPlanStageRequest, plan: ValidatedTaskPlan):
+        return lambda event: self._record_parallel_event(request, plan, event)
+
+    def _record_parallel_event(
+        self,
+        request: TaskPlanStageRequest,
+        plan: ValidatedTaskPlan,
+        event: Any,
+    ) -> None:
+        if not isinstance(event, dict):
+            raise HarnessValidationError("parallel event must be an object", code="task_plan_parallel_event_invalid")
+        event_type = event.get("event_type")
+        if not isinstance(event_type, str):
+            raise HarnessValidationError("parallel event type is missing", code="task_plan_parallel_event_invalid")
+        idempotency_key = event.get("idempotency_key")
+        durable_idempotency_key = f"{event_type}:{idempotency_key or canonical_payload_checksum(event)}"
+        if any(
+            item.payload.get("parallel_event_idempotency_key") == durable_idempotency_key
+            for item in self.store.read_events(request.run_id, request.stage_id)
+        ):
+            return
+        payload = dict(event)
+        payload["parallel_event_idempotency_key"] = durable_idempotency_key
+        event_checksum = canonical_payload_checksum(event)
+        self.store.append_event(
+            TaskPlanEvent.for_plan(
+                event_type,
+                plan,
+                input_checksum=event_checksum,
+                reason_code=event.get("reason_code") if isinstance(event.get("reason_code"), str) else None,
+                payload=payload,
+                sequence=self._next_sequence(request),
+            )
+        )
+        self._persist_checkpoint(request, plan)
+
     def _recover_failed_task_retries(
         self,
         request: TaskPlanStageRequest,
@@ -397,6 +834,7 @@ class TaskPlanStageRunner(TaskPlanStageRunnerPort):
                     last_sequence=sequence,
                 ),
             )
+            self._persist_checkpoint(request, plan)
             return True
         return False
 
@@ -488,6 +926,7 @@ class TaskPlanStageRunner(TaskPlanStageRunnerPort):
             ),
             replace(projection, last_sequence=sequence),
         )
+        self._persist_checkpoint(request, plan)
 
     def _invoke(
         self,
@@ -555,6 +994,72 @@ class TaskPlanStageRunner(TaskPlanStageRunnerPort):
         if isinstance(value, dict):
             return HarnessWorkerResult(**value)
         raise HarnessValidationError("dynamic worker returned invalid result", code="task_plan_result_invalid")
+
+    def _publish_metrics(self, plan: ValidatedTaskPlan | None) -> None:
+        """Publish a derived inspection snapshot without changing run outcome."""
+
+        if self.metrics_sink is None or plan is None:
+            return
+        try:
+            projection = self.store.load_projection(plan.run_id, plan.stage_id)
+            samples = task_plan_metric_samples(
+                projection,
+                plan,
+                self.store.read_events(plan.run_id, plan.stage_id),
+            )
+            self.metrics_sink(samples)
+        except Exception:
+            # Metrics are strictly observational. A faulty exporter must not
+            # rewrite a verified task-plan decision or turn a completed run
+            # into a retryable execution failure.
+            return
+
+    def _persist_checkpoint(
+        self,
+        request: TaskPlanStageRequest,
+        plan: ValidatedTaskPlan,
+    ) -> None:
+        """Persist a replay-derived checkpoint after a durable lifecycle fact."""
+
+        if self.checkpoint_store is None:
+            return
+        events = self.store.read_events(request.run_id, request.stage_id)
+        results = self.store.result_history_for(
+            request.run_id,
+            request.stage_id,
+            plan.plan_id,
+            plan.version,
+        )
+        plan_history = tuple(
+            candidate
+            for version in range(1, plan.version + 1)
+            if (candidate := self.store.plan(request.run_id, request.stage_id, version))
+            is not None
+        )
+        if not plan_history:
+            return
+        patch_reader = getattr(self.store, "patches_for", None)
+        patches = (
+            tuple(patch_reader(request.run_id, request.stage_id))
+            if callable(patch_reader)
+            else ()
+        )
+        report = TaskPlanReplayReducer().replay(
+            plan_history,
+            events,
+            results=results,
+            patches=patches,
+            require_terminal_events=False,
+            require_latest_plan=False,
+            apply_unterminated_results=False,
+        )
+        checkpoint = TaskPlanCheckpoint.from_replay(
+            f"checkpoint-{plan.plan_id}-{report.projection.last_sequence}",
+            plan,
+            report,
+            created_at=_required_observation_time(request),
+        )
+        self.checkpoint_store.save(checkpoint)
 
     def _halt(self, request: TaskPlanStageRequest, reason_code: str) -> None:
         try:

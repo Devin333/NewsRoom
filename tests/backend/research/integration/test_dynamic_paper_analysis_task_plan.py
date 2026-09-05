@@ -61,6 +61,8 @@ from framework.harness.graph.model import (
 )
 from framework.harness.graph.validation import HarnessGraphPreflightPolicy
 from framework.harness.task_plan import task_plan_context_identities
+from framework.harness.task_plan.parallel import ParallelAgentCoordinator
+from framework.harness.subagents.supervisor import ChildAgentSupervisor
 from framework.shared.graph_identity import GraphExecutionIdentity
 from infrastructure.storage.harness import FilesystemSubAgentTranscriptStore
 from interfaces.services.research_service import (
@@ -169,6 +171,8 @@ class _DynamicTaskPlanFactory:
         self.subagent_runtimes: list[SubAgentRuntime] = []
         self.subagent_workers: list[dict[str, _WorkspaceAnalysisSubAgent]] = []
         self.stage_workers: list[ResearchAnalysisTaskPlanStageWorker] = []
+        self.parallel_coordinators: list[ParallelAgentCoordinator] = []
+        self.child_supervisors: list[ChildAgentSupervisor] = []
 
     def __call__(self, *, workspace: Any, dependencies: Any):
         policy = build_research_analysis_task_plan_policy()
@@ -353,6 +357,13 @@ class _DynamicTaskPlanFactory:
         graph = HarnessGraphCompiler().compile(
             build_dynamic_paper_analysis_graph_definition()
         ).graph
+        child_supervisor = ChildAgentSupervisor(
+            max_children=policy.max_parallelism,
+        )
+        parallel_coordinator = ParallelAgentCoordinator(
+            max_workers=child_supervisor.capacity,
+            child_supervisor=child_supervisor,
+        )
         stage_worker = ResearchAnalysisTaskPlanStageWorker(
             stage_binding=TaskPlanStageBinding(graph, RESEARCH_DYNAMIC_STAGE_ID),
             accepted_at="2026-08-01T00:00:00Z",
@@ -366,6 +377,8 @@ class _DynamicTaskPlanFactory:
                 transcript_store=transcript_store,
             ),
             policy=policy,
+            parallel_coordinator=parallel_coordinator,
+            child_agent_supervisor=child_supervisor,
             allow_test_store=True,
         )
         self.stores.append(store)
@@ -374,6 +387,8 @@ class _DynamicTaskPlanFactory:
         self.subagent_runtimes.append(runtime)
         self.subagent_workers.append(workers)
         self.stage_workers.append(stage_worker)
+        self.parallel_coordinators.append(parallel_coordinator)
+        self.child_supervisors.append(child_supervisor)
         return stage_worker
 
 
@@ -388,6 +403,14 @@ def test_dynamic_task_plan_fake_llm_and_subagents_publish_through_fixed_path() -
     )
 
     assert result.succeeded is True
+    stage_worker = factory.stage_workers[0]
+    assert stage_worker._parallel_coordinator is factory.parallel_coordinators[0]
+    assert stage_worker._child_agent_supervisor is factory.child_supervisors[0]
+    assert (
+        stage_worker._parallel_coordinator.max_workers
+        == stage_worker._child_agent_supervisor.capacity
+        == 3
+    )
     assert factory.outline_workers[0].calls == 1
     assert all(
         len(worker.calls) == 1 for worker in factory.subagent_workers[0].values()
@@ -648,7 +671,8 @@ def test_dynamic_task_plan_recovers_post_receipt_crash_without_duplicate_worker(
         capability: len(worker.calls)
         for capability, worker in first_workers.items()
     }
-    assert sum(first_counts.values()) == 1
+    assert sum(first_counts.values()) == 2
+    assert all(count <= 1 for count in first_counts.values())
     store = factory.stores[0]
     plan = store.plan(request.run_id, "dynamic_analysis_stage")
     assert plan is not None
@@ -656,8 +680,8 @@ def test_dynamic_task_plan_recovers_post_receipt_crash_without_duplicate_worker(
     assert sum(
         state.status in {TaskLifecycle.DISPATCHED, TaskLifecycle.RUNNING}
         for state in projection.tasks
-    ) == 1
-    assert sum(state.status is TaskLifecycle.PENDING for state in projection.tasks) == 2
+    ) == 2
+    assert sum(state.status is TaskLifecycle.PENDING for state in projection.tasks) == 1
 
     recovery = event_port.recover_graph(request.run_id)
     recovery_state = recovery.state
@@ -695,6 +719,29 @@ def test_dynamic_task_plan_recovers_post_receipt_crash_without_duplicate_worker(
     assert len(records) == 3
     assert all(record.transcript_ref for record in records)
     assert all(record.subagent_output_ref for record in records)
+    parallel_events = [
+        event
+        for event in store.read_events(request.run_id, plan.stage_id)
+        if event.event_type.startswith("TASK_GROUP_")
+        or event.event_type.startswith("TASK_WAVE_")
+    ]
+    assert any(event.event_type == "TASK_GROUP_RECOVERY" for event in parallel_events)
+    assert len(
+        {
+            event.payload.get("group_id")
+            or event.payload.get("group", {}).get("group_id")
+            for event in parallel_events
+        }
+    ) == 1
+    replay = TaskPlanReplayReducer(factory.transcript_stores[0]).replay(
+        (plan,),
+        store.read_events(request.run_id, plan.stage_id),
+        results=records,
+    )
+    assert len(replay.parallel_groups) == 1
+    assert {
+        group["state"] for group in replay.parallel_groups.values()
+    } == {"SUCCEEDED"}
 
 
 def test_production_shaped_stage_worker_rejects_in_memory_store_by_default() -> None:

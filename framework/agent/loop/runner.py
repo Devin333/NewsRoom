@@ -22,6 +22,7 @@ from framework.agent.messages import (
     ConversationCursor,
 )
 from framework.shared.graph_identity import GraphExecutionIdentity
+from framework.agent.models.orchestration import AgentOrchestrationPort
 
 
 class AgentRunner:
@@ -33,6 +34,8 @@ class AgentRunner:
         conversation_store: Any | None = None,
         global_budget_tracker: GlobalBudgetTracker | None = None,
         subagent_executor: SubAgentExecutor | None = None,
+        orchestration_port: AgentOrchestrationPort | None = None,
+        orchestration_enabled: bool = False,
         memory_runtime: MemoryRuntime | None = None,
         memory_policy: MemoryPolicy | None = None,
         output_judge: OutputJudge | None = None,
@@ -46,6 +49,8 @@ class AgentRunner:
         self._conversation_store = conversation_store
         self._global_budget_tracker = global_budget_tracker
         self._subagent_executor = subagent_executor
+        self._orchestration_port = orchestration_port
+        self._orchestration_enabled = orchestration_enabled
         self._memory_runtime = memory_runtime
         self._memory_policy = memory_policy
         self._output_judge = output_judge or OutputJudge()
@@ -59,6 +64,47 @@ class AgentRunner:
         """Return the provider registry bound to this runner, if any."""
 
         return self._execution_environment
+
+    @property
+    def orchestration_enabled(self) -> bool:
+        """Whether the Harness-owned multi-child capability is enabled."""
+
+        return self._orchestration_enabled
+
+    @property
+    def orchestration_port(self) -> AgentOrchestrationPort | None:
+        """Expose the configured Harness boundary for composition integrity checks."""
+
+        return self._orchestration_port
+
+    def bind_orchestration(
+        self,
+        *,
+        orchestration_port: AgentOrchestrationPort | None,
+        orchestration_enabled: bool,
+    ) -> None:
+        """Bind the production-owned orchestration boundary before execution.
+
+        Rebinding a runner to a different port is prohibited so a reused graph
+        worker cannot drift to an ad hoc child executor between runs.
+        """
+
+        if orchestration_port is not None and not isinstance(
+            orchestration_port, AgentOrchestrationPort
+        ):
+            raise TypeError("orchestration_port must implement AgentOrchestrationPort")
+        if not isinstance(orchestration_enabled, bool):
+            raise TypeError("orchestration_enabled must be boolean")
+        if (
+            self._orchestration_port is not None
+            and orchestration_port is not None
+            and self._orchestration_port is not orchestration_port
+        ):
+            raise ValueError("AgentRunner orchestration port is already bound")
+        if self._orchestration_enabled and not orchestration_enabled:
+            raise ValueError("AgentRunner orchestration feature cannot be disabled after binding")
+        self._orchestration_port = orchestration_port or self._orchestration_port
+        self._orchestration_enabled = orchestration_enabled
 
     def run(
         self,
@@ -173,6 +219,8 @@ class AgentRunner:
             output_normalizer=self._output_normalizer,
             global_budget_tracker=effective_budget_tracker,
             subagent_executor=self._subagent_executor,
+            orchestration_port=self._orchestration_port,
+            orchestration_enabled=self._orchestration_enabled,
             memory_runtime=self._memory_runtime,
             memory_policy=self._memory_policy,
             runtime_event_sink=self._runtime_event_sink,

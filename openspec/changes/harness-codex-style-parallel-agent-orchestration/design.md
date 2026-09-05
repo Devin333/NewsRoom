@@ -40,6 +40,10 @@ LLM 产生的是 `PlanCandidate` 或 `delegate_batch` candidate，不是上述�
 
 选择 group/wave contract 而不是让各 worker 自行汇报，是为了把 admission、child identity、join 和 replay 放在同一控制面。单任务 worker 通过 `SerialTaskExecutorAdapter` 包装为一个只有一项 task 的 group/wave，保持已有 `TaskRequest -> result` 接口。
 
+candidate durable dedup key 固定为 `run_id + stage_id + parent_turn_id + action_correlation_id`，与 `candidate_checksum` 一起持久化。相同 key/checksum 复用原 accepted plan/group/submission/terminal observation，冲突 checksum 返回 `CANDIDATE_IDEMPOTENCY_CONFLICT` 且不得执行新 payload。`group_id` 来自 accepted plan identity 与 dedup key 的稳定 hash；新 plan version 的 replan 必须使用新的 correlation/dedup identity。
+
+所有 input/result/planning refs 和 memory namespace 统一通过 `RefAuthority`，校验 run、stage、tenant/owner、读写权限、artifact type、source checksum 和 pinned allowlist。跨作用域默认拒绝；共享必须由 policy 声明只读范围，candidate 不能自行授权，child 不得读取 sibling private refs。
+
 ### 2. Harness 作为唯一 fan-out/fan-in coordinator
 
 新增或扩展 `TaskPlanBatchCoordinator`，由 `TaskPlanStageRunner` 和 `AgentLoop` 共同调用的 Harness-owned port。其顺序固定为：
@@ -47,7 +51,7 @@ LLM 产生的是 `PlanCandidate` 或 `delegate_batch` candidate，不是上述�
 1. 从 immutable plan 计算完整 dependency closure、required output roles 和稳定 task order，为该 plan version 创建一个 `DispatchGroup`，再计算当前 ready set。
 2. 在 durable stream 中提交 group admission，原子记录 group membership、join scope、总预算 envelope、policy checksum 和边界；group admission 只锁定上限，不重复消费逐任务预算。没有 admission 记录不得启动 child。
 3. 从 group 的当前 ready set 中按 capacity 创建一个 `DispatchWave`，原子记录 wave ordinal、选中的 task instances，以及每个 task 的 budget/capacity reservation；reservation ledger 使用 `RESERVED -> CONSUMED | RELEASED`，重试、取消、失败和 recovery 必须幂等结算。超出 capacity 或依赖未满足的 task 保持 durable PENDING/READY，等待后续 wave。
-4. 调用 `ChildAgentSupervisor` 为 wave 中每个 task 创建独立 child attempt。物理 worker 数量由 `min(stage.max_parallelism, capability capacity, supervisor capacity, available reservation)` 决定；`available reservation` 只能由 policy 定义的可并发 slot 计算，不得把任意 token/cost 数值直接当作 worker 数量。
+4. 按 plan stable task order 做 deterministic first-fit packing，每个 task 的全部 capability pool、resource key、concurrency slot 和预算必须 all-or-nothing reservation；不能满足的 task 留在 READY，继续检查后续 task。多池预留证据进入 wave checksum。先 durable 提交 admission、ledger 和逐 attempt spawn intent，再通过 `spawn_operation_key` 调用 `ChildAgentSupervisor`；保存 confirmed/unknown receipt 后核对全部 selected task 的 spawn 状态，只有 child 可追踪时才记录 dispatch。
 5. 复用 `SubAgentRuntime` 完成 context/tool/memory/result gate 和 durable receipt；每个 child 独立完成或进入失败/取消/不确定终态。wave 结束后，若 group 仍有 ready task 且未达到 group 边界，继续创建下一 wave。
 6. 对 group 内已终态的 child 做 deterministic join。join 顺序使用 plan 中的稳定 task order，不使用完成时间、线程返回顺序或 queue 顺序。
 7. 只有 group join 通过 required role、output conflict、schema 和 aggregate gate 后，才向 parent Agent 或下游 Graph 发布一个 `ParallelDispatchResult`。
@@ -56,9 +60,11 @@ LLM 产生的是 `PlanCandidate` 或 `delegate_batch` candidate，不是上述�
 
 ### 3. 并发资格由 policy 和资源共同决定
 
-每个 task 在 dispatch 前必须满足：依赖结果已经 durable success、输入 refs 可解析、capability binding 唯一且 pinned、预算已 reservation、工具和 memory namespace 在 allowlist 内，并且 task 的 side-effect class 允许并发。side-effect class 使用 policy 固定枚举：`READ_ONLY`、`EXTERNAL_IDEMPOTENT`、`MUTATING_SERIAL`、`FENCED_MUTATION`；资源冲突由 policy/capability binding 提供的 `resource_conflict_key` 判定，不能由 candidate 自行声明。只读分析任务可并行；共享写入或外部副作用任务必须串行，或持有 policy 明确的 deterministic fence。`max_parallelism` 只能被 Harness 取最小值，不能被 candidate 或 child 提高。
+每个 task 在 dispatch 前必须满足：依赖结果已经 durable success、输入 refs 可解析、capability binding 唯一且 pinned、预算已 reservation、工具和 memory namespace 在 allowlist 内，并且 task 的 side-effect class 允许并发。side-effect class 使用 policy 固定枚举：`READ_ONLY`、`EXTERNAL_IDEMPOTENT`、`MUTATING_SERIAL`、`FENCED_MUTATION`；资源冲突由 policy/capability binding 提供的 `resource_conflict_key` 判定，不能由 candidate 自行声明。只读分析任务可并行；副作用按下述 resource-key/receipt/fence 规则判断，不把所有外部写入一概全局串行化。`max_parallelism` 只能被 Harness 在授权上限内计算，不能被 candidate 或 child 提高。
 
-policy 必须提供 `CapabilityCapacity`，至少包含 `capability`、`capacity_limit`、`currently_reserved`、`reservation_scope` 和 `reservation_key`。该容量必须可在 group admission 时检查并在 wave terminal/recovery 时幂等释放；缺失容量信息时按不可用处理，不得默认为无限容量。
+policy 必须提供按 capability/resource pool 区分的 `CapabilityCapacity`，至少包含 pool identity、capacity、currently reserved、owner scope、reservation key/version 和有效期。task demand 可以涉及多个 pool；单一 capability 标量不能代表异构 capacity。所有 pool 与 supervisor capacity、stage limit、可用 concurrency reservation 共同约束 admission。缺失或过期信息 fail closed，多资源预留失败不得留下部分 reservation；wave terminal/recovery 按 key 幂等结算。
+
+`READ_ONLY` 可共享资源 key；`EXTERNAL_IDEMPOTENT` 在同 key 下默认串行，只有 policy 明确允许且有幂等 receipt 才可并发；`MUTATING_SERIAL` 只序列化同 key，除非 capability 被标记为全局串行；`FENCED_MUTATION` 按 key 持有包含 owner、generation、TTL、续租和释放历史的 fence。不同 key 可按独立 fence 并发，不能把所有 mutation 隐式降为全局串行。fence 丢失或 generation/TTL 不确定时进入 `INDETERMINATE`/`HALTED`，禁止自动重试。
 
 当两个或以上 task 独立、通过并发资格检查、`effective_parallelism >= 2` 且未启用 `serial_fallback` 时，coordinator **MUST** 并发启动最多 `effective_parallelism` 个 child attempt。只有 side-effect fence、有效 capacity 为 1 或显式 `serial_fallback` 才允许串行，并且必须记录稳定的降级原因。
 
@@ -66,7 +72,9 @@ policy 必须提供 `CapabilityCapacity`，至少包含 `capability`、`capacity
 
 ### 4. Parent Agent 只接收一次受控 join observation
 
-`AgentLoop` 新增对 `delegate_batch` candidate 的解析和校验，但不负责线程、队列、重试、路由或质量判断。它把候选交给 production `AgentOrchestrationPort`，等待 Harness 返回一个受控 observation：包括 group/wave 状态、稳定 task summaries、output refs/checksums、gate diagnostics、budget usage 和可安全展示的 failure/recovery 信息。`ParentObservationLimits` 必须由 AgentSpec/stage policy 提供，至少限制 task summaries 数量、summary 字节数、diagnostics 数量、refs 数量和总 observation 字节数；超限内容只能以经过 checksum 绑定的 artifact ref 表示。原始 hidden prompt、兄弟 child 私有 transcript、未授权工具结果和控制字段不进入 observation。
+`AgentLoop` 新增对 `delegate_batch` candidate 的解析和校验，但不负责线程、队列、重试、路由或质量判断。`AgentOrchestrationPort.submit(candidate)` 先返回 durable submission identity、group identity、dedup 状态和 bounded wait 信息；terminal observation 与 submission receipt 是不同合同。等待 capacity、在线 recovery 或 join 超过 bounded wait 时返回 `PENDING`，不能追加成功 observation 或启动下一轮 parent reasoning。Harness 通过 durable continuation 唤醒同一个 parent turn，以 `observation_id + observation_version` 幂等追加 terminal observation；重复读取保留同一 checksum。progress 只进入 inspection/metrics。
+
+terminal observation 包括 group/wave 状态、稳定 task summaries、output refs/checksums、gate diagnostics、budget usage 和可安全展示的 failure/recovery 信息。summary 只能投影 durable、已通过 gate 的结构化 result fields、typed status 和 deterministic diagnostics，projection/replay 禁止 LLM 摘要。固定排序、字段选择、脱敏、UTF-8 截断、`summary_truncated` 和 projection version 进入 observation checksum。`ParentObservationLimits` 使用唯一 `max_observation_bytes` 字段，超限保留 identity、terminal outcome、checksum 和 continuation；详细内容只能以 checksum-bound artifact ref 表示。原始 hidden prompt、兄弟 child 私有 transcript、未授权工具结果和控制字段不进入 observation。
 
 现有单 child `delegate` 通过一条兼容 adapter 转换为单 task group/wave；因此旧 AgentSpec 和旧 worker executor 可以继续使用。parent Agent 是否继续、重试还是结束，仍然由自身下一轮候选和 Harness 的 loop budget 共同约束，不能由 child 输出直接改变 workflow control。
 
@@ -82,9 +90,13 @@ child Agent 的工具权限继续由 resolved `SubAgentSpec` 和 capability bind
 
 可重试失败只创建有界的新 attempt；达到 `max_task_attempts` 后，Harness 只能执行明确的 patch 操作：`ADD_REPLACEMENT_TASK` 以终态失败的 logical task 为 target，新增 task 必须有新的 logical id/task instance；`SKIP_PENDING_TASK` 和 `UPDATE_PENDING_DEPENDENCY` 只能作用于尚未 admission 的 pending task。每次 replan 必须创建新的 immutable `plan_version`、新的 `DispatchGroup` 和新的 correlation id；旧 group 只保留审计证据，迟到结果不得写入新 projection。已验证的 sibling result refs 可按 policy 显式复用，但不得重新挂接旧 task instance。运行中、已完成、required role、policy、gate 和 outer Graph 不可被 patch 修改。缺少 required role、结果冲突、证据不可验证或 crash 后状态不确定时，必须进入 typed failure/halt，而不是猜测或选择一个“先完成”的结果。
 
+predecessor 不可恢复失败后，coordinator 按 stable DAG order 将未 admission 的直接和传递后继转为终态 `BLOCKED_DEPENDENCY`，记录 `TASK_BLOCKED_UPSTREAM_FAILURE` 并释放未消费 reservation，不创建 child。`wait_all` 将这些终态纳入 join，返回 `DEPENDENCY_BLOCKED`/`REQUIRED_ROLE_MISSING`。replacement replan 重新验证 dependency closure，不改写旧 group blocked task。`max_waves` 包括 initial/retry waves；耗尽时按稳定顺序关闭未 admission task，记录 `WAVE_LIMIT_EXCEEDED` 或相应 dependency failure，禁止永久等待。
+
+版本化 `BudgetReservation` 包含 token/time/tool-call/optional-cost 上限、owner scope、reservation key、parent/attempt allocation 和 ledger version。对每种预算维度保持 `consumed + released + outstanding_reserved <= group_envelope`；wave admission 原子预留，硬上限耗尽停止执行并记录 `BUDGET_EXCEEDED`，按已消费和未消费部分结算。retry 使用新 attempt reservation，cancel/reclaim/reconcile 按 key 幂等结算；replan 不直接继承旧 group 未结算余额。
+
 ### 7. State machine and event contract
 
-每个 `DispatchGroup` 使用固定状态：`PLANNED -> ADMITTED -> DISPATCHING -> RUNNING -> JOINING -> SUCCEEDED | FAILED | CANCELLED | INDETERMINATE | HALTED | SUPERSEDED`。`DispatchWave` 使用固定状态：`PLANNED -> ADMITTED -> DISPATCHING -> RUNNING -> TERMINAL`。每个 transition 必须声明唯一 owner、规范 event name、幂等 key、允许后继状态、是否 terminal 以及 recovery 行为。`REPLAN_PENDING` 只作为 coordinator 内部诊断，不作为 parent 的最终状态；parent 只接收 versioned group outcome。
+每个 `DispatchGroup` 使用 canonical 状态：`PLANNED -> ADMITTED -> DISPATCHING -> RUNNING -> JOINING -> SUCCEEDED | FAILED | CANCELLED | INDETERMINATE | HALTED`。尚有 READY task 时允许 `RUNNING -> DISPATCHING -> RUNNING`。`JOINING -> REPLAN_PENDING -> SUPERSEDED | FAILED | HALTED` 是 durable 状态分支，不是隐式诊断；`REPLAN_PENDING` 为非终态，不向 parent 暴露为最终 outcome。`DispatchWave` 使用 `PLANNED -> ADMITTED -> DISPATCHING -> RUNNING -> TERMINAL`，terminal outcome 为 `SUCCEEDED | PARTIAL_FAILED | FAILED | CANCELLED | INDETERMINATE | RECLAIMED | DEADLINE_EXCEEDED`。每个 transition 必须声明唯一 owner、规范 event name、幂等 key、允许后继、terminality 和 recovery 行为。同一 group 只允许一个 active wave admission transaction。
 
 | Group transition | Canonical event | 唯一 owner | Recovery / terminal rule |
 | --- | --- | --- | --- |
@@ -104,7 +116,11 @@ child Agent 的工具权限继续由 resolved `SubAgentSpec` 和 capability bind
 
 至少记录 `TASK_GROUP_ADMITTED`、`TASK_WAVE_ADMITTED`、`TASK_WAVE_DISPATCHED`、`TASK_GROUP_JOIN_WAITING`、`TASK_GROUP_JOINED` 以及每个 child 已有的 spawn/start/receipt/result/terminal/cancel/retry/reclaim 事件。每个 event 必须包含 group/wave/plan/task/attempt correlation 和幂等 key；checkpoint 必须包含 group/wave identity、budget reservation/release、join policy、每个 attempt 的 transcript/output refs 和 checksums、aggregate projection 及 stream sequence。`ToolRuntime` 不新增独立事件事实源，planning/child tool receipt 通过 adapter 关联到相同 attempt/group stream。
 
-恢复先读取 receipt、result artifact 和 projection，再补写缺失的 transition；只有确实没有可验证 receipt 才按 lease/recovery policy reclaim。replay 只使用记录的 candidate、plan、tool receipt、child receipt 和 aggregate，不调用 live LLM、tool、worker、queue 或 publication adapter。
+在线 recovery 先读取 intent、supervisor operation status、receipt、result artifact 和 ledger，再补写缺失 transition。intent 存在但 receipt 缺失不是未启动的证据；unknown spawn 进入 `SPAWN_UNKNOWN`，不能盲目重复 spawn。confirmed child 不重复启动，缺 dispatch event 时复用 receipt 补事件；reservation 存在但 admission 缺失时按同一 key 补 admission 或 halt ledger conflict，不重复扣费。完全相同的 receipt 重投幂等复用；同 identity 不同 checksum/body 才是冲突，必须拒绝且保留审计。
+
+online recovery 可执行已审计的 supervisor status/termination/reconcile，以及 policy 允许、幂等性可验证、deadline 内的新 attempt。每次调用记录 `RECOVERY_STATUS_READ`、`RECOVERY_RECONCILED`、`RECOVERY_RETRY_ADMITTED` 或 `RECOVERY_HALTED`，禁止 live LLM 重新规划和重复已确认或不确定的非幂等副作用。offline replay 只读 durable candidate/plan/patch/events/receipt/result history/aggregate/checkpoint，不调用 live LLM/source/RAG/tool/worker/supervisor/queue/publication。测试用调用即失败的 adapters 和零调用计数证明隔离。
+
+每个 attempt 的 `spawn_operation_key = group_id + wave_id + task_instance_id + attempt`。`TASK_WAVE_ADMITTED`、reservation ledger 与 `TASK_ATTEMPT_SPAWN_INTENT` 必须同一事务或等价 durable batch 提交；supervisor 按 operation key 幂等接受并保存 `SPAWN_CONFIRMED`/`SPAWN_UNKNOWN` receipt。batch 部分成功时逐 task reconcile。完整 attempt history 保留 failed、rejected、cancelled、indeterminate、reclaimed、quarantined，accepted projection 不能替代 `result_history_for()`。checkpoint 包含 spawn intent/receipt、完整历史索引、ledger、aggregate/observation checksum 和 stream sequence。
 
 ### 9. 通用 AgentLoop 生产交付与 Research opt-in 验证
 
@@ -130,6 +146,8 @@ child Agent 的工具权限继续由 resolved `SubAgentSpec` 和 capability bind
 
 ## Migration Plan
 
+交付按 G1 Contract、G2 Coordinator、G3 AgentLoop、G4 Research、G5 Release 分 gate。G1 固定 schema/state/dedup/ref/budget/event/replay 契约；G2 验证 overlap、multi-pool packing、spawn crash 和 dependency block；G3 验证真实 production port、durable continuation、redaction 与 legacy golden fixtures；G4 验证 Research golden contract parity、static default、failure/publication boundary 与 offline replay；G5 单独验收 telemetry、alert、运行中 group recovery 和回滚演练。实现测试通过不等于授权启用默认路径。
+
 1. 先落地 group/wave/result/event schema、状态机、validator、capacity/reservation contract 和 fake supervisor contract，补齐 admission、join、replay、budget 和 serial adapter 的单元测试；功能通过 feature flag 保持关闭。
 2. 将 `TaskPlanStageRunner` 的 ready-task dispatch 改为调用 coordinator，验证多 wave 与 group join，再接入真实 `ChildAgentSupervisor`。
 3. 完成通用 `AgentLoop` production composition：`delegate_batch` candidate、单 child compatibility adapter、parent join observation、配置/availability 和入口 smoke；验证旧 AgentRunner 测试不变。
@@ -137,6 +155,8 @@ child Agent 的工具权限继续由 resolved `SubAgentSpec` 和 capability bind
 5. 仅在通用 AgentLoop smoke、Research publication parity、metrics 和 replay evidence 全部通过后开放 dynamic Research production opt-in；static workflow 继续保持默认。
 
 回滚时只关闭 dynamic parallel feature flag 或切换到显式 serial adapter，不修改已经接受的 plan version。正在运行的 group 必须按其 pinned policy 完成恢复或进入可诊断 halt；不能把同一 run 静默改写成 static workflow 或重新生成 candidate。
+
+Research parity 使用固定 golden inputs，逐字段比较 required role completeness、`analysis_branch_refs` 结构/归属/checksum 验证、claim evidence、quality verdict、reader/card/artifact 契约与失败时无 downstream success refs。允许差异必须在 fixture 显式列出，例如 duration、wave/attempt identity 和 timing；不要求逐字相同 LLM 文本。legacy compatibility 同样使用旧调用方 golden fixtures，覆盖 result/error/stop_reason/diagnostics/trace、取消和 recovery，而不是只比较字符串。
 
 ## Explicit scope decisions
 

@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from dataclasses import replace
+import json
 from typing import Any
 
 from framework.agent.diagnostics import (
@@ -28,9 +29,17 @@ from framework.agent.models import (
     AgentLoopStatus,
     AgentLoopStopReason,
     AgentSpec,
+    DelegateBatchCandidate,
+    DelegateBatchProposal,
     JudgeDecision,
     JudgeVerdict,
     LLMCallArtifact,
+)
+from framework.agent.models.orchestration import (
+    AgentOrchestrationPort,
+    AgentOrchestrationRequest,
+    AgentOrchestrationResult,
+    ParentObservationLimits,
 )
 from framework.agent.skill_call import SkillCall
 from framework.agent.skill_context import (
@@ -97,6 +106,8 @@ class AgentLoop:
         output_normalizer: OutputNormalizer | None = None,
         global_budget_tracker: GlobalBudgetTracker | None = None,
         subagent_executor: SubAgentExecutor | None = None,
+        orchestration_port: AgentOrchestrationPort | None = None,
+        orchestration_enabled: bool = False,
         memory_runtime: MemoryRuntime | None = None,
         memory_policy: MemoryPolicy | None = None,
         memory_adapter: AgentMemoryAdapter | None = None,
@@ -116,6 +127,14 @@ class AgentLoop:
         self._active_budget_operation: LLMBudgetOperation | None = None
         self._active_budget_tracker: GlobalBudgetTracker | None = None
         self._subagent_executor = subagent_executor
+        if orchestration_port is not None and not isinstance(
+            orchestration_port, AgentOrchestrationPort
+        ):
+            raise TypeError("orchestration_port must implement AgentOrchestrationPort")
+        if not isinstance(orchestration_enabled, bool):
+            raise TypeError("orchestration_enabled must be boolean")
+        self._orchestration_port = orchestration_port
+        self._orchestration_enabled = orchestration_enabled
         self._memory_runtime = memory_runtime
         self._memory_policy = memory_policy or DEFAULT_AGENT_MEMORY_POLICY
         self._memory_adapter = memory_adapter or AgentMemoryAdapter()
@@ -566,6 +585,26 @@ class AgentLoop:
                 trace.finish_iteration(iteration_trace)
                 continue
 
+            if _action_type_value(action.action_type) == "delegate_batch":
+                result = self._handle_delegate_batch_action(
+                    agent=agent,
+                    action=action,
+                    run_id=effective_run_id,
+                    execution_identity=execution_identity,
+                    graph_checkpoint_ref=graph_checkpoint_ref,
+                    metrics=metrics,
+                    events=events,
+                    trace=trace,
+                    diagnostics=diagnostics,
+                    iteration_trace=iteration_trace,
+                    llm_call_artifacts=llm_call_artifacts,
+                )
+                if isinstance(result, AgentLoopResult):
+                    return result
+                feedback = result
+                trace.finish_iteration(iteration_trace)
+                continue
+
             raw_output = action.output or {}
             budget_verdict = self._output_budget_verdict(agent=agent, output=raw_output)
             if budget_verdict is not None:
@@ -910,6 +949,305 @@ class AgentLoop:
             return f"skill observation: {observation.skill_name} {observation.status}: {observation.errors[0]}"
         return f"skill observation: {observation.skill_name} {observation.status}: {observation.output_summary}"
 
+    def _handle_delegate_batch_action(
+        self,
+        *,
+        agent: AgentSpec,
+        action: AgentAction,
+        run_id: str | None,
+        execution_identity: GraphExecutionIdentity | None,
+        graph_checkpoint_ref: str | None,
+        metrics: AgentLoopMetrics,
+        events: AgentLoopEventRecorder,
+        trace: AgentLoopTrace,
+        diagnostics: AgentLoopDiagnosticsBuilder,
+        iteration_trace: IterationTrace,
+        llm_call_artifacts: list[LLMCallArtifact],
+    ) -> str | AgentLoopResult:
+        candidate = action.delegate_batch
+        if candidate is None:
+            verdict = JudgeVerdict(
+                decision=JudgeDecision.RETRY,
+                confidence=1.0,
+                feedback="delegate_batch candidate is missing",
+                validation_errors=["delegate_batch candidate is missing"],
+            )
+            trace.record_judge(iteration_trace, verdict)
+            return verdict.feedback or "delegate_batch candidate is missing"
+        if not agent.allow_subagents:
+            verdict = JudgeVerdict(
+                decision=JudgeDecision.BLOCK,
+                confidence=1.0,
+                feedback="delegate_batch is not allowed by the parent Agent policy",
+                policy_violations=["delegate_batch not allowed"],
+            )
+            trace.record_judge(iteration_trace, verdict)
+            events.judge_block(iteration=iteration_trace.iteration, verdict=verdict.to_dict())
+            return self._blocked_result(
+                agent=agent,
+                metrics=metrics,
+                events=events,
+                trace=trace,
+                diagnostics=diagnostics,
+                iterations=iteration_trace.iteration,
+                verdict=verdict,
+                stop_reason=AgentLoopStopReason.AGENT_POLICY_BLOCKED,
+                via_tool=None,
+                llm_call_artifacts=llm_call_artifacts,
+            )
+        if not self._orchestration_enabled or self._orchestration_port is None:
+            verdict = JudgeVerdict(
+                decision=JudgeDecision.ESCALATE,
+                confidence=1.0,
+                feedback="delegate_batch orchestration is unavailable",
+                validation_errors=["agent_orchestration_unavailable"],
+            )
+            trace.record_judge(iteration_trace, verdict)
+            return "delegate_batch deferred: agent_orchestration_unavailable"
+        try:
+            policy_ref, max_tasks, limits = _orchestration_policy(agent)
+            request = AgentOrchestrationRequest(
+                parent_agent_id=agent.agent_id,
+                run_id=run_id,
+                execution_identity=execution_identity,
+                graph_checkpoint_ref=graph_checkpoint_ref,
+                policy_ref=policy_ref,
+                max_tasks_per_group=max_tasks,
+                parent_observation_limits=limits,
+                candidate=candidate,
+            )
+        except (TypeError, ValueError) as exc:
+            verdict = JudgeVerdict(
+                decision=JudgeDecision.RETRY,
+                confidence=1.0,
+                feedback=f"delegate_batch rejected: {exc}",
+                validation_errors=["delegate_batch_candidate_rejected"],
+            )
+            trace.record_judge(iteration_trace, verdict)
+            return verdict.feedback or "delegate_batch rejected"
+        events.subagent_delegation_requested(
+            iteration=iteration_trace.iteration,
+            parent_agent_id=agent.agent_id,
+            child_agent_id="delegate_batch",
+            handoff_reason="Harness-owned multi-child delegation",
+            task=candidate.correlation_id,
+        )
+        try:
+            result = self._orchestration_port.dispatch(request)
+        except Exception as exc:
+            events.subagent_failed(
+                iteration=iteration_trace.iteration,
+                child_agent_id="delegate_batch",
+                status="unavailable",
+                error=type(exc).__name__,
+            )
+            verdict = JudgeVerdict(
+                decision=JudgeDecision.ESCALATE,
+                confidence=1.0,
+                feedback="delegate_batch orchestration is unavailable",
+                validation_errors=["agent_orchestration_unavailable"],
+            )
+            trace.record_judge(iteration_trace, verdict)
+            return "delegate_batch deferred: agent_orchestration_unavailable"
+        if not isinstance(result, AgentOrchestrationResult):
+            events.subagent_failed(
+                iteration=iteration_trace.iteration,
+                child_agent_id="delegate_batch",
+                status="unavailable",
+                error="invalid_orchestration_result",
+            )
+            return "delegate_batch deferred: agent_orchestration_unavailable"
+        observation = result.observation.project(limits)
+        if result.status.casefold() != "succeeded":
+            events.subagent_failed(
+                iteration=iteration_trace.iteration,
+                child_agent_id="delegate_batch",
+                status=result.status,
+                error=result.reason_code or "agent_orchestration_group_not_succeeded",
+            )
+            return self._orchestration_group_failed_result(
+                agent=agent,
+                metrics=metrics,
+                events=events,
+                trace=trace,
+                diagnostics=diagnostics,
+                iterations=iteration_trace.iteration,
+                observation=observation,
+                result=result,
+                llm_call_artifacts=llm_call_artifacts,
+            )
+        events.subagent_completed(
+            iteration=iteration_trace.iteration,
+            child_agent_id="delegate_batch",
+            output_keys=sorted(observation),
+            summary=f"group={observation['group_id']} status={result.status}",
+        )
+        return "delegate_batch joined observation: " + json.dumps(
+            observation,
+            ensure_ascii=True,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+
+    def _orchestration_group_failed_result(
+        self,
+        *,
+        agent: AgentSpec,
+        metrics: AgentLoopMetrics,
+        events: AgentLoopEventRecorder,
+        trace: AgentLoopTrace,
+        diagnostics: AgentLoopDiagnosticsBuilder,
+        iterations: int,
+        observation: dict[str, Any],
+        result: AgentOrchestrationResult,
+        llm_call_artifacts: list[LLMCallArtifact],
+    ) -> AgentLoopResult:
+        reason = result.reason_code or "agent_orchestration_group_not_succeeded"
+        result_diagnostics = diagnostics.failed(
+            metrics=metrics,
+            iterations=iterations,
+            stop_reason=AgentLoopStopReason.UNKNOWN_FAILED,
+            error=reason,
+        )
+        events.failed(
+            iteration=iterations,
+            stop_reason=AgentLoopStopReason.UNKNOWN_FAILED.value,
+            error=reason,
+        )
+        return _agent_loop_result(
+            loop_trace=trace,
+            stop_reason=AgentLoopStopReason.UNKNOWN_FAILED,
+            success=False,
+            status=AgentLoopStatus.FAILED,
+            output={"delegate_batch_observation": observation},
+            iterations=iterations,
+            metrics=metrics,
+            events=events.to_dicts(),
+            trace=_trace_payload(trace, agent),
+            diagnostics=result_diagnostics,
+            llm_call_artifacts=list(llm_call_artifacts),
+            error=reason,
+        )
+
+    def _handle_legacy_delegate_orchestration(
+        self,
+        *,
+        agent: AgentSpec,
+        child_agent_id: str,
+        subagent_task: str,
+        run_id: str | None,
+        execution_identity: GraphExecutionIdentity | None,
+        graph_checkpoint_ref: str | None,
+        metrics: AgentLoopMetrics,
+        events: AgentLoopEventRecorder,
+        trace: AgentLoopTrace,
+        diagnostics: AgentLoopDiagnosticsBuilder,
+        iteration_trace: IterationTrace,
+        llm_call_artifacts: list[LLMCallArtifact],
+    ) -> str | AgentLoopResult:
+        if self._orchestration_port is None:
+            return _legacy_orchestration_unavailable_feedback(
+                child_agent_id=child_agent_id,
+                events=events,
+                iteration=iteration_trace.iteration,
+                trace=trace,
+                iteration_trace=iteration_trace,
+            )
+        try:
+            policy_ref, max_tasks, limits = _orchestration_policy(agent)
+            capability_hint, input_refs, output_role = _legacy_delegate_mapping(
+                agent,
+                child_agent_id,
+            )
+            candidate = DelegateBatchCandidate(
+                correlation_id=(
+                    f"legacy:{agent.agent_id}:{iteration_trace.iteration}:{child_agent_id}"
+                ),
+                tasks=(
+                    DelegateBatchProposal(
+                        logical_task_id=child_agent_id,
+                        objective=subagent_task,
+                        capability_hint=capability_hint,
+                        input_refs=input_refs,
+                        output_role=output_role,
+                    ),
+                ),
+            )
+            request = AgentOrchestrationRequest(
+                parent_agent_id=agent.agent_id,
+                run_id=run_id,
+                execution_identity=execution_identity,
+                graph_checkpoint_ref=graph_checkpoint_ref,
+                policy_ref=policy_ref,
+                max_tasks_per_group=max_tasks,
+                parent_observation_limits=limits,
+                candidate=candidate,
+            )
+        except (TypeError, ValueError) as exc:
+            events.subagent_failed(
+                iteration=iteration_trace.iteration,
+                child_agent_id=child_agent_id,
+                status="deferred",
+                error=f"legacy_delegate_mapping_unavailable: {exc}",
+            )
+            verdict = JudgeVerdict(
+                decision=JudgeDecision.ESCALATE,
+                confidence=1.0,
+                feedback="legacy delegate orchestration is unavailable",
+                validation_errors=["legacy_delegate_mapping_unavailable"],
+            )
+            trace.record_judge(iteration_trace, verdict)
+            return "delegate deferred: legacy_delegate_mapping_unavailable"
+        try:
+            result = self._orchestration_port.dispatch(request)
+        except Exception as exc:
+            events.subagent_failed(
+                iteration=iteration_trace.iteration,
+                child_agent_id=child_agent_id,
+                status="unavailable",
+                error=type(exc).__name__,
+            )
+            return "delegate deferred: agent_orchestration_unavailable"
+        if not isinstance(result, AgentOrchestrationResult):
+            events.subagent_failed(
+                iteration=iteration_trace.iteration,
+                child_agent_id=child_agent_id,
+                status="unavailable",
+                error="invalid_orchestration_result",
+            )
+            return "delegate deferred: agent_orchestration_unavailable"
+        observation = result.observation.project(limits)
+        if result.status.casefold() != "succeeded":
+            events.subagent_failed(
+                iteration=iteration_trace.iteration,
+                child_agent_id=child_agent_id,
+                status=result.status,
+                error=result.reason_code or "agent_orchestration_group_not_succeeded",
+            )
+            return self._orchestration_group_failed_result(
+                agent=agent,
+                metrics=metrics,
+                events=events,
+                trace=trace,
+                diagnostics=diagnostics,
+                iterations=iteration_trace.iteration,
+                observation=observation,
+                result=result,
+                llm_call_artifacts=llm_call_artifacts,
+            )
+        events.subagent_completed(
+            iteration=iteration_trace.iteration,
+            child_agent_id=child_agent_id,
+            output_keys=sorted(observation),
+            summary=f"group={observation['group_id']} status={result.status}",
+        )
+        return "subagent delegation observation: " + json.dumps(
+            observation,
+            ensure_ascii=True,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+
     def _handle_delegate_action(
         self,
         *,
@@ -964,6 +1302,21 @@ class AgentLoop:
             handoff_reason=handoff_reason,
             task=subagent_task,
         )
+        if self._orchestration_enabled:
+            return self._handle_legacy_delegate_orchestration(
+                agent=agent,
+                child_agent_id=child_agent_id,
+                subagent_task=subagent_task,
+                run_id=run_id,
+                execution_identity=execution_identity,
+                graph_checkpoint_ref=graph_checkpoint_ref,
+                metrics=metrics,
+                events=events,
+                trace=trace,
+                diagnostics=diagnostics,
+                iteration_trace=iteration_trace,
+                llm_call_artifacts=llm_call_artifacts,
+            )
         if self._subagent_executor is not None:
             try:
                 subagent_result = self._subagent_executor.run(
@@ -2148,6 +2501,74 @@ def _optional_float(value: Any) -> float | None:
 
 def _mapping_or_empty(value: Any) -> dict[str, Any]:
     return dict(value) if isinstance(value, dict) else {}
+
+
+def _orchestration_policy(agent: AgentSpec) -> tuple[str, int, ParentObservationLimits]:
+    raw_policy = agent.metadata.get("agent_orchestration", {})
+    if not isinstance(raw_policy, Mapping):
+        raise ValueError("agent_orchestration metadata must be an object")
+    policy_ref = raw_policy.get("policy_ref", "agent-orchestration@1")
+    max_tasks = raw_policy.get("max_tasks_per_group", 8)
+    limit_values = ParentObservationLimits().to_dict()
+    limit_values.update(
+        {
+            key: value
+            for key, value in raw_policy.items()
+            if key not in {"policy_ref", "max_tasks_per_group", "legacy_delegate_capabilities"}
+        }
+    )
+    limits = ParentObservationLimits.from_dict(limit_values)
+    return str(policy_ref), max_tasks, limits
+
+
+def _legacy_delegate_mapping(
+    agent: AgentSpec,
+    child_agent_id: str,
+) -> tuple[str, tuple[str, ...], str]:
+    raw_policy = agent.metadata.get("agent_orchestration", {})
+    if not isinstance(raw_policy, Mapping):
+        raise ValueError("agent_orchestration metadata must be an object")
+    raw_mappings = raw_policy.get("legacy_delegate_capabilities")
+    if not isinstance(raw_mappings, Mapping):
+        raise ValueError("legacy_delegate_capabilities is not configured")
+    raw_mapping = raw_mappings.get(child_agent_id)
+    if not isinstance(raw_mapping, Mapping):
+        raise ValueError(f"legacy child {child_agent_id!r} has no pinned capability")
+    expected = {"capability_hint", "input_refs", "output_role"}
+    if set(raw_mapping) != expected:
+        raise ValueError("legacy delegate mapping contains unsupported fields")
+    capability_hint = raw_mapping["capability_hint"]
+    output_role = raw_mapping["output_role"]
+    input_refs = raw_mapping["input_refs"]
+    if not isinstance(input_refs, (list, tuple)):
+        raise ValueError("legacy delegate input_refs must be an array")
+    return str(capability_hint), tuple(input_refs), str(output_role)
+
+
+def _legacy_orchestration_unavailable_feedback(
+    *,
+    child_agent_id: str,
+    events: AgentLoopEventRecorder,
+    iteration: int,
+    trace: AgentLoopTrace,
+    iteration_trace: IterationTrace,
+) -> str:
+    events.subagent_failed(
+        iteration=iteration,
+        child_agent_id=child_agent_id,
+        status="unavailable",
+        error="agent_orchestration_unavailable",
+    )
+    trace.record_judge(
+        iteration_trace,
+        JudgeVerdict(
+            decision=JudgeDecision.ESCALATE,
+            confidence=1.0,
+            feedback="legacy delegate orchestration is unavailable",
+            validation_errors=["agent_orchestration_unavailable"],
+        ),
+    )
+    return "delegate deferred: agent_orchestration_unavailable"
 
 
 def _action_type_value(action_type: Any) -> str:

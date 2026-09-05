@@ -118,8 +118,10 @@ from framework.harness.task_plan.replay import (
 )
 from framework.harness.task_plan.checkpoint import (
     InMemoryTaskPlanCheckpointStore,
+    JsonlTaskPlanCheckpointStore,
     TASK_PLAN_CHECKPOINT_SCHEMA,
     TASK_PLAN_CHECKPOINT_SCHEMA_V2,
+    TASK_PLAN_CHECKPOINT_SCHEMA_V3,
     TASK_PLAN_CHECKPOINT_SCHEMAS,
     TaskPlanCheckpoint,
     TaskPlanCheckpointStorePort,
@@ -146,6 +148,28 @@ from framework.harness.task_plan.verification import (
     TaskPlanResultVerifier,
     subagent_attempt_evidence,
     task_plan_subagent_attempt_identity,
+)
+from framework.harness.task_plan.planning_observation import (
+    PLANNING_OBSERVATION_RECEIPT_SCHEMA,
+    PLANNING_OBSERVATION_REQUEST_SCHEMA,
+    HarnessPlanningObservationService,
+    InMemoryPlanningObservationStore,
+    JsonlPlanningObservationStore,
+    PlanningObservationPolicy,
+    PlanningObservationPort,
+    PlanningObservationReceipt,
+    PlanningObservationRequest,
+    PlanningObservationStorePort,
+)
+from framework.harness.task_plan.parallel import (
+    SerialTaskExecutorAdapter,
+    SerialTaskExecutorPort,
+)
+from framework.harness.task_plan.observability import (
+    TaskPlanMetricSample,
+    TaskPlanTraceEvent,
+    task_plan_metric_samples,
+    task_plan_trace_events,
 )
 
 
@@ -240,8 +264,10 @@ __all__ = [
     "TASK_PLAN_REPLAY_REDUCER_VERSION_V2",
     "TASK_PLAN_REPLAY_REDUCER_VERSIONS",
     "InMemoryTaskPlanCheckpointStore",
+    "JsonlTaskPlanCheckpointStore",
     "TASK_PLAN_CHECKPOINT_SCHEMA",
     "TASK_PLAN_CHECKPOINT_SCHEMA_V2",
+    "TASK_PLAN_CHECKPOINT_SCHEMA_V3",
     "TASK_PLAN_CHECKPOINT_SCHEMAS",
     "TaskPlanCheckpoint",
     "TaskPlanCheckpointStorePort",
@@ -272,4 +298,20 @@ __all__ = [
     "TaskPlanQueueReadback",
     "materialize_queue_task",
     "task_instance_for_attempt",
+    "PLANNING_OBSERVATION_RECEIPT_SCHEMA",
+    "PLANNING_OBSERVATION_REQUEST_SCHEMA",
+    "HarnessPlanningObservationService",
+    "InMemoryPlanningObservationStore",
+    "JsonlPlanningObservationStore",
+    "PlanningObservationPolicy",
+    "PlanningObservationPort",
+    "PlanningObservationReceipt",
+    "PlanningObservationRequest",
+    "PlanningObservationStorePort",
+    "SerialTaskExecutorAdapter",
+    "SerialTaskExecutorPort",
+    "TaskPlanMetricSample",
+    "TaskPlanTraceEvent",
+    "task_plan_metric_samples",
+    "task_plan_trace_events",
 ]

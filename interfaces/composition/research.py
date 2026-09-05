@@ -96,6 +96,7 @@ from framework.harness import (
     ResolvedSubAgentTaskAdapter,
     RAGSessionSpec,
     SubAgentRuntime,
+    ChildAgentSupervisor,
     TaskPlanResultVerifier,
     subagent_attempt_evidence,
     DurableTaskPlanStore,
@@ -107,6 +108,8 @@ from framework.harness.graph.bindings import HarnessWorkerBinding
 from framework.harness.graph.model import HarnessContractKind, HarnessContractReference
 from framework.harness.task_plan.stage_binding import TaskPlanStageBinding
 from framework.harness.task_plan.capability import task_plan_context_identities
+from framework.harness.task_plan.parallel import ParallelAgentCoordinator
+from framework.harness.task_plan.checkpoint import JsonlTaskPlanCheckpointStore
 from framework.harness.control_plane.gates import GateContext
 from framework.harness.control_plane.graph_application import (
     HarnessGraphControlPlaneRuntime,
@@ -482,7 +485,13 @@ class ResearchRuntimeComposition:
 
         first_error: Exception | None = None
         for resource in reversed(self._resources):
-            close = getattr(resource, "close", None)
+            close = (
+                resource.shutdown
+                if isinstance(resource, ChildAgentSupervisor)
+                else getattr(resource, "close", None)
+            )
+            if not callable(close):
+                close = getattr(resource, "shutdown", None)
             if not callable(close):
                 continue
             try:
@@ -1558,6 +1567,9 @@ def _build_configured_composition(
             artifact_store=artifact_port.store,
             tenant_id=_RESEARCH_EVENT_TENANT_ID,
         )
+        dynamic_checkpoint_store = JsonlTaskPlanCheckpointStore(
+            settings.artifact.root / "task-plan-checkpoints.jsonl"
+        )
         subagent_transcript_store = FilesystemSubAgentTranscriptStore(
             settings.artifact.root,
             max_output_bytes=settings.artifact.max_bytes,
@@ -1565,6 +1577,17 @@ def _build_configured_composition(
                 settings.artifact.max_bytes + 4 * 1024 * 1024,
                 12 * 1024 * 1024,
             ),
+        )
+        # Process-scoped lifecycle authority. Individual dynamic stage workers
+        # receive this same controller, so capacity is shared across runs and
+        # released with the composed runtime.
+        dynamic_child_agent_supervisor = ChildAgentSupervisor(
+            max_children=build_research_analysis_task_plan_policy().max_parallelism,
+        )
+        owned_resources.append(dynamic_child_agent_supervisor)
+        dynamic_parallel_coordinator = ParallelAgentCoordinator(
+            max_workers=dynamic_child_agent_supervisor.capacity,
+            child_supervisor=dynamic_child_agent_supervisor,
         )
 
         def dynamic_task_plan_runner_factory(*, workspace: Any, dependencies: Any):
@@ -1811,6 +1834,9 @@ def _build_configured_composition(
                 worker_result_recovery=recover,
                 result_verifier=result_verifier,
                 policy=policy,
+                parallel_coordinator=dynamic_parallel_coordinator,
+                child_agent_supervisor=dynamic_child_agent_supervisor,
+                checkpoint_store=dynamic_checkpoint_store,
             )
         owned_resources.extend(
             resource

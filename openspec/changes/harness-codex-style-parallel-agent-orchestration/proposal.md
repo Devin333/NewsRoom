@@ -15,6 +15,9 @@
 - 增加 durable group/wave lifecycle、join、partial failure、retry、replan、cancel 和 crash recovery 事件，并保证 replay 不重新调用 LLM、Tool、SubAgent 或外部副作用。
 - 为 Research dynamic analysis 接入并行 fan-out/fan-in，保留 `document`、`evidence_pack`、三个 required output roles、既有 deterministic gates、`verify_claims`、quality gate 和 publication boundary。
 - 增加配置和观测字段：group id、wave ids、task instance ids、parallelism、queue/wait duration、child status、join policy、result refs、budget usage、recovery outcome 和 `DEGRADED_SERIAL` reason。
+- 按 PRD 固定 durable candidate dedup、统一 `RefAuthority`、多 capability/resource pool 原子 reservation，以及 spawn intent/receipt/reconcile 协议；上游失败必须传播为终态 `BLOCKED_DEPENDENCY`。
+- 将 parent submission 与 terminal observation 分离：bounded wait 到期保存 `PENDING` receipt，通过 durable continuation 恢复同一 parent turn，不能启动第二次推理或重复追加 observation。
+- 区分在线 recovery 与离线 replay，并按 G1 Contract、G2 Coordinator、G3 AgentLoop、G4 Research、G5 Release 分别验收；feature flag enable 是独立 release gate。
 - **BREAKING**：动态 TaskPlan executor 的生产语义从“选择多个但逐个调用”改为“在满足真实并行条件时并行执行并显式 group join”；现有单任务 worker contract 保持兼容，但自定义 executor 必须实现新的 wave/attempt result contract，或由明确的 serial adapter 包装。
 
 ## Capabilities
@@ -44,5 +47,6 @@
 - 当两个或以上任务独立、通过并发资格检查、`effective_parallelism >= 2` 且未启用 `serial_fallback` 时，Harness 必须真实并发启动 child；串行只能是显式、可观测的例外。
 - `DispatchGroup` 覆盖完整逻辑 join 范围，`DispatchWave` 只表示一次受 capacity 限制的物理派发；多 wave 结果必须在同一 group 内完成 role-complete aggregation。
 - group 状态、retry、replan、cancel、lease、reservation 和 recovery 均有有界状态转换、唯一事件 owner 和可回放证据。
-- child 完成顺序变化不改变 aggregate checksum；崩溃恢复和 replay 不重新调用 live LLM、tool、worker、queue 或 publication adapter。
+- child 完成顺序变化不改变 aggregate/observation checksum；offline replay 不调用 live dependency。在线 recovery 只可执行已审计的 supervisor status/reconcile 和 policy 允许的新 attempt，不调用 live LLM 重新规划，也不重复已确认或不确定的非幂等副作用。
 - 旧单 child `delegate` 保持兼容，Research dynamic 在固定 quality/publication boundary 内作为首个 production opt-in 接入。
+- PRD、design、spec、tasks、schema、默认值和测试 oracle 保持一致；G1-G4 的实现证据与 G5 的开启、遥测、恢复及回滚演练证据分别记录，不以 strict validation 或 feature flag 代替行为验收。

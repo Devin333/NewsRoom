@@ -4,6 +4,7 @@ from dataclasses import replace
 
 import pytest
 
+from framework.agent.models.orchestration import ParentObservationLimits
 from framework.harness.control_plane.errors import HarnessValidationError
 from framework.harness.task_plan import (
     FakePlanCandidateBuilder,
@@ -45,6 +46,7 @@ from framework.harness.graph.bindings import HarnessWorkerBinding
 from framework.harness.graph.model import HarnessContractKind, HarnessContractReference
 from framework.harness.graph.activity import HarnessWorkerType
 from framework.harness.workers.result import HarnessWorkerResult
+from framework.harness.task_plan.parallel import ParallelAgentCoordinator
 from tests.fixtures.task_plan import build_task_plan_stage_binding
 
 
@@ -150,6 +152,27 @@ def _setup(*, roles=("role",), capabilities=("cap",)):
             "schema://result@1",
         ))
     return stage_binding, policy, TaskCapabilityRegistry(registrations)
+
+
+def test_task_plan_policy_observation_defaults_and_checksum_roundtrip() -> None:
+    _, policy, _ = _setup()
+    expected = ParentObservationLimits().to_dict()
+    assert dict(policy.parent_observation_limits) == expected
+    restored = TaskPlanPolicy.from_dict(policy.to_dict())
+    assert dict(restored.parent_observation_limits) == expected
+    assert restored.policy_checksum == policy.policy_checksum
+
+    changed = replace(policy, parent_observation_limits={**expected, "max_summary_bytes": 1024})
+    assert changed.policy_checksum != policy.policy_checksum
+    assert TaskPlanPolicy.from_dict(changed.to_dict()).policy_checksum == changed.policy_checksum
+
+
+@pytest.mark.parametrize("field", ["max_total_bytes", "max_observaton_bytes"])
+def test_task_plan_policy_rejects_noncanonical_observation_fields(field: str) -> None:
+    _, policy, _ = _setup()
+    with pytest.raises(HarnessValidationError) as exc_info:
+        replace(policy, parent_observation_limits={**policy.parent_observation_limits, field: 512})
+    assert exc_info.value.code == "invalid_task_plan_policy"
 
 
 def _task(task_id: str, capability: str = "cap", role: str = "role", depends_on=()):
@@ -526,6 +549,122 @@ def test_runner_recovers_failed_result_before_retry_event_without_redispatching_
         event.event_type == "TASK_RETRY_SCHEDULED"
         for event in store.read_events("run", "dynamic_stage")
     )
+
+
+def test_parallel_runner_retries_with_a_new_attempt_in_the_same_dispatch_group():
+    graph, policy, registry = _setup()
+    policy = replace(
+        policy,
+        capability_capacity=2,
+        available_concurrency_reservations=2,
+    )
+    candidate = _candidate(
+        graph,
+        (
+            replace(
+                _task("a"),
+                retry_policy={
+                    "max_attempts": 2,
+                    "retryable_reason_codes": ("transport",),
+                },
+            ),
+        ),
+    )
+    store = InMemoryTaskPlanStore()
+    verifier = _FailOnceResultVerifier(failure_code="transport")
+    attempts: list[tuple[str, int, str]] = []
+
+    def execute(_binding, instance):
+        attempts.append(
+            (
+                instance.task_id,
+                instance.attempt,
+                instance.task_instance_id,
+            )
+        )
+        return HarnessWorkerResult(
+            status="succeeded",
+            output={"value": instance.task_id},
+        )
+
+    request = TaskPlanStageRequest(
+        run_id="run",
+        stage_binding=graph,
+        context_refs={"document": "document"},
+        policy=policy,
+        policy_ref=policy.exact_ref,
+        candidate=candidate,
+        accepted_at="2026-08-01T00:00:00Z",
+    )
+    runner = TaskPlanStageRunner(
+        candidate_builder=FakePlanCandidateBuilder(candidate),
+        capability_registry=registry,
+        store=store,
+        result_verifier=verifier,
+        worker_executor=execute,
+        parallel_coordinator=ParallelAgentCoordinator(
+            max_workers=2,
+            allow_test_executor=True,
+        ),
+    )
+
+    result = runner.run(request)
+
+    assert result.status.value == "succeeded"
+    assert [attempt for _task_id, attempt, _instance_id in attempts] == [1, 2]
+    assert attempts[0][2] != attempts[1][2]
+    events = store.read_events("run", "dynamic_stage")
+    assert [event.event_type for event in events].count("TASK_RETRY_SCHEDULED") == 1
+    wave_admissions = [
+        event
+        for event in events
+        if event.event_type == "TASK_WAVE_ADMITTED"
+    ]
+    assert len(wave_admissions) == 2
+    assert {event.payload["wave"]["group_id"] for event in wave_admissions} == {
+        event.payload["group"]["group_id"]
+        for event in events
+        if event.event_type == "TASK_GROUP_ADMITTED"
+    }
+    assert any(event.event_type == "TASK_GROUP_JOINED" for event in events)
+
+
+def test_parallel_policy_without_coordinator_fails_closed_even_when_serial_fallback_is_enabled():
+    graph, policy, registry = _setup()
+    policy = replace(
+        policy,
+        capability_capacity=2,
+        available_concurrency_reservations=2,
+        serial_fallback=True,
+    )
+    candidate = _candidate(graph, (_task("a"),))
+    calls: list[str] = []
+
+    def execute(_binding, request):
+        calls.append(request.task_id)
+        return HarnessWorkerResult(status="succeeded", output={"value": request.task_id})
+
+    result = TaskPlanStageRunner(
+        candidate_builder=FakePlanCandidateBuilder(candidate),
+        capability_registry=registry,
+        store=InMemoryTaskPlanStore(),
+        result_verifier=_AcceptingResultVerifier(),
+        worker_executor=execute,
+    ).run(
+        TaskPlanStageRequest(
+            run_id="run",
+            stage_binding=graph,
+            context_refs={"document": "document"},
+            policy=policy,
+            policy_ref=policy.exact_ref,
+            candidate=candidate,
+            accepted_at="2026-08-01T00:00:00Z",
+        )
+    )
+
+    assert result.status.value == "blocked"
+    assert result.diagnostics["reason_code"] == "TASK_GROUP_WAVE_ADAPTER_REQUIRED"
+    assert calls == []
 
 
 def test_authorized_inspection_exposes_only_task_plan_control_projection() -> None:

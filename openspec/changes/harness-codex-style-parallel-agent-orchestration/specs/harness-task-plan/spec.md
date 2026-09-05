@@ -135,3 +135,29 @@ The runtime SHALL record candidate, validation, acceptance, readiness, group/wav
 - **WHEN** recovery finds an immutable TaskResult document but its matching result, terminal, or join transition is absent
 - **THEN** reconciliation MUST append only the missing transition with the same checksum and projection
 - **AND** it MUST not run the worker or generate a new result document
+
+### Requirement: Upstream terminal failure SHALL close unadmitted dependency descendants
+
+When a predecessor reaches an unrecoverable terminal failure, the coordinator MUST traverse its dependency closure in stable DAG order and mark every unadmitted direct/transitive successor `BLOCKED_DEPENDENCY` with `TASK_BLOCKED_UPSTREAM_FAILURE`. Blocked tasks are terminal without entering a wave. Unconsumed reservations MUST be released and no child may be created. `wait_all` MUST include these states and return `DEPENDENCY_BLOCKED` or `REQUIRED_ROLE_MISSING` instead of waiting forever. Replacement replan MUST validate a new dependency closure in a new group without rewriting old blocked tasks.
+
+#### Scenario: A predecessor exhausts retries
+
+- **WHEN** A exhausts attempts while B depends on A and C depends on B, and B/C are not admitted
+- **THEN** B and C MUST become terminal `BLOCKED_DEPENDENCY` in stable order, with no child calls or leaked reservations
+- **AND** the group MUST reach typed failure or a policy-authorized new-plan replan without producing a success aggregate
+
+#### Scenario: Wave budget is exhausted
+
+- **WHEN** initial and retry admissions reach `max_waves` with tasks still unadmitted
+- **THEN** Harness MUST record `WAVE_LIMIT_EXCEEDED` and close affected tasks in stable order, including dependency propagation
+- **AND** no task may wait indefinitely or create a wave above the limit
+
+### Requirement: Canonical result history SHALL retain every attempt outcome
+
+The durable canonical `result_history_for()` MUST preserve accepted, rejected, failed, cancelled, indeterminate, reclaimed and quarantined attempt records, including plan/group/wave/task/attempt/binding identity and receipt evidence. `results_for()` MAY expose only accepted results, but retry, recovery, replay and checkpoint rebuilding MUST use complete history. Late old-group receipts MUST enter quarantine/audit without changing current-plan projections.
+
+#### Scenario: A failed attempt is followed by success and a stale receipt
+
+- **WHEN** one task succeeds on a later attempt and a receipt from a superseded group arrives afterward
+- **THEN** accepted projection MUST contain only the valid accepted result and canonical history MUST retain failure, success and quarantined stale evidence
+- **AND** offline replay MUST rebuild the same history without invoking live execution

@@ -520,6 +520,18 @@ class ResearchTaskPlanResultMaterializer(TaskPlanResultVerifierPort):
         refs = getattr(self._verifier, "registered_gate_refs", None)
         return tuple(refs) if refs is not None else ()
 
+    @property
+    def transcript_store(self) -> Any:
+        """Expose the wrapped durable evidence owner to composition checks."""
+
+        return getattr(self._verifier, "transcript_store", None)
+
+    @property
+    def artifact_reference_verifier(self) -> Any:
+        """Expose the wrapped artifact verifier to composition checks."""
+
+        return getattr(self._verifier, "artifact_reference_verifier", None)
+
     def verify(
         self,
         result: HarnessWorkerResult,

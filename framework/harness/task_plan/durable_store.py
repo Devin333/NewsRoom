@@ -864,28 +864,52 @@ class DurableTaskPlanStore:
         plan_id: str,
         plan_version: int,
     ) -> tuple[TaskResultRecord, ...]:
-        run = identifier(run_id, "run_id")
-        stage = identifier(stage_id, "stage_id")
-        requested_plan = self.plan(run, stage, plan_version)
-        if requested_plan is None or requested_plan.plan_id != plan_id:
-            return ()
-        projection = self.load_projection(run, stage)
+        history = self.result_history_for(run_id, stage_id, plan_id, plan_version)
+        projection = self.load_projection(run_id, stage_id)
         successful = {
             item.task_id
             for item in projection.tasks
             if item.status is TaskLifecycle.SUCCEEDED
         }
+        records: dict[str, TaskResultRecord] = {}
+        for record in history:
+            if record.task_id not in successful or record.status is not TaskLifecycle.SUCCEEDED:
+                continue
+            existing = records.get(record.task_id)
+            if existing is None or (record.attempt, record.result_checksum) > (
+                existing.attempt,
+                existing.result_checksum,
+            ):
+                records[record.task_id] = record
+        return tuple(
+            sorted(
+                records.values(),
+                key=lambda item: (item.task_id, item.attempt, item.result_checksum),
+            )
+        )
+
+    def result_history_for(
+        self,
+        run_id: str,
+        stage_id: str,
+        plan_id: str,
+        plan_version: int,
+    ) -> tuple[TaskResultRecord, ...]:
+        """Return accepted and rejected attempts required for replay."""
+
+        run = identifier(run_id, "run_id")
+        stage = identifier(stage_id, "stage_id")
+        requested_plan = self.plan(run, stage, plan_version)
+        if requested_plan is None or requested_plan.plan_id != plan_id:
+            return ()
         plans = {
             (run, stage, version): plan
             for version in range(1, plan_version + 1)
             if (plan := self.plan(run, stage, version)) is not None
         }
-        records: dict[str, TaskResultRecord] = {}
+        records: dict[tuple[str, int, int, str], TaskResultRecord] = {}
         for event in self.read_events(run, stage):
-            if (
-                event.event_type != "TASK_RESULT_ACCEPTED"
-                or event.task_id not in successful
-            ):
+            if event.event_type not in {"TASK_RESULT_ACCEPTED", "TASK_RESULT_REJECTED"}:
                 continue
             raw_checksum = event.payload.get("result_checksum")
             if not isinstance(raw_checksum, str):
@@ -911,6 +935,12 @@ class DurableTaskPlanStore:
                 or event.task_instance_id != record.task_instance_id
                 or event.attempt != record.attempt
                 or event.payload.get("result_checksum") != record.result_checksum
+                or event.event_type
+                != (
+                    "TASK_RESULT_ACCEPTED"
+                    if record.status is TaskLifecycle.SUCCEEDED
+                    else "TASK_RESULT_REJECTED"
+                )
             ):
                 raise HarnessValidationError(
                     "TaskPlan result artifact conflicts with its event or accepted plan",
@@ -920,19 +950,24 @@ class DurableTaskPlanStore:
                 record.plan_id == plan_id and record.plan_version == plan_version
             ) and not _plan_contains_task_version(plans, requested_plan, record):
                 continue
-            existing = records.get(record.task_id)
-            if existing is None or (
-                record.attempt,
-                record.result_checksum,
-            ) > (
-                existing.attempt,
-                existing.result_checksum,
-            ):
-                records[record.task_id] = record
+            records[
+                (
+                    record.task_id,
+                    record.attempt,
+                    record.plan_version,
+                    record.result_checksum,
+                )
+            ] = record
         return tuple(
             sorted(
                 records.values(),
-                key=lambda item: (item.task_id, item.attempt, item.result_checksum),
+                key=lambda item: (
+                    item.task_id,
+                    item.attempt,
+                    item.plan_version,
+                    item.task_instance_id,
+                    item.result_checksum,
+                ),
             )
         )
 
@@ -1067,6 +1102,68 @@ class DurableTaskPlanStore:
                 code="task_plan_artifact_identity_mismatch",
             )
         return plan
+
+    def patches_for(
+        self,
+        run_id: str,
+        stage_id: str,
+    ) -> tuple[PlanPatch, ...]:
+        """Load all recorded patch evidence for deterministic offline replay."""
+
+        run = identifier(run_id, "run_id")
+        stage = identifier(stage_id, "stage_id")
+        patches: dict[str, PlanPatch] = {}
+        for event in self.read_events(run, stage):
+            if event.event_type not in {
+                "PLAN_PATCH_PROPOSED",
+                "PLAN_PATCH_REJECTED",
+                "PLAN_PATCH_ACCEPTED",
+            }:
+                continue
+            patch_ref = event.payload.get("patch_ref")
+            if not isinstance(patch_ref, str):
+                raise HarnessValidationError(
+                    "TaskPlan patch event has no patch reference",
+                    code="task_plan_artifact_missing",
+                )
+            patch = self._load_document("patch", run, stage, patch_ref, PlanPatch)
+            if (
+                patch.patch_checksum != patch_ref
+                or patch.base_plan_id != event.plan_id
+                or patch.base_plan_version != event.plan_version
+                or any(
+                    getattr(event, field_name) != getattr(patch, field_name)
+                    for field_name in (
+                        "graph_id",
+                        "graph_version",
+                        "graph_ref",
+                        "graph_schema_version",
+                        "compiler_version",
+                        "condition_policy_version",
+                        "graph_checksum",
+                        "stage_binding_checksum",
+                        "stage_identity_schema",
+                        "stage_identity_checksum",
+                    )
+                )
+            ):
+                raise HarnessValidationError(
+                    "TaskPlan patch artifact conflicts with its event",
+                    code="task_plan_artifact_identity_mismatch",
+                )
+            existing = patches.get(patch.patch_checksum)
+            if existing is not None and existing != patch:
+                raise HarnessValidationError(
+                    "TaskPlan history contains conflicting patch evidence",
+                    code="task_plan_checksum_conflict",
+                )
+            patches[patch.patch_checksum] = patch
+        return tuple(
+            sorted(
+                patches.values(),
+                key=lambda item: (item.base_plan_version, item.patch_checksum),
+            )
+        )
 
     def _optional_projection(
         self,

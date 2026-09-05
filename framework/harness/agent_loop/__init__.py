@@ -34,6 +34,23 @@ from framework.harness.agent_loop.artifacts import (
     AgentLoopGraphArtifactRecord,
     AgentLoopGraphArtifactRecorder,
 )
+from framework.harness.agent_loop.orchestration import (
+    AGENT_ORCHESTRATION_REQUEST_SCHEMA,
+    AGENT_ORCHESTRATION_RESULT_SCHEMA,
+    PARENT_OBSERVATION_SCHEMA,
+    AgentOrchestrationBinding,
+    AgentOrchestrationDispatch,
+    AgentOrchestrationPort,
+    AgentOrchestrationRequest,
+    AgentOrchestrationResult,
+    AgentOrchestrationTaskProfile,
+    HarnessAgentOrchestrationPort,
+    HarnessAgentOrchestrationRuntime,
+    ParentObservation,
+    ParentObservationLimits,
+    ParentTaskSummary,
+    ParentWaveSummary,
+)
 
 __all__ = [
     "AGENT_LOOP_GRAPH_ACTIVITY_OUTPUT_SCHEMA",
@@ -68,4 +85,19 @@ __all__ = [
     "AgentLoopGraphWorker",
     "AgentLoopRunnerPort",
     "build_agent_loop_graph_activity_binding_bundle",
+    "AGENT_ORCHESTRATION_REQUEST_SCHEMA",
+    "AGENT_ORCHESTRATION_RESULT_SCHEMA",
+    "PARENT_OBSERVATION_SCHEMA",
+    "AgentOrchestrationBinding",
+    "AgentOrchestrationDispatch",
+    "AgentOrchestrationPort",
+    "AgentOrchestrationRequest",
+    "AgentOrchestrationResult",
+    "AgentOrchestrationTaskProfile",
+    "HarnessAgentOrchestrationPort",
+    "HarnessAgentOrchestrationRuntime",
+    "ParentObservation",
+    "ParentObservationLimits",
+    "ParentTaskSummary",
+    "ParentWaveSummary",
 ]

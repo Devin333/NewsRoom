@@ -103,6 +103,7 @@ _POSITIVE_BUDGET_KEYS = frozenset(
     }
 )
 _BUDGET_DIMENSIONS = ("turns", "tokens", "tool_calls", "memory_ops", "cpu_seconds")
+_WORKER_NOT_SUPPLIED = object()
 
 
 def _required_text(value: Any, field_name: str) -> str:
@@ -553,6 +554,7 @@ class ChildAgentSupervisor:
         self._budget_by_operation: dict[str, tuple[str, dict[str, float]]] = {}
         self._workers: dict[str, Any] = {}
         self._futures: dict[str, Future[Any]] = {}
+        self._reserved_spawn_operations: set[str] = set()
         self._executor = ThreadPoolExecutor(max_workers=max_children, thread_name_prefix="newsroom-child")
         self._lock = threading.RLock()
 
@@ -560,7 +562,110 @@ class ChildAgentSupervisor:
     def events(self) -> InMemoryChildAgentEventLog:
         return self._events
 
-    def spawn(self, request: ChildAgentSpawnRequest | Mapping[str, Any]) -> ChildAgentHandle:
+    @property
+    def capacity(self) -> int:
+        """Configured upper bound used by Harness admission control."""
+        return self._max_children
+
+    @property
+    def available_capacity(self) -> int:
+        """Current admission headroom without exposing mutable handles."""
+        with self._lock:
+            occupied = sum(
+                1 for item in self._handles.values() if self._capacity_occupied(item)
+            )
+            return max(
+                self._max_children
+                - occupied
+                - len(self._reserved_spawn_operations),
+                0,
+            )
+
+    def spawn_batch(
+        self,
+        requests: Sequence[ChildAgentSpawnRequest | Mapping[str, Any]],
+        *,
+        workers: Sequence[Any] | None = None,
+    ) -> tuple[ChildAgentHandle, ...]:
+        """Atomically reserve capacity before admitting a child wave.
+
+        Worker execution can finish while the caller is still admitting the
+        rest of a wave. Terminal handles intentionally retain capacity until
+        ``close``; the short-lived reservations below ensure those fast
+        completions cannot make a previously admitted sibling look over
+        capacity.
+        """
+
+        normalized = tuple(
+            item
+            if isinstance(item, ChildAgentSpawnRequest)
+            else ChildAgentSpawnRequest.from_mapping(item)
+            for item in requests
+        )
+        if not normalized:
+            return ()
+        supplied_workers = (
+            tuple(_WORKER_NOT_SUPPLIED for _ in normalized)
+            if workers is None
+            else tuple(workers)
+        )
+        if len(supplied_workers) != len(normalized):
+            raise ValueError("workers must match spawn batch size")
+        operation_ids = tuple(item.operation_id for item in normalized)
+        if len(operation_ids) != len(set(operation_ids)):
+            raise ChildAgentOperationConflict(
+                "spawn batch contains duplicate operation identities",
+                code="operation_identity_conflict",
+            )
+
+        with self._lock:
+            new_operations: set[str] = set()
+            for request in normalized:
+                previous = self._operations.get(request.operation_id)
+                if previous is not None:
+                    parent = _identity(
+                        request.parent_graph_identity,
+                        "parent_graph_identity",
+                    )
+                    if previous.handle.parent_graph_identity != parent:
+                        raise ChildAgentOperationConflict(
+                            "operation identity was reused for another parent",
+                            code="operation_identity_conflict",
+                        )
+                    continue
+                new_operations.add(request.operation_id)
+            occupied = sum(
+                1 for item in self._handles.values() if self._capacity_occupied(item)
+            )
+            if (
+                occupied
+                + len(self._reserved_spawn_operations)
+                + len(new_operations)
+                > self._max_children
+            ):
+                raise ChildAgentAdmissionError(
+                    "child capacity is exhausted",
+                    code="child_capacity_exhausted",
+                )
+            self._reserved_spawn_operations.update(new_operations)
+            try:
+                return tuple(
+                    self.spawn(request, worker=worker)
+                    for request, worker in zip(
+                        normalized,
+                        supplied_workers,
+                        strict=True,
+                    )
+                )
+            finally:
+                self._reserved_spawn_operations.difference_update(new_operations)
+
+    def spawn(
+        self,
+        request: ChildAgentSpawnRequest | Mapping[str, Any],
+        *,
+        worker: Any = _WORKER_NOT_SUPPLIED,
+    ) -> ChildAgentHandle:
         if not isinstance(request, ChildAgentSpawnRequest):
             request = ChildAgentSpawnRequest.from_mapping(request)
         with self._lock:
@@ -569,8 +674,13 @@ class ChildAgentSupervisor:
                 if previous.handle.parent_graph_identity != _identity(request.parent_graph_identity, "parent_graph_identity"):
                     raise ChildAgentOperationConflict("operation identity was reused for another parent", code="operation_identity_conflict")
                 return previous.handle
+            reserved = request.operation_id in self._reserved_spawn_operations
+            if reserved:
+                self._reserved_spawn_operations.remove(request.operation_id)
             active = sum(1 for item in self._handles.values() if self._capacity_occupied(item))
-            if active >= self._max_children:
+            if not reserved and (
+                active + len(self._reserved_spawn_operations) >= self._max_children
+            ):
                 raise ChildAgentAdmissionError("child capacity is exhausted", code="child_capacity_exhausted")
             parent = _identity(request.parent_graph_identity, "parent_graph_identity")
             if self._budget_admitter is not None:
@@ -629,7 +739,11 @@ class ChildAgentSupervisor:
             self._handles[handle.child_id] = handle
             self._operations[request.operation_id] = ChildAgentOperationResult(request.operation_id, handle.child_id, handle)
             try:
-                worker = self._build_worker(handle)
+                admitted_worker = (
+                    self._build_worker(handle)
+                    if worker is _WORKER_NOT_SUPPLIED
+                    else worker
+                )
             except Exception as exc:
                 # The spawn fact is already durable. Retain the operation and
                 # commit a terminal failure so recovery cannot resurrect a
@@ -647,13 +761,13 @@ class ChildAgentSupervisor:
                     # non-terminal handle and reservation in memory.
                     pass
                 raise
-            if worker is not None:
+            if admitted_worker is not None:
                 try:
-                    self._workers[handle.child_id] = worker
+                    self._workers[handle.child_id] = admitted_worker
                     handle = replace(handle, state=ChildAgentState.RUNNING, updated_at=_utc(self._clock()))
                     self._emit("child_status", handle=handle, reason_code="worker_started")
                     self._replace(handle)
-                    handle = self._start_worker(handle, worker)
+                    handle = self._start_worker(handle, admitted_worker)
                 except Exception as exc:
                     # Durable spawn/status facts remain authoritative. Do not
                     # remove their indexes after a worker start failure.

@@ -1,66 +1,67 @@
-## 1. Group/Wave Contract and Policy Model
+# Delivery Gates
 
-- [ ] 1.1 Define versioned `ParallelDispatchRequest`, `ParallelDispatchResult`, `DispatchGroup`, `DispatchWave`, group/wave status machines, join policy, and task-attempt identity models under the Harness task-plan boundary.
-- [ ] 1.2 Extend the normalized dynamic-stage policy with explicit `join_policy`, `serial_fallback`, side-effect class/resource conflict key, group/wave limits, capability capacity, `ParentObservationLimits`, and parent/child budget reservation rules.
-- [ ] 1.3 Add deterministic checksum projections for group/wave identity, ordered task identities, reservations, child result evidence, aggregate refs, and parent observation.
-- [ ] 1.4 Add validator rules that reject candidate control fields, duplicate task identities, dependency violations, output collisions, unapproved capabilities/tools/memory, and policy widening before group admission.
-- [ ] 1.5 Define canonical group/wave event names, transition owners, terminal states, idempotency keys, recovery actions, and at-least-once side-effect/reconciliation semantics.
+Aligned to PRD revision `e9a81f7d`. The previous checklist had 16/43 checked
+items with partial implementation evidence recorded in `verification.md`.
+Those checks do not prove expanded PRD contracts. Retained checks below cover
+only unchanged, focused surfaces; each gate requires all its own exit evidence.
 
-## 2. Harness Fan-Out/Fan-In Coordinator
+## 1. G1 Contract
 
-- [ ] 2.1 Implement the Harness-owned group/wave coordinator port and connect `TaskPlanStageRunner` to submit ready tasks as bounded dispatch waves.
-- [ ] 2.2 Implement durable group admission and per-wave capacity/budget reservation before any child spawn, including idempotency for repeated admission requests and reservation release.
-- [ ] 2.3 Compute effective parallelism from stage policy, capability capacity, concurrency reservations, and `ChildAgentSupervisor` capacity; leave overflow tasks in deterministic READY order within the same group.
-- [ ] 2.4 Add explicit serial adapter and fail-closed behavior when parallel execution is required but no valid wave adapter is configured.
-- [ ] 2.5 Implement deterministic group join waiting across multiple waves, `wait_all`/`fail_fast` behavior, required-role checks, output-conflict checks, and aggregate result publication.
-- [ ] 2.6 Ensure group/wave coordinator never lets queue order, completion time, child output, or LLM text change workflow routing, quality, publication, memory, or outer-Graph state.
+- [x] 1.1 Align proposal, design, capability specs and this checklist with the PRD, including online recovery/offline replay separation, canonical states, defaults and independent G1-G5 acceptance; pass strict OpenSpec validation.
+- [x] 1.2 Use one Agent/Harness `ParentObservationLimits` contract with canonical `max_observation_bytes`, PRD defaults, strict parsing and matching serialization/checksum tests; remove competing field aliases.
+- [ ] 1.3 Complete versioned group/wave/task/attempt schemas, canonical `REPLAN_PENDING` and `BLOCKED_DEPENDENCY`, typed wave outcomes, stable identity/checksum and transition validation.
+- [ ] 1.4 Implement durable candidate dedup keyed by run/stage/parent-turn/action-correlation plus candidate checksum, stable group identity, terminal reuse and conflict rejection across restart.
+- [ ] 1.5 Establish shared `RefAuthority` validation for input/result/planning refs and memory namespaces, including owner/tenant/stage/run/access/type/checksum/allowlist and read-only sharing policy.
+- [ ] 1.6 Define per-task multi-pool capacity demand, versioned pool reservations, resource conflict keys and fenced mutation lifecycle; reject missing or stale required capacity policy.
+- [ ] 1.7 Define versioned token/time/tool/cost budget allocations and ledger settlement; prove consumed/released/outstanding invariants, no partial reservation and idempotent retry/cancel/recovery accounting.
+- [ ] 1.8 Preserve complete accepted/rejected/failed/cancelled/indeterminate/reclaimed/quarantined attempt history and group/wave/plan/task/binding/receipt identity in result verification and replay.
+- [ ] 1.9 Extend canonical events/checkpoints with spawn intent/receipt, ledger, complete history index, continuation and aggregate/observation checksums; reject corrupt/conflicting histories.
+- [ ] 1.10 Complete bounded planning calls/timeouts/retries/failure accounting with durable receipts and strict source-observation validation.
 
-## 3. Child Runtime and Tool Boundary
+## 2. G2 Coordinator
 
-- [ ] 3.1 Connect admitted task instances to `ChildAgentSupervisor` while preserving existing spawn, lease, heartbeat, cancel, close, and reclaim semantics.
-- [ ] 3.2 Route each child attempt through `SubAgentRuntime`/`AgentRunner` with isolated input refs, context, tool allowlist, memory namespaces, transcript, budget, and attempt identity.
-- [ ] 3.3 Reuse `ToolExecutor` and `ToolBatchExecutor` for child tool calls, and persist tool receipts/checksums under the owning child attempt.
-- [ ] 3.4 Add deterministic result verification for group/wave/plan/task/attempt identity, transcript and artifact refs, output schema, tool/memory usage, and Research gates.
-- [ ] 3.5 Add tests proving a child cannot select a worker, authorize tools, modify routing, publish, promote memory, or control sibling children.
+- [x] 2.1 Connect `TaskPlanStageRunner` to the Harness-owned group/wave coordinator port instead of its implicit synchronous worker loop.
+- [ ] 2.2 Complete immutable group admission and single-active-wave admission transaction with durable, idempotent membership, policy and budget-envelope pinning.
+- [ ] 2.3 Implement deterministic first-fit multi-pool packing, all-or-nothing task reservations, stable overflow READY order and pool evidence in wave checksums.
+- [ ] 2.4 Commit wave admission, ledger and `TASK_ATTEMPT_SPAWN_INTENT` atomically before supervisor spawn; persist per-task confirmed/unknown receipts using unique operation keys.
+- [ ] 2.5 Reconcile crashes around admission/intent/receipt/dispatch using audited supervisor status; never duplicate confirmed children or treat missing receipts as proof of no spawn.
+- [ ] 2.6 Route each child through the real `SubAgentRuntime`/`AgentRunner` and `ToolExecutor`/`ToolBatchExecutor`, with isolated refs/context/tool/memory/budget/lease and attributable durable tool receipts.
+- [ ] 2.7 Verify every child result against group/wave/plan/task/attempt/binding, readable transcript/output/artifact/tool receipts, schema, memory/budget and deterministic gates before acceptance.
+- [ ] 2.8 Propagate terminal upstream failure to unadmitted transitive `BLOCKED_DEPENDENCY` descendants, release allocations and finish wait-all without spawning blocked tasks.
+- [ ] 2.9 Complete stable multi-wave join, required-role completeness, deterministic merge/conflict checks, aggregate gate and one final group result independent of completion order.
+- [ ] 2.10 Complete bounded new-attempt retry, wave exhaustion and legal replacement replan with new plan/group/correlation identity; quarantine old-group late receipts.
+- [ ] 2.11 Complete fail-fast admission closure, sibling cancel receipt/lease waiting, reclaim, resource-scoped fence loss and indeterminate handling without unconfirmed side-effect replay.
+- [x] 2.12 Preserve the explicit serial adapter and fail closed when parallel execution requires a missing adapter; never silently select serial fallback.
+- [ ] 2.13 Prove monotonic interval overlap, three-tasks/two-slots multi-wave join, heterogeneous packing, upstream failure, spawn crash matrix and online/offline recovery boundaries with invocation-count assertions.
 
-## 4. AgentLoop Parent Delegation
+## 3. G3 AgentLoop
 
-- [ ] 4.1 Extend the action schema/parser with bounded `delegate_batch` candidates containing logical child proposals, dependencies, output roles, and correlation metadata.
-- [ ] 4.2 Add the AgentLoop-to-Harness orchestration port and ensure AgentLoop submits candidates without creating threads, queues, concrete worker refs, or policy grants.
-- [ ] 4.3 Convert legacy single `delegate` actions through a one-task group/wave compatibility adapter and preserve the current `AgentLoopResult` projection.
-- [ ] 4.4 Materialize one security-projected joined observation for the parent turn, including stable group/wave summaries, refs/checksums, diagnostics, budget/recovery facts, and explicit `ParentObservationLimits`.
-- [ ] 4.5 Add parent loop tests for valid multi-delegation, invalid control fields, excessive fan-out, partial failure, retry exhaustion, unavailable executor, and hidden-context redaction.
+- [x] 3.1 Parse bounded multi-child `delegate_batch` candidates and reject forbidden top-level/child control fields without introducing Agent-to-Harness reverse imports or Agent-owned threads/queues.
+- [ ] 3.2 Replace synchronous-only orchestration with durable submission identity and bounded `PENDING` receipts; do not advance parent reasoning while waiting.
+- [ ] 3.3 Implement durable same-parent-turn continuation with idempotent observation id/version delivery and terminal checksum reuse across restart/redelivery.
+- [ ] 3.4 Project summaries only from gated durable structured evidence and typed diagnostics; fix ordering/redaction/UTF-8 truncation/version/checksum and spill oversize detail to verified refs while retaining identity/continuation.
+- [ ] 3.5 Complete real generic production composition and negative dependency checks for coordinator, binding registry, supervisor, durable stores, artifact verifier, authorized tools and observation policy; no fake fallback.
+- [ ] 3.6 Verify legacy one-logical-task adaptation with old caller golden result/error/stop_reason/diagnostics/trace fixtures, unique pinned capability mapping, cancellation and recovery.
+- [ ] 3.7 Add full parent contract tests for pending/resume/redelivery, partial failure/replan, exhaustion, unavailable dependencies, hidden-context isolation and completion-order-independent replay.
+- [x] 3.8 Preserve the two-stage Harness-authorized planning request/receipt/candidate flow, deny side-effect planning tools, and replay observations from recorded receipts without live tool calls.
 
-## 5. Planning and Tool Observations
+## 4. G4 Research
 
-- [ ] 5.1 Define a Harness-controlled two-stage planning-observation port: request/receipt first, then `PlanCandidate(source_observation_refs)` validation; invoke only policy-allowlisted read-only tools.
-- [ ] 5.2 Persist planning tool receipts, planning budgets, correlation ids, and checksums; bind receipts first to `run_id/stage_id/planner_turn_id/policy_checksum`, then expose immutable source refs on the candidate.
-- [ ] 5.3 Deny planner side-effect, publication, policy-change, and memory-promotion tools before execution with stable authorization diagnostics.
-- [ ] 5.4 Add replay tests proving planning observations are read from durable receipts and never re-run live tools.
-- [ ] 5.5 Add bounded planning limits: `max_planning_tool_calls`, `planning_timeout`, and planning retry behavior.
+- [x] 4.1 Wire the dynamic Research graph factory to the actual group/wave coordinator and `ChildAgentSupervisor`.
+- [x] 4.2 Retain `document`/`evidence_pack` references and policy-approved tools without copying parent private context into child inputs.
+- [ ] 4.3 Dispatch structure/contribution/experiments through bounded multi-pool fan-out with all existing per-role gates, attributable real tool receipts and pinned wait-all.
+- [x] 4.4 Aggregate accepted role results deterministically into `analysis_branch_refs` and preserve fixed claim verification, quality, reader/card and publication successors.
+- [x] 4.5 Preserve static Research as default and regression coverage that required-role/quality failures produce no downstream success or publication.
+- [ ] 4.6 Complete production negative dependency checks, including durable transcript/artifact/tool/ref/capacity policy; explicit serial fallback cannot bypass these dependencies.
+- [ ] 4.7 Add fixed golden inputs with field-level role/ref/checksum/evidence/gate/quality/reader/card/publication parity assertions and an explicit allowed-difference list.
+- [ ] 4.8 Cover accepted/partial-failed/cancelled/indeterminate/serial/crash-recovered Research histories with full history/ledger/checksum equality and zero live replay calls.
 
-## 6. Research Dynamic Analysis Integration
+## 5. G5 Release
 
-- [ ] 6.1 Wire `build_dynamic_paper_analysis_workflow_spec()` and its composition factory to the real group/wave coordinator and `ChildAgentSupervisor`.
-- [ ] 6.2 Update the Research dynamic policy/builder to declare policy-approved child tools and to retain `document`/`evidence_pack` input references without copying parent private context.
-- [ ] 6.3 Dispatch independent `analysis.structure`, `analysis.contribution`, and `analysis.experiments` tasks through bounded fan-out, retaining existing per-role deterministic gates.
-- [ ] 6.4 Implement deterministic Research aggregation into `analysis_branch_refs` and preserve the fixed `verify_claims` -> quality -> reader/card -> publication boundary.
-- [ ] 6.5 Add production-composition checks that reject missing plan builder, wave adapter, worker binding, supervisor, durable store, artifact verifier, or tool port; allow serial fallback only when policy explicitly enables it.
-
-## 7. Durable Events, Recovery, and Inspection
-
-- [ ] 7.1 Add group/wave admission, dispatch, join-waiting, join-completed, retry, replan, cancel, reclaim, and recovery event types/projections with parent run correlation.
-- [ ] 7.2 Extend checkpoints and transcript receipts with group/wave/join state, reservations, per-attempt evidence, aggregate checksum, and event stream sequence.
-- [ ] 7.3 Implement crash reconciliation for missing dispatch/result/join transitions and receipt reuse without duplicate child, tool, or external side-effect execution.
-- [ ] 7.4 Implement lease-expiry handling for indeterminate child outcomes and bounded reclaim/retry according to the pinned policy.
-- [ ] 7.5 Add security-projected inspection and metrics for requested/effective parallelism, queue/wait/run/join durations, child states, budget usage, retry/replan counts, recovery outcome, and `DEGRADED_SERIAL` reason.
-- [ ] 7.6 Add offline replay tests for accepted, partially failed, cancelled, serial-fallback, and crash-recovered groups; assert no live LLM/tool/worker/queue calls.
-
-## 8. Verification, Rollout, and Documentation
-
-- [ ] 8.1 Add focused unit tests for candidate validation, admission idempotency, capacity reservation, deterministic ordering, join aggregation, output conflict, and bounded retry/replan.
-- [ ] 8.2 Add integration tests using a fake supervisor/worker to prove two or more independent children MUST overlap in execution when concurrency conditions hold, while dependency tasks wait; also cover multi-wave group join.
-- [ ] 8.3 Add Research dynamic publication regression and static-workflow-default regression tests.
-- [ ] 8.4 Run `openspec validate harness-codex-style-parallel-agent-orchestration --strict` and resolve every validation error.
-- [ ] 8.5 Run targeted Harness, AgentLoop, tool-runtime, supervisor, and Research tests, then run the repository compile/smoke checks required by the affected modules.
-- [ ] 8.6 Enable the generic AgentLoop orchestration port behind a feature flag, then enable it only for the opt-in dynamic Research workflow; capture telemetry/replay evidence and document serial fallback/rollback before any default switch.
+- [ ] 5.1 Pass focused Harness/AgentLoop/tool/supervisor/Research/architecture tests, required repository compile/smoke/source checks and strict OpenSpec validation; record final exits and remaining limitations before code commits.
+- [ ] 5.2 Expose independent `FEATURE_DISABLED`, `DEPENDENCY_UNAVAILABLE`, `DEGRADED_SERIAL` and `ENABLED_PARALLEL` states without switching the static default.
+- [ ] 5.3 Capture run/stage/group/wave/capability-linked admission/wait/run/join/budget/retry/recovery telemetry and alert evidence.
+- [ ] 5.4 Exercise generic AgentLoop only in controlled allowlisted runs after G3 passes, retaining reproducible continuation and replay evidence.
+- [ ] 5.5 Exercise allowlisted dynamic Research only after G4 passes, documenting golden parity, gates, failures and production dependency provenance.
+- [ ] 5.6 Rehearse feature disablement/explicit serial fallback with running groups pinned to their original policy; preserve receipts/history, settle reservations and verify post-rollback inspection/replay.
+- [ ] 5.7 Record G1-G5 evidence separately, including recovery and rollback artifacts and rollout decisions; do not equate feature enablement or passing structural validation with production readiness.

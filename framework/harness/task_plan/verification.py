@@ -264,6 +264,18 @@ class TaskPlanResultVerifier:
         refs = getattr(self._gates, "refs", ())
         return tuple(refs)
 
+    @property
+    def transcript_store(self) -> SubAgentTranscriptStorePort | None:
+        """Expose the bound transcript owner for production composition checks."""
+
+        return self._transcript_store
+
+    @property
+    def artifact_reference_verifier(self) -> ArtifactReferenceVerifierPort | None:
+        """Expose the artifact-reference verifier for production composition checks."""
+
+        return self._artifact_reference_verifier
+
     def verify(
         self,
         result: HarnessWorkerResult,

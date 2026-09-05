@@ -1,5 +1,12 @@
 # pyright: reportUnsupportedDunderAll=false
-from framework.agent.models.action import AgentAction, AgentActionType
+from framework.agent.models.action import (
+    DELEGATE_BATCH_SCHEMA_VERSION,
+    MAX_DELEGATE_BATCH_TASKS,
+    AgentAction,
+    AgentActionType,
+    DelegateBatchCandidate,
+    DelegateBatchProposal,
+)
 from framework.agent.skill_call import SkillCall, SkillCallParseError
 from framework.agent.models.policy import AgentLoopPolicy
 from framework.agent.models.result import (

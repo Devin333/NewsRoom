@@ -24,7 +24,7 @@ Harness SHALL provide a versioned orchestration contract that accepts a parent A
 
 ### Requirement: Group and wave admission SHALL be bounded and durable
 
-Harness SHALL create a durable `DispatchGroup` only after the complete plan scope, dependency closure, required roles, capability bindings, policy checksum, input-reference authority, and total budget envelope validate. A group MAY contain tasks that are not ready yet. Harness SHALL create each `DispatchWave` only after its selected tasks are ready and their side-effect, budget, and capacity checks pass. A group covers the complete logical join scope; a wave covers one physical dispatch bounded by current capacity. The effective parallelism MUST be the minimum of stage policy, capability capacity, child supervisor capacity, and available concurrency reservations. Group admission MUST pin but not consume the total budget envelope. Wave admission MUST atomically reserve each selected task's normalized budget and capacity exactly once using `RESERVED -> CONSUMED | RELEASED`; later waves MUST reuse the same group identity.
+Harness SHALL create a durable `DispatchGroup` only after the complete plan scope, dependency closure, required roles, capability bindings, policy checksum, input-reference authority, and total budget envelope validate. A group MAY contain tasks that are not ready yet. Harness SHALL create each `DispatchWave` only after its selected tasks are ready and their side-effect, budget, and capacity checks pass. A group covers the complete logical join scope; a wave covers one physical dispatch bounded by current capacity. Admission MUST use deterministic first-fit packing in stable plan order against all capability/resource pools, supervisor capacity, stage limits, and available concurrency reservations. Each selected task MUST reserve all resources atomically; unavailable tasks remain READY while later eligible tasks are considered. Pool reservations MUST enter the wave checksum; missing or stale capacity MUST fail closed. Group admission MUST pin but not consume the total budget envelope. Wave admission MUST atomically reserve each selected task's normalized budget and capacity exactly once using `RESERVED -> CONSUMED | RELEASED`; later waves MUST reuse the same group identity.
 
 #### Scenario: Group and first wave are admitted within capacity
 
@@ -130,7 +130,7 @@ Harness SHALL apply the group's pinned `join_policy`, retry budget, replan budge
 
 ### Requirement: Group and wave lifecycle SHALL be replayable and recoverable
 
-Harness SHALL persist group admission, wave admission/dispatch, child lifecycle, join waiting, join completion, retry, replan, cancel, reclaim, and recovery transitions in the canonical event stream. Checkpoints MUST include group/wave identity, plan version/checksum, task projections, attempt receipts, budget reservations/releases, join policy, aggregate evidence, and stream sequence. Replay and crash recovery MUST use recorded evidence and MUST NOT call live LLMs, tools, workers, queues, or publication adapters.
+Harness SHALL persist group admission, wave admission/dispatch, child lifecycle, join waiting, join completion, retry, replan, cancel, reclaim, and recovery transitions in the canonical event stream. Checkpoints MUST include group/wave identity, plan version/checksum, task projections, spawn intents/receipts, complete attempt-history indices, reservation ledger, join policy, aggregate/observation checksums, and stream sequence. Offline replay MUST use only recorded evidence and MUST NOT call live LLMs, sources, RAG, tools, workers, supervisors, queues, or publication adapters. Online recovery MAY perform audited supervisor status/termination/reconcile calls and policy-authorized new attempts only when side-effect safety, idempotency and deadlines permit. Recovery MUST NOT replan through a live LLM or repeat confirmed or uncertain non-idempotent effects.
 
 #### Scenario: Crash occurs after admission
 
@@ -193,3 +193,93 @@ Each `DispatchGroup` MUST use the states `PLANNED`, `ADMITTED`, `DISPATCHING`, `
 - **WHEN** a non-retryable failure occurs under `fail_fast`
 - **THEN** the coordinator MUST record failure, close group admission, request sibling cancellation, and wait for cancel receipt or lease expiry
 - **AND** late success receipts MUST be quarantined to the closed group and MUST NOT change its aggregate
+
+### Requirement: Candidate admission SHALL be durably idempotent
+
+Harness MUST persist `candidate_dedup_key = run_id + stage_id + parent_turn_id + action_correlation_id` with `candidate_checksum` before accepting a new execution scope. Equal key and checksum MUST reuse the original plan, group, submission, or terminal observation. A conflicting checksum MUST return `CANDIDATE_IDEMPOTENCY_CONFLICT` without executing the new payload. Group identity MUST be a stable hash of accepted plan identity and dedup key. Replan MUST use a new action correlation id and dedup key.
+
+#### Scenario: Candidate is resubmitted after restart
+
+- **WHEN** the same parent turn and action correlation resubmit the same candidate after process restart
+- **THEN** Harness MUST return the original group/submission identity and existing outcome when terminal
+- **AND** it MUST create no additional group, child attempt, or publication
+
+#### Scenario: Candidate payload conflicts with an admitted key
+
+- **WHEN** a submitted candidate has an existing dedup key but different checksum
+- **THEN** admission MUST return `CANDIDATE_IDEMPOTENCY_CONFLICT`
+- **AND** the original plan, group and observation MUST remain unchanged
+
+### Requirement: Reference authority SHALL be uniform and fail closed
+
+Harness MUST apply one `RefAuthority` boundary to input refs, result refs, planning observation refs and memory namespaces. Validation MUST cover run, stage, tenant/owner, access mode, artifact type, source checksum and pinned allowlist. Cross-scope sharing MUST be explicitly policy-approved and read-only; candidates cannot authorize sharing and children cannot access sibling private refs.
+
+#### Scenario: Candidate references a sibling private artifact
+
+- **WHEN** a candidate references an artifact outside its permitted owner/stage/tenant scope
+- **THEN** Harness MUST reject it with `REF_UNAUTHORIZED` before admission
+- **AND** no worker or tool may read the referenced payload
+
+### Requirement: Spawn SHALL use a durable intent receipt and reconciliation protocol
+
+Each attempt MUST have `spawn_operation_key = group_id + wave_id + task_instance_id + attempt`. Wave admission, reservation ledger and `TASK_ATTEMPT_SPAWN_INTENT` MUST be committed in one transaction or equivalent durable batch before spawn. `ChildAgentSupervisor` MUST handle the operation key idempotently and persist `SPAWN_CONFIRMED` or `SPAWN_UNKNOWN` receipts. `TASK_WAVE_DISPATCHED` requires known spawn status and trackable children for all selected tasks. Partially successful batches MUST reconcile each task independently. Identical verified receipt redelivery MUST be reused; conflicting identity/checksum evidence MUST halt rather than overwrite history.
+
+#### Scenario: Process crashes after intent but before receipt
+
+- **WHEN** recovery finds a spawn intent without a receipt
+- **THEN** it MUST query the supervisor operation status and record the audited recovery decision
+- **AND** unknown status MUST become `SPAWN_UNKNOWN`, not permission to blindly repeat spawn
+
+#### Scenario: Child started before dispatch event was saved
+
+- **WHEN** the supervisor confirms an existing child but the dispatch event is absent
+- **THEN** recovery MUST reuse the receipt and append only the missing transition
+- **AND** it MUST not start another child or charge another reservation
+
+#### Scenario: Reservation exists without admission projection
+
+- **WHEN** recovery finds a ledger entry but no corresponding admission event
+- **THEN** it MUST repair admission with the same idempotency key or halt on ledger conflict
+- **AND** it MUST not reserve the same resources twice
+
+### Requirement: Capacity packing and mutation fences SHALL be resource scoped
+
+Task demand MUST identify every required capability pool, quantity, resource conflict key and policy-resolved side-effect class. Multi-pool reservations MUST be all-or-nothing. `READ_ONLY` tasks may share keys; same-key `EXTERNAL_IDEMPOTENT` tasks serialize unless policy explicitly permits concurrency with receipts. `MUTATING_SERIAL` serializes by key unless policy declares global serialization. `FENCED_MUTATION` requires a per-key fence with owner, generation, TTL, renewal, release and recovery history; loss or uncertain ownership MUST halt or become indeterminate without automatic retry.
+
+#### Scenario: An earlier task cannot reserve all pools
+
+- **WHEN** task A lacks one required pool while later task B can reserve every required resource
+- **THEN** A MUST remain READY with `CAPACITY_NOT_AVAILABLE`, without partial reservation, and B MAY enter the wave
+- **AND** selection and pool ledger evidence MUST be stable and included in the wave checksum
+
+#### Scenario: Independent mutations have different resource keys
+
+- **WHEN** two mutation tasks have different keys, valid reservations and any required independent fences, without a global serial policy
+- **THEN** they MUST remain eligible for concurrent execution within capacity
+- **AND** same-key conflicts MUST still obey the pinned serialization or fencing rule
+
+### Requirement: Budget settlement SHALL be bounded versioned and idempotent
+
+`BudgetReservation` MUST carry token, time, tool-call and optional cost limits, owner scope, reservation key, parent/attempt allocations and ledger version. For each dimension `consumed + released + outstanding_reserved <= group_envelope` MUST hold. Attempt hard-limit violations MUST stop execution with `BUDGET_EXCEEDED`; consumed and unused portions MUST be settled separately. Retry requires a new attempt reservation. Cancel, reclaim and crash reconciliation MUST settle by key idempotently. Replan MUST NOT treat unsettled old-group allocations as available new-group budget.
+
+#### Scenario: Attempt cancellation is reconciled twice
+
+- **WHEN** cancellation and recovery both settle the same attempt reservation
+- **THEN** the ledger MUST retain one settlement per reservation key and preserve every budget invariant
+- **AND** neither consumed budget nor released allocation may be counted twice
+
+### Requirement: Recovery calls and release gates SHALL have explicit evidence
+
+Every recovery live call MUST record `RECOVERY_STATUS_READ`, `RECOVERY_RECONCILED`, `RECOVERY_RETRY_ADMITTED` or `RECOVERY_HALTED` with run/stage/plan/group/wave/attempt correlation. G1 Contract, G2 Coordinator, G3 AgentLoop, G4 Research and G5 Release MUST be evaluated independently. Feature enablement belongs to G5 and MUST NOT substitute for implementation, telemetry, alert, recovery or rollback evidence. Running groups MUST retain pinned policy through rollback and preserve inspection/replay history.
+
+#### Scenario: Feature flag is disabled during an active group
+
+- **WHEN** an operator disables the feature for new submissions
+- **THEN** active groups MUST complete recovery, cancellation or halt under their original pinned policy
+- **AND** their join policy, budgets, bindings, receipts and event history MUST not be rewritten
+
+#### Scenario: Offline replay encounters a live dependency
+
+- **WHEN** accepted, failed, cancelled, indeterminate, quarantined, serial or crash-recovered history is replayed
+- **THEN** failing live adapters MUST remain uncalled and complete state/history/ledger and aggregate/observation checksums MUST match
+- **AND** any attempted live call MUST fail with `REPLAY_LIVE_DEPENDENCY`

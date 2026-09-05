@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import Any, Self
 
+from framework.agent.models.orchestration import ParentObservationLimits
 from framework.harness.control_plane.errors import HarnessValidationError
 from framework.harness.task_plan.canonical import (
     canonical_payload_checksum,
@@ -56,6 +57,21 @@ class TaskPlanPolicy:
     aggregate_task_budget: TaskBudget | Mapping[str, Any]
     max_validation_diagnostics: int = 64
     allow_nested_subagents: bool = False
+    join_policy: str = "wait_all"
+    serial_fallback: bool = False
+    max_tasks_per_group: int | None = None
+    max_waves: int = 16
+    max_group_runtime_seconds: int = 900
+    max_join_wait_seconds: int = 300
+    capability_capacity: int | None = None
+    available_concurrency_reservations: int | None = None
+    side_effect_class: str = "READ_ONLY"
+    resource_conflict_key: str | None = None
+    parent_observation_limits: Mapping[str, int] = field(
+        default_factory=lambda: ParentObservationLimits().to_dict()
+    )
+    max_planning_tool_calls: int = 3
+    planning_timeout_seconds: int = 30
     metadata: Mapping[str, Any] = field(default_factory=dict)
     runtime_version: str = TASK_PLAN_RUNTIME_VERSION
     schema_version: str = TASK_PLAN_POLICY_SCHEMA
@@ -152,6 +168,8 @@ class TaskPlanPolicy:
                 code="incomplete_task_plan_policy_contracts",
                 details={"capabilities": missing_contracts},
             )
+        if self.max_tasks_per_group is None:
+            object.__setattr__(self, "max_tasks_per_group", max(self.max_tasks, 8))
         for field_name in (
             "max_tasks",
             "max_depth",
@@ -195,6 +213,41 @@ class TaskPlanPolicy:
                 "allow_nested_subagents must be a boolean",
                 code="invalid_task_plan_policy",
             )
+        if self.join_policy not in {"wait_all", "fail_fast"}:
+            raise HarnessValidationError("join_policy must be wait_all or fail_fast", code="invalid_task_plan_policy")
+        if not isinstance(self.serial_fallback, bool):
+            raise HarnessValidationError("serial_fallback must be a boolean", code="invalid_task_plan_policy")
+        for field_name in (
+            "max_tasks_per_group",
+            "max_waves",
+            "max_group_runtime_seconds",
+            "max_join_wait_seconds",
+            "planning_timeout_seconds",
+        ):
+            object.__setattr__(self, field_name, positive_int(getattr(self, field_name), field_name))
+        if self.max_tasks_per_group < self.max_tasks:
+            raise HarnessValidationError("max_tasks_per_group must cover max_tasks", code="invalid_task_plan_limit")
+        for field_name in ("capability_capacity", "available_concurrency_reservations"):
+            value = getattr(self, field_name)
+            if value is not None and (isinstance(value, bool) or not isinstance(value, int) or value < 0):
+                raise HarnessValidationError(f"{field_name} must be non-negative", code="invalid_task_plan_limit")
+        if isinstance(self.max_planning_tool_calls, bool) or not isinstance(self.max_planning_tool_calls, int) or self.max_planning_tool_calls < 0:
+            raise HarnessValidationError("max_planning_tool_calls must be non-negative", code="invalid_task_plan_limit")
+        if self.side_effect_class not in {"READ_ONLY", "EXTERNAL_IDEMPOTENT", "MUTATING_SERIAL", "FENCED_MUTATION"}:
+            raise HarnessValidationError("invalid side_effect_class", code="invalid_task_plan_policy")
+        if self.resource_conflict_key is not None and (
+            not isinstance(self.resource_conflict_key, str) or not self.resource_conflict_key.strip()
+        ):
+            raise HarnessValidationError("resource_conflict_key must be non-empty", code="invalid_task_plan_policy")
+        observation_limits = dict(self.parent_observation_limits)
+        required_observation_limits = set(ParentObservationLimits().to_dict())
+        if set(observation_limits) != required_observation_limits:
+            raise HarnessValidationError("parent_observation_limits has invalid fields", code="invalid_task_plan_policy")
+        try:
+            observation_limits = ParentObservationLimits.from_dict(observation_limits).to_dict()
+        except (TypeError, ValueError) as exc:
+            raise HarnessValidationError(str(exc), code="invalid_task_plan_limit") from exc
+        object.__setattr__(self, "parent_observation_limits", frozen_mapping(observation_limits, "parent_observation_limits"))
         object.__setattr__(self, "metadata", frozen_mapping(self.metadata, "policy.metadata"))
         object.__setattr__(self, "runtime_version", required_text(self.runtime_version, "runtime_version"))
         object.__setattr__(self, "policy_checksum", canonical_payload_checksum(self.checksum_projection()))
@@ -269,6 +322,19 @@ class TaskPlanPolicy:
             "aggregate_task_budget": self.aggregate_task_budget.to_dict(),
             "max_validation_diagnostics": self.max_validation_diagnostics,
             "allow_nested_subagents": self.allow_nested_subagents,
+            "join_policy": self.join_policy,
+            "serial_fallback": self.serial_fallback,
+            "max_tasks_per_group": self.max_tasks_per_group,
+            "max_waves": self.max_waves,
+            "max_group_runtime_seconds": self.max_group_runtime_seconds,
+            "max_join_wait_seconds": self.max_join_wait_seconds,
+            "capability_capacity": self.capability_capacity,
+            "available_concurrency_reservations": self.available_concurrency_reservations,
+            "side_effect_class": self.side_effect_class,
+            "resource_conflict_key": self.resource_conflict_key,
+            "parent_observation_limits": thaw_mapping(self.parent_observation_limits),
+            "max_planning_tool_calls": self.max_planning_tool_calls,
+            "planning_timeout_seconds": self.planning_timeout_seconds,
             "metadata": thaw_mapping(self.metadata),
         }
 
@@ -312,10 +378,48 @@ class TaskPlanPolicy:
                 "policy_checksum",
             }
         )
-        payload = exact_keys(value, required=required, model=cls.__name__)
+        optional = frozenset(
+            {
+                "join_policy",
+                "serial_fallback",
+                "max_tasks_per_group",
+                "max_waves",
+                "max_group_runtime_seconds",
+                "max_join_wait_seconds",
+                "capability_capacity",
+                "available_concurrency_reservations",
+                "side_effect_class",
+                "resource_conflict_key",
+                "parent_observation_limits",
+                "max_planning_tool_calls",
+                "planning_timeout_seconds",
+            }
+        )
+        payload = exact_keys(value, required=required, optional=optional, model=cls.__name__)
+        legacy = not (set(payload) & optional)
+        payload.setdefault("join_policy", "wait_all")
+        payload.setdefault("serial_fallback", False)
+        payload.setdefault("max_tasks_per_group", None)
+        payload.setdefault("max_waves", 16)
+        payload.setdefault("max_group_runtime_seconds", 900)
+        payload.setdefault("max_join_wait_seconds", 300)
+        payload.setdefault("capability_capacity", None)
+        payload.setdefault("available_concurrency_reservations", None)
+        payload.setdefault("side_effect_class", "READ_ONLY")
+        payload.setdefault("resource_conflict_key", None)
+        payload.setdefault(
+            "parent_observation_limits",
+            ParentObservationLimits().to_dict(),
+        )
+        payload.setdefault("max_planning_tool_calls", 3)
+        payload.setdefault("planning_timeout_seconds", 30)
         supplied = checksum(payload.pop("policy_checksum"), "policy_checksum")
         policy = cls(**payload)
-        if supplied != policy.policy_checksum:
+        legacy_projection = policy.checksum_projection()
+        for field_name in optional:
+            legacy_projection.pop(field_name, None)
+        legacy_checksum = canonical_payload_checksum(legacy_projection)
+        if supplied != policy.policy_checksum and (not legacy or supplied != legacy_checksum):
             raise HarnessValidationError(
                 "TaskPlanPolicy checksum does not match canonical content",
                 code="task_plan_checksum_mismatch",

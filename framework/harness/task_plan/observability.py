@@ -15,7 +15,14 @@ from framework.harness.graph.canonical import required_text
 
 
 _METRIC_LABELS = frozenset(
-    {"outcome", "status", "reason_code", "stage_kind", "worker_capability"}
+    {
+        "outcome",
+        "status",
+        "reason_code",
+        "stage_kind",
+        "worker_capability",
+        "recovery_outcome",
+    }
 )
 _MAX_TRACE_EVENTS = 512
 
@@ -176,6 +183,12 @@ def task_plan_metric_samples(
             event_counts["TASK_PLAN_HALTED"],
             base_labels,
         ),
+        TaskPlanMetricSample(
+            "harness_task_plan_replan_total",
+            event_counts["PLAN_PATCH_ACCEPTED"]
+            + event_counts["TASK_GROUP_REPLAN_PENDING"],
+            base_labels,
+        ),
     ]
     status_counts = Counter(item.status.value for item in projection.tasks)
     for status, value in sorted(status_counts.items()):
@@ -217,6 +230,116 @@ def task_plan_metric_samples(
                 "harness_task_plan_replay_verification",
                 int(replay_verified),
                 {**base_labels, "outcome": "passed" if replay_verified else "failed"},
+            )
+        )
+    samples.extend(_parallel_metric_samples(event_values, base_labels))
+    return tuple(samples)
+
+
+def _parallel_metric_samples(
+    events: tuple[TaskPlanEvent, ...],
+    base_labels: Mapping[str, str],
+) -> tuple[TaskPlanMetricSample, ...]:
+    """Project low-cardinality parallel facts from the durable event stream."""
+
+    group_admissions = tuple(
+        item for item in events if item.event_type == "TASK_GROUP_ADMITTED"
+    )
+    if not group_admissions:
+        return ()
+    requested = [
+        value
+        for item in group_admissions
+        if isinstance((value := item.payload.get("requested_parallelism")), int)
+        and not isinstance(value, bool)
+        and value >= 0
+    ]
+    effective = [
+        value
+        for item in events
+        if item.event_type in {"TASK_GROUP_ADMITTED", "TASK_WAVE_ADMITTED"}
+        if isinstance((value := item.payload.get("effective_parallelism")), int)
+        and not isinstance(value, bool)
+        and value >= 0
+    ]
+    samples: list[TaskPlanMetricSample] = [
+        TaskPlanMetricSample(
+            "harness_task_plan_parallel_group_total",
+            len(group_admissions),
+            base_labels,
+        ),
+        TaskPlanMetricSample(
+            "harness_task_plan_parallel_requested",
+            max(requested, default=0),
+            base_labels,
+        ),
+        TaskPlanMetricSample(
+            "harness_task_plan_parallel_effective",
+            max(effective, default=0),
+            base_labels,
+        ),
+    ]
+    for event_type, metric_name, payload_key in (
+        ("TASK_WAVE_DISPATCHED", "harness_task_plan_parallel_queue_duration_ms", "queue_wait_ms"),
+        ("TASK_WAVE_COMPLETED", "harness_task_plan_parallel_run_duration_ms", "run_duration_ms"),
+        ("TASK_GROUP_JOINED", "harness_task_plan_parallel_join_duration_ms", "join_duration_ms"),
+    ):
+        duration = sum(
+            value
+            for item in events
+            if item.event_type == event_type
+            if isinstance((value := item.payload.get(payload_key)), int)
+            and not isinstance(value, bool)
+            and value >= 0
+        )
+        samples.append(TaskPlanMetricSample(metric_name, duration, base_labels))
+
+    child_states: Counter[str] = Counter()
+    for item in events:
+        if item.event_type != "TASK_WAVE_COMPLETED":
+            continue
+        states = item.payload.get("child_states")
+        if not isinstance(states, Mapping):
+            continue
+        for state in states.values():
+            if isinstance(state, str) and state:
+                child_states[state.casefold()] += 1
+    for state, count in sorted(child_states.items()):
+        samples.append(
+            TaskPlanMetricSample(
+                "harness_task_plan_parallel_children",
+                count,
+                {**base_labels, "status": state},
+            )
+        )
+
+    recovery_outcomes = Counter(
+        str(item.payload["recovery_outcome"])
+        for item in events
+        if item.event_type == "TASK_GROUP_RECOVERY"
+        and isinstance(item.payload.get("recovery_outcome"), str)
+        and item.payload["recovery_outcome"]
+    )
+    for outcome, count in sorted(recovery_outcomes.items()):
+        samples.append(
+            TaskPlanMetricSample(
+                "harness_task_plan_parallel_recovery_total",
+                count,
+                {**base_labels, "recovery_outcome": outcome},
+            )
+        )
+
+    degraded_reasons = Counter(
+        item.reason_code or str(item.payload.get("reason_code") or "unknown")
+        for item in events
+        if item.event_type == "DEGRADED_SERIAL"
+    )
+    for reason, count in sorted(degraded_reasons.items()):
+        samples.append(
+            TaskPlanMetricSample(
+                "harness_task_plan_parallel_degraded_serial_total",
+                count,
+                {**base_labels, "reason_code": reason},
             )
         )
     return tuple(samples)

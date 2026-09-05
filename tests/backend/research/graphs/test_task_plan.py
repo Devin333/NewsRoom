@@ -98,6 +98,20 @@ def test_policy_pins_existing_research_gates_workers_and_subagents() -> None:
         "research_analysis_contribution",
         "research_analysis_experiments",
     }
+    assert policy.join_policy == "wait_all"
+    assert policy.serial_fallback is False
+    assert policy.max_tasks_per_group == 8
+    assert policy.max_waves == 8
+    assert policy.capability_capacity == 3
+    assert policy.available_concurrency_reservations == 3
+    assert policy.side_effect_class == "READ_ONLY"
+    assert policy.parent_observation_limits == {
+        "max_task_summaries": 3,
+        "max_summary_bytes": 1024,
+        "max_diagnostics": 8,
+        "max_refs": 8,
+        "max_observation_bytes": 8192,
+    }
 
 
 def test_capability_registry_requires_every_exact_subagent_binding() -> None:

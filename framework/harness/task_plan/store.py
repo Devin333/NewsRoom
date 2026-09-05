@@ -69,6 +69,25 @@ TASK_PLAN_EVENT_TYPES = (
     "STAGE_OUTPUT_AGGREGATED",
     "TASK_PLAN_VERIFIED",
     "TASK_PLAN_HALTED",
+    # Parallel dispatch lifecycle facts.  These events carry group/wave
+    # admission and join evidence while task projection remains reduced by the
+    # existing task/result events.
+    "TASK_GROUP_ADMITTED",
+    "TASK_WAVE_ADMITTED",
+    "TASK_WAVE_DISPATCHED",
+    "TASK_WAVE_COMPLETED",
+    "TASK_GROUP_JOIN_WAITING",
+    "TASK_GROUP_JOINED",
+    "TASK_GROUP_FAILED",
+    "TASK_GROUP_REPLAN_PENDING",
+    "TASK_GROUP_CANCEL_REQUESTED",
+    "TASK_GROUP_CANCELLED",
+    "TASK_GROUP_INDETERMINATE",
+    "TASK_GROUP_HALTED",
+    "TASK_GROUP_SUPERSEDED",
+    "TASK_GROUP_RECLAIMED",
+    "TASK_GROUP_RECOVERY",
+    "DEGRADED_SERIAL",
 )
 
 
@@ -753,9 +772,11 @@ class TaskPlanStorePort(Protocol):
     def read_events(self, run_id: str, stage_id: str) -> tuple[TaskPlanEvent, ...]: ...
     def update_projection(self, projection: TaskPlanProjection) -> None: ...
     def results_for(self, run_id: str, stage_id: str, plan_id: str, plan_version: int) -> tuple[TaskResultRecord, ...]: ...
+    def result_history_for(self, run_id: str, stage_id: str, plan_id: str, plan_version: int) -> tuple[TaskResultRecord, ...]: ...
     def append_event(self, event: TaskPlanEvent) -> str: ...
     def commit_event(self, event: TaskPlanEvent, projection: TaskPlanProjection) -> str: ...
     def plan(self, run_id: str, stage_id: str, version: int | None = None) -> ValidatedTaskPlan | None: ...
+    def patches_for(self, run_id: str, stage_id: str) -> tuple[PlanPatch, ...]: ...
 
 
 class InMemoryTaskPlanStore:
@@ -1194,24 +1215,15 @@ class InMemoryTaskPlanStore:
             self._projections[(projection.run_id, projection.stage_id)] = projection
 
     def results_for(self, run_id: str, stage_id: str, plan_id: str, plan_version: int) -> tuple[TaskResultRecord, ...]:
+        history = self.result_history_for(run_id, stage_id, plan_id, plan_version)
         with self._lock:
-            current_plan = self._plans.get((run_id, stage_id, plan_version))
-            if current_plan is None or current_plan.plan_id != plan_id:
-                return ()
+            projection = self._projections.get((run_id, stage_id))
             valid_task_ids = {
                 item.task_id
-                for item in (self._projections.get((run_id, stage_id)).tasks if self._projections.get((run_id, stage_id)) else ())
+                for item in (projection.tasks if projection else ())
                 if item.status is TaskLifecycle.SUCCEEDED
             }
-            matching = [
-                item
-                for item in self._results.values()
-                if item.run_id == run_id
-                and item.stage_id == stage_id
-                and item.task_id in valid_task_ids
-                and item.status is TaskLifecycle.SUCCEEDED
-                and (item.plan_id == plan_id and item.plan_version == plan_version or current_plan is not None and _plan_contains_task_version(self._plans, current_plan, item))
-            ]
+            matching = [item for item in history if item.task_id in valid_task_ids and item.status is TaskLifecycle.SUCCEEDED]
             unique: dict[str, TaskResultRecord] = {}
             for item in sorted(
                 matching,
@@ -1220,6 +1232,47 @@ class InMemoryTaskPlanStore:
             ):
                 unique.setdefault(item.task_id, item)
             return tuple(sorted(unique.values(), key=lambda item: (item.task_id, item.attempt, item.result_checksum)))
+
+    def result_history_for(
+        self,
+        run_id: str,
+        stage_id: str,
+        plan_id: str,
+        plan_version: int,
+    ) -> tuple[TaskResultRecord, ...]:
+        """Return every recorded attempt needed to replay the plan lifecycle.
+
+        ``results_for`` intentionally exposes only the latest successful output
+        for aggregation. Checkpoints and replay also need rejected attempts so
+        retry and halt transitions retain their causal result evidence.
+        """
+
+        with self._lock:
+            current_plan = self._plans.get((run_id, stage_id, plan_version))
+            if current_plan is None or current_plan.plan_id != plan_id:
+                return ()
+            matching = [
+                item
+                for item in self._results.values()
+                if item.run_id == run_id
+                and item.stage_id == stage_id
+                and (
+                    (item.plan_id == plan_id and item.plan_version == plan_version)
+                    or _plan_contains_task_version(self._plans, current_plan, item)
+                )
+            ]
+            return tuple(
+                sorted(
+                    matching,
+                    key=lambda item: (
+                        item.task_id,
+                        item.attempt,
+                        item.plan_version,
+                        item.task_instance_id,
+                        item.result_checksum,
+                    ),
+                )
+            )
 
     def append_event(self, event: TaskPlanEvent) -> str:
         if not isinstance(event, TaskPlanEvent):
@@ -1299,6 +1352,27 @@ class InMemoryTaskPlanStore:
     def candidate(self, candidate_ref: str) -> PlanCandidate | None:
         with self._lock:
             return self._candidates.get(candidate_ref)
+
+    def patches_for(
+        self,
+        run_id: str,
+        stage_id: str,
+    ) -> tuple[PlanPatch, ...]:
+        """Return immutable patch evidence needed for offline plan replay."""
+
+        run = identifier(run_id, "run_id")
+        stage = identifier(stage_id, "stage_id")
+        with self._lock:
+            return tuple(
+                sorted(
+                    (
+                        patch
+                        for patch in self._patches.values()
+                        if patch.run_id == run and patch.stage_id == stage
+                    ),
+                    key=lambda item: (item.base_plan_version, item.patch_checksum),
+                )
+            )
 
     def plan(self, run_id: str, stage_id: str, version: int | None = None) -> ValidatedTaskPlan | None:
         with self._lock:

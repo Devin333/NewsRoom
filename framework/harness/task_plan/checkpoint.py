@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+import json
+import os
 from collections.abc import Mapping
 from dataclasses import dataclass, field
+from pathlib import Path
+from threading import RLock
 from typing import Any, Protocol, runtime_checkable
 
 from framework.harness.control_plane.errors import HarnessValidationError
@@ -27,14 +31,20 @@ from framework.harness.task_plan.replay import (
     TASK_PLAN_REPLAY_REDUCER_VERSION,
     TASK_PLAN_REPLAY_REDUCER_VERSION_V2,
     TaskPlanReplayReport,
+    _freeze_parallel_projection_mapping,
+    _validate_parallel_report_projection,
 )
 from framework.harness.task_plan.store import TaskResultRecord
 from framework.shared.time import format_datetime, parse_datetime
 
 
 TASK_PLAN_CHECKPOINT_SCHEMA_V2 = "newsroom.harness-task-plan-checkpoint/v2"
-TASK_PLAN_CHECKPOINT_SCHEMA = TASK_PLAN_CHECKPOINT_SCHEMA_V2
-TASK_PLAN_CHECKPOINT_SCHEMAS = (TASK_PLAN_CHECKPOINT_SCHEMA_V2,)
+TASK_PLAN_CHECKPOINT_SCHEMA_V3 = "newsroom.harness-task-plan-checkpoint/v3"
+TASK_PLAN_CHECKPOINT_SCHEMA = TASK_PLAN_CHECKPOINT_SCHEMA_V3
+TASK_PLAN_CHECKPOINT_SCHEMAS = (
+    TASK_PLAN_CHECKPOINT_SCHEMA_V2,
+    TASK_PLAN_CHECKPOINT_SCHEMA_V3,
+)
 _GRAPH_CHECKPOINT_IDENTITY_FIELDS = (
     "graph_id",
     "graph_version",
@@ -93,6 +103,11 @@ class TaskPlanCheckpoint:
     stage_binding_checksum: str | None = None
     stage_identity_schema: str | None = None
     stage_identity_checksum: str | None = None
+    parallel_groups: Mapping[str, Mapping[str, Any]] = field(default_factory=dict)
+    parallel_waves: Mapping[str, Mapping[str, Any]] = field(default_factory=dict)
+    parallel_reservations: Mapping[str, Mapping[str, Any]] = field(default_factory=dict)
+    parallel_diagnostics: tuple[Mapping[str, Any], ...] = ()
+    parallel_event_sequence: int = 0
     schema_version: str = TASK_PLAN_CHECKPOINT_SCHEMA
     reducer_version: str = TASK_PLAN_REPLAY_REDUCER_VERSION
     checkpoint_checksum: str = field(init=False)
@@ -285,6 +300,66 @@ class TaskPlanCheckpoint:
                 "TaskPlan checkpoint aggregate ref and checksum must be present together",
                 code="task_plan_checkpoint_aggregate_mismatch",
             )
+        parallel_groups = _freeze_parallel_projection_mapping(
+            self.parallel_groups,
+            "parallel_groups",
+        )
+        parallel_waves = _freeze_parallel_projection_mapping(
+            self.parallel_waves,
+            "parallel_waves",
+        )
+        parallel_reservations = _freeze_parallel_projection_mapping(
+            self.parallel_reservations,
+            "parallel_reservations",
+        )
+        parallel_diagnostics = tuple(
+            frozen_mapping(item, "parallel_diagnostics.item")
+            for item in self.parallel_diagnostics
+        )
+        if any(not isinstance(item, Mapping) for item in self.parallel_diagnostics):
+            raise TypeError("parallel_diagnostics must contain mappings")
+        _validate_parallel_report_projection(
+            parallel_groups,
+            parallel_waves,
+            parallel_reservations,
+        )
+        parallel_event_sequence = non_negative_int(
+            self.parallel_event_sequence,
+            "parallel_event_sequence",
+        )
+        has_parallel_facts = bool(
+            parallel_groups
+            or parallel_waves
+            or parallel_reservations
+            or parallel_diagnostics
+        )
+        if self.schema_version == TASK_PLAN_CHECKPOINT_SCHEMA_V2:
+            if has_parallel_facts or parallel_event_sequence:
+                raise HarnessValidationError(
+                    "parallel checkpoint facts require schema v3",
+                    code="task_plan_checkpoint_parallel_schema_required",
+                )
+        else:
+            if has_parallel_facts and parallel_event_sequence < 1:
+                raise HarnessValidationError(
+                    "parallel checkpoint facts require an event sequence",
+                    code="task_plan_checkpoint_parallel_sequence_missing",
+                )
+            if not has_parallel_facts and parallel_event_sequence:
+                raise HarnessValidationError(
+                    "parallel checkpoint sequence requires checkpoint facts",
+                    code="task_plan_checkpoint_parallel_sequence_unexpected",
+                )
+            if parallel_event_sequence > self.last_sequence:
+                raise HarnessValidationError(
+                    "parallel checkpoint sequence exceeds checkpoint history",
+                    code="task_plan_checkpoint_parallel_sequence_mismatch",
+                )
+        object.__setattr__(self, "parallel_groups", parallel_groups)
+        object.__setattr__(self, "parallel_waves", parallel_waves)
+        object.__setattr__(self, "parallel_reservations", parallel_reservations)
+        object.__setattr__(self, "parallel_diagnostics", parallel_diagnostics)
+        object.__setattr__(self, "parallel_event_sequence", parallel_event_sequence)
         expected_reducer_version = TASK_PLAN_REPLAY_REDUCER_VERSION_V2
         if self.reducer_version != expected_reducer_version:
             raise HarnessValidationError(
@@ -358,7 +433,12 @@ class TaskPlanCheckpoint:
             created_at=created_at,
             aggregate_ref=report.aggregate_ref,
             aggregate_checksum=report.aggregate_checksum,
-            schema_version=TASK_PLAN_CHECKPOINT_SCHEMA_V2,
+            parallel_groups=report.parallel_groups,
+            parallel_waves=report.parallel_waves,
+            parallel_reservations=report.parallel_reservations,
+            parallel_diagnostics=report.parallel_diagnostics,
+            parallel_event_sequence=report.parallel_event_sequence,
+            schema_version=TASK_PLAN_CHECKPOINT_SCHEMA_V3,
             reducer_version=report.reducer_version,
             **graph_identity,
         )
@@ -377,6 +457,26 @@ class TaskPlanCheckpoint:
                 report.event_history_checksum,
             ),
             "replay_checksum": (self.replay_checksum, report.replay_checksum),
+            "parallel_groups": (
+                thaw_mapping(self.parallel_groups),
+                thaw_mapping(report.parallel_groups),
+            ),
+            "parallel_waves": (
+                thaw_mapping(self.parallel_waves),
+                thaw_mapping(report.parallel_waves),
+            ),
+            "parallel_reservations": (
+                thaw_mapping(self.parallel_reservations),
+                thaw_mapping(report.parallel_reservations),
+            ),
+            "parallel_diagnostics": (
+                tuple(thaw_mapping(item) for item in self.parallel_diagnostics),
+                tuple(thaw_mapping(item) for item in report.parallel_diagnostics),
+            ),
+            "parallel_event_sequence": (
+                self.parallel_event_sequence,
+                report.parallel_event_sequence,
+            ),
         }
         mismatches = sorted(name for name, values in checks.items() if values[0] != values[1])
         if report.reducer_version != self.reducer_version:
@@ -423,6 +523,18 @@ class TaskPlanCheckpoint:
             "aggregate_ref": self.aggregate_ref,
             "aggregate_checksum": self.aggregate_checksum,
         })
+        if self.schema_version == TASK_PLAN_CHECKPOINT_SCHEMA_V3:
+            payload.update(
+                {
+                    "parallel_groups": thaw_mapping(self.parallel_groups),
+                    "parallel_waves": thaw_mapping(self.parallel_waves),
+                    "parallel_reservations": thaw_mapping(self.parallel_reservations),
+                    "parallel_diagnostics": [
+                        thaw_mapping(item) for item in self.parallel_diagnostics
+                    ],
+                    "parallel_event_sequence": self.parallel_event_sequence,
+                }
+            )
         return payload
 
     def to_dict(self) -> dict[str, Any]:
@@ -461,10 +573,21 @@ class TaskPlanCheckpoint:
                 "checkpoint_checksum",
             }
         )
+        parallel = frozenset(
+            {
+                "parallel_groups",
+                "parallel_waves",
+                "parallel_reservations",
+                "parallel_diagnostics",
+                "parallel_event_sequence",
+            }
+        )
         identity = frozenset(_GRAPH_CHECKPOINT_IDENTITY_FIELDS)
         payload = exact_keys(
             value,
-            required=common | identity,
+            required=(common | identity | parallel)
+            if schema_version == TASK_PLAN_CHECKPOINT_SCHEMA_V3
+            else common | identity,
             model=cls.__name__,
         )
         supplied = checksum(payload.pop("checkpoint_checksum"), "checkpoint_checksum")
@@ -478,11 +601,13 @@ class TaskPlanCheckpoint:
 
     @property
     def is_graph_only(self) -> bool:
-        return self.schema_version == TASK_PLAN_CHECKPOINT_SCHEMA_V2
+        return self.schema_version in TASK_PLAN_CHECKPOINT_SCHEMAS
 
 
 class InMemoryTaskPlanCheckpointStore:
     """Deterministic test-only checkpoint store."""
+
+    is_durable = False
 
     def __init__(self) -> None:
         self._checkpoints: dict[str, TaskPlanCheckpoint] = {}
@@ -510,6 +635,62 @@ class InMemoryTaskPlanCheckpointStore:
                 code="task_plan_checkpoint_missing",
                 details={"checkpoint_id": normalized},
             ) from exc
+
+
+class JsonlTaskPlanCheckpointStore(InMemoryTaskPlanCheckpointStore):
+    """Append-only, checksummed TaskPlan checkpoint store for production composition.
+
+    The TaskPlan event stream remains the source of truth.  Checkpoints are
+    replay-derived acceleration snapshots, so this store only accepts exact
+    idempotent rewrites and fails closed on a conflicting checkpoint id.
+    """
+
+    is_durable = True
+
+    def __init__(self, path: str | Path) -> None:
+        super().__init__()
+        self._path = Path(path)
+        self._lock = RLock()
+        self._path.parent.mkdir(parents=True, exist_ok=True)
+        if self._path.exists():
+            for line_number, line in enumerate(
+                self._path.read_text(encoding="utf-8").splitlines(),
+                start=1,
+            ):
+                if not line.strip():
+                    continue
+                try:
+                    checkpoint = TaskPlanCheckpoint.from_dict(json.loads(line))
+                except Exception as exc:
+                    raise HarnessValidationError(
+                        "TaskPlan checkpoint log contains invalid content",
+                        code="task_plan_checkpoint_log_corrupt",
+                        details={"path": str(self._path), "line": line_number},
+                    ) from exc
+                super().save(checkpoint)
+
+    @property
+    def path(self) -> Path:
+        return self._path
+
+    def save(self, checkpoint: TaskPlanCheckpoint) -> TaskPlanCheckpoint:
+        if not isinstance(checkpoint, TaskPlanCheckpoint):
+            raise TypeError("checkpoint must be TaskPlanCheckpoint")
+        with self._lock:
+            existing = self._checkpoints.get(checkpoint.checkpoint_id)
+            if existing is not None:
+                return super().save(checkpoint)
+            encoded = json.dumps(
+                checkpoint.to_dict(),
+                ensure_ascii=True,
+                sort_keys=True,
+                separators=(",", ":"),
+            ) + "\n"
+            with self._path.open("a", encoding="utf-8") as handle:
+                handle.write(encoded)
+                handle.flush()
+                os.fsync(handle.fileno())
+            return super().save(checkpoint)
 
 
 def _require_checkpoint_schema(value: Any) -> str:
@@ -583,8 +764,10 @@ def _result_matches_checkpoint_projection(
 
 __all__ = [
     "InMemoryTaskPlanCheckpointStore",
+    "JsonlTaskPlanCheckpointStore",
     "TASK_PLAN_CHECKPOINT_SCHEMA",
     "TASK_PLAN_CHECKPOINT_SCHEMA_V2",
+    "TASK_PLAN_CHECKPOINT_SCHEMA_V3",
     "TASK_PLAN_CHECKPOINT_SCHEMAS",
     "TaskPlanCheckpoint",
     "TaskPlanCheckpointStorePort",

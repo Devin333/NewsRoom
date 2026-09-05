@@ -529,6 +529,7 @@ class PlanCandidate:
     requested_max_parallelism: int = 1
     diagnostics: Mapping[str, Any] = field(default_factory=dict)
     metadata: Mapping[str, Any] = field(default_factory=dict)
+    source_observation_refs: tuple[str, ...] = ()
     graph_id: str | None = None
     graph_version: str | None = None
     graph_ref: str | None = None
@@ -594,11 +595,20 @@ class PlanCandidate:
         )
         object.__setattr__(self, "diagnostics", frozen_mapping(self.diagnostics, "candidate.diagnostics"))
         object.__setattr__(self, "metadata", frozen_mapping(self.metadata, "candidate.metadata"))
+        object.__setattr__(
+            self,
+            "source_observation_refs",
+            stable_text_tuple(
+                self.source_observation_refs,
+                "source_observation_refs",
+                item_kind="reference",
+            ),
+        )
         ensure_candidate_only(self.checksum_projection(), path="$.candidate")
         object.__setattr__(self, "candidate_checksum", canonical_payload_checksum(self.checksum_projection()))
 
     def checksum_projection(self) -> dict[str, Any]:
-        return {
+        projection = {
             "schema_version": self.schema_version,
             "candidate_id": self.candidate_id,
             **_model_identity_projection(self),
@@ -611,6 +621,11 @@ class PlanCandidate:
             "diagnostics": thaw_mapping(self.diagnostics),
             "metadata": thaw_mapping(self.metadata),
         }
+        if self.source_observation_refs:
+            projection["source_observation_refs"] = list(
+                self.source_observation_refs
+            )
+        return projection
 
     def to_dict(self) -> dict[str, Any]:
         return {**self.checksum_projection(), "candidate_checksum": self.candidate_checksum}
@@ -636,6 +651,7 @@ class PlanCandidate:
         requested_max_parallelism: int = 1,
         diagnostics: Mapping[str, Any] | None = None,
         metadata: Mapping[str, Any] | None = None,
+        source_observation_refs: tuple[str, ...] = (),
     ) -> Self:
         return cls(
             candidate_id=candidate_id,
@@ -647,6 +663,7 @@ class PlanCandidate:
             requested_max_parallelism=requested_max_parallelism,
             diagnostics=diagnostics or {},
             metadata=metadata or {},
+            source_observation_refs=source_observation_refs,
             schema_version=GRAPH_ONLY_PLAN_CANDIDATE_SCHEMA,
             **_stage_identity_kwargs(stage_identity),
         )
@@ -681,8 +698,10 @@ class PlanCandidate:
                 }
             )
             | identity_fields,
+            optional=frozenset({"source_observation_refs"}),
             model=cls.__name__,
         )
+        payload.setdefault("source_observation_refs", ())
         supplied = checksum(payload.pop("candidate_checksum"), "candidate_checksum")
         raw_tasks = payload.pop("tasks")
         if isinstance(raw_tasks, (str, bytes)) or not isinstance(raw_tasks, Sequence):

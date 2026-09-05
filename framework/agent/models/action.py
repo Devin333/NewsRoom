@@ -2,7 +2,154 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any
+from typing import Any, Mapping
+
+
+DELEGATE_BATCH_SCHEMA_VERSION = "newsroom.agent.delegate-batch/v1"
+MAX_DELEGATE_BATCH_TASKS = 32
+
+
+@dataclass(frozen=True)
+class DelegateBatchProposal:
+    """Untrusted logical child proposal emitted by the parent model."""
+
+    logical_task_id: str
+    objective: str
+    capability_hint: str
+    input_refs: tuple[str, ...]
+    output_role: str
+    depends_on: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        for field_name in ("logical_task_id", "objective", "capability_hint", "output_role"):
+            value = getattr(self, field_name)
+            if not isinstance(value, str) or not value.strip() or value != value.strip():
+                raise ValueError(f"delegate_batch {field_name} must be a non-empty canonical string")
+        for field_name in ("input_refs", "depends_on"):
+            values = tuple(getattr(self, field_name))
+            if any(not isinstance(value, str) or not value.strip() or value != value.strip() for value in values):
+                raise ValueError(f"delegate_batch {field_name} must contain canonical strings")
+            if len(values) != len(set(values)):
+                raise ValueError(f"delegate_batch {field_name} must not contain duplicates")
+            object.__setattr__(self, field_name, values)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "logical_task_id": self.logical_task_id,
+            "objective": self.objective,
+            "capability_hint": self.capability_hint,
+            "input_refs": list(self.input_refs),
+            "output_role": self.output_role,
+            "depends_on": list(self.depends_on),
+        }
+
+    @classmethod
+    def from_dict(cls, value: Mapping[str, Any]) -> "DelegateBatchProposal":
+        expected = {
+            "logical_task_id",
+            "objective",
+            "capability_hint",
+            "input_refs",
+            "output_role",
+            "depends_on",
+        }
+        if set(value) != expected:
+            unexpected = sorted(set(value) - expected)
+            missing = sorted(expected - set(value))
+            raise ValueError(
+                "delegate_batch child proposal has unsupported fields "
+                f"{unexpected} or missing fields {missing}"
+            )
+        input_refs = value["input_refs"]
+        depends_on = value["depends_on"]
+        if not isinstance(input_refs, list) or not isinstance(depends_on, list):
+            raise ValueError("delegate_batch input_refs and depends_on must be arrays")
+        return cls(
+            logical_task_id=value["logical_task_id"],
+            objective=value["objective"],
+            capability_hint=value["capability_hint"],
+            input_refs=tuple(input_refs),
+            output_role=value["output_role"],
+            depends_on=tuple(depends_on),
+        )
+
+
+@dataclass(frozen=True)
+class DelegateBatchCandidate:
+    """Versioned, bounded candidate. It carries no execution authority."""
+
+    correlation_id: str
+    tasks: tuple[DelegateBatchProposal, ...]
+    parallelism_hint: int | None = None
+    schema_version: str = DELEGATE_BATCH_SCHEMA_VERSION
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.correlation_id, str) or not self.correlation_id.strip() or self.correlation_id != self.correlation_id.strip():
+            raise ValueError("delegate_batch correlation_id must be a non-empty canonical string")
+        tasks = tuple(self.tasks)
+        if not tasks or len(tasks) > MAX_DELEGATE_BATCH_TASKS:
+            raise ValueError(f"delegate_batch must contain between 1 and {MAX_DELEGATE_BATCH_TASKS} tasks")
+        if not all(isinstance(item, DelegateBatchProposal) for item in tasks):
+            raise TypeError("delegate_batch tasks must be DelegateBatchProposal values")
+        task_ids = tuple(item.logical_task_id for item in tasks)
+        if len(task_ids) != len(set(task_ids)):
+            raise ValueError("delegate_batch logical_task_id values must be unique")
+        task_id_set = set(task_ids)
+        for task in tasks:
+            if task.logical_task_id in task.depends_on or not set(task.depends_on).issubset(task_id_set):
+                raise ValueError("delegate_batch dependencies must reference other tasks in the same candidate")
+        _validate_delegate_batch_dag(tasks)
+        if self.parallelism_hint is not None and (
+            isinstance(self.parallelism_hint, bool)
+            or not isinstance(self.parallelism_hint, int)
+            or self.parallelism_hint < 1
+            or self.parallelism_hint > MAX_DELEGATE_BATCH_TASKS
+        ):
+            raise ValueError("delegate_batch parallelism_hint must be a bounded positive integer")
+        if self.schema_version != DELEGATE_BATCH_SCHEMA_VERSION:
+            raise ValueError("unsupported delegate_batch schema_version")
+        object.__setattr__(self, "tasks", tasks)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "schema_version": self.schema_version,
+            "correlation_id": self.correlation_id,
+            "tasks": [task.to_dict() for task in self.tasks],
+            "parallelism_hint": self.parallelism_hint,
+        }
+
+    @classmethod
+    def from_dict(cls, value: Mapping[str, Any]) -> "DelegateBatchCandidate":
+        required = {"schema_version", "correlation_id", "tasks"}
+        allowed = required | {"parallelism_hint"}
+        if not required.issubset(value) or not set(value).issubset(allowed):
+            unexpected = sorted(set(value) - allowed)
+            missing = sorted(required - set(value))
+            raise ValueError(
+                "delegate_batch has forbidden control or unsupported fields "
+                f"{unexpected} or missing fields {missing}"
+            )
+        tasks = value["tasks"]
+        if not isinstance(tasks, list) or not all(isinstance(item, Mapping) for item in tasks):
+            raise ValueError("delegate_batch tasks must be an array of objects")
+        return cls(
+            schema_version=value["schema_version"],
+            correlation_id=value["correlation_id"],
+            tasks=tuple(DelegateBatchProposal.from_dict(item) for item in tasks),
+            parallelism_hint=value.get("parallelism_hint"),
+        )
+
+
+def _validate_delegate_batch_dag(tasks: tuple[DelegateBatchProposal, ...]) -> None:
+    dependencies = {task.logical_task_id: set(task.depends_on) for task in tasks}
+    resolved: set[str] = set()
+    while dependencies:
+        ready = sorted(task_id for task_id, task_dependencies in dependencies.items() if task_dependencies.issubset(resolved))
+        if not ready:
+            raise ValueError("delegate_batch dependencies must form a DAG")
+        resolved.update(ready)
+        for task_id in ready:
+            dependencies.pop(task_id)
 
 
 
@@ -12,6 +159,7 @@ class AgentActionType(str, Enum):
     SKILL_CALL = "skill_call"
     ASK_CLARIFICATION = "ask_clarification"
     DELEGATE = "delegate"
+    DELEGATE_BATCH = "delegate_batch"
     THINK = "think"
 
 
@@ -25,6 +173,7 @@ class AgentAction:
     subagent_id: str | None = None
     subagent_task: str | None = None
     handoff_reason: str | None = None
+    delegate_batch: DelegateBatchCandidate | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
 
     def is_final(self) -> bool:
@@ -43,6 +192,7 @@ class AgentAction:
             "subagent_id": self.subagent_id,
             "subagent_task": self.subagent_task,
             "handoff_reason": self.handoff_reason,
+            "delegate_batch": self.delegate_batch.to_dict() if self.delegate_batch is not None else None,
             "metadata": dict(self.metadata),
         }
 

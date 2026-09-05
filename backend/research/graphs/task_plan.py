@@ -12,6 +12,7 @@ from framework.harness.control_plane.activity_execution import (
     HarnessGraphActivityTaskContext,
 )
 from framework.harness.subagents.models import SubAgentSpec
+from framework.harness.subagents.transcript import SubAgentTranscriptStorePort
 from framework.harness.task_plan.aggregator import (
     TaskPlanAggregateResult,
     TaskPlanAggregator,
@@ -37,6 +38,9 @@ from framework.harness.task_plan.ports import (
     TaskPlanStageRequest,
 )
 from framework.harness.task_plan.policy import TaskPlanPolicy, TaskPlanPolicyRegistry
+from framework.harness.task_plan.parallel import ParallelAgentCoordinator
+from framework.harness.task_plan.checkpoint import TaskPlanCheckpointStorePort
+from framework.harness.task_plan.planning_observation import PlanningObservationPort
 from framework.harness.task_plan.stage import TaskPlanStageRunner
 from framework.harness.task_plan.stage_binding import TaskPlanStageBinding
 from framework.harness.task_plan.store import (
@@ -50,6 +54,8 @@ from framework.harness.task_plan.verification import (
 )
 from framework.harness.graph.bindings import HarnessWorkerBinding
 from framework.harness.graph.activity import HarnessWorkerType
+from framework.harness.subagents.supervisor import ChildAgentSupervisor
+from framework.harness.artifacts import ArtifactReferenceVerifierPort
 from framework.shared.graph_identity import GraphExecutionIdentity
 
 from backend.research.graphs.contracts import (
@@ -179,6 +185,29 @@ def build_research_analysis_task_plan_policy() -> TaskPlanPolicy:
         max_plan_build_tool_calls=2,
         per_task_budget=budget,
         aggregate_task_budget=TaskBudget(max_turns=12, max_tool_calls=12, max_memory_ops=6, max_output_tokens=12288),
+        # The three Research analyses are independent, read-only candidates.
+        # Harness still owns admission, join, verification, and publication.
+        join_policy="wait_all",
+        serial_fallback=False,
+        max_tasks_per_group=8,
+        max_waves=8,
+        max_group_runtime_seconds=900,
+        max_join_wait_seconds=300,
+        capability_capacity=3,
+        available_concurrency_reservations=3,
+        side_effect_class="READ_ONLY",
+        parent_observation_limits={
+            "max_task_summaries": 3,
+            "max_summary_bytes": 1024,
+            "max_diagnostics": 8,
+            "max_refs": 8,
+            "max_observation_bytes": 8192,
+        },
+        # Research's candidate builder has no planning-tool surface.  Keep the
+        # capability disabled until a composition root binds a durable,
+        # read-only observation service and an explicit allowlist.
+        max_planning_tool_calls=0,
+        planning_timeout_seconds=30,
         metadata={
             "input_contract": {"required": list(RESEARCH_DYNAMIC_INPUT_REFS)},
             "output_contract": {"required": list(RESEARCH_DYNAMIC_OUTPUT_ROLES)},
@@ -343,6 +372,10 @@ class ResearchAnalysisTaskPlanStageWorker:
         result_verifier: TaskPlanResultVerifierPort,
         worker_result_recovery: Any | None = None,
         policy: TaskPlanPolicy | None = None,
+        parallel_coordinator: ParallelAgentCoordinator | None = None,
+        child_agent_supervisor: ChildAgentSupervisor | None = None,
+        checkpoint_store: TaskPlanCheckpointStorePort | None = None,
+        planning_observation_port: PlanningObservationPort | None = None,
         allow_test_store: bool = False,
     ) -> None:
         if not isinstance(store, TaskPlanStorePort):
@@ -356,8 +389,45 @@ class ResearchAnalysisTaskPlanStageWorker:
             )
         if not callable(worker_executor):
             raise TypeError("worker_executor must be callable")
+        if not isinstance(candidate_builder, PlanCandidateBuilderPort):
+            raise TypeError(
+                "candidate_builder must implement PlanCandidateBuilderPort"
+            )
+        if not isinstance(capability_registry, TaskCapabilityRegistry):
+            raise TypeError(
+                "capability_registry must be TaskCapabilityRegistry"
+            )
         if not isinstance(result_verifier, TaskPlanResultVerifierPort):
             raise TypeError("result_verifier must implement TaskPlanResultVerifierPort")
+        if parallel_coordinator is not None and not isinstance(
+            parallel_coordinator,
+            ParallelAgentCoordinator,
+        ):
+            raise TypeError("parallel_coordinator must be ParallelAgentCoordinator")
+        if child_agent_supervisor is not None and not isinstance(
+            child_agent_supervisor,
+            ChildAgentSupervisor,
+        ):
+            raise TypeError("child_agent_supervisor must be ChildAgentSupervisor")
+        if not allow_test_store and (
+            parallel_coordinator is None or child_agent_supervisor is None
+        ):
+            raise HarnessValidationError(
+                "Research production TaskPlan requires a parallel coordinator and child supervisor",
+                code="research_task_plan_parallel_runtime_required",
+            )
+        if checkpoint_store is not None and not isinstance(
+            checkpoint_store,
+            TaskPlanCheckpointStorePort,
+        ):
+            raise TypeError(
+                "checkpoint_store must implement TaskPlanCheckpointStorePort"
+            )
+        if not allow_test_store and getattr(checkpoint_store, "is_durable", False) is not True:
+            raise HarnessValidationError(
+                "Research production TaskPlan requires a durable checkpoint store",
+                code="research_task_plan_durable_checkpoint_required",
+            )
         actual_policy = policy or build_research_analysis_task_plan_policy()
         if (
             actual_policy.exact_ref != RESEARCH_DYNAMIC_POLICY_REF
@@ -372,9 +442,55 @@ class ResearchAnalysisTaskPlanStageWorker:
                 "Research TaskPlan stage worker requires the pinned Graph stage",
                 code="research_task_plan_policy_mismatch",
             )
+        for capability in actual_policy.allowed_worker_capabilities:
+            capability_registry.resolve(capability, actual_policy)
+        if not allow_test_store:
+            transcript_store = getattr(result_verifier, "transcript_store", None)
+            if not isinstance(transcript_store, SubAgentTranscriptStorePort) or (
+                getattr(transcript_store, "is_durable", False) is not True
+            ):
+                raise HarnessValidationError(
+                    "Research production TaskPlan requires a durable subagent transcript store",
+                    code="research_task_plan_durable_transcript_required",
+                )
+            artifact_verifier = getattr(
+                result_verifier,
+                "artifact_reference_verifier",
+                None,
+            )
+            if not isinstance(artifact_verifier, ArtifactReferenceVerifierPort):
+                raise HarnessValidationError(
+                    "Research production TaskPlan requires an artifact reference verifier",
+                    code="research_task_plan_artifact_verifier_required",
+                )
+            if actual_policy.max_planning_tool_calls > 0:
+                if not isinstance(planning_observation_port, PlanningObservationPort):
+                    raise HarnessValidationError(
+                        "Research production TaskPlan requires a planning observation port",
+                        code="research_task_plan_planning_observation_required",
+                    )
+                if getattr(planning_observation_port, "is_durable", False) is not True:
+                    raise HarnessValidationError(
+                        "Research production TaskPlan requires durable planning observations",
+                        code="research_task_plan_durable_planning_observation_required",
+                    )
+        if child_agent_supervisor is not None and parallel_coordinator is not None:
+            supervisor_capacity = child_agent_supervisor.capacity
+            if supervisor_capacity < 1 or parallel_coordinator.max_workers > supervisor_capacity:
+                raise HarnessValidationError(
+                    "Research TaskPlan coordinator exceeds child supervisor capacity",
+                    code="research_task_plan_parallel_capacity_invalid",
+                )
+            if parallel_coordinator.child_supervisor is not child_agent_supervisor:
+                raise HarnessValidationError(
+                    "Research TaskPlan coordinator must use the configured child supervisor",
+                    code="research_task_plan_parallel_supervisor_mismatch",
+                )
         self._stage_binding = stage_binding
         self._accepted_at = str(accepted_at)
         self._policy = actual_policy
+        self._parallel_coordinator = parallel_coordinator
+        self._child_agent_supervisor = child_agent_supervisor
         self._runner = TaskPlanStageRunner(
             candidate_builder=candidate_builder,
             capability_registry=capability_registry,
@@ -383,6 +499,14 @@ class ResearchAnalysisTaskPlanStageWorker:
             result_verifier=result_verifier,
             worker_executor=worker_executor,
             worker_result_recovery=worker_result_recovery,
+            parallel_coordinator=parallel_coordinator,
+            child_supervisor_capacity=(
+                child_agent_supervisor.capacity
+                if child_agent_supervisor is not None
+                else None
+            ),
+            planning_observation_port=planning_observation_port,
+            checkpoint_store=checkpoint_store,
         )
 
     def __call__(self, task: Mapping[str, Any]):

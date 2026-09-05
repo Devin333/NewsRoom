@@ -1,10 +1,18 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any
+
 from framework.agent.loop.runner import AgentRunner
 from framework.harness.artifacts import RunBoundArtifactPort
 from framework.harness.agent_loop import (
+    AgentOrchestrationBinding,
+    AgentOrchestrationDispatch,
+    AgentOrchestrationTaskProfile,
     AgentLoopGraphActivityBindingBundle,
     AgentLoopGraphArtifactRecorder,
+    HarnessAgentOrchestrationRuntime,
     build_agent_loop_graph_activity_binding_bundle,
 )
 from framework.harness.control_plane import (
@@ -12,6 +20,7 @@ from framework.harness.control_plane import (
     HarnessRunResult,
     HarnessRunSpec,
 )
+from framework.harness.control_plane.errors import HarnessValidationError
 from framework.harness.control_plane.activity_execution import (
     HarnessGraphActivityExecutionCommitPort,
 )
@@ -26,14 +35,195 @@ from framework.harness.side_effects import (
     HarnessSideEffectRegistry,
     HarnessSideEffectStorePort,
 )
+from framework.harness.subagents.supervisor import ChildAgentSupervisor
+from framework.harness.task_plan.capability import TaskCapabilityRegistry
+from framework.harness.task_plan.checkpoint import TaskPlanCheckpointStorePort
+from framework.harness.task_plan.durable_store import DurableTaskPlanStore
+from framework.harness.task_plan.parallel import ParallelAgentCoordinator
+from framework.harness.task_plan.planning_observation import (
+    HarnessPlanningObservationService,
+    JsonlPlanningObservationStore,
+    PlanningObservationPort,
+    PlanningObservationPolicy,
+)
+from framework.harness.task_plan.policy import TaskPlanPolicy, TaskPlanPolicyRegistry
+from framework.harness.task_plan.ports import (
+    PlanCandidateBuilderPort,
+    TaskPlanResultVerifierPort,
+)
+from framework.harness.task_plan.stage import TaskPlanStageRunner
+from framework.harness.task_plan.stage_binding import TaskPlanStageBinding
 from framework.shared.attempts import AttemptSupervisor
 from framework.shared.time import utc_now
 from framework.agent.models import AgentSpec
 from framework.execution_environment.composition import RuntimeExecutionComposition
 from framework.execution_environment.errors import RuntimeCompositionDriftError
+from framework.tool import ToolExecutor, ToolRegistry
 from interfaces.services.agent_loop_graph_service import (
     AgentLoopGraphApplicationService,
 )
+
+
+@dataclass(frozen=True, slots=True)
+class AgentLoopOrchestrationFeature:
+    """Explicit rollout selection for the generic Harness delegation port.
+
+    The value is supplied by the application settings/composition layer.  It
+    intentionally does not let a worker or an AgentLoop action turn the
+    feature on for itself.
+    """
+
+    enabled: bool = False
+    rollout_scope: str = "generic"
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.enabled, bool):
+            raise TypeError("enabled must be boolean")
+        if self.rollout_scope not in {"generic", "research_dynamic"}:
+            raise ValueError(
+                "rollout_scope must be 'generic' or 'research_dynamic'"
+            )
+
+    def enabled_for(self, scope: str) -> bool:
+        """Return whether this immutable rollout decision applies to ``scope``."""
+
+        if scope not in {"generic", "research_dynamic"}:
+            raise ValueError("scope must be 'generic' or 'research_dynamic'")
+        return self.enabled and self.rollout_scope == scope
+
+
+def build_agent_loop_planning_observation_service(
+    *,
+    policy: TaskPlanPolicy,
+    executor: ToolExecutor,
+    registry: ToolRegistry,
+    receipt_path: str | Path,
+) -> HarnessPlanningObservationService:
+    """Build the durable, Harness-owned planning tool boundary.
+
+    The caller supplies the application-owned ``ToolExecutor`` and registry;
+    this factory only narrows them to the policy's read-only planning grants
+    and makes the receipt log durable before candidates can cite it.
+    """
+
+    if not isinstance(policy, TaskPlanPolicy):
+        raise TypeError("policy must be TaskPlanPolicy")
+    if not isinstance(executor, ToolExecutor):
+        raise TypeError("executor must be ToolExecutor")
+    if not isinstance(registry, ToolRegistry):
+        raise TypeError("registry must be ToolRegistry")
+    return HarnessPlanningObservationService(
+        executor=executor,
+        registry=registry,
+        store=JsonlPlanningObservationStore(receipt_path),
+        policy=PlanningObservationPolicy.from_task_plan_policy(policy),
+    )
+
+
+def build_agent_loop_harness_orchestration_runtime(
+    *,
+    stage_binding: TaskPlanStageBinding,
+    policy_registry: TaskPlanPolicyRegistry,
+    capability_registry: TaskCapabilityRegistry,
+    store: DurableTaskPlanStore,
+    child_supervisor: ChildAgentSupervisor,
+    candidate_builder: Any,
+    worker_executor: Any,
+    task_profiles: tuple[AgentOrchestrationTaskProfile, ...],
+    result_verifier: Any | None = None,
+    worker_result_recovery: Any | None = None,
+    planning_observation_port: PlanningObservationPort | None = None,
+    metrics_sink: Any | None = None,
+    checkpoint_store: TaskPlanCheckpointStorePort,
+) -> HarnessAgentOrchestrationRuntime:
+    """Compose the real AgentLoop fan-out runtime from durable dependencies.
+
+    This is the only production constructor for the generic delegate-batch
+    path.  It deliberately has no in-memory fallback and always routes child
+    execution through the supplied lifecycle supervisor.
+    """
+
+    if not isinstance(store, DurableTaskPlanStore):
+        raise TypeError("store must be DurableTaskPlanStore")
+    if not isinstance(stage_binding, TaskPlanStageBinding):
+        raise TypeError("stage_binding must be TaskPlanStageBinding")
+    if not isinstance(policy_registry, TaskPlanPolicyRegistry):
+        raise TypeError("policy_registry must be TaskPlanPolicyRegistry")
+    if not isinstance(capability_registry, TaskCapabilityRegistry):
+        raise TypeError("capability_registry must be TaskCapabilityRegistry")
+    if not isinstance(child_supervisor, ChildAgentSupervisor):
+        raise TypeError("child_supervisor must be ChildAgentSupervisor")
+    if not isinstance(checkpoint_store, TaskPlanCheckpointStorePort):
+        raise TypeError("checkpoint_store must implement TaskPlanCheckpointStorePort")
+    if getattr(checkpoint_store, "is_durable", False) is not True:
+        raise ValueError(
+            "production AgentLoop orchestration requires a durable checkpoint store"
+        )
+    if not callable(worker_executor):
+        raise TypeError("worker_executor must be callable")
+    if not isinstance(candidate_builder, PlanCandidateBuilderPort):
+        raise TypeError(
+            "candidate_builder must implement PlanCandidateBuilderPort"
+        )
+    # Resolve the exact stage policy before constructing any executable
+    # runtime.  This makes missing or stale worker bindings a composition
+    # error instead of a late child-admission failure.
+    policy = policy_registry.resolve(
+        stage_binding.policy_ref,
+        stage_id=stage_binding.stage_id,
+    )
+    profiles = tuple(task_profiles)
+    if not profiles:
+        raise ValueError("task_profiles must not be empty")
+    for profile in profiles:
+        if not isinstance(profile, AgentOrchestrationTaskProfile):
+            raise TypeError(
+                "task_profiles must contain AgentOrchestrationTaskProfile values"
+            )
+        try:
+            capability_registry.resolve(profile.capability_hint, policy)
+        except HarnessValidationError as exc:
+            raise ValueError(
+                "worker capability binding is not available for the production "
+                f"AgentLoop orchestration runtime: {exc}"
+            ) from exc
+
+    if not isinstance(result_verifier, TaskPlanResultVerifierPort):
+        raise TypeError(
+            "result_verifier must implement TaskPlanResultVerifierPort"
+        )
+    if not isinstance(planning_observation_port, PlanningObservationPort):
+        raise TypeError(
+            "planning_observation_port must implement PlanningObservationPort"
+        )
+
+    coordinator = ParallelAgentCoordinator(
+        max_workers=child_supervisor.capacity,
+        child_supervisor=child_supervisor,
+    )
+    runner = TaskPlanStageRunner(
+        candidate_builder=candidate_builder,
+        capability_registry=capability_registry,
+        store=store,
+        result_verifier=result_verifier,
+        worker_executor=worker_executor,
+        worker_result_recovery=worker_result_recovery,
+        parallel_coordinator=coordinator,
+        child_supervisor_capacity=child_supervisor.capacity,
+        planning_observation_port=planning_observation_port,
+        metrics_sink=metrics_sink,
+        checkpoint_store=checkpoint_store,
+    )
+    return HarnessAgentOrchestrationRuntime(
+        stage_binding=stage_binding,
+        policy_registry=policy_registry,
+        capability_registry=capability_registry,
+        store=store,
+        stage_runner=runner,
+        child_supervisor=child_supervisor,
+        task_profiles=task_profiles,
+        require_durable_store=True,
+    )
 
 
 class AgentLoopGraphRuntimeComposition:
@@ -57,6 +247,11 @@ class AgentLoopGraphRuntimeComposition:
         side_effect_registry: HarnessSideEffectRegistry | None = None,
         side_effect_store: HarnessSideEffectStorePort | None = None,
         runtime_execution_composition: RuntimeExecutionComposition | None = None,
+        orchestration_runtime: HarnessAgentOrchestrationRuntime | None = None,
+        orchestration_dispatch: AgentOrchestrationDispatch | None = None,
+        orchestration_feature_enabled: bool = False,
+        orchestration_feature: AgentLoopOrchestrationFeature | None = None,
+        orchestration_scope: str = "generic",
     ) -> None:
         if not isinstance(agent_runner, AgentRunner):
             raise TypeError("agent_runner must be AgentRunner")
@@ -88,6 +283,42 @@ class AgentLoopGraphRuntimeComposition:
                         "composition_fingerprint": runtime_execution_composition.fingerprint,
                     },
                 )
+
+        if orchestration_feature is not None and not isinstance(
+            orchestration_feature,
+            AgentLoopOrchestrationFeature,
+        ):
+            raise TypeError("orchestration_feature must be AgentLoopOrchestrationFeature")
+        if orchestration_scope not in {"generic", "research_dynamic"}:
+            raise ValueError(
+                "orchestration_scope must be 'generic' or 'research_dynamic'"
+            )
+        if (
+            orchestration_feature is not None
+            and orchestration_feature_enabled
+            and not orchestration_feature.enabled
+        ):
+            raise ValueError(
+                "orchestration_feature_enabled conflicts with a disabled feature"
+            )
+        selected_feature = orchestration_feature or AgentLoopOrchestrationFeature(
+            enabled=orchestration_feature_enabled,
+        )
+        orchestration_binding = build_agent_loop_orchestration_binding(
+            feature_enabled=selected_feature.enabled_for(orchestration_scope),
+            runtime=orchestration_runtime,
+            # A raw callback remains a test compatibility API on the binding
+            # helper, but is intentionally not a production composition path.
+            dispatch=(
+                orchestration_dispatch
+                if not selected_feature.enabled and orchestration_runtime is None
+                else None
+            ),
+        )
+        agent_runner.bind_orchestration(
+            orchestration_port=orchestration_binding.port,
+            orchestration_enabled=orchestration_binding.feature_enabled,
+        )
 
         bundle = build_agent_loop_graph_activity_binding_bundle(
             worker_ref=worker_ref,
@@ -128,6 +359,8 @@ class AgentLoopGraphRuntimeComposition:
         self._bundle = bundle
         self._control_plane = control_plane
         self._runtime_execution_composition = runtime_execution_composition
+        self._orchestration_binding = orchestration_binding
+        self._orchestration_feature = selected_feature
 
     @property
     def binding_bundle(self) -> AgentLoopGraphActivityBindingBundle:
@@ -140,6 +373,18 @@ class AgentLoopGraphRuntimeComposition:
     @property
     def runtime_execution_composition(self) -> RuntimeExecutionComposition | None:
         return self._runtime_execution_composition
+
+    @property
+    def orchestration_binding(self) -> AgentOrchestrationBinding:
+        """Expose the feature/availability state selected by this composition."""
+
+        return self._orchestration_binding
+
+    @property
+    def orchestration_feature(self) -> AgentLoopOrchestrationFeature:
+        """Return the immutable feature decision selected at composition time."""
+
+        return self._orchestration_feature
 
     def run(self, run_spec: HarnessRunSpec) -> HarnessRunResult:
         if not isinstance(run_spec, HarnessRunSpec):
@@ -213,6 +458,11 @@ def build_agent_loop_graph_runtime_composition(
     side_effect_registry: HarnessSideEffectRegistry | None = None,
     side_effect_store: HarnessSideEffectStorePort | None = None,
     runtime_execution_composition: RuntimeExecutionComposition | None = None,
+    orchestration_runtime: HarnessAgentOrchestrationRuntime | None = None,
+    orchestration_dispatch: AgentOrchestrationDispatch | None = None,
+    orchestration_feature_enabled: bool = False,
+    orchestration_feature: AgentLoopOrchestrationFeature | None = None,
+    orchestration_scope: str = "generic",
 ) -> AgentLoopGraphRuntimeComposition:
     """Compose one durable AgentLoop Graph worker and its Harness dispatcher."""
 
@@ -227,11 +477,47 @@ def build_agent_loop_graph_runtime_composition(
         side_effect_registry=side_effect_registry,
         side_effect_store=side_effect_store,
         runtime_execution_composition=runtime_execution_composition,
+        orchestration_runtime=orchestration_runtime,
+        orchestration_dispatch=orchestration_dispatch,
+        orchestration_feature_enabled=orchestration_feature_enabled,
+        orchestration_feature=orchestration_feature,
+        orchestration_scope=orchestration_scope,
+    )
+
+
+def build_agent_loop_orchestration_binding(
+    *,
+    feature_enabled: bool,
+    runtime: HarnessAgentOrchestrationRuntime | None = None,
+    dispatch: AgentOrchestrationDispatch | None = None,
+) -> AgentOrchestrationBinding:
+    """Resolve the only generic AgentLoop-to-Harness delegation boundary.
+
+    Production composition supplies ``runtime``, which owns strict candidate
+    materialization and reuses the durable TaskPlan/group-wave runtime. The
+    optional callback is retained only for isolated compatibility tests.
+    """
+
+    if runtime is not None:
+        if not isinstance(runtime, HarnessAgentOrchestrationRuntime):
+            raise TypeError("runtime must be HarnessAgentOrchestrationRuntime")
+        return AgentOrchestrationBinding(
+            feature_enabled=feature_enabled,
+            port=runtime if feature_enabled else None,
+            availability_reason=None if feature_enabled else "feature_disabled",
+        )
+    return AgentOrchestrationBinding.from_dispatch(
+        feature_enabled=feature_enabled,
+        dispatch=dispatch,
     )
 
 
 __all__ = [
+    "AgentLoopOrchestrationFeature",
     "AgentLoopGraphRuntimeComposition",
+    "build_agent_loop_harness_orchestration_runtime",
+    "build_agent_loop_orchestration_binding",
+    "build_agent_loop_planning_observation_service",
     "build_agent_loop_graph_application_service",
     "build_agent_loop_graph_runtime_composition",
 ]

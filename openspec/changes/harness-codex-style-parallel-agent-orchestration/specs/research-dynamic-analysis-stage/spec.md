@@ -143,3 +143,19 @@ The dynamic workflow variant SHALL use the same production Research composition 
 - **WHEN** production configuration lacks a required dynamic plan builder, wave adapter, worker binding, child supervisor, or durable store capability
 - **THEN** the entrypoint MUST return a stable sanitized unavailable error unless the pinned policy explicitly allows serial fallback
 - **AND** it MUST not execute an unverified compatibility path or publish partial artifacts
+
+### Requirement: Research parity SHALL be field-level contract parity
+
+Dynamic/static parity MUST use fixed golden inputs and explicit field-level assertions for required role completeness, `analysis_branch_refs` structure/ownership/checksum validity, claim-verification evidence and gates, quality verdict, reader/card/artifact contracts and publication boundaries. Allowed differences such as duration, wave id, attempt id and trace timing MUST be enumerated in the fixture; generated LLM text need not match verbatim. Failure fixtures MUST prove the absence of downstream success refs. G4 parity evidence MUST remain distinct from G5 feature enablement and rollout evidence.
+
+#### Scenario: Dynamic and static outputs satisfy the same Research contract
+
+- **WHEN** fixed golden inputs are run through static and opted-in dynamic composition
+- **THEN** every invariant field MUST satisfy the same contract and every ignored difference MUST be listed explicitly
+- **AND** a missing required role, invalid receipt or failed gate MUST prevent downstream success refs and publication
+
+#### Scenario: Dynamic production entrypoint lacks a durable dependency
+
+- **WHEN** the plan builder, wave adapter, binding, supervisor, durable event/transcript store, artifact verifier, tool port or required policy is missing
+- **THEN** production composition MUST return its stable unavailable/deferred/halted diagnostic without constructing a fake fallback
+- **AND** serial fallback MAY occur only where explicitly permitted, with no bypass of evidence, gates or durable dependencies

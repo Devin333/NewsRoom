@@ -630,7 +630,7 @@ def test_graph_only_subagent_invocation_uses_accepted_plan_identity_and_recovery
         context_payload
     )
     assert canonical_payload_checksum(payload) == (
-        "sha256:783f9ba724b62181bc7706fdf9e990828becbd71a8ec893f172c2c76e6b248b8"
+        "sha256:b41fc6685afa3d120dcf457dd6082c6ecdc4fbb6876983aa974ecc903f5d3651"
     )
 
     for invalid_context in (

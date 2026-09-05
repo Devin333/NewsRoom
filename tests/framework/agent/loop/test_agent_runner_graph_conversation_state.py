@@ -84,6 +84,35 @@ def test_agent_runner_passes_execution_environment_to_tool_executor(
     assert captured["execution_environment"] is environment
 
 
+def test_agent_runner_injects_orchestration_port_into_loop(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, Any] = {}
+
+    class _CapturingLoop(_AcceptedLoop):
+        def __init__(self, **kwargs: Any) -> None:
+            captured.update(kwargs)
+
+    monkeypatch.setattr(runner_module, "AgentLoop", _CapturingLoop)
+    port = object()
+    runner = AgentRunner(
+        llm_client=object(),
+        tool_registry=ToolRegistry(),
+        orchestration_port=port,
+        orchestration_enabled=True,
+    )
+    agent = AgentSpec(
+        agent_id="analyst",
+        name="Analyst",
+        instructions="Return a bounded answer.",
+    )
+
+    runner.run(agent, {"query": "inspect"}, standalone=True)
+
+    assert captured["orchestration_port"] is port
+    assert captured["orchestration_enabled"] is True
+
+
 @pytest.fixture
 def graph_runner(
     monkeypatch: pytest.MonkeyPatch,

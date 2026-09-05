@@ -45,6 +45,8 @@ from framework.execution_environment import (
     RuntimeExecutionComposition,
 )
 from framework.harness import ArtifactReferenceVerifierPort, ContextAssembler
+from framework.harness.subagents.supervisor import ChildAgentSupervisor
+from framework.harness.task_plan.parallel import ParallelAgentCoordinator
 from framework.harness.control_plane.durable_events import (
     DurableHarnessTransitionPort,
 )
@@ -493,6 +495,19 @@ def test_valid_settings_compose_full_durable_production_graph(
         dynamic_stage = runtime.dynamic_task_plan_runner_factory(
             workspace=candidate_workspace,
             dependencies=object(),
+        )
+        assert isinstance(
+            dynamic_stage._parallel_coordinator,
+            ParallelAgentCoordinator,
+        )
+        assert isinstance(
+            dynamic_stage._child_agent_supervisor,
+            ChildAgentSupervisor,
+        )
+        assert (
+            dynamic_stage._parallel_coordinator.max_workers
+            == dynamic_stage._child_agent_supervisor.capacity
+            == dynamic_stage._policy.max_parallelism
         )
         configured_verifier = dynamic_stage._runner.result_verifier
         while hasattr(configured_verifier, "_verifier"):

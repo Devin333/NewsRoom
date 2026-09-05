@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import re
 
-from framework.agent.models import AgentAction
+from framework.agent.models import AgentAction, DelegateBatchCandidate
 from framework.agent.skill_call import SkillCall, SkillCallParseError
 
 
@@ -38,6 +38,7 @@ class AgentActionParser:
             "final_output",
             "delegate",
             "delegate_to_subagent",
+            "delegate_batch",
             "ask_clarification",
             "think",
         }:
@@ -68,6 +69,18 @@ class AgentActionParser:
                 subagent_task=subagent_task,
                 handoff_reason=handoff_reason,
             )
+
+        if action_type == "delegate_batch":
+            candidate_payload = {
+                key: value
+                for key, value in payload.items()
+                if key != "action_type"
+            }
+            try:
+                candidate = DelegateBatchCandidate.from_dict(candidate_payload)
+            except (TypeError, ValueError) as exc:
+                raise AgentActionParserError(str(exc)) from exc
+            return AgentAction(action_type="delegate_batch", delegate_batch=candidate)
 
         if action_type in {"ask_clarification", "think"}:
             content = payload.get("content")

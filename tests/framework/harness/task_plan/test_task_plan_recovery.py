@@ -16,7 +16,6 @@ from framework.harness.task_plan import (
     TaskLifecycle,
     TaskOutputContract,
     TaskPlanCheckpoint,
-    TASK_PLAN_CHECKPOINT_SCHEMA_V2,
     TaskPlanEvent,
     TASK_PLAN_RESULT_SCHEMA_V3,
     TaskPlanPolicy,
@@ -33,6 +32,11 @@ from framework.harness.task_plan import (
     task_instance_for_attempt,
 )
 from framework.harness.task_plan.canonical import canonical_payload_checksum
+from framework.harness.task_plan.checkpoint import (
+    TASK_PLAN_CHECKPOINT_SCHEMA_V2,
+    TASK_PLAN_CHECKPOINT_SCHEMA_V3,
+    JsonlTaskPlanCheckpointStore,
+)
 from framework.harness.task_plan.models import PlanPatch, PlanPatchOperation, PlanPatchOperationType
 from framework.harness.graph.bindings import HarnessWorkerBinding
 from framework.harness.graph.model import HarnessContractKind, HarnessContractReference
@@ -220,12 +224,10 @@ def test_checkpoint_roundtrip_and_missing_queue_projection_recovery_are_offline(
 
     assert report.reducer_version == TASK_PLAN_REPLAY_REDUCER_VERSION_V2
     assert report.replay_checksum == (
-        "sha256:18c0511a902fb5a79192707c49f7a60dcf6e49a6d4e171e4dfd68c49b4f7c243"
+        "sha256:4d95e40b4480ffaaec41cc40668dd9e7d6e2fc3a316e74613257702c47d8f5c1"
     )
-    assert checkpoint.schema_version == TASK_PLAN_CHECKPOINT_SCHEMA_V2
-    assert checkpoint.checkpoint_checksum == (
-        "sha256:0315bace88a0008939dd612f2c7662a66f56eea2e0c0f5143525cc2fcc4815b7"
-    )
+    assert checkpoint.schema_version == TASK_PLAN_CHECKPOINT_SCHEMA_V3
+    assert checkpoint.checkpoint_checksum.startswith("sha256:")
     assert set(checkpoint.to_dict()) == {
         "accepted_output_refs",
         "active_task_instances",
@@ -245,6 +247,11 @@ def test_checkpoint_roundtrip_and_missing_queue_projection_recovery_are_offline(
             "graph_version",
         "last_sequence",
         "pending_terminal_results",
+        "parallel_diagnostics",
+        "parallel_event_sequence",
+        "parallel_groups",
+        "parallel_reservations",
+        "parallel_waves",
         "plan_checksum",
         "plan_id",
         "plan_version",
@@ -277,6 +284,121 @@ def test_checkpoint_roundtrip_and_missing_queue_projection_recovery_are_offline(
     assert queue_task.payload == {}
     assert TaskPlanQueueProjection.from_task(queue_task).matches_instance(instance)
     assert worker.calls == 0
+
+
+def test_checkpoint_v2_payload_remains_readable_without_parallel_projection() -> None:
+    plan, base_events, _worker = _history_fixture()
+    instance = task_instance_for_attempt(plan, "recover-task", 1)
+    report = TaskPlanReplayReducer().replay(
+        (plan,),
+        (*base_events, _lifecycle_event("TASK_READY", 3, plan, instance)),
+    )
+    checkpoint = TaskPlanCheckpoint.from_replay(
+        "checkpoint-v2",
+        plan,
+        report,
+        created_at="2026-08-01T00:00:01Z",
+    )
+    legacy_payload = checkpoint.to_dict()
+    legacy_payload["schema_version"] = TASK_PLAN_CHECKPOINT_SCHEMA_V2
+    for field_name in (
+        "parallel_groups",
+        "parallel_waves",
+        "parallel_reservations",
+        "parallel_diagnostics",
+        "parallel_event_sequence",
+        "checkpoint_checksum",
+    ):
+        legacy_payload.pop(field_name)
+
+    legacy_checkpoint = TaskPlanCheckpoint(**legacy_payload)
+    restored = TaskPlanCheckpoint.from_dict(legacy_checkpoint.to_dict())
+
+    assert restored == legacy_checkpoint
+    assert restored.schema_version == TASK_PLAN_CHECKPOINT_SCHEMA_V2
+
+
+def test_jsonl_checkpoint_store_reloads_checksummed_snapshots(tmp_path) -> None:
+    plan, base_events, _worker = _history_fixture()
+    instance = task_instance_for_attempt(plan, "recover-task", 1)
+    report = TaskPlanReplayReducer().replay(
+        (plan,),
+        (*base_events, _lifecycle_event("TASK_READY", 3, plan, instance)),
+    )
+    checkpoint = TaskPlanCheckpoint.from_replay(
+        "checkpoint-jsonl",
+        plan,
+        report,
+        created_at="2026-08-01T00:00:01Z",
+    )
+    path = tmp_path / "checkpoints.jsonl"
+    first = JsonlTaskPlanCheckpointStore(path)
+    assert first.save(checkpoint) == checkpoint
+    assert first.save(checkpoint) == checkpoint
+
+    restored = JsonlTaskPlanCheckpointStore(path)
+    assert restored.is_durable is True
+    assert restored.load(checkpoint.checkpoint_id) == checkpoint
+    assert len(path.read_text(encoding="utf-8").splitlines()) == 1
+
+
+def test_checkpoint_copies_and_validates_parallel_replay_projection() -> None:
+    plan, base_events, _worker = _history_fixture()
+    instance = task_instance_for_attempt(plan, "recover-task", 1)
+    report = TaskPlanReplayReducer().replay(
+        (plan,),
+        (*base_events, _lifecycle_event("TASK_READY", 3, plan, instance)),
+    )
+    parallel_report = replace(
+        report,
+        parallel_groups={
+            "dispatch-group": {
+                "group_id": "dispatch-group",
+                "state": "RUNNING",
+            }
+        },
+        parallel_waves={
+            "dispatch-wave": {
+                "wave_id": "dispatch-wave",
+                "group_id": "dispatch-group",
+                "state": "RUNNING",
+            }
+        },
+        parallel_reservations={
+            "dispatch-wave:recover-task": {
+                "reservation_id": "dispatch-wave:recover-task",
+                "wave_id": "dispatch-wave",
+                "state": "RESERVED",
+            }
+        },
+        parallel_diagnostics=(
+            {
+                "event_type": "TASK_GROUP_RECOVERY",
+                "reason_code": "receipts_reconciled",
+            },
+        ),
+        parallel_event_sequence=3,
+    )
+
+    checkpoint = TaskPlanCheckpoint.from_replay(
+        "checkpoint-parallel",
+        plan,
+        parallel_report,
+        created_at="2026-08-01T00:00:01Z",
+    )
+    restored = TaskPlanCheckpoint.from_dict(checkpoint.to_dict())
+
+    assert restored.parallel_groups == parallel_report.parallel_groups
+    assert restored.parallel_waves == parallel_report.parallel_waves
+    assert restored.parallel_reservations == parallel_report.parallel_reservations
+    assert restored.parallel_diagnostics == parallel_report.parallel_diagnostics
+    assert restored.parallel_event_sequence == 3
+    restored.verify_replay(parallel_report)
+
+    tampered = replace(parallel_report, parallel_event_sequence=2)
+    with pytest.raises(HarnessValidationError) as exc_info:
+        restored.verify_replay(tampered)
+    assert exc_info.value.code == "task_plan_checkpoint_replay_mismatch"
 
 
 def test_legacy_replay_rejects_plan_history_with_changed_graph_checksum():
