@@ -11,6 +11,7 @@ from dataclasses import dataclass, field, replace
 from enum import StrEnum
 import json
 from threading import Event, Lock, RLock
+from types import MappingProxyType
 from time import monotonic, sleep
 from typing import Any, Callable, Mapping, Protocol, runtime_checkable
 
@@ -48,6 +49,7 @@ from framework.harness.task_plan.parallel_lifecycle import (
     _GROUP_TRANSITIONS,
     _WAVE_TRANSITIONS,
 )
+from framework.harness.task_plan.capacity import CapacityPool, TaskCapacityDemand, pack_first_fit
 from framework.harness.task_plan.store import TaskResultRecord
 from framework.shared.graph_identity import GraphExecutionIdentity
 
@@ -107,6 +109,7 @@ class TaskReservation:
     idempotency_key: str
     budget: Mapping[str, int]
     state: ReservationState | str = ReservationState.RESERVED
+    capacity_allocations: Mapping[str, int] = field(default_factory=dict)
     schema_version: str = TASK_RESERVATION_SCHEMA
     reservation_checksum: str = field(init=False)
 
@@ -121,6 +124,7 @@ class TaskReservation:
                 raise HarnessValidationError("reservation budget must be non-negative", code="PLAN_SCHEMA_INVALID")
             normalized[str(key)] = value
         object.__setattr__(self, "budget", frozen_mapping(normalized, "reservation.budget"))
+        object.__setattr__(self, "capacity_allocations", frozen_mapping(dict(self.capacity_allocations), "reservation.capacity_allocations"))
         object.__setattr__(self, "state", ReservationState(self.state))
         if self.schema_version != TASK_RESERVATION_SCHEMA:
             raise HarnessValidationError("unsupported reservation schema", code="PLAN_SCHEMA_INVALID")
@@ -128,6 +132,8 @@ class TaskReservation:
 
     def to_dict(self, *, include_checksum: bool = True) -> dict[str, Any]:
         value = {"schema_version": self.schema_version, "task_id": self.task_id, "idempotency_key": self.idempotency_key, "budget": thaw_mapping(self.budget), "state": self.state.value}
+        if self.capacity_allocations:
+            value["capacity_allocations"] = thaw_mapping(self.capacity_allocations)
         if include_checksum:
             value["reservation_checksum"] = self.reservation_checksum
         return value
@@ -142,6 +148,7 @@ class TaskReservation:
             }),
             model=cls.__name__,
         )
+        payload.setdefault("capacity_allocations", {})
         supplied_checksum = checksum(payload.pop("reservation_checksum"), "reservation_checksum")
         try:
             reservation = cls(**payload)
@@ -339,6 +346,7 @@ class DispatchWave:
                         "task_id": item.task_id,
                         "idempotency_key": item.idempotency_key,
                         "budget": thaw_mapping(item.budget),
+                        **({"capacity_allocations": thaw_mapping(item.capacity_allocations)} if item.capacity_allocations else {}),
                     }
                     for item in self.reservations
                 ],
@@ -442,6 +450,8 @@ class ParallelDispatchRequest:
     max_join_wait_seconds: float = 300.0
     parent_graph_identity: GraphExecutionIdentity | None = None
     schema_version: str = PARALLEL_DISPATCH_REQUEST_SCHEMA
+    capacity_pools: tuple[CapacityPool, ...] = ()
+    task_capacity_demands: Mapping[str, TaskCapacityDemand] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if not isinstance(self.plan, ValidatedTaskPlan):
@@ -457,6 +467,14 @@ class ParallelDispatchRequest:
         if not isinstance(self.serial_fallback, bool):
             raise HarnessValidationError("serial_fallback must be boolean", code="PLAN_SCHEMA_INVALID")
         object.__setattr__(self, "task_instances", instances)
+        pools = tuple(self.capacity_pools)
+        if any(not isinstance(pool, CapacityPool) for pool in pools) or len({pool.pool_id for pool in pools}) != len(pools):
+            raise HarnessValidationError("capacity pools must be unique CapacityPool values", code="CAPACITY_POLICY_INVALID")
+        object.__setattr__(self, "capacity_pools", pools)
+        demands = dict(self.task_capacity_demands)
+        if any(not isinstance(value, TaskCapacityDemand) or key != value.task_id for key, value in demands.items()):
+            raise HarnessValidationError("task capacity demands must be keyed by task id", code="CAPACITY_DEMAND_INVALID")
+        object.__setattr__(self, "task_capacity_demands", MappingProxyType(demands))
         object.__setattr__(self, "join_policy", JoinPolicy(self.join_policy))
         object.__setattr__(self, "side_effect_class", SideEffectClass(self.side_effect_class))
         if self.group_task_ids is not None:
@@ -1186,7 +1204,9 @@ class ParallelAgentCoordinator:
             if session.degraded_reason is not None:
                 self._emit("DEGRADED_SERIAL", event_sink=event_sink, group_id=group.group_id, reason_code=session.degraded_reason)
 
-        for offset in range(0, len(pending), effective):
+        pending_work = list(pending)
+        pool_state = {pool.pool_id: pool for pool in request.capacity_pools}
+        while pending_work:
             with self._lock:
                 if not _GROUP_TRANSITIONS[session.group.state] or session.group.state in {
                     DispatchGroupState.JOINING, DispatchGroupState.REPLAN_PENDING,
@@ -1202,14 +1222,32 @@ class ParallelAgentCoordinator:
                         idempotency_key=group.group_id,
                     )
                     break
-                batch = pending[offset : offset + effective]
+                if pool_state:
+                    packing = pack_first_fit(
+                        [item.task_id for item in pending_work],
+                        request.task_capacity_demands,
+                        pool_state,
+                        max_tasks=effective,
+                    )
+                    if not packing.selected:
+                        session.terminal_diagnostics = ("CAPACITY_NOT_AVAILABLE",)
+                        break
+                    selected_ids = set(packing.selected)
+                    batch = tuple(item for item in pending_work if item.task_id in selected_ids)
+                    reservation_allocations = {item.task_id: dict(item.allocations) for item in packing.reservations}
+                    for reservation in packing.reservations:
+                        for pool_id, quantity in reservation.allocations.items():
+                            pool_state[pool_id] = replace(pool_state[pool_id], reserved=pool_state[pool_id].reserved + quantity)
+                else:
+                    batch = tuple(pending_work[:effective])
+                    reservation_allocations = {item.task_id: {} for item in batch}
                 wave = DispatchWave(
                     group.group_id,
                     session.next_wave_ordinal,
                     tuple(item.task_id for item in batch),
                     effective,
                     tuple(
-                        TaskReservation(item.task_id, item.idempotency_key, item.budget_snapshot.to_dict())
+                        TaskReservation(item.task_id, item.idempotency_key, item.budget_snapshot.to_dict(), capacity_allocations=reservation_allocations[item.task_id])
                         for item in batch
                     ),
                     DispatchWaveState.ADMITTED,
@@ -1245,6 +1283,7 @@ class ParallelAgentCoordinator:
                 # The embedded reservations and every spawn intent are one
                 # durable commit. No local admission or child precedes it.
                 self._emit_batch((admission, *intents), event_sink=event_sink)
+                pending_work = [item for item in pending_work if item.task_id not in {entry.task_id for entry in batch}]
                 session.next_wave_ordinal += 1
                 session.reserved.update(wave.task_ids)
                 session.waves.append(wave)
@@ -1307,6 +1346,7 @@ class ParallelAgentCoordinator:
                             item.idempotency_key,
                             item.budget,
                             reservation_states[item.task_id],
+                            item.capacity_allocations,
                         )
                         for item in wave.reservations
                     ),
@@ -1334,6 +1374,11 @@ class ParallelAgentCoordinator:
                     terminal_outcome=terminal_wave.terminal_outcome.value,
                     run_duration_ms=_elapsed_ms(dispatched_at),
                 )
+                for reservation in wave.reservations:
+                    for pool_id, quantity in reservation.capacity_allocations.items():
+                        pool = pool_state.get(pool_id)
+                        if pool is not None:
+                            pool_state[pool_id] = replace(pool, reserved=max(0, pool.reserved - quantity))
                 if request.join_policy is JoinPolicy.FAIL_FAST and any(
                     item.status is TaskLifecycle.FAILED for item in outcome.results
                 ):

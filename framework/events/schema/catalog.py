@@ -1235,8 +1235,9 @@ def _parallel_task_plan_details_schema(event_type: str) -> dict[str, Any]:
     reservation = object_schema({
         "schema_version": {"const": "agora.harness-task-reservation/v1"},
         "task_id": _TEXT, "idempotency_key": _TEXT, "budget": budget,
+        "capacity_allocations": budget,
         "state": reservation_state, "reservation_checksum": _CHECKSUM_TEXT,
-    })
+    }, required=["schema_version", "task_id", "idempotency_key", "budget", "state", "reservation_checksum"])
     group = object_schema({
         "schema_version": {"const": "agora.harness-dispatch-group/v1"},
         "group_id": _TEXT, "group_checksum": _CHECKSUM_TEXT,

@@ -166,6 +166,13 @@ from framework.harness.task_plan.parallel import (
     SerialTaskExecutorPort,
     DispatchWaveTerminalOutcome,
 )
+from framework.harness.task_plan.capacity import (
+    CapacityPool,
+    FirstFitPacking,
+    PoolReservation,
+    TaskCapacityDemand,
+    pack_first_fit,
+)
 from framework.harness.task_plan.observability import (
     TaskPlanMetricSample,
     TaskPlanTraceEvent,
@@ -312,6 +319,11 @@ __all__ = [
     "SerialTaskExecutorAdapter",
     "SerialTaskExecutorPort",
     "DispatchWaveTerminalOutcome",
+    "CapacityPool",
+    "TaskCapacityDemand",
+    "PoolReservation",
+    "FirstFitPacking",
+    "pack_first_fit",
     "TaskPlanMetricSample",
     "TaskPlanTraceEvent",
     "task_plan_metric_samples",

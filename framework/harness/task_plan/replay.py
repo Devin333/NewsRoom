@@ -1365,6 +1365,7 @@ def _normalize_parallel_wave(
                     "task_id": item["task_id"],
                     "idempotency_key": item["idempotency_key"],
                     "budget": item["budget"],
+                    **({"capacity_allocations": item["capacity_allocations"]} if "capacity_allocations" in item else {}),
                 }
                 for item in value["reservations"]
             ],
@@ -1465,9 +1466,10 @@ def _normalize_parallel_reservation(
         _parallel_error("parallel reservation is invalid", event)
     value = thaw_mapping(frozen_mapping(raw, "parallel_reservation"))
     required = {"schema_version", "task_id", "idempotency_key", "budget", "state", "reservation_checksum"}
+    allowed = required | {"capacity_allocations"}
     if (
         not required.issubset(value)
-        or set(value) - required
+        or set(value) - allowed
         or value.get("schema_version") != "agora.harness-task-reservation/v1"
     ):
         _parallel_error("parallel reservation has unexpected fields", event)
@@ -1476,14 +1478,17 @@ def _normalize_parallel_reservation(
         _parallel_error("parallel reservation does not match its wave", event)
     if not isinstance(value.get("idempotency_key"), str) or not value["idempotency_key"].strip() or not isinstance(value.get("budget"), Mapping):
         _parallel_error("parallel reservation payload is invalid", event)
+    if "capacity_allocations" in value and not isinstance(value["capacity_allocations"], Mapping):
+        _parallel_error("parallel capacity allocation payload is invalid", event)
     if "reservation_checksum" in value:
-        expected_checksum = canonical_payload_checksum(
-            {
+        checksum_payload = {
                 field_name: value[field_name]
                 for field_name in ("schema_version", "task_id", "idempotency_key", "budget", "state")
                 if field_name in value
             }
-        )
+        if "capacity_allocations" in value:
+            checksum_payload["capacity_allocations"] = value["capacity_allocations"]
+        expected_checksum = canonical_payload_checksum(checksum_payload)
         if value["reservation_checksum"] != expected_checksum:
             _parallel_error("parallel reservation checksum does not match its snapshot", event)
     return {
