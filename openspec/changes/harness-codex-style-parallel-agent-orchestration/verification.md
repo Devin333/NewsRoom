@@ -141,10 +141,10 @@ current checklist is 12/46, superseding the earlier historical counts above.
   admission append fails, so a retry cannot be suppressed by a ghost group.
 - Coordinator recovery now validates and reuses a terminal `TaskResultRecord`
   held by the controlled child adapter after a parent-side append interruption;
-  mismatched result identity is rejected before the child is closed. Durable
-  cross-process child-result lookup remains a separate acceptance item because
-  the supervisor terminal event currently persists only the result reference
-  and checksum, not the complete parent result envelope.
+  mismatched result identity is rejected before the child is closed. The
+  supervisor terminal event also persists a checksum-bound result envelope, so
+  a fresh supervisor/coordinator can recover the typed task result without
+  invoking a live worker; resolver-backed results must match the same checksum.
 - When a verified parent result is already recovered, a confirmed terminal child
   receipt (including a child-side FAILED/CANCELLED state) no longer blocks the
   group join; the child is closed and the verified parent result remains the
@@ -167,16 +167,17 @@ Increment checks before final commit:
 
 - Spawn recovery audit suite: 33 passed, including a fresh coordinator/process
   restart that re-reads child status and reuses durable receipts.
-- Broader TaskPlan/AgentLoop/supervisor regression: 291 passed; focused spawn
+- Broader TaskPlan/AgentLoop/supervisor regression: 294 passed; focused spawn
   and receipt recovery regression: 61 passed.
-- Final required repository smoke: passed (`2637 passed, 23 deselected`, plus
+- Final required repository smoke: passed (`2640 passed, 23 deselected`, plus
   smoke AgentLoop artifact and source validation).
 - Strict OpenSpec validation: passed.
 
-Remaining 2.5/2.13 work includes end-to-end terminal child-result recovery,
-auditing the older wait/close recovery path, durable supervisor restoration,
-and ledger/admission conflict recovery. This increment proves admission and
-dispatch repair, not successful whole-stage completion after every crash.
+Remaining 2.5/2.13 work includes auditing the older wait/close recovery path,
+durable supervisor restoration beyond terminal result envelopes, and
+ledger/admission conflict recovery. This increment proves admission, dispatch,
+and terminal child-result repair, not successful whole-stage completion after
+every crash.
 G1-G5, rollout, and production readiness remain unproven.
 
 ### Broader Acceptance

@@ -709,6 +709,62 @@ def test_recovery_reuses_terminal_worker_result_after_parent_append_crash() -> N
         supervisor.shutdown()
 
 
+def test_fresh_coordinator_recovers_embedded_terminal_task_result() -> None:
+    plan = _accepted_parallel_plan(("task-1",))
+    request = _request(plan)
+    supervisor = ChildAgentSupervisor(max_children=1)
+    coordinator = ParallelAgentCoordinator(max_workers=1, child_supervisor=supervisor)
+    failed_once = True
+
+    def sink(event):
+        nonlocal failed_once
+        if event["event_type"] == "TASK_WAVE_DISPATCHED" and failed_once:
+            failed_once = False
+            raise RuntimeError("parent append interrupted")
+
+    try:
+        with pytest.raises(RuntimeError, match="parent append interrupted"):
+            coordinator.dispatch(
+                request,
+                lambda instance: _result(plan, instance),
+                event_sink=ParallelEventSink(sink, lambda _batch: None),
+            )
+        session = next(iter(coordinator._sessions.values()))
+        handle, _worker = next(iter(session.active_children.values()))
+        supervisor.wait(handle.child_id, operation_id=handle.operation_id, timeout_seconds=1)
+        durable_child_events = list(supervisor.events.events)
+
+        restored_supervisor = ChildAgentSupervisor(
+            max_children=1,
+            events=type(supervisor.events)(durable_child_events),
+        )
+        restored_handles = restored_supervisor.recover()
+        restored_coordinator = ParallelAgentCoordinator(
+            max_workers=1,
+            child_supervisor=restored_supervisor,
+        )
+        restored_coordinator.create_group(
+            request,
+            event_sink=lambda _event: None,
+            check_capacity=False,
+        )
+        restored_session = next(iter(restored_coordinator._sessions.values()))
+        restored_session.active_children["task-1"] = (restored_handles[0], None)
+
+        recovered = restored_coordinator.recover(request, (), event_sink=lambda _event: None)
+
+        assert recovered.group.state is DispatchGroupState.RUNNING
+        assert [item.task_id for item in recovered.results] == ["task-1"]
+        assert recovered.results[0].result_checksum == _result(
+            plan, request.task_instances[0]
+        ).result_checksum
+        assert restored_session.active_children == {}
+    finally:
+        supervisor.shutdown()
+        if "restored_supervisor" in locals():
+            restored_supervisor.shutdown()
+
+
 def test_parallel_contracts_round_trip_and_validate_derived_identity() -> None:
     plan = _accepted_parallel_plan(("task-1",))
     request = _request(plan)

@@ -1079,18 +1079,45 @@ class ChildAgentSupervisor:
                                 ),
                             )
                             recovered_result = None
+                            embedded_result = terminal_event.get("result")
+                            metadata_result = metadata.get("result")
+                            if embedded_result is not None and not isinstance(embedded_result, Mapping):
+                                raise ValueError("terminal event result must be an object")
+                            if metadata_result is not None and not isinstance(metadata_result, Mapping):
+                                raise ValueError("terminal metadata result must be an object")
+                            if (
+                                isinstance(embedded_result, Mapping)
+                                and isinstance(metadata_result, Mapping)
+                                and dict(embedded_result) != dict(metadata_result)
+                            ):
+                                raise ValueError("terminal event result conflicts with metadata result")
+                            durable_result = (
+                                embedded_result
+                                if isinstance(embedded_result, Mapping)
+                                else metadata_result
+                            )
+                            if isinstance(durable_result, Mapping):
+                                checksum = "sha256:" + hashlib.sha256(
+                                    stable_json_dumps(durable_result).encode("utf-8")
+                                ).hexdigest()
+                                if checksum != receipt.result_checksum:
+                                    raise ValueError("embedded result checksum does not match receipt")
+                                recovered_result = dict(durable_result)
                             if receipt.result_ref and self._result_resolver is not None:
                                 try:
-                                    recovered_result = self._result_resolver(receipt.result_ref)
+                                    resolved_result = self._result_resolver(receipt.result_ref)
                                 except Exception:
-                                    recovered_result = None
-                                if recovered_result is None:
+                                    resolved_result = None
+                                if resolved_result is None:
                                     raise ValueError("terminal result reference could not be resolved")
                                 checksum = "sha256:" + hashlib.sha256(
-                                    stable_json_dumps(recovered_result).encode("utf-8")
+                                    stable_json_dumps(resolved_result).encode("utf-8")
                                 ).hexdigest()
                                 if checksum != receipt.result_checksum:
                                     raise ValueError("recovered result checksum does not match receipt")
+                                if recovered_result is not None and recovered_result != dict(resolved_result):
+                                    raise ValueError("resolved result conflicts with embedded result")
+                                recovered_result = dict(resolved_result)
                             operation = ChildAgentOperationResult(
                                 handle.operation_id,
                                 child_id,
@@ -1287,6 +1314,7 @@ class ChildAgentSupervisor:
                 "terminal_receipt": receipt.to_dict(),
                 "result_ref": result_ref,
                 "result_checksum": result_checksum,
+                "result": dict(result) if result is not None else None,
             },
         )
         self._replace(handle)

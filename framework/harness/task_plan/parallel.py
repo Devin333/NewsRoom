@@ -749,9 +749,14 @@ class _SupervisorTaskWorker:
             raise HarnessValidationError("worker result task identity mismatch", code="RESULT_IDENTITY_MISMATCH")
         with self._lock:
             self.result = result
-        # The supervisor stores only a security-validated mapping.  The typed
-        # TaskResultRecord remains on this adapter and is joined by the Harness.
-        return {"task_result_checksum": result.result_checksum}
+        # Persist the complete typed result envelope in the supervisor's
+        # terminal receipt metadata as well as keeping the typed value on the
+        # adapter.  A fresh coordinator can therefore recover the result
+        # without invoking the worker again after a parent-side crash.
+        return {
+            "task_result": result.to_dict(),
+            "task_result_checksum": result.result_checksum,
+        }
 
     def cancel(self, _handle: ChildAgentHandle) -> bool:
         self._cancel_requested.set()
@@ -1132,7 +1137,32 @@ class ParallelAgentCoordinator:
                 with self._lock:
                     self._sessions[group.group_id].active_children.pop(task_id, None)
                 continue
-            worker_result = worker.result
+            worker_result = worker.result if worker is not None else None
+            if worker_result is None and isinstance(operation.result, Mapping):
+                raw_task_result = operation.result.get("task_result")
+                raw_checksum = operation.result.get("task_result_checksum")
+                if raw_task_result is not None and not isinstance(raw_task_result, Mapping):
+                    raise HarnessValidationError(
+                        "terminal child task result must be an object",
+                        code="TASK_GROUP_RECOVERY_RESULT_CONFLICT",
+                        details={"task_id": task_id, "child_id": handle.child_id},
+                    )
+                if isinstance(raw_task_result, Mapping):
+                    try:
+                        recovered_result = TaskResultRecord.from_dict(raw_task_result)
+                    except (TypeError, ValueError, HarnessValidationError) as exc:
+                        raise HarnessValidationError(
+                            "terminal child task result is not verifiable",
+                            code="TASK_GROUP_RECOVERY_RESULT_CONFLICT",
+                            details={"task_id": task_id, "child_id": handle.child_id},
+                        ) from exc
+                    if raw_checksum != recovered_result.result_checksum:
+                        raise HarnessValidationError(
+                            "terminal child task result checksum conflicts with envelope",
+                            code="TASK_GROUP_RECOVERY_RESULT_CONFLICT",
+                            details={"task_id": task_id, "child_id": handle.child_id},
+                        )
+                    worker_result = recovered_result
             if worker_result is not None:
                 if (
                     not isinstance(worker_result, TaskResultRecord)

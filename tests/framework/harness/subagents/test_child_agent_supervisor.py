@@ -191,6 +191,41 @@ def test_recovery_reuses_terminal_receipt_and_result() -> None:
     assert result.result == {"candidate": "ok"}
 
 
+def test_recovery_reuses_embedded_terminal_result_without_resolver() -> None:
+    events: list[dict[str, object]] = []
+    supervisor = ChildAgentSupervisor(event_sink=events.append)
+    handle = supervisor.spawn(_request())
+    committed = supervisor.complete(
+        handle.child_id,
+        operation_id=handle.operation_id,
+        output={"candidate": "ok"},
+    )
+
+    restored = ChildAgentSupervisor(events=type(supervisor.events)(events))
+    restored.recover()
+    result = restored.wait(handle.child_id, operation_id=handle.operation_id)
+
+    assert result.receipt == committed.receipt
+    assert result.result == {"candidate": "ok"}
+
+
+def test_recovery_rejects_tampered_embedded_terminal_result() -> None:
+    events: list[dict[str, object]] = []
+    supervisor = ChildAgentSupervisor(event_sink=events.append)
+    handle = supervisor.spawn(_request())
+    supervisor.complete(handle.child_id, operation_id=handle.operation_id, output={"candidate": "ok"})
+    terminal = next(item for item in events if item["event_type"] == "child_terminal")
+    metadata = dict(terminal["metadata"])
+    metadata["result"] = {"candidate": "tampered"}
+    terminal["metadata"] = metadata
+
+    restored = ChildAgentSupervisor(events=type(supervisor.events)(events))
+    recovered = restored.recover()
+
+    assert recovered[0].state is ChildAgentState.LOST
+    assert restored.status(handle.child_id).terminal_receipt_ref is None
+
+
 def test_recovery_treats_corrupt_terminal_receipt_as_lost_and_occupies_capacity() -> None:
     events: list[dict[str, object]] = []
     supervisor = ChildAgentSupervisor(event_sink=events.append)
