@@ -11,7 +11,7 @@ from framework.harness.control_plane.errors import HarnessValidationError
 from framework.harness.graph.activity import HarnessWorkerType
 from framework.harness.graph.bindings import HarnessWorkerBinding
 from framework.harness.graph.model import HarnessContractKind, HarnessContractReference
-from framework.harness.subagents.supervisor import ChildAgentSupervisor
+from framework.harness.subagents.supervisor import ChildAgentSupervisor, ChildAgentSupervisorError
 from framework.harness.task_plan import (
     PlanBuildBudget,
     PlanCandidate,
@@ -463,16 +463,22 @@ def test_reconcile_spawn_intents_reuses_confirmed_children_without_spawn() -> No
             # Model a lost receipt projection while retaining the supervisor's
             # authoritative child handles and the admitted wave.
             session.spawn_receipts.clear()
+            admitted_wave = session.waves[0]
 
         def must_not_spawn(*_args, **_kwargs):
             raise AssertionError("recovery must not invoke spawn_batch")
 
         supervisor.spawn_batch = must_not_spawn
         recovery_events: list[dict[str, object]] = []
-        recovered = coordinator.reconcile_spawn_intents(
+        restarted = ParallelAgentCoordinator(
+            max_workers=2,
+            child_supervisor=supervisor,
+        )
+        recovered = restarted.reconcile_spawn_intents(
             request,
             intents,
             invoke,
+            admitted_waves=(admitted_wave,),
             event_sink=recovery_events.append,
         )
 
@@ -483,6 +489,71 @@ def test_reconcile_spawn_intents_reuses_confirmed_children_without_spawn() -> No
             for event in recovery_events
             if event["event_type"] == "TASK_ATTEMPT_SPAWN_CONFIRMED"
         } == {"SPAWN_CONFIRMED"}
+    finally:
+        supervisor.shutdown()
+
+
+def test_reconcile_spawn_intents_fails_closed_when_supervisor_status_is_unknown() -> None:
+    plan = _accepted_parallel_plan(("task-1",))
+    request = _request(plan)
+    durable_events: list[dict[str, object]] = []
+    supervisor = ChildAgentSupervisor(max_children=2)
+    coordinator = ParallelAgentCoordinator(
+        max_workers=2,
+        child_supervisor=supervisor,
+        event_sink=ParallelEventSink(
+            durable_events.append,
+            lambda batch: durable_events.extend(dict(item) for item in batch),
+        ),
+    )
+
+    def fail_after_receipt(event):
+        durable_events.append(dict(event))
+        if event["event_type"] == "TASK_ATTEMPT_SPAWN_CONFIRMED":
+            raise RuntimeError("simulated crash after spawn receipt")
+
+    coordinator.event_sink = ParallelEventSink(
+        fail_after_receipt,
+        lambda batch: durable_events.extend(dict(item) for item in batch),
+    )
+
+    try:
+        with pytest.raises(RuntimeError, match="after spawn receipt"):
+            coordinator.dispatch(request, lambda instance: _result(plan, instance))
+        intent = next(item for item in durable_events if item["event_type"] == "TASK_ATTEMPT_SPAWN_INTENT")
+        session = coordinator._sessions[intent["group_id"]]
+        admitted_wave = session.waves[0]
+        handle = supervisor.status(f"parallel-{intent['task_instance_id']}", operation_id=intent["operation_key"])
+        operation = supervisor.cancel(handle.child_id, operation_id=handle.operation_id, reason="test_reconcile_unknown")
+        assert operation.receipt is not None and operation.receipt.termination_confirmed
+        supervisor.close(handle.child_id, operation_id=handle.operation_id)
+        def unknown_status(*_args, **_kwargs):
+            raise ChildAgentSupervisorError("supervisor receipt unavailable", code="operation_not_found")
+        supervisor.status = unknown_status
+
+        recovery_events: list[dict[str, object]] = []
+        restarted = ParallelAgentCoordinator(max_workers=2, child_supervisor=supervisor)
+        first = restarted.reconcile_spawn_intents(
+            request,
+            (intent,),
+            lambda instance: _result(plan, instance),
+            admitted_waves=(admitted_wave,),
+            event_sink=recovery_events.append,
+        )
+        assert first.group.state is DispatchGroupState.ADMITTED
+        assert not any(event["event_type"] == "TASK_WAVE_DISPATCHED" for event in recovery_events)
+        unknown_count = sum(event["event_type"] == "TASK_ATTEMPT_SPAWN_UNKNOWN" for event in recovery_events)
+        assert unknown_count == 1
+
+        second = restarted.reconcile_spawn_intents(
+            request,
+            (intent,),
+            lambda instance: _result(plan, instance),
+            admitted_waves=(admitted_wave,),
+            event_sink=recovery_events.append,
+        )
+        assert second.dispatch_checksum == first.dispatch_checksum
+        assert sum(event["event_type"] == "TASK_ATTEMPT_SPAWN_UNKNOWN" for event in recovery_events) == unknown_count
     finally:
         supervisor.shutdown()
 

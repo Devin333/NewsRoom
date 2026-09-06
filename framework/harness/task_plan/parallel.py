@@ -1146,6 +1146,7 @@ class ParallelAgentCoordinator:
         intents: tuple[Mapping[str, Any], ...],
         invoke: Callable[[TaskInstance], TaskResultRecord],
         *,
+        admitted_waves: tuple[DispatchWave, ...] = (),
         event_sink: Callable[[Mapping[str, Any]], Any] | None = None,
     ) -> ParallelDispatchResult:
         """Reconcile durable spawn intents using supervisor status only.
@@ -1163,6 +1164,26 @@ class ParallelAgentCoordinator:
         group = self.create_group(request, event_sink=event_sink, check_capacity=False)
         with self._lock:
             session = self._sessions[group.group_id]
+            if admitted_waves:
+                for wave in admitted_waves:
+                    if not isinstance(wave, DispatchWave) or wave.group_id != group.group_id:
+                        raise HarnessValidationError(
+                            "recovery wave does not match dispatch group",
+                            code="TASK_GROUP_RECOVERY_WAVE_INVALID",
+                        )
+                    if wave.state not in {DispatchWaveState.ADMITTED, DispatchWaveState.DISPATCHING}:
+                        raise HarnessValidationError(
+                            "recovery wave is not pending dispatch",
+                            code="TASK_GROUP_RECOVERY_WAVE_INVALID",
+                        )
+                by_wave = {wave.wave_id: wave for wave in session.waves}
+                by_wave.update({wave.wave_id: wave for wave in admitted_waves})
+                session.waves = [by_wave[key] for key in sorted(by_wave, key=lambda value: by_wave[value].ordinal)]
+                session.next_wave_ordinal = max(
+                    session.next_wave_ordinal,
+                    max(wave.ordinal for wave in admitted_waves) + 1,
+                )
+                session.reserved.update(task_id for wave in admitted_waves for task_id in wave.task_ids)
         task_by_id = {item.task_id: item for item in request.task_instances}
         if not intents:
             return self._result_for_session(session, request, limits=None)
