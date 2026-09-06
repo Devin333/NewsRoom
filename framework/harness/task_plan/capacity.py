@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 from typing import Any, Mapping, Sequence
 
 from framework.harness.control_plane.errors import HarnessValidationError
-from framework.harness.task_plan.canonical import canonical_payload_checksum, frozen_mapping, identifier, thaw_mapping
+from framework.harness.task_plan.canonical import checksum, canonical_payload_checksum, frozen_mapping, identifier, thaw_mapping
 from framework.harness.task_plan.parallel_lifecycle import SideEffectClass
 
 
@@ -70,11 +70,19 @@ class PoolReservation:
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "task_id", identifier(self.task_id, "task_id"))
+        if not isinstance(self.allocations, Mapping) or not self.allocations:
+            raise HarnessValidationError("pool reservation allocations must be an object", code="CAPACITY_RESERVATION_INVALID")
         allocations = {identifier(str(key), "pool_id"): value for key, value in self.allocations.items()}
         if any(isinstance(value, bool) or not isinstance(value, int) or value < 1 for value in allocations.values()):
             raise HarnessValidationError("pool allocation must be positive", code="CAPACITY_RESERVATION_INVALID")
         object.__setattr__(self, "allocations", frozen_mapping(allocations, "pool_reservation.allocations"))
-        object.__setattr__(self, "policy_checksums", frozen_mapping(dict(self.policy_checksums), "pool_reservation.policy_checksums"))
+        if not isinstance(self.policy_checksums, Mapping) or set(self.policy_checksums) != set(allocations):
+            raise HarnessValidationError("pool reservation policy evidence must match allocations", code="CAPACITY_RESERVATION_INVALID")
+        policy_checksums = {
+            identifier(str(key), "pool_id"): checksum(value, "pool_policy_checksum")
+            for key, value in self.policy_checksums.items()
+        }
+        object.__setattr__(self, "policy_checksums", frozen_mapping(policy_checksums, "pool_reservation.policy_checksums"))
         object.__setattr__(self, "reservation_checksum", canonical_payload_checksum(self.to_dict(include_checksum=False)))
 
     def to_dict(self, *, include_checksum: bool = True) -> dict[str, Any]:

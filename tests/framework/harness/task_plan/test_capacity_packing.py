@@ -70,8 +70,35 @@ def test_coordinator_uses_pool_packing_for_later_task_selection():
         assert result.results[0].task_id == "b"
         admitted = next(item for item in events if item["event_type"] == "TASK_WAVE_ADMITTED")
         assert admitted["wave"]["reservations"][0]["capacity_allocations"] == {"cpu": 1}
+        assert admitted["wave"]["reservations"][0]["capacity_policy_checksums"]["cpu"] == request.capacity_pools[0].policy_checksum
     finally:
         supervisor.shutdown()
+
+
+def test_pool_policy_version_is_bound_to_wave_identity():
+    plan = _accepted_parallel_plan(("task-1",))
+    base = _request(plan)
+    events_by_policy = []
+    for policy_version in ("policy-v1", "policy-v2"):
+        supervisor = ChildAgentSupervisor(max_children=1)
+        events = []
+        coordinator = ParallelAgentCoordinator(
+            max_workers=1,
+            child_supervisor=supervisor,
+            event_sink=ParallelEventSink(events.append, events.extend),
+        )
+        request = replace(
+            base,
+            capacity_pools=(CapacityPool("cpu", 1, policy_version=policy_version),),
+            task_capacity_demands={"task-1": TaskCapacityDemand("task-1", {"cpu": 1})},
+        )
+        try:
+            coordinator.dispatch(request, lambda instance: _result(plan, instance))
+            admitted = next(item for item in events if item["event_type"] == "TASK_WAVE_ADMITTED")
+            events_by_policy.append(admitted["wave"])
+        finally:
+            supervisor.shutdown()
+    assert events_by_policy[0]["wave_id"] != events_by_policy[1]["wave_id"]
 
 
 def test_pool_reservation_is_released_between_capacity_limited_waves():

@@ -112,6 +112,7 @@ class TaskReservation:
     budget: Mapping[str, int]
     state: ReservationState | str = ReservationState.RESERVED
     capacity_allocations: Mapping[str, int] = field(default_factory=dict)
+    capacity_policy_checksums: Mapping[str, str] = field(default_factory=dict)
     schema_version: str = TASK_RESERVATION_SCHEMA
     reservation_checksum: str = field(init=False)
 
@@ -145,6 +146,32 @@ class TaskReservation:
             "capacity_allocations",
             frozen_mapping(capacity_allocations, "reservation.capacity_allocations"),
         )
+        if not isinstance(self.capacity_policy_checksums, Mapping):
+            raise HarnessValidationError(
+                "reservation capacity policy checksums must be an object",
+                code="CAPACITY_RESERVATION_INVALID",
+            )
+        capacity_policy_checksums: dict[str, str] = {}
+        for pool_id, policy_checksum in self.capacity_policy_checksums.items():
+            normalized_pool_id = identifier(str(pool_id), "pool_id")
+            try:
+                normalized_checksum = checksum(policy_checksum, "capacity_policy_checksum")
+            except HarnessValidationError as exc:
+                raise HarnessValidationError(
+                    "reservation capacity policy checksum is invalid",
+                    code="CAPACITY_RESERVATION_INVALID",
+                ) from exc
+            capacity_policy_checksums[normalized_pool_id] = normalized_checksum
+        if set(capacity_policy_checksums) != set(capacity_allocations):
+            raise HarnessValidationError(
+                "reservation capacity policy checksums must match allocations",
+                code="CAPACITY_RESERVATION_INVALID",
+            )
+        object.__setattr__(
+            self,
+            "capacity_policy_checksums",
+            frozen_mapping(capacity_policy_checksums, "reservation.capacity_policy_checksums"),
+        )
         object.__setattr__(self, "state", ReservationState(self.state))
         if self.schema_version != TASK_RESERVATION_SCHEMA:
             raise HarnessValidationError("unsupported reservation schema", code="PLAN_SCHEMA_INVALID")
@@ -154,6 +181,7 @@ class TaskReservation:
         value = {"schema_version": self.schema_version, "task_id": self.task_id, "idempotency_key": self.idempotency_key, "budget": thaw_mapping(self.budget), "state": self.state.value}
         if self.capacity_allocations:
             value["capacity_allocations"] = thaw_mapping(self.capacity_allocations)
+            value["capacity_policy_checksums"] = thaw_mapping(self.capacity_policy_checksums)
         if include_checksum:
             value["reservation_checksum"] = self.reservation_checksum
         return value
@@ -166,9 +194,11 @@ class TaskReservation:
                 "schema_version", "task_id", "idempotency_key", "budget", "state",
                 "reservation_checksum",
             }),
+            optional=frozenset({"capacity_allocations", "capacity_policy_checksums"}),
             model=cls.__name__,
         )
         payload.setdefault("capacity_allocations", {})
+        payload.setdefault("capacity_policy_checksums", {})
         supplied_checksum = checksum(payload.pop("reservation_checksum"), "reservation_checksum")
         try:
             reservation = cls(**payload)
@@ -367,6 +397,7 @@ class DispatchWave:
                         "idempotency_key": item.idempotency_key,
                         "budget": thaw_mapping(item.budget),
                         **({"capacity_allocations": thaw_mapping(item.capacity_allocations)} if item.capacity_allocations else {}),
+                        **({"capacity_policy_checksums": thaw_mapping(item.capacity_policy_checksums)} if item.capacity_policy_checksums else {}),
                     }
                     for item in self.reservations
                 ],
@@ -1644,19 +1675,29 @@ class ParallelAgentCoordinator:
                     selected_ids = set(packing.selected)
                     batch = tuple(item for item in pending_work if item.task_id in selected_ids)
                     reservation_allocations = {item.task_id: dict(item.allocations) for item in packing.reservations}
+                    reservation_policy_checksums = {
+                        item.task_id: dict(item.policy_checksums) for item in packing.reservations
+                    }
                     for reservation in packing.reservations:
                         for pool_id, quantity in reservation.allocations.items():
                             pool_state[pool_id] = replace(pool_state[pool_id], reserved=pool_state[pool_id].reserved + quantity)
                 else:
                     batch = tuple(pending_work[:effective])
                     reservation_allocations = {item.task_id: {} for item in batch}
+                    reservation_policy_checksums = {item.task_id: {} for item in batch}
                 wave = DispatchWave(
                     group.group_id,
                     session.next_wave_ordinal,
                     tuple(item.task_id for item in batch),
                     effective,
                     tuple(
-                        TaskReservation(item.task_id, item.idempotency_key, item.budget_snapshot.to_dict(), capacity_allocations=reservation_allocations[item.task_id])
+                        TaskReservation(
+                            item.task_id,
+                            item.idempotency_key,
+                            item.budget_snapshot.to_dict(),
+                            capacity_allocations=reservation_allocations[item.task_id],
+                            capacity_policy_checksums=reservation_policy_checksums[item.task_id],
+                        )
                         for item in batch
                     ),
                     DispatchWaveState.ADMITTED,
@@ -1756,6 +1797,7 @@ class ParallelAgentCoordinator:
                             item.budget,
                             reservation_states[item.task_id],
                             item.capacity_allocations,
+                            item.capacity_policy_checksums,
                         )
                         for item in wave.reservations
                     ),
@@ -2450,7 +2492,14 @@ class ParallelAgentCoordinator:
                 updated.append(wave)
                 continue
             reservations = tuple(
-                TaskReservation(item.task_id, item.idempotency_key, item.budget, ReservationState.RELEASED)
+                TaskReservation(
+                    item.task_id,
+                    item.idempotency_key,
+                    item.budget,
+                    ReservationState.RELEASED,
+                    item.capacity_allocations,
+                    item.capacity_policy_checksums,
+                )
                 if release_confirmed and item.task_id in pending
                 else item
                 for item in wave.reservations

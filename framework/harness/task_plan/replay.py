@@ -1457,6 +1457,7 @@ def _normalize_parallel_wave(
                     "idempotency_key": item["idempotency_key"],
                     "budget": item["budget"],
                     **({"capacity_allocations": item["capacity_allocations"]} if "capacity_allocations" in item else {}),
+                    **({"capacity_policy_checksums": item["capacity_policy_checksums"]} if "capacity_policy_checksums" in item else {}),
                 }
                 for item in value["reservations"]
             ],
@@ -1557,7 +1558,7 @@ def _normalize_parallel_reservation(
         _parallel_error("parallel reservation is invalid", event)
     value = thaw_mapping(frozen_mapping(raw, "parallel_reservation"))
     required = {"schema_version", "task_id", "idempotency_key", "budget", "state", "reservation_checksum"}
-    allowed = required | {"capacity_allocations"}
+    allowed = required | {"capacity_allocations", "capacity_policy_checksums"}
     if (
         not required.issubset(value)
         or set(value) - allowed
@@ -1571,6 +1572,28 @@ def _normalize_parallel_reservation(
         _parallel_error("parallel reservation payload is invalid", event)
     if "capacity_allocations" in value and not isinstance(value["capacity_allocations"], Mapping):
         _parallel_error("parallel capacity allocation payload is invalid", event)
+    if "capacity_policy_checksums" in value and not isinstance(value["capacity_policy_checksums"], Mapping):
+        _parallel_error("parallel capacity policy checksum payload is invalid", event)
+    if "capacity_allocations" in value:
+        allocations = value["capacity_allocations"]
+        if not allocations:
+            _parallel_error("parallel capacity allocations must not be empty", event)
+        policy_checksums = value.get("capacity_policy_checksums")
+        if not isinstance(policy_checksums, Mapping) or set(policy_checksums) != set(allocations):
+            _parallel_error("parallel capacity policy evidence does not match allocations", event)
+        for pool_id, quantity in allocations.items():
+            try:
+                identifier(str(pool_id), "reservation.pool_id")
+            except HarnessValidationError:
+                _parallel_error("parallel capacity allocation pool id is invalid", event)
+            if isinstance(quantity, bool) or not isinstance(quantity, int) or quantity < 1:
+                _parallel_error("parallel capacity allocation quantity is invalid", event)
+            try:
+                checksum(policy_checksums[pool_id], "reservation.capacity_policy_checksum")
+            except (HarnessValidationError, KeyError):
+                _parallel_error("parallel capacity policy checksum is invalid", event)
+    elif "capacity_policy_checksums" in value:
+        _parallel_error("parallel capacity policy evidence has no allocations", event)
     if "reservation_checksum" in value:
         checksum_payload = {
                 field_name: value[field_name]
@@ -1579,6 +1602,8 @@ def _normalize_parallel_reservation(
             }
         if "capacity_allocations" in value:
             checksum_payload["capacity_allocations"] = value["capacity_allocations"]
+        if "capacity_policy_checksums" in value:
+            checksum_payload["capacity_policy_checksums"] = value["capacity_policy_checksums"]
         expected_checksum = canonical_payload_checksum(checksum_payload)
         if value["reservation_checksum"] != expected_checksum:
             _parallel_error("parallel reservation checksum does not match its snapshot", event)
@@ -1726,13 +1751,16 @@ def _validate_reservation_checksum(payload: Mapping[str, Any]) -> None:
             "parallel reservation checksum is missing",
             code="task_plan_replay_parallel_state_mismatch",
         )
-    expected = canonical_payload_checksum(
-        {
-            field_name: payload[field_name]
-            for field_name in ("schema_version", "task_id", "idempotency_key", "budget", "state")
-            if field_name in payload
-        }
-    )
+    checksum_payload = {
+        field_name: payload[field_name]
+        for field_name in ("schema_version", "task_id", "idempotency_key", "budget", "state")
+        if field_name in payload
+    }
+    if "capacity_allocations" in payload:
+        checksum_payload["capacity_allocations"] = payload["capacity_allocations"]
+    if "capacity_policy_checksums" in payload:
+        checksum_payload["capacity_policy_checksums"] = payload["capacity_policy_checksums"]
+    expected = canonical_payload_checksum(checksum_payload)
     if supplied != expected:
         raise HarnessValidationError(
             "parallel reservation checksum does not match state",
@@ -1747,12 +1775,15 @@ def _set_parallel_reservation_state(
     event: TaskPlanEvent,
 ) -> None:
     reservation["state"] = state
-    reservation["reservation_checksum"] = canonical_payload_checksum(
-        {
-            field_name: reservation[field_name]
-            for field_name in ("schema_version", "task_id", "idempotency_key", "budget", "state")
-        }
-    )
+    checksum_payload = {
+        field_name: reservation[field_name]
+        for field_name in ("schema_version", "task_id", "idempotency_key", "budget", "state")
+    }
+    if "capacity_allocations" in reservation:
+        checksum_payload["capacity_allocations"] = reservation["capacity_allocations"]
+    if "capacity_policy_checksums" in reservation:
+        checksum_payload["capacity_policy_checksums"] = reservation["capacity_policy_checksums"]
+    reservation["reservation_checksum"] = canonical_payload_checksum(checksum_payload)
     wave_id = reservation.get("wave_id")
     wave = waves.get(wave_id)
     if wave is None:

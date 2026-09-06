@@ -7,6 +7,7 @@ import pytest
 
 from framework.harness.control_plane.errors import HarnessValidationError
 from framework.harness.task_plan import TaskLifecycle
+from framework.harness.task_plan.capacity import CapacityPool, TaskCapacityDemand
 from framework.harness.task_plan.parallel import (
     JoinPolicy,
     ParallelAgentCoordinator,
@@ -33,9 +34,15 @@ def _event(value: dict[str, object], sequence: int) -> SimpleNamespace:
     )
 
 
-def _coordinator_events(*, status: TaskLifecycle = TaskLifecycle.SUCCEEDED):
+def _coordinator_events(*, status: TaskLifecycle = TaskLifecycle.SUCCEEDED, with_capacity: bool = False):
     plan = _accepted_parallel_plan(("task-1",))
     request = replace(_request(plan, join_policy=JoinPolicy.WAIT_ALL), serial_fallback=True)
+    if with_capacity:
+        request = replace(
+            request,
+            capacity_pools=(CapacityPool("cpu", 1, policy_version="policy-v1"),),
+            task_capacity_demands={"task-1": TaskCapacityDemand("task-1", {"cpu": 1})},
+        )
     events: list[dict[str, object]] = []
     coordinator = ParallelAgentCoordinator(
         max_workers=1,
@@ -44,6 +51,29 @@ def _coordinator_events(*, status: TaskLifecycle = TaskLifecycle.SUCCEEDED):
     )
     coordinator.dispatch(request, lambda instance: _result(plan, instance, status=status))
     return plan, events
+
+
+def test_capacity_policy_evidence_survives_terminal_replay() -> None:
+    plan, raw_events = _coordinator_events(with_capacity=True)
+    projection = _projection_for_plan(plan, sequence=1)
+    groups: dict[str, dict[str, object]] = {}
+    waves: dict[str, dict[str, object]] = {}
+    reservations: dict[str, dict[str, object]] = {}
+    diagnostics: list[dict[str, object]] = []
+    relevant = [
+        item for item in raw_events
+        if item["event_type"] in {
+            "TASK_GROUP_ADMITTED", "TASK_WAVE_ADMITTED", "TASK_WAVE_DISPATCHED", "TASK_WAVE_COMPLETED",
+        }
+    ]
+    for sequence, item in enumerate(relevant, start=1):
+        _apply_parallel_event(
+            _event(item, sequence), projection, groups, waves, reservations, diagnostics,
+        )
+    reservation = next(iter(reservations.values()))
+    assert reservation["capacity_allocations"] == {"cpu": 1}
+    assert reservation["capacity_policy_checksums"]["cpu"].startswith("sha256:")
+    _validate_parallel_report_projection(groups, waves, reservations)
 
 
 def test_coordinator_wave_events_replay_to_terminal_reservation_checksum() -> None:

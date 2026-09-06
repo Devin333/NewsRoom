@@ -1222,6 +1222,10 @@ def _parallel_task_plan_details_schema(event_type: str) -> dict[str, Any]:
 
     non_negative = {"type": "integer", "minimum": 0}
     budget = {"type": "object", "additionalProperties": non_negative, "maxProperties": 16}
+    capacity_allocations = {
+        "type": "object", "additionalProperties": {"type": "integer", "minimum": 1},
+        "minProperties": 1, "maxProperties": 16,
+    }
     nullable_text = {"anyOf": [_TEXT, {"type": "null"}]}
     nullable_checksum = {"anyOf": [_CHECKSUM_TEXT, {"type": "null"}]}
     group_state = {"enum": [
@@ -1236,9 +1240,17 @@ def _parallel_task_plan_details_schema(event_type: str) -> dict[str, Any]:
     reservation = object_schema({
         "schema_version": {"const": "agora.harness-task-reservation/v1"},
         "task_id": _TEXT, "idempotency_key": _TEXT, "budget": budget,
-        "capacity_allocations": budget,
+        "capacity_allocations": capacity_allocations,
+        "capacity_policy_checksums": {
+            "type": "object", "minProperties": 1,
+            "additionalProperties": _CHECKSUM_TEXT, "maxProperties": 16,
+        },
         "state": reservation_state, "reservation_checksum": _CHECKSUM_TEXT,
     }, required=["schema_version", "task_id", "idempotency_key", "budget", "state", "reservation_checksum"])
+    reservation["dependentRequired"] = {
+        "capacity_allocations": ["capacity_policy_checksums"],
+        "capacity_policy_checksums": ["capacity_allocations"],
+    }
     group = object_schema({
         "schema_version": {"const": "agora.harness-dispatch-group/v1"},
         "group_id": _TEXT, "group_checksum": _CHECKSUM_TEXT,

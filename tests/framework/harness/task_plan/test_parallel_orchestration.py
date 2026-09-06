@@ -46,6 +46,7 @@ from framework.harness.task_plan.parallel import (
     SerialTaskExecutorAdapter,
     TaskReservation,
 )
+from framework.harness.task_plan.capacity import CapacityPool
 from framework.shared.graph_identity import GraphExecutionIdentity
 from tests.fixtures.task_plan import build_task_plan_stage_binding
 
@@ -833,6 +834,24 @@ def test_parallel_contracts_round_trip_and_validate_derived_identity() -> None:
         terminal_outcome=DispatchWaveTerminalOutcome.SUCCEEDED,
     )
     assert DispatchWave.from_dict(terminal.to_dict()) == terminal
+
+
+def test_parallel_contracts_round_trip_multi_pool_policy_evidence() -> None:
+    plan = _accepted_parallel_plan(("task-1",))
+    pool = CapacityPool("cpu", 1, policy_version="policy-v1")
+    reservation = TaskReservation(
+        "task-1",
+        "reservation-key",
+        {"turns": 1},
+        capacity_allocations={"cpu": 1},
+        capacity_policy_checksums={"cpu": pool.policy_checksum},
+    )
+    wave = DispatchWave(
+        "group-1", 1, ("task-1",), 1, (reservation,), DispatchWaveState.ADMITTED
+    )
+    restored = DispatchWave.from_dict(wave.to_dict())
+    assert restored == wave
+    assert restored.reservations[0].capacity_policy_checksums["cpu"] == pool.policy_checksum
 
 
 @pytest.mark.parametrize(
