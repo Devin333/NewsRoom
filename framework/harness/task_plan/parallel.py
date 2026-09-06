@@ -525,6 +525,30 @@ class ParallelDispatchRequest:
         demands = dict(self.task_capacity_demands)
         if any(not isinstance(value, TaskCapacityDemand) or key != value.task_id for key, value in demands.items()):
             raise HarnessValidationError("task capacity demands must be keyed by task id", code="CAPACITY_DEMAND_INVALID")
+        task_id_set = set(ids)
+        demand_task_ids = set(demands)
+        if demands and not pools:
+            raise HarnessValidationError(
+                "capacity policy is required when task demands are configured",
+                code="CAPACITY_POLICY_MISSING",
+            )
+        if pools and demand_task_ids != task_id_set:
+            raise HarnessValidationError(
+                "capacity policy must define one demand for every dispatched task",
+                code="CAPACITY_DEMAND_INVALID",
+                details={
+                    "missing_task_ids": sorted(task_id_set - demand_task_ids),
+                    "unknown_task_ids": sorted(demand_task_ids - task_id_set),
+                },
+            )
+        pool_ids = {pool.pool_id for pool in pools}
+        unknown_pools = sorted({pool_id for demand in demands.values() for pool_id in demand.quantities if pool_id not in pool_ids})
+        if unknown_pools:
+            raise HarnessValidationError(
+                "capacity demand references an unavailable pool policy",
+                code="CAPACITY_POLICY_MISSING",
+                details={"pool_ids": unknown_pools},
+            )
         object.__setattr__(self, "task_capacity_demands", MappingProxyType(demands))
         object.__setattr__(self, "join_policy", JoinPolicy(self.join_policy))
         object.__setattr__(self, "side_effect_class", SideEffectClass(self.side_effect_class))

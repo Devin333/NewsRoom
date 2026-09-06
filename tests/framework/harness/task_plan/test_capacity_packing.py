@@ -55,6 +55,37 @@ def test_capacity_policy_checksum_and_missing_demand_fail_closed():
     assert result.reasons["missing"] == "CAPACITY_POLICY_MISSING"
 
 
+def test_dispatch_request_rejects_demands_without_capacity_pools():
+    plan = _accepted_parallel_plan(("task-1",))
+    with pytest.raises(HarnessValidationError) as exc_info:
+        replace(
+            _request(plan),
+            task_capacity_demands={"task-1": TaskCapacityDemand("task-1", {"cpu": 1})},
+        )
+    assert exc_info.value.code == "CAPACITY_POLICY_MISSING"
+
+
+def test_dispatch_request_rejects_missing_task_demand_or_pool_policy():
+    plan = _accepted_parallel_plan(("task-1", "task-2"))
+    with pytest.raises(HarnessValidationError) as exc_info:
+        replace(
+            _request(plan),
+            capacity_pools=(CapacityPool("cpu", 2),),
+            task_capacity_demands={"task-1": TaskCapacityDemand("task-1", {"cpu": 1})},
+        )
+    assert exc_info.value.code == "CAPACITY_DEMAND_INVALID"
+    with pytest.raises(HarnessValidationError) as exc_info:
+        replace(
+            _request(plan, ),
+            capacity_pools=(CapacityPool("cpu", 2),),
+            task_capacity_demands={
+                "task-1": TaskCapacityDemand("task-1", {"gpu": 1}),
+                "task-2": TaskCapacityDemand("task-2", {"gpu": 1}),
+            },
+        )
+    assert exc_info.value.code == "CAPACITY_POLICY_MISSING"
+
+
 def test_coordinator_uses_pool_packing_for_later_task_selection():
     plan = _accepted_parallel_plan(("a", "b"))
     base = _request(plan)

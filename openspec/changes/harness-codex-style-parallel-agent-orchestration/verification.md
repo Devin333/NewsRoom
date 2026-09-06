@@ -170,6 +170,9 @@ current checklist is 12/46, superseding the earlier historical counts above.
   replay state transitions. Allocation and policy evidence must match exactly,
   so a policy-version change produces a new wave identity and cannot reuse an
   older reservation history.
+- `ParallelDispatchRequest` now fails closed when task capacity demands have no
+  pool policy, omit a dispatched task, or reference an unavailable pool; the
+  coordinator cannot interpret missing capacity policy as unlimited capacity.
 - Offline reduction verifies every audit against its admitted spawn operation,
   status-read identity and receipt. Audited confirmations are the only route
   for reopening an indeterminate group at this boundary. Unknown outcomes keep
@@ -184,9 +187,9 @@ Increment checks before final commit:
 
 - Spawn recovery audit suite: 33 passed, including a fresh coordinator/process
   restart that re-reads child status and reuses durable receipts.
-- Broader TaskPlan/AgentLoop/supervisor regression: 303 passed; focused spawn
+- Broader TaskPlan/AgentLoop/supervisor regression: 305 passed; focused spawn
   and receipt recovery regression: 61 passed.
-- Final required repository smoke: passed (`2649 passed, 23 deselected`, plus
+- Final required repository smoke: passed (`2651 passed, 23 deselected`, plus
   smoke AgentLoop artifact and source validation).
 - Strict OpenSpec validation: passed.
 
