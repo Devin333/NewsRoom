@@ -672,6 +672,43 @@ def test_offline_recovery_uses_durable_results_without_live_worker_invocation() 
         supervisor.shutdown()
 
 
+def test_recovery_reuses_terminal_worker_result_after_parent_append_crash() -> None:
+    plan = _accepted_parallel_plan(("task-1",))
+    request = _request(plan)
+    supervisor = ChildAgentSupervisor(max_children=2)
+    coordinator = ParallelAgentCoordinator(max_workers=2, child_supervisor=supervisor)
+    events: list[dict[str, object]] = []
+    failed_once = True
+
+    def sink(event):
+        nonlocal failed_once
+        if event["event_type"] == "TASK_WAVE_DISPATCHED" and failed_once:
+            failed_once = False
+            events.append(dict(event))
+            raise RuntimeError("crash after child terminal result")
+        events.append(dict(event))
+
+    try:
+        with pytest.raises(RuntimeError, match="crash after child terminal result"):
+            coordinator.dispatch(
+                request,
+                lambda instance: _result(plan, instance),
+                event_sink=ParallelEventSink(sink, lambda batch: events.extend(dict(item) for item in batch)),
+            )
+        session = next(iter(coordinator._sessions.values()))
+        handle, worker = next(iter(session.active_children.values()))
+        supervisor.wait(handle.child_id, operation_id=handle.operation_id, timeout_seconds=1)
+        recovered = coordinator.recover(request, (), event_sink=sink)
+        assert recovered.group.state is DispatchGroupState.RUNNING
+        assert [item.task_id for item in recovered.results] == ["task-1"]
+        assert recovered.results[0].result_checksum == _result(
+            plan, request.task_instances[0]
+        ).result_checksum
+        assert session.active_children == {}
+    finally:
+        supervisor.shutdown()
+
+
 def test_parallel_contracts_round_trip_and_validate_derived_identity() -> None:
     plan = _accepted_parallel_plan(("task-1",))
     request = _request(plan)

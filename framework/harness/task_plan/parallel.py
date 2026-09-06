@@ -1104,7 +1104,9 @@ class ParallelAgentCoordinator:
                 "active child handles cannot be reconciled without a supervisor",
                 code="TASK_GROUP_RECOVERY_SUPERVISOR_REQUIRED",
             )
-        for task_id, (handle, _worker) in active:
+        recovered_worker_results: dict[str, TaskResultRecord] = {}
+        recovered_task_ids = frozenset(missing_results)
+        for task_id, (handle, worker) in active:
             assert self.child_supervisor is not None
             operation = self.child_supervisor.wait(
                 handle.child_id,
@@ -1118,6 +1120,33 @@ class ParallelAgentCoordinator:
                     code="TASK_GROUP_RECOVERY_UNCONFIRMED",
                     details={"task_id": task_id, "child_id": handle.child_id},
                 )
+            if task_id in recovered_task_ids:
+                # The parent result was independently verified and durably
+                # recovered before this coordinator pass. The child receipt
+                # still must prove terminal termination, but its FAILED or
+                # CANCELLED state must not discard the verified parent result.
+                self.child_supervisor.close(
+                    handle.child_id,
+                    operation_id=handle.operation_id,
+                )
+                with self._lock:
+                    self._sessions[group.group_id].active_children.pop(task_id, None)
+                continue
+            worker_result = worker.result
+            if worker_result is not None:
+                if (
+                    not isinstance(worker_result, TaskResultRecord)
+                    or worker_result.task_id != handle.task_id
+                    or worker_result.task_instance_id != handle.task_instance_id
+                    or worker_result.attempt != handle.attempt
+                    or not worker_result.matches_plan_identity(request.plan)
+                ):
+                    raise HarnessValidationError(
+                        "terminal child result does not match its admitted attempt",
+                        code="TASK_GROUP_RECOVERY_RESULT_CONFLICT",
+                        details={"task_id": task_id, "child_id": handle.child_id},
+                    )
+                recovered_worker_results[task_id] = worker_result
             self.child_supervisor.close(
                 handle.child_id,
                 operation_id=handle.operation_id,
@@ -1127,6 +1156,16 @@ class ParallelAgentCoordinator:
 
         with self._lock:
             session = self._sessions[group.group_id]
+            for task_id, result in recovered_worker_results.items():
+                existing = session.results.get(task_id)
+                if existing is not None and existing.result_checksum != result.result_checksum:
+                    raise HarnessValidationError(
+                        "recovered worker result conflicts with coordinator state",
+                        code="TASK_GROUP_RECOVERY_RESULT_CONFLICT",
+                        details={"task_id": task_id},
+                    )
+                if task_id not in session.results:
+                    missing_results[task_id] = result
             session.results.update(missing_results)
             session.reserved.difference_update(missing_results)
             if session.group.state is DispatchGroupState.INDETERMINATE:
