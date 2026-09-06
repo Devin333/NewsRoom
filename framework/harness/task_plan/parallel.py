@@ -1164,19 +1164,25 @@ class ParallelAgentCoordinator:
                         )
                     worker_result = recovered_result
             if worker_result is not None:
-                if (
-                    not isinstance(worker_result, TaskResultRecord)
-                    or worker_result.task_id != handle.task_id
-                    or worker_result.task_instance_id != handle.task_instance_id
-                    or worker_result.attempt != handle.attempt
-                    or not worker_result.matches_plan_identity(request.plan)
-                ):
+                try:
+                    admitted_instance = next(
+                        item
+                        for item in request.task_instances
+                        if item.task_id == handle.task_id
+                        and item.task_instance_id == handle.task_instance_id
+                        and item.attempt == handle.attempt
+                    )
+                    recovered_worker_results[task_id] = _validated_supervised_task_result(
+                        worker_result,
+                        admitted_instance,
+                        request.plan,
+                    )
+                except HarnessValidationError as exc:
                     raise HarnessValidationError(
                         "terminal child result does not match its admitted attempt",
                         code="TASK_GROUP_RECOVERY_RESULT_CONFLICT",
                         details={"task_id": task_id, "child_id": handle.child_id},
-                    )
-                recovered_worker_results[task_id] = worker_result
+                    ) from exc
             self.child_supervisor.close(
                 handle.child_id,
                 operation_id=handle.operation_id,
@@ -2682,6 +2688,32 @@ def _validated_supervised_task_result(
                 "task_instance_id": task_instance.task_instance_id,
                 "attempt": task_instance.attempt,
             },
+        )
+    definition = next(
+        (item for item in plan.tasks if item.task_id == task_instance.task_id),
+        None,
+    )
+    if definition is None:
+        raise HarnessValidationError(
+            "supervised worker result references an unknown task",
+            code="RESULT_IDENTITY_MISMATCH",
+        )
+    if (
+        result.worker_ref != definition.worker_ref
+        or result.task_checksum != definition.task_definition_checksum
+        or result.binding_checksum != definition.binding_checksum
+        or (
+            result.status is TaskLifecycle.SUCCEEDED
+            and (
+                result.output_schema_ref != definition.task.output_contract.schema_ref
+                or result.output_roles != (definition.output_role,)
+            )
+        )
+    ):
+        raise HarnessValidationError(
+            "supervised worker result evidence does not match its accepted task",
+            code="RESULT_IDENTITY_MISMATCH",
+            details={"task_id": task_instance.task_id},
         )
     return result
 

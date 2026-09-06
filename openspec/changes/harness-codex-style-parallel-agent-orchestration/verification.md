@@ -175,9 +175,9 @@ Increment checks before final commit:
 
 - Spawn recovery audit suite: 33 passed, including a fresh coordinator/process
   restart that re-reads child status and reuses durable receipts.
-- Broader TaskPlan/AgentLoop/supervisor regression: 295 passed; focused spawn
+- Broader TaskPlan/AgentLoop/supervisor regression: 296 passed; focused spawn
   and receipt recovery regression: 61 passed.
-- Final required repository smoke: passed (`2641 passed, 23 deselected`, plus
+- Final required repository smoke: passed (`2642 passed, 23 deselected`, plus
   smoke AgentLoop artifact and source validation).
 - Strict OpenSpec validation: passed.
 
