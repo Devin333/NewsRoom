@@ -970,15 +970,25 @@ class ParallelAgentCoordinator:
                 else group.max_parallelism
             )
             self._sessions[group.group_id] = _GroupSession(group=group, request=request)
-        self._emit(
-            "TASK_GROUP_ADMITTED",
-            event_sink=event_sink,
-            group=group.to_dict(),
-            requested_parallelism=request.requested_parallelism
-            or group.max_parallelism,
-            effective_parallelism=admitted_parallelism,
-            idempotency_key=group.group_id,
-        )
+        try:
+            self._emit(
+                "TASK_GROUP_ADMITTED",
+                event_sink=event_sink,
+                group=group.to_dict(),
+                requested_parallelism=request.requested_parallelism
+                or group.max_parallelism,
+                effective_parallelism=admitted_parallelism,
+                idempotency_key=group.group_id,
+            )
+        except BaseException:
+            # Admission is not visible to this coordinator until its durable
+            # fact is accepted. A failed append must be retryable without a
+            # ghost session suppressing the next admission attempt.
+            with self._lock:
+                session = self._sessions.get(group.group_id)
+                if session is not None and session.group == group:
+                    self._sessions.pop(group.group_id, None)
+            raise
         return group
 
     def recover(

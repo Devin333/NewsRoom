@@ -317,6 +317,34 @@ def test_production_parallel_coordinator_requires_child_supervisor() -> None:
         supervisor.shutdown()
 
 
+def test_group_admission_append_failure_does_not_leave_ghost_session() -> None:
+    plan = _accepted_parallel_plan(("task-1",))
+    request = _request(plan)
+    supervisor = ChildAgentSupervisor(max_children=2)
+    calls = 0
+
+    def append(_event):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise RuntimeError("admission append failed")
+
+    coordinator = ParallelAgentCoordinator(
+        max_workers=2,
+        child_supervisor=supervisor,
+        event_sink=ParallelEventSink(append, lambda _events: None),
+    )
+    try:
+        with pytest.raises(RuntimeError, match="admission append failed"):
+            coordinator.create_group(request)
+        assert coordinator._sessions == {}
+        admitted = coordinator.create_group(request)
+        assert admitted.state is DispatchGroupState.ADMITTED
+        assert calls == 2
+    finally:
+        supervisor.shutdown()
+
+
 def test_serial_fallback_requires_explicit_adapter_and_preserves_group_waves() -> None:
     plan = _accepted_parallel_plan(("task-1",))
     request = replace(_request(plan), serial_fallback=True)

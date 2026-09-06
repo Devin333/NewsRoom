@@ -137,6 +137,8 @@ current checklist is 12/46, superseding the earlier historical counts above.
   conclusion can be retried from its recorded status read without another live
   call. Identical receipt delivery is reused; conflicting status, child or task
   identity is rejected before canonical append, including same-batch conflicts.
+- Group admission also rolls back its in-memory session when the durable
+  admission append fails, so a retry cannot be suppressed by a ghost group.
 - The stage now invokes admission reconciliation before its normal scheduling
   loop. It rehydrates both admitted and already-dispatched nonterminal waves
   from canonical history. No new wave, budget charge or child is created by
@@ -155,8 +157,9 @@ Increment checks before final commit:
 
 - Spawn recovery audit suite: 33 passed, including a fresh coordinator/process
   restart that re-reads child status and reuses durable receipts.
-- Broader TaskPlan/AgentLoop/supervisor regression: 290 passed.
-- Final required repository smoke: passed (`2635 passed, 23 deselected`, plus
+- Broader TaskPlan/AgentLoop/supervisor regression: 291 passed; focused spawn
+  and receipt recovery regression: 60 passed.
+- Final required repository smoke: passed (`2636 passed, 23 deselected`, plus
   smoke AgentLoop artifact and source validation).
 - Strict OpenSpec validation: passed.
 
