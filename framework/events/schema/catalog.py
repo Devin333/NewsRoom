@@ -66,6 +66,7 @@ TASK_PLAN_PARALLEL_EVENT_TYPES = (
     "TASK_GROUP_FAILED", "TASK_GROUP_REPLAN_PENDING", "TASK_GROUP_CANCEL_REQUESTED",
     "TASK_GROUP_CANCELLED", "TASK_GROUP_INDETERMINATE", "TASK_GROUP_HALTED",
     "TASK_GROUP_SUPERSEDED", "TASK_GROUP_RECLAIMED", "TASK_GROUP_RECOVERY", "DEGRADED_SERIAL",
+    "RECOVERY_STATUS_READ", "RECOVERY_RECONCILED", "RECOVERY_HALTED",
 )
 TASK_PLAN_EVENT_TYPES = (
     "PLAN_CANDIDATE_BUILT",
@@ -1301,6 +1302,7 @@ def _parallel_task_plan_details_schema(event_type: str) -> dict[str, Any]:
         "reservation_states": {"type": "object", "additionalProperties": reservation_state, "maxProperties": 128},
         "child_states": {"type": "object", "additionalProperties": _TEXT, "maxProperties": 128},
         "recovery_outcome": _TEXT,
+        "recovery_id": _TEXT,
         "operation_key": _TEXT,
         "spawn_status": {"enum": ["SPAWN_CONFIRMED", "SPAWN_UNKNOWN"]},
         "terminal_outcome": wave_terminal_outcome,
@@ -1318,10 +1320,17 @@ def _parallel_task_plan_details_schema(event_type: str) -> dict[str, Any]:
         "TASK_GROUP_JOIN_WAITING": ["group", "observation", "idempotency_key"],
         "TASK_GROUP_JOINED": ["group", "observation", "idempotency_key"],
         "TASK_GROUP_RECOVERY": ["group", "group_id", "recovered_results", "recovery_outcome", "idempotency_key"],
+        "RECOVERY_STATUS_READ": ["group_id", "wave_id", "task_id", "task_instance_id", "attempt", "operation_key", "recovery_outcome", "idempotency_key"],
+        "RECOVERY_RECONCILED": ["group_id", "wave_id", "task_id", "task_instance_id", "attempt", "operation_key", "recovery_outcome", "idempotency_key"],
+        "RECOVERY_HALTED": ["group_id", "wave_id", "task_id", "task_instance_id", "attempt", "operation_key", "reason_code", "idempotency_key"],
         "TASK_GROUP_RECLAIMED": ["group_id", "wave_id", "task_ids", "task_instance_id", "attempt", "child_id", "retry_eligible"],
         "DEGRADED_SERIAL": ["group_id", "reason_code"],
     }
     required = ["event_type", "parallel_event_idempotency_key", *required_by_type.get(event_type, ["reason_code"])]
+    if event_type.startswith("RECOVERY_"):
+        required.append("recovery_id")
+    if event_type == "RECOVERY_RECONCILED":
+        required.append("child_id")
     result = object_schema(fields, required=required)
     result["anyOf"] = [{"required": ["group"]}, {"required": ["group_id"]}]
     if event_type in {"TASK_ATTEMPT_SPAWN_CONFIRMED", "TASK_ATTEMPT_SPAWN_UNKNOWN"}:
@@ -1330,6 +1339,12 @@ def _parallel_task_plan_details_schema(event_type: str) -> dict[str, Any]:
         }
     if event_type == "TASK_ATTEMPT_SPAWN_UNKNOWN":
         result["properties"]["child_id"] = False
+    if event_type in {"RECOVERY_STATUS_READ", "RECOVERY_RECONCILED"}:
+        result["properties"]["recovery_outcome"] = {
+            "const": "status_read" if event_type == "RECOVERY_STATUS_READ" else "SPAWN_CONFIRMED"
+        }
+    if event_type == "RECOVERY_HALTED":
+        result["properties"]["reason_code"] = {"enum": ["SPAWN_UNKNOWN", "SPAWN_IDENTITY_CONFLICT", "CHILD_NOT_TRACKABLE"]}
     return result
 
 

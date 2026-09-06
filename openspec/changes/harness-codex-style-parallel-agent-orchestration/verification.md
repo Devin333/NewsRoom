@@ -120,6 +120,54 @@ production readiness is claimed by these focused checks.
 
 ## Remaining Acceptance Work
 
+### Spawn Recovery Audit Increment
+
+This increment advances 2.5; its full acceptance checkbox remains open. The
+current checklist is 12/46, superseding the earlier historical counts above.
+
+- Online spawn reconciliation records one correlated `RECOVERY_STATUS_READ`
+  before each supervisor query and a `RECOVERY_RECONCILED` or `RECOVERY_HALTED`
+  conclusion. Canonical schemas require group/wave/task/attempt/operation and
+  recovery identity; run/stage/plan identity is carried by the TaskPlan envelope.
+- A complete wave and all intents are validated before any live read or local
+  admission mutation. Restart consumes verified replay group/wave snapshots;
+  terminal groups cannot be reopened, and the existing dispatch lock serializes
+  admission with recovery. Confirmed worker handles are retained, not respawned.
+- Receipt caches are updated only after append succeeds. An interrupted audit
+  conclusion can be retried from its recorded status read without another live
+  call. Identical receipt delivery is reused; conflicting status, child or task
+  identity is rejected before canonical append, including same-batch conflicts.
+- The stage now invokes admission reconciliation before its normal scheduling
+  loop. It rehydrates both admitted and already-dispatched nonterminal waves
+  from canonical history. No new wave, budget charge or child is created by
+  this path.
+- Offline reduction verifies every audit against its admitted spawn operation,
+  status-read identity and receipt. Audited confirmations are the only route
+  for reopening an indeterminate group at this boundary. Unknown outcomes keep
+  their outstanding reservations; they are not evidence of released capacity.
+- Canonical-store/checkpoint tests exercise crashes before receipt commit,
+  before dispatch commit and after dispatch commit, with one dispatch fact and
+  zero live supervisor calls during replay. Additional tests cover partial or
+  duplicate intent sets, audit write failures, conflicting/untrackable handles,
+  terminal groups, receipt redelivery and corrupted recovery evidence.
+
+Increment checks before final commit:
+
+- Spawn recovery audit suite: 33 passed, including a fresh coordinator/process
+  restart that re-reads child status and reuses durable receipts.
+- Broader TaskPlan/AgentLoop/supervisor regression: 290 passed.
+- Final required repository smoke: passed (`2635 passed, 23 deselected`, plus
+  smoke AgentLoop artifact and source validation).
+- Strict OpenSpec validation: passed.
+
+Remaining 2.5/2.13 work includes end-to-end terminal child-result recovery,
+auditing the older wait/close recovery path, durable supervisor restoration,
+and ledger/admission conflict recovery. This increment proves admission and
+dispatch repair, not successful whole-stage completion after every crash.
+G1-G5, rollout, and production readiness remain unproven.
+
+### Broader Acceptance
+
 - Route generic children through the real controlled Agent runtime and persist
   ToolExecutor/ToolBatchExecutor receipts under their child attempt identity.
 - Bind group/wave identity into task-result verification and durable child

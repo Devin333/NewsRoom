@@ -38,7 +38,7 @@ from framework.harness.task_plan.submission import CandidateSubmission
 from framework.harness.task_plan.submission_result import submission_result_from_event
 from framework.harness.task_plan.validation import TaskPlanValidationContext, TaskPlanValidator
 from framework.harness.workers.result import HarnessWorkerResult, HarnessWorkerStatus
-from framework.harness.task_plan.canonical import canonical_payload_checksum
+from framework.harness.task_plan.canonical import canonical_payload_checksum, thaw_mapping
 from framework.harness.task_plan.dependency import (
     TASK_BLOCKED_UPSTREAM_FAILURE,
     block_dependency_task,
@@ -46,6 +46,9 @@ from framework.harness.task_plan.dependency import (
     dependency_blocking_predecessor_ids,
 )
 from framework.harness.task_plan.parallel import (
+    DispatchGroup,
+    DispatchGroupState,
+    DispatchWave,
     JoinPolicy,
     ParallelAgentCoordinator,
     ParallelDispatchRequest,
@@ -63,6 +66,26 @@ from framework.harness.task_plan.verification import (
     TaskPlanResultVerifier,
 )
 from framework.harness.graph.activity import HarnessWorkerType
+
+
+def _same_spawn_receipt(
+    left: Mapping[str, Any],
+    right: Mapping[str, Any],
+) -> bool:
+    """Compare the immutable identity carried by one spawn receipt."""
+
+    fields = (
+        "event_type",
+        "group_id",
+        "wave_id",
+        "task_id",
+        "task_instance_id",
+        "attempt",
+        "operation_key",
+        "spawn_status",
+        "child_id",
+    )
+    return all(left.get(field) == right.get(field) for field in fields)
 
 
 class TaskPlanStageRunner(TaskPlanStageRunnerPort):
@@ -618,6 +641,7 @@ class TaskPlanStageRunner(TaskPlanStageRunnerPort):
         limits = ParentObservationLimits(**dict(policy.parent_observation_limits))
         admission = self._parallel_request(request, plan, task_instances=())
         event_sink = self._parallel_event_sink(request, plan)
+        self._recover_parallel_spawn_admission(request, plan, event_sink)
         group = self.parallel_coordinator.create_group(admission, event_sink=event_sink)
         max_rounds = max(
             1,
@@ -952,6 +976,48 @@ class TaskPlanStageRunner(TaskPlanStageRunnerPort):
             {"run_id": request.run_id, "stage_id": request.stage_id, "plan_id": plan.plan_id}
         ).removeprefix("sha256:")[:32]
 
+    def _recover_parallel_spawn_admission(
+        self,
+        request: TaskPlanStageRequest,
+        plan: ValidatedTaskPlan,
+        event_sink: ParallelEventSink,
+    ) -> None:
+        history = self.store.read_events(request.run_id, request.stage_id)
+        if not any(event.event_type == "TASK_WAVE_ADMITTED" for event in history):
+            return
+        report = self._replay_history(request, plan)
+        pending = [wave for wave in report.parallel_waves.values()
+                   if wave["state"] in {"ADMITTED", "RUNNING"} and wave["execution_mode"] == "SUPERVISED"
+                   and report.parallel_groups[wave["group_id"]]["plan_id"] == plan.plan_id]
+        if len(pending) > 1:
+            raise HarnessValidationError(
+                "multiple admitted waves require explicit recovery arbitration",
+                code="TASK_GROUP_RECOVERY_WAVE_INVALID",
+            )
+        for projected_wave in pending:
+            wave_id = projected_wave["wave_id"]
+            wave = DispatchWave.from_dict(thaw_mapping(projected_wave))
+            group = DispatchGroup.from_dict(thaw_mapping(report.parallel_groups[wave.group_id]))
+            intents = tuple(thaw_mapping(event.payload) for event in history
+                            if event.event_type == "TASK_ATTEMPT_SPAWN_INTENT"
+                            and event.payload.get("wave_id") == wave_id)
+            instances = tuple(task_instance_for_attempt(
+                plan, intent["task_id"], intent["attempt"],
+                task_instance_id=intent["task_instance_id"],
+            ) for intent in intents)
+            recovered = self.parallel_coordinator.reconcile_spawn_intents(
+                self._parallel_request(request, plan, task_instances=instances),
+                intents,
+                lambda instance: self._invoke(instance, plan, request.policy,
+                                              execution_identity=request.execution_identity),
+                admitted_waves=(wave,), admitted_group=group, event_sink=event_sink,
+            )
+            if recovered.group.state is DispatchGroupState.INDETERMINATE:
+                raise HarnessValidationError(
+                    "spawn recovery has an unknown child outcome",
+                    code="task_plan_spawn_recovery_indeterminate",
+                )
+
     def _historical_parallel_wave_ordinals(
         self,
         request: TaskPlanStageRequest,
@@ -999,12 +1065,53 @@ class TaskPlanStageRunner(TaskPlanStageRunnerPort):
             for item in history
             if "parallel_event_idempotency_key" in item.payload
         }
+        batch_event_checksums: dict[str, str] = {}
+        spawn_receipt_by_operation: dict[str, Mapping[str, Any]] = {}
+        for item in history:
+            if item.event_type not in {
+                "TASK_ATTEMPT_SPAWN_CONFIRMED",
+                "TASK_ATTEMPT_SPAWN_UNKNOWN",
+            }:
+                continue
+            operation_key = item.payload.get("operation_key")
+            if not isinstance(operation_key, str) or not operation_key:
+                raise HarnessValidationError(
+                    "durable spawn receipt is missing its operation key",
+                    code="task_plan_event_history_conflict",
+                )
+            existing = spawn_receipt_by_operation.get(operation_key)
+            if existing is not None and not _same_spawn_receipt(existing, item.payload):
+                raise HarnessValidationError(
+                    "durable spawn receipts conflict for one operation",
+                    code="task_plan_event_history_conflict",
+                )
+            spawn_receipt_by_operation[operation_key] = item.payload
         batch: list[TaskPlanEvent] = []
         reused = 0
         for event in events:
             if not isinstance(event, Mapping) or not isinstance(event.get("event_type"), str):
                 raise HarnessValidationError("parallel event type is missing", code="task_plan_parallel_event_invalid")
             event_type = event["event_type"]
+            if event_type in {
+                "TASK_ATTEMPT_SPAWN_CONFIRMED",
+                "TASK_ATTEMPT_SPAWN_UNKNOWN",
+            }:
+                operation_key = event.get("operation_key")
+                if not isinstance(operation_key, str) or not operation_key:
+                    raise HarnessValidationError(
+                        "spawn receipt is missing its operation key",
+                        code="task_plan_parallel_event_invalid",
+                    )
+                existing_receipt = spawn_receipt_by_operation.get(operation_key)
+                if existing_receipt is not None and not _same_spawn_receipt(
+                    existing_receipt,
+                    event,
+                ):
+                    raise HarnessValidationError(
+                        "spawn receipt conflicts with durable operation evidence",
+                        code="task_plan_event_history_conflict",
+                    )
+                spawn_receipt_by_operation[operation_key] = event
             event_checksum = canonical_payload_checksum(event)
             idempotency_key = event.get("idempotency_key")
             durable_key = f"{event_type}:{idempotency_key or event_checksum}"
@@ -1017,6 +1124,14 @@ class TaskPlanStageRunner(TaskPlanStageRunnerPort):
                     )
                 reused += 1
                 continue
+            existing_batch_checksum = batch_event_checksums.get(durable_key)
+            if existing_batch_checksum is not None:
+                if existing_batch_checksum != event_checksum:
+                    raise HarnessValidationError(
+                        "parallel event idempotency key has conflicting content",
+                        code="task_plan_event_history_conflict",
+                    )
+                continue
             batch.append(
                 TaskPlanEvent.for_plan(
                     event_type, plan,
@@ -1026,6 +1141,7 @@ class TaskPlanStageRunner(TaskPlanStageRunnerPort):
                     sequence=len(history) + len(batch) + 1,
                 )
             )
+            batch_event_checksums[durable_key] = event_checksum
         if reused:
             if batch:
                 raise HarnessValidationError("atomic admission is partially present", code="task_plan_event_history_conflict")

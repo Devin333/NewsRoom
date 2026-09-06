@@ -14,6 +14,7 @@ from threading import Event, Lock, RLock
 from types import MappingProxyType
 from time import monotonic, sleep
 from typing import Any, Callable, Mapping, Protocol, runtime_checkable
+from uuid import uuid4
 
 from framework.agent.models.orchestration import ParentObservationLimits, truncate_observation_text
 from framework.harness.control_plane.errors import HarnessValidationError
@@ -22,6 +23,7 @@ from framework.harness.subagents.supervisor import (
     ChildAgentSpawnRequest,
     ChildAgentState,
     ChildAgentSupervisorError,
+    ChildAgentOperationConflict,
     ChildAgentSupervisor,
 )
 from framework.harness.task_plan.canonical import (
@@ -705,6 +707,8 @@ class _GroupSession:
     degraded_reason: str | None = None
     active_children: dict[str, tuple[ChildAgentHandle, "_SupervisorTaskWorker"]] = field(default_factory=dict)
     spawn_receipts: dict[str, tuple[str, str | None]] = field(default_factory=dict)
+    recovery_status_reads: dict[str, tuple[str, ChildAgentHandle | None]] = field(default_factory=dict)
+    reconciled_spawns: set[str] = field(default_factory=set)
     quarantined_task_ids: set[str] = field(default_factory=set)
     next_wave_ordinal: int = 1
     started_at: float = field(default_factory=monotonic)
@@ -921,12 +925,9 @@ class ParallelAgentCoordinator:
             return effective, "capacity_limited"
         return effective, None
 
-    def create_group(
+    def _group_definition(
         self,
         request: ParallelDispatchRequest,
-        *,
-        event_sink: Callable[[Mapping[str, Any]], Any] | None = None,
-        check_capacity: bool = True,
     ) -> DispatchGroup:
         group_parallelism = self._group_parallelism_limit(request)
         if group_parallelism < 1:
@@ -950,6 +951,16 @@ class ParallelAgentCoordinator:
             correlation_id=request.correlation_id,
             state=DispatchGroupState.PLANNED,
         ).transitioned(DispatchGroupState.ADMITTED)
+        return group
+
+    def create_group(
+        self,
+        request: ParallelDispatchRequest,
+        *,
+        event_sink: Callable[[Mapping[str, Any]], Any] | None = None,
+        check_capacity: bool = True,
+    ) -> DispatchGroup:
+        group = self._group_definition(request)
         with self._lock:
             if group.group_id in self._sessions:
                 return self._sessions[group.group_id].group
@@ -1147,124 +1158,285 @@ class ParallelAgentCoordinator:
         invoke: Callable[[TaskInstance], TaskResultRecord],
         *,
         admitted_waves: tuple[DispatchWave, ...] = (),
+        admitted_group: DispatchGroup | None = None,
         event_sink: Callable[[Mapping[str, Any]], Any] | None = None,
     ) -> ParallelDispatchResult:
-        """Reconcile durable spawn intents using supervisor status only.
+        """Restore verified admission evidence, then reconcile without spawning.
 
-        An intent without a receipt is not evidence that no child started. The
-        supervisor operation is queried by its immutable key; confirmed
-        handles are indexed for later waiting, while unknown outcomes remain
-        fail-closed and are never retried implicitly.
+        The caller supplies canonical replay snapshots on restart. A complete
+        wave is validated before any projection mutation or supervisor call.
+        Unknown outcomes retain their reservations and close admission.
         """
         if self.child_supervisor is None:
             raise HarnessValidationError(
                 "spawn reconciliation requires a supervisor",
                 code="TASK_GROUP_RECOVERY_SUPERVISOR_REQUIRED",
             )
-        group = self.create_group(request, event_sink=event_sink, check_capacity=False)
-        with self._lock:
-            session = self._sessions[group.group_id]
-            if admitted_waves:
-                for wave in admitted_waves:
-                    if not isinstance(wave, DispatchWave) or wave.group_id != group.group_id:
-                        raise HarnessValidationError(
-                            "recovery wave does not match dispatch group",
-                            code="TASK_GROUP_RECOVERY_WAVE_INVALID",
-                        )
-                    if wave.state not in {DispatchWaveState.ADMITTED, DispatchWaveState.DISPATCHING}:
-                        raise HarnessValidationError(
-                            "recovery wave is not pending dispatch",
-                            code="TASK_GROUP_RECOVERY_WAVE_INVALID",
-                        )
-                by_wave = {wave.wave_id: wave for wave in session.waves}
-                by_wave.update({wave.wave_id: wave for wave in admitted_waves})
-                session.waves = [by_wave[key] for key in sorted(by_wave, key=lambda value: by_wave[value].ordinal)]
-                session.next_wave_ordinal = max(
-                    session.next_wave_ordinal,
-                    max(wave.ordinal for wave in admitted_waves) + 1,
-                )
-                session.reserved.update(task_id for wave in admitted_waves for task_id in wave.task_ids)
-        task_by_id = {item.task_id: item for item in request.task_instances}
-        if not intents:
-            return self._result_for_session(session, request, limits=None)
-        intent_wave_ids = {
-            identifier(raw.get("wave_id"), "wave_id")
-            for raw in intents
-            if isinstance(raw, Mapping)
-        }
-        if len(intent_wave_ids) != 1:
+        if event_sink is None and self.event_sink is None:
             raise HarnessValidationError(
-                "spawn reconciliation must cover one wave at a time",
-                code="TASK_GROUP_RECOVERY_INTENT_INVALID",
+                "spawn reconciliation requires an audit sink",
+                code="TASK_GROUP_RECOVERY_EVENT_SINK_REQUIRED",
             )
-        for raw in intents:
-            if not isinstance(raw, Mapping):
-                raise HarnessValidationError("spawn intent is invalid", code="TASK_GROUP_RECOVERY_INTENT_INVALID")
-            task_id = identifier(raw.get("task_id"), "task_id")
-            item = task_by_id.get(task_id)
-            wave_id = identifier(raw.get("wave_id"), "wave_id")
-            task_instance_id = identifier(raw.get("task_instance_id"), "task_instance_id")
-            attempt = raw.get("attempt")
-            if item is None or item.task_instance_id != task_instance_id or item.attempt != attempt:
+        if not callable(invoke):
+            raise TypeError("invoke must be callable")
+        definition = self._group_definition(request)
+        if admitted_group is not None and (
+            not isinstance(admitted_group, DispatchGroup)
+            or admitted_group.group_checksum != definition.group_checksum
+        ):
+            raise HarnessValidationError(
+                "recovery group differs from immutable admission",
+                code="TASK_GROUP_RECOVERY_IDENTITY_MISMATCH",
+            )
+        with self._lock:
+            session = self._sessions.get(definition.group_id)
+            group = session.group if session is not None else admitted_group
+            if group is None:
+                raise HarnessValidationError(
+                    "restart recovery requires the durable group projection",
+                    code="TASK_GROUP_RECOVERY_STATE_INVALID",
+                )
+            if (admitted_group is not None and admitted_group.state not in {
+                DispatchGroupState.ADMITTED, DispatchGroupState.DISPATCHING,
+                DispatchGroupState.RUNNING, DispatchGroupState.INDETERMINATE,
+            }) or group.state not in {
+                DispatchGroupState.ADMITTED, DispatchGroupState.DISPATCHING,
+                DispatchGroupState.RUNNING, DispatchGroupState.INDETERMINATE,
+            }:
+                raise HarnessValidationError(
+                    "terminal group cannot reconcile spawn admission",
+                    code="TASK_GROUP_RECOVERY_STATE_INVALID",
+                )
+            wave, tasks = self._validate_spawn_recovery(
+                request, group, session, intents, admitted_waves,
+            )
+            if session is None:
+                session = _GroupSession(group=group, request=request)
+                self._sessions[group.group_id] = session
+            if not session.dispatch_lock.acquire(blocking=False):
+                raise HarnessValidationError(
+                    "dispatch group already has an active operation",
+                    code="TASK_GROUP_DISPATCH_BUSY",
+                )
+            if not any(item.wave_id == wave.wave_id for item in session.waves):
+                session.waves.append(wave)
+                session.waves.sort(key=lambda item: item.ordinal)
+                session.reserved.update(wave.task_ids)
+                session.next_wave_ordinal = max(session.next_wave_ordinal, wave.ordinal + 1)
+            elif wave.state is DispatchWaveState.RUNNING:
+                session.waves = [wave if item.wave_id == wave.wave_id else item for item in session.waves]
+        try:
+            if wave.state is DispatchWaveState.RUNNING and all(
+                spawn.operation_id in session.reconciled_spawns for _, spawn in tasks
+            ):
+                return self._result_for_session(session, request, limits=None)
+            for item, spawn in tasks:
+                self._reconcile_spawn_status(session, wave, item, spawn, invoke, event_sink)
+            with self._lock:
+                confirmed = all(
+                    session.spawn_receipts.get(spawn.operation_id) == (
+                        "SPAWN_CONFIRMED", spawn.child_id,
+                    )
+                    and item.task_id in session.active_children
+                    for item, spawn in tasks
+                )
+                if confirmed:
+                    # This transition is justified by the committed per-attempt
+                    # RECOVERY_RECONCILED facts, never by an unlogged status read.
+                    if session.group.state is DispatchGroupState.INDETERMINATE:
+                        session.group = replace(session.group, state=(
+                            DispatchGroupState.RUNNING if wave.state is DispatchWaveState.RUNNING
+                            else DispatchGroupState.DISPATCHING
+                        ))
+                    self._mark_wave_dispatched(session, wave, event_sink=event_sink)
+                elif session.group.state is not DispatchGroupState.INDETERMINATE:
+                    self._mark_indeterminate(
+                        group.group_id, reason_code="child_runtime_indeterminate",
+                        event_sink=event_sink, diagnostics=("SPAWN_UNKNOWN",),
+                    )
+                return self._result_for_session(session, request, limits=None)
+        finally:
+            session.dispatch_lock.release()
+
+    def _validate_spawn_recovery(
+        self,
+        request: ParallelDispatchRequest,
+        group: DispatchGroup,
+        session: _GroupSession | None,
+        intents: tuple[Mapping[str, Any], ...],
+        admitted_waves: tuple[DispatchWave, ...],
+    ) -> tuple[DispatchWave, tuple[tuple[TaskInstance, ChildAgentSpawnRequest], ...]]:
+        if not intents or any(not isinstance(raw, Mapping) for raw in intents):
+            raise HarnessValidationError("spawn intents are invalid", code="TASK_GROUP_RECOVERY_INTENT_INVALID")
+        wave_ids = {identifier(raw.get("wave_id"), "wave_id") for raw in intents}
+        task_ids = tuple(identifier(raw.get("task_id"), "task_id") for raw in intents)
+        if len(wave_ids) != 1 or len(task_ids) != len(set(task_ids)):
+            raise HarnessValidationError("spawn intents are not one unique wave", code="TASK_GROUP_RECOVERY_INTENT_INVALID")
+        wave_id = next(iter(wave_ids))
+        if len(admitted_waves) > 1 or any(
+            not isinstance(wave, DispatchWave) or wave.wave_id != wave_id
+            or wave.group_id != group.group_id
+            or wave.state not in {DispatchWaveState.ADMITTED, DispatchWaveState.RUNNING}
+            for wave in admitted_waves
+        ):
+            raise HarnessValidationError("recovery admission wave is invalid", code="TASK_GROUP_RECOVERY_WAVE_INVALID")
+        local = next((wave for wave in session.waves if wave.wave_id == wave_id), None) if session else None
+        wave = local or (admitted_waves[0] if admitted_waves else None)
+        if local is not None and local.state is DispatchWaveState.ADMITTED and admitted_waves:
+            wave = admitted_waves[0]
+        if wave is None or wave.state not in {DispatchWaveState.ADMITTED, DispatchWaveState.RUNNING}:
+            raise HarnessValidationError("recovery wave is not dispatchable", code="TASK_GROUP_RECOVERY_WAVE_INVALID")
+        if (
+            wave.execution_mode != "SUPERVISED"
+            or wave.group_id != group.group_id
+            or set(wave.task_ids) != set(task_ids)
+            or not set(task_ids).issubset(group.task_ids)
+            or wave.effective_parallelism > group.max_parallelism
+            or wave.ordinal > group.max_waves
+        ):
+            raise HarnessValidationError("recovery intents must cover the admitted wave", code="TASK_GROUP_RECOVERY_INTENT_INVALID")
+        if session and any(
+            other.wave_id != wave_id and (
+                other.ordinal == wave.ordinal or other.state is not DispatchWaveState.TERMINAL
+            )
+            for other in session.waves
+        ):
+            raise HarnessValidationError("recovery conflicts with another wave", code="TASK_GROUP_RECOVERY_WAVE_INVALID")
+        tasks = {item.task_id: item for item in request.task_instances}
+        reservations = {item.task_id: item for item in wave.reservations}
+        validated = []
+        for raw in sorted(intents, key=lambda value: value["task_id"]):
+            item = tasks.get(raw["task_id"])
+            if (
+                item is None or isinstance(raw.get("attempt"), bool)
+                or raw.get("attempt") != item.attempt
+                or raw.get("task_instance_id") != item.task_instance_id
+                or raw.get("group_id") != group.group_id
+                or raw.get("event_type") != "TASK_ATTEMPT_SPAWN_INTENT"
+            ):
                 raise HarnessValidationError("spawn intent does not match task instance", code="TASK_GROUP_RECOVERY_INTENT_INVALID")
-            operation_key = raw.get("operation_key")
-            expected_key = spawn_operation_key(group.group_id, wave_id, task_instance_id, attempt)
-            if operation_key != expected_key:
+            reservation = reservations[item.task_id]
+            if (
+                reservation.idempotency_key != item.idempotency_key
+                or dict(reservation.budget) != item.budget_snapshot.to_dict()
+                or reservation.state is not ReservationState.RESERVED
+            ):
+                raise HarnessValidationError("spawn reservation differs from task", code="TASK_GROUP_RECOVERY_WAVE_INVALID")
+            spawn = self._spawn_request(request, wave, item)
+            if raw.get("operation_key") != spawn.operation_id or raw.get("idempotency_key") != spawn.operation_id:
                 raise HarnessValidationError("spawn intent operation key is invalid", code="TASK_GROUP_RECOVERY_INTENT_INVALID")
-            wave = next((value for value in session.waves if value.wave_id == wave_id), None)
-            if wave is None or task_id not in wave.task_ids:
-                raise HarnessValidationError("spawn intent wave scope is invalid", code="TASK_GROUP_RECOVERY_INTENT_INVALID")
-            with self._lock:
-                prior = session.spawn_receipts.get(operation_key)
-            if prior is not None:
-                continue
-            child_id = f"parallel-{task_instance_id}"
-            try:
-                handle = self.child_supervisor.status(child_id, operation_id=operation_key)
-            except ChildAgentSupervisorError:
-                with self._lock:
-                    session.spawn_receipts[operation_key] = ("SPAWN_UNKNOWN", None)
-                self._emit(
-                    "TASK_ATTEMPT_SPAWN_UNKNOWN", event_sink=event_sink,
-                    group_id=group.group_id, wave_id=wave_id, task_id=task_id,
-                    task_instance_id=task_instance_id, attempt=attempt,
-                    operation_key=operation_key, spawn_status="SPAWN_UNKNOWN",
-                    idempotency_key=operation_key,
-                )
-                continue
-            worker = _SupervisorTaskWorker(invoke, item)
-            with self._lock:
-                session.active_children[task_id] = (handle, worker)
-                session.reserved.add(task_id)
-                session.spawn_receipts[operation_key] = ("SPAWN_CONFIRMED", handle.child_id)
-            self._emit(
-                "TASK_ATTEMPT_SPAWN_CONFIRMED", event_sink=event_sink,
-                group_id=group.group_id, wave_id=wave_id, task_id=task_id,
-                task_instance_id=task_instance_id, attempt=attempt,
-                operation_key=operation_key, spawn_status="SPAWN_CONFIRMED",
-                child_id=handle.child_id, idempotency_key=operation_key,
-            )
-        intent_task_ids = {identifier(raw.get("task_id"), "task_id") for raw in intents}
-        if len(intent_task_ids) != len(intents):
-            raise HarnessValidationError(
-                "spawn reconciliation contains duplicate task intents",
-                code="TASK_GROUP_RECOVERY_INTENT_INVALID",
-            )
+            validated.append((item, spawn))
+        return wave, tuple(validated)
+
+    def _reconcile_spawn_status(
+        self,
+        session: _GroupSession,
+        wave: DispatchWave,
+        item: TaskInstance,
+        spawn: ChildAgentSpawnRequest,
+        invoke: Callable[[TaskInstance], TaskResultRecord],
+        event_sink: Callable[[Mapping[str, Any]], Any] | None,
+    ) -> None:
+        operation_key = spawn.operation_id
         with self._lock:
-            confirmed = intent_task_ids.intersection(session.active_children)
-            wave_states = {value.wave_id: value for value in session.waves}
-        if confirmed == intent_task_ids:
-            wave_id = identifier(intents[0].get("wave_id"), "wave_id")
-            wave = wave_states[wave_id]
-            # ``dispatch`` marks a group INDETERMINATE when the process dies
-            # after child receipts but before the dispatch event.  Reopening
-            # that audited boundary is specific to this reconciliation path;
-            # ordinary callers still cannot transition terminal groups.
+            if operation_key in session.reconciled_spawns:
+                return
+            pending = session.recovery_status_reads.get(operation_key)
+        identity = {
+            "group_id": wave.group_id, "wave_id": wave.wave_id,
+            "task_id": item.task_id, "task_instance_id": item.task_instance_id,
+            "attempt": item.attempt, "operation_key": operation_key,
+        }
+        if pending is None:
+            recovery_id = f"recovery-{uuid4().hex}"
+            self._emit(
+                "RECOVERY_STATUS_READ", event_sink=event_sink, **identity,
+                recovery_id=recovery_id, recovery_outcome="status_read",
+                idempotency_key=f"{recovery_id}:status-read",
+            )
+            assert self.child_supervisor is not None and spawn.child_id is not None
+            try:
+                handle = self.child_supervisor.status(spawn.child_id, operation_id=operation_key)
+            except ChildAgentOperationConflict:
+                self._emit(
+                    "RECOVERY_HALTED", event_sink=event_sink, **identity,
+                    recovery_id=recovery_id, reason_code="SPAWN_IDENTITY_CONFLICT",
+                    idempotency_key=f"{recovery_id}:halted",
+                )
+                self._mark_indeterminate(
+                    wave.group_id, reason_code="child_runtime_indeterminate", event_sink=event_sink,
+                    diagnostics=("SPAWN_IDENTITY_CONFLICT",),
+                )
+                raise
+            except ChildAgentSupervisorError:
+                handle = None
+            if handle is not None and (not isinstance(handle, ChildAgentHandle) or any(
+                getattr(handle, name) != getattr(spawn, name)
+                for name in (
+                    "child_id", "operation_id", "parent_graph_identity", "stage_id",
+                    "task_id", "task_instance_id", "attempt", "allowed_tools",
+                    "allowed_memory_namespaces", "budget",
+                )
+            )):
+                self._emit(
+                    "RECOVERY_HALTED", event_sink=event_sink, **identity,
+                    recovery_id=recovery_id, reason_code="SPAWN_IDENTITY_CONFLICT",
+                    idempotency_key=f"{recovery_id}:halted",
+                )
+                self._mark_indeterminate(
+                    wave.group_id, reason_code="child_runtime_indeterminate", event_sink=event_sink,
+                    diagnostics=("SPAWN_IDENTITY_CONFLICT",),
+                )
+                raise HarnessValidationError("supervisor handle identity mismatch", code="TASK_GROUP_RECOVERY_IDENTITY_MISMATCH")
+            if handle is not None and handle.state in {ChildAgentState.LOST, ChildAgentState.CLOSED}:
+                self._emit(
+                    "RECOVERY_HALTED", event_sink=event_sink, **identity,
+                    recovery_id=recovery_id, reason_code="CHILD_NOT_TRACKABLE",
+                    idempotency_key=f"{recovery_id}:halted",
+                )
+                self._mark_indeterminate(
+                    wave.group_id, reason_code="child_runtime_indeterminate", event_sink=event_sink,
+                    diagnostics=("CHILD_NOT_TRACKABLE",),
+                )
+                raise HarnessValidationError("supervisor child is not trackable", code="TASK_GROUP_RECOVERY_UNCONFIRMED")
             with self._lock:
-                if session.group.state is DispatchGroupState.INDETERMINATE:
-                    session.group = replace(session.group, state=DispatchGroupState.DISPATCHING)
-            self._mark_wave_dispatched(session, wave, event_sink=event_sink)
-        return self._result_for_session(session, request, limits=None)
+                session.recovery_status_reads[operation_key] = (recovery_id, handle)
+                if handle is not None:
+                    worker = session.active_children.get(item.task_id, (None, None))[1]
+                    session.active_children[item.task_id] = (handle, worker or _SupervisorTaskWorker(invoke, item))
+        else:
+            recovery_id, handle = pending
+        status = "SPAWN_CONFIRMED" if handle is not None else "SPAWN_UNKNOWN"
+        receipt = {
+            "event_type": f"TASK_ATTEMPT_{status}", **identity,
+            "spawn_status": status, "idempotency_key": operation_key,
+            **({"child_id": handle.child_id} if handle is not None else {}),
+        }
+        try:
+            self._emit(receipt.pop("event_type"), event_sink=event_sink, **receipt)
+        except HarnessValidationError as exc:
+            if exc.code != "task_plan_event_history_conflict":
+                raise
+            self._emit(
+                "RECOVERY_HALTED", event_sink=event_sink, **identity,
+                recovery_id=recovery_id, reason_code="SPAWN_IDENTITY_CONFLICT",
+                idempotency_key=f"{recovery_id}:halted",
+            )
+            self._mark_indeterminate(
+                wave.group_id, reason_code="child_runtime_indeterminate", event_sink=event_sink,
+                diagnostics=("SPAWN_IDENTITY_CONFLICT",),
+            )
+            raise
+        with self._lock:
+            session.spawn_receipts[operation_key] = (status, handle.child_id if handle else None)
+        self._emit(
+            "RECOVERY_RECONCILED" if handle else "RECOVERY_HALTED",
+            event_sink=event_sink, **identity, recovery_id=recovery_id,
+            **({"recovery_outcome": status, "child_id": handle.child_id} if handle else {"reason_code": status}),
+            idempotency_key=f"{recovery_id}:{'reconciled' if handle else 'halted'}",
+        )
+        with self._lock:
+            session.reconciled_spawns.add(operation_key)
 
     def dispatch(
         self,
@@ -1747,8 +1919,13 @@ class ParallelAgentCoordinator:
         event_sink: Callable[[Mapping[str, Any]], Any] | None,
     ) -> None:
         with self._lock:
+            current = next((item for item in session.waves if item.wave_id == wave.wave_id), None)
+            if current is not None and current.state is DispatchWaveState.RUNNING:
+                return
             if not _GROUP_TRANSITIONS[session.group.state]:
                 raise HarnessValidationError("group closed before dispatch", code="TASK_GROUP_DISPATCH_CLOSED")
+            running_group = session.group.transitioned(DispatchGroupState.RUNNING)
+            running = wave.transitioned(DispatchWaveState.DISPATCHING).transitioned(DispatchWaveState.RUNNING)
             dispatched_at = monotonic()
             queued_at = session.wave_admitted_at.get(wave.wave_id, session.started_at)
             self._emit(
@@ -1758,8 +1935,7 @@ class ParallelAgentCoordinator:
                 queue_wait_ms=_elapsed_ms(queued_at, now=dispatched_at),
                 idempotency_key=wave.wave_id,
             )
-            session.group = session.group.transitioned(DispatchGroupState.RUNNING)
-            running = wave.transitioned(DispatchWaveState.DISPATCHING).transitioned(DispatchWaveState.RUNNING)
+            session.group = running_group
             session.waves = [running if item.wave_id == wave.wave_id else item for item in session.waves]
             session.wave_dispatched_at[wave.wave_id] = dispatched_at
 
@@ -1898,15 +2074,9 @@ class ParallelAgentCoordinator:
                     continue
                 with self._lock:
                     session.active_children[item.task_id] = (handle, worker)
-                    session.spawn_receipts[spawn_request.operation_id] = (
-                        "SPAWN_CONFIRMED",
-                        handle.child_id,
-                    )
                 reconciled.append((item, spawn_request, handle))
             for item, spawn_request, handle in reconciled:
                 if handle is None:
-                    with self._lock:
-                        session.spawn_receipts[spawn_request.operation_id] = ("SPAWN_UNKNOWN", None)
                     self._emit(
                         "TASK_ATTEMPT_SPAWN_UNKNOWN",
                         event_sink=event_sink,
@@ -1919,6 +2089,8 @@ class ParallelAgentCoordinator:
                         spawn_status="SPAWN_UNKNOWN",
                         idempotency_key=spawn_request.operation_id,
                     )
+                    with self._lock:
+                        session.spawn_receipts[spawn_request.operation_id] = ("SPAWN_UNKNOWN", None)
                     continue
                 self._emit(
                     "TASK_ATTEMPT_SPAWN_CONFIRMED",
@@ -1933,6 +2105,8 @@ class ParallelAgentCoordinator:
                     child_id=handle.child_id,
                     idempotency_key=spawn_request.operation_id,
                 )
+                with self._lock:
+                    session.spawn_receipts[spawn_request.operation_id] = ("SPAWN_CONFIRMED", handle.child_id)
             raise
         # Retain all handles before writing any receipt so a failed write
         # cannot hide a sibling that the supervisor already started.
@@ -1944,10 +2118,6 @@ class ParallelAgentCoordinator:
             children.append((item, worker, handle))
             with self._lock:
                 session.active_children[item.task_id] = (handle, worker)
-                session.spawn_receipts[_spawn_request.operation_id] = (
-                    "SPAWN_CONFIRMED",
-                    handle.child_id,
-                )
         for (item, _worker, _spawn_request), handle in zip(pending_children, handles, strict=True):
             self._emit(
                 "TASK_ATTEMPT_SPAWN_CONFIRMED",
@@ -1962,6 +2132,8 @@ class ParallelAgentCoordinator:
                 child_id=handle.child_id,
                 idempotency_key=_spawn_request.operation_id,
             )
+            with self._lock:
+                session.spawn_receipts[_spawn_request.operation_id] = ("SPAWN_CONFIRMED", handle.child_id)
         self._mark_wave_dispatched(session, wave, event_sink=event_sink)
         results: list[TaskResultRecord] = []
         released: set[str] = set()
@@ -2218,6 +2390,8 @@ class ParallelAgentCoordinator:
         with self._lock:
             session = self._sessions.get(group_id)
             if session is None:
+                return
+            if session.group.state is DispatchGroupState.INDETERMINATE:
                 return
             self._release_pending_waves(session, event_sink=event_sink, reason_code=reason_code)
             session.group = session.group.transitioned(DispatchGroupState.INDETERMINATE)

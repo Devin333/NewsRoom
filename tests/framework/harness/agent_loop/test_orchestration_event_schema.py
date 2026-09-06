@@ -90,3 +90,31 @@ def test_group_admission_requires_complete_pinned_group(catalog, canonical_event
     del payload["details"]["group"]["group_checksum"]
     with pytest.raises(EventSchemaError):
         catalog.validate(event.event_type, event.data_schema, payload)
+
+
+@pytest.mark.parametrize("event_type", ["RECOVERY_STATUS_READ", "RECOVERY_RECONCILED", "RECOVERY_HALTED"])
+@pytest.mark.parametrize("missing", [None, "group_id", "wave_id", "task_id", "task_instance_id", "attempt", "operation_key", "recovery_id"])
+def test_recovery_schema_requires_complete_attempt_correlation(catalog, canonical_events, event_type, missing):
+    source = next(event for event in canonical_events if event.event_type == "TASK_ATTEMPT_SPAWN_CONFIRMED")
+    payload = thaw_canonical_json(source.payload)
+    source_details = payload["details"]
+    payload["details"] = {
+        key: source_details[key] for key in (
+            "group_id", "wave_id", "task_id", "task_instance_id", "attempt", "operation_key",
+        )
+    }
+    details = payload["details"]
+    details.update(event_type=event_type, recovery_id="recovery-test",
+                   idempotency_key="recovery-test:event", parallel_event_idempotency_key="audit-test")
+    if event_type == "RECOVERY_HALTED":
+        details["reason_code"] = "SPAWN_UNKNOWN"
+    else:
+        details["recovery_outcome"] = "status_read" if event_type == "RECOVERY_STATUS_READ" else "SPAWN_CONFIRMED"
+        if event_type == "RECOVERY_RECONCILED":
+            details["child_id"] = source_details["child_id"]
+    if missing is None:
+        catalog.validate(event_type, source.data_schema, payload)
+    else:
+        del details[missing]
+        with pytest.raises(EventSchemaError):
+            catalog.validate(event_type, source.data_schema, payload)

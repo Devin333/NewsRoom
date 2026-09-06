@@ -96,6 +96,9 @@ _PARALLEL_EVENT_TYPES = frozenset(
         "TASK_GROUP_SUPERSEDED",
         "TASK_GROUP_RECLAIMED",
         "TASK_GROUP_RECOVERY",
+        "RECOVERY_STATUS_READ",
+        "RECOVERY_RECONCILED",
+        "RECOVERY_HALTED",
         "DEGRADED_SERIAL",
     }
 )
@@ -915,6 +918,10 @@ def _apply_parallel_event(
         snapshot = _normalize_parallel_group(group_payload, projection, event)
         _require_same_parallel_group(group, snapshot, event)
 
+    if event.event_type.startswith("RECOVERY_"):
+        _apply_spawn_recovery_audit(event, payload, group, waves, spawn_operations, diagnostics)
+        return
+
     if event.event_type in {
         "TASK_ATTEMPT_SPAWN_INTENT",
         "TASK_ATTEMPT_SPAWN_CONFIRMED",
@@ -1175,7 +1182,8 @@ def _apply_parallel_event(
             event,
             allow_same=False,
         )
-        _release_parallel_group_reservations(group_id, waves, reservations, event)
+        # Unknown external outcomes are not evidence that resources are free.
+        # Only a recorded per-reservation settlement can release this charge.
     elif event.event_type == "TASK_GROUP_HALTED":
         _require_group_snapshot_target(
             group_payload,
@@ -1235,6 +1243,89 @@ def _apply_parallel_event(
     else:
         _parallel_error("unsupported parallel event", event)
     diagnostics.append(_parallel_diagnostic(event, group_id, payload))
+
+
+def _apply_spawn_recovery_audit(
+    event: TaskPlanEvent,
+    payload: Mapping[str, Any],
+    group: dict[str, Any],
+    waves: dict[str, dict[str, Any]],
+    operations: dict[str, dict[str, Any]],
+    diagnostics: list[dict[str, Any]],
+) -> None:
+    wave_id = _parallel_identifier(payload.get("wave_id"), "wave_id", event)
+    wave = waves.get(wave_id)
+    instance_id = _parallel_identifier(payload.get("task_instance_id"), "task_instance_id", event)
+    attempt = payload.get("attempt")
+    if isinstance(attempt, bool) or not isinstance(attempt, int) or attempt < 1:
+        _parallel_error("recovery audit attempt is invalid", event)
+    operation = operations.get(f"{wave_id}:{instance_id}:{attempt}")
+    if wave is None or wave["group_id"] != group["group_id"] or operation is None:
+        _parallel_error("recovery audit has no admitted spawn intent", event)
+    if any(payload.get(name) != operation[name] for name in (
+        "group_id", "wave_id", "task_id", "task_instance_id", "attempt", "operation_key",
+    )):
+        _parallel_error("recovery audit identity differs from spawn intent", event)
+    recovery_id = _parallel_identifier(payload.get("recovery_id"), "recovery_id", event)
+    suffix = {
+        "RECOVERY_STATUS_READ": "status-read",
+        "RECOVERY_RECONCILED": "reconciled",
+        "RECOVERY_HALTED": "halted",
+    }[event.event_type]
+    if payload.get("idempotency_key") != f"{recovery_id}:{suffix}":
+        _parallel_error("recovery audit idempotency key is invalid", event)
+    reads = operation.setdefault("recovery_reads", {})
+    prior = reads.get(recovery_id)
+    if event.event_type == "RECOVERY_STATUS_READ":
+        if payload.get("recovery_outcome") != "status_read":
+            _parallel_error("recovery status read outcome is invalid", event)
+        if prior is not None:
+            _parallel_error("recovery status call was recorded more than once", event)
+        if any(recovery_id in item.get("recovery_reads", {}) for item in operations.values()):
+            _parallel_error("recovery status identity belongs to another operation", event)
+        reads[recovery_id] = "REQUESTED"
+        operation["latest_recovery_id"] = recovery_id
+        operation["latest_recovery_outcome"] = "REQUESTED"
+    else:
+        if prior != "REQUESTED":
+            _parallel_error("recovery decision has no unmatched status read", event)
+        if event.event_type == "RECOVERY_RECONCILED":
+            if (
+                payload.get("recovery_outcome") != "SPAWN_CONFIRMED"
+                or operation["status"] != "SPAWN_CONFIRMED"
+                or payload.get("child_id") != operation.get("child_id")
+            ):
+                _parallel_error("recovery confirmation has no matching child receipt", event)
+            reads[recovery_id] = "SPAWN_CONFIRMED"
+            if operation.get("latest_recovery_id") == recovery_id:
+                operation["latest_recovery_outcome"] = "SPAWN_CONFIRMED"
+            confirmed = [item for item in operations.values() if item["wave_id"] == wave_id]
+            if (
+                group["state"] == DispatchGroupState.INDETERMINATE.value
+                and wave["state"] in {DispatchWaveState.ADMITTED.value, DispatchWaveState.RUNNING.value}
+                and {item["task_id"] for item in confirmed} == set(wave["task_ids"])
+                and all(item["status"] == "SPAWN_CONFIRMED" and
+                        item.get("latest_recovery_outcome") == "SPAWN_CONFIRMED" for item in confirmed)
+            ):
+                group["state"] = (DispatchGroupState.RUNNING.value if wave["state"] == DispatchWaveState.RUNNING.value
+                                  else DispatchGroupState.DISPATCHING.value)
+        else:
+            reason = payload.get("reason_code")
+            if reason not in {"SPAWN_UNKNOWN", "SPAWN_IDENTITY_CONFLICT", "CHILD_NOT_TRACKABLE"}:
+                _parallel_error("recovery halt reason is invalid", event)
+            if reason == "SPAWN_UNKNOWN" and operation["status"] != "SPAWN_UNKNOWN":
+                _parallel_error("unknown recovery decision has no unknown receipt", event)
+            reads[recovery_id] = reason
+            if operation.get("latest_recovery_id") == recovery_id:
+                operation["latest_recovery_outcome"] = reason
+    diagnostics.append({
+        "event_type": event.event_type, "sequence": event.sequence,
+        **{name: payload[name] for name in (
+            "group_id", "wave_id", "task_id", "task_instance_id", "attempt", "operation_key", "recovery_id",
+        )},
+        **{name: payload[name] for name in ("child_id", "recovery_outcome", "reason_code") if name in payload},
+        "audit_checksum": canonical_payload_checksum(payload),
+    })
 
 
 def _normalize_parallel_group(

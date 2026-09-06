@@ -479,6 +479,7 @@ def test_reconcile_spawn_intents_reuses_confirmed_children_without_spawn() -> No
             intents,
             invoke,
             admitted_waves=(admitted_wave,),
+            admitted_group=session.group,
             event_sink=recovery_events.append,
         )
 
@@ -538,9 +539,10 @@ def test_reconcile_spawn_intents_fails_closed_when_supervisor_status_is_unknown(
             (intent,),
             lambda instance: _result(plan, instance),
             admitted_waves=(admitted_wave,),
+            admitted_group=session.group,
             event_sink=recovery_events.append,
         )
-        assert first.group.state is DispatchGroupState.ADMITTED
+        assert first.group.state is DispatchGroupState.INDETERMINATE
         assert not any(event["event_type"] == "TASK_WAVE_DISPATCHED" for event in recovery_events)
         unknown_count = sum(event["event_type"] == "TASK_ATTEMPT_SPAWN_UNKNOWN" for event in recovery_events)
         assert unknown_count == 1
