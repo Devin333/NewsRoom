@@ -899,19 +899,7 @@ def _child_budget_reservation(
         if isinstance(raw_limit, int) and not isinstance(raw_limit, bool) and raw_limit > 0:
             reservation[f"remaining_{amount_key}"] = raw_limit
             reservation["parent_allocation"][amount_key] = raw_limit
-    reservation["reservation_checksum"] = canonical_payload_checksum(
-        {
-            key: reservation[key]
-            for key in (
-                "schema_version",
-                "ledger_version",
-                "owner_scope",
-                "reservation_key",
-                "parent_allocation",
-                "attempt_allocation",
-            )
-        }
-    )
+    reservation["reservation_checksum"] = canonical_payload_checksum(reservation)
     return reservation
 
 
@@ -1776,6 +1764,7 @@ class ParallelAgentCoordinator:
                         "attempt": item.attempt,
                         "operation_key": item.operation_id,
                         "idempotency_key": item.operation_id,
+                        "budget_reservation": dict(item.budget),
                     }
                     for item in spawn_requests
                 )

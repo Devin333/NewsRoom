@@ -957,18 +957,25 @@ def _apply_parallel_event(
             "operation_key": operation_key,
         }
         if event.event_type == "TASK_ATTEMPT_SPAWN_INTENT":
+            budget_reservation = payload.get("budget_reservation")
+            if not isinstance(budget_reservation, Mapping):
+                _parallel_error("spawn intent is missing its budget reservation", event)
             if existing is not None:
                 if any(existing[name] != value for name, value in identity.items()):
                     _parallel_error("spawn intent conflicts with recorded identity", event)
+                if existing.get("budget_reservation") != thaw_mapping(frozen_mapping(budget_reservation, "spawn_budget_reservation")):
+                    _parallel_error("spawn intent conflicts with budget reservation", event)
                 return
             _require_parallel_state(wave["state"], {DispatchWaveState.ADMITTED.value}, event)
             task = next((item for item in projection.tasks if item.task_id == task_id), None)
             if task is None or task.active_instance_id != task_instance_id or task.attempts != attempt:
                 _parallel_error("spawn intent differs from admitted task attempt", event)
+            _validate_spawn_budget_reservation(budget_reservation, operation_key, event)
             if any(item["wave_id"] == wave_id and item["task_id"] == task_id for item in spawn_operations.values()):
                 _parallel_error("wave task has multiple spawn attempts", event)
             spawn_operations[key] = {
                 **identity,
+                "budget_reservation": thaw_mapping(frozen_mapping(budget_reservation, "spawn_budget_reservation")),
                 "status": "INTENT",
             }
             return
@@ -1865,6 +1872,41 @@ def _parallel_error(message: str, event: TaskPlanEvent) -> None:
         code="task_plan_replay_parallel_mismatch",
         details={"event_type": event.event_type, "sequence": event.sequence},
     )
+
+
+def _validate_spawn_budget_reservation(
+    value: Mapping[str, Any],
+    operation_key: str,
+    event: TaskPlanEvent,
+) -> None:
+    required = {
+        "schema_version", "ledger_version", "owner_scope", "reservation_key",
+        "parent_allocation", "attempt_allocation", "reservation_checksum",
+    }
+    if not required.issubset(value):
+        _parallel_error("spawn budget reservation is incomplete", event)
+    if value.get("schema_version") != "agora.harness-budget-reservation/v1":
+        _parallel_error("spawn budget reservation schema is invalid", event)
+    if value.get("reservation_key") != operation_key:
+        _parallel_error("spawn budget reservation key differs from operation key", event)
+    if (
+        isinstance(value.get("ledger_version"), bool)
+        or not isinstance(value.get("ledger_version"), int)
+        or value["ledger_version"] < 1
+        or not isinstance(value.get("owner_scope"), str)
+        or not value["owner_scope"].strip()
+        or not isinstance(value.get("parent_allocation"), Mapping)
+        or not isinstance(value.get("attempt_allocation"), Mapping)
+    ):
+        _parallel_error("spawn budget reservation metadata is invalid", event)
+    supplied = value.get("reservation_checksum")
+    if not isinstance(supplied, str) or not supplied.startswith("sha256:"):
+        _parallel_error("spawn budget reservation checksum is invalid", event)
+    expected = canonical_payload_checksum(
+        {key: item for key, item in value.items() if key != "reservation_checksum"}
+    )
+    if supplied != expected:
+        _parallel_error("spawn budget reservation checksum does not match its snapshot", event)
 
 
 def _validated_plan_history(

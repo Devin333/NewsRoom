@@ -176,8 +176,10 @@ current checklist is 12/46, superseding the earlier historical counts above.
 - Supervised child budget envelopes now carry a versioned reservation schema,
   owner scope, deterministic operation key, parent allocation, attempt
   allocation, ledger version, and canonical reservation checksum. This binds
-  the metadata sent to the child admission boundary while leaving the broader
-  durable TaskPlan ledger/settlement work explicitly open.
+  the metadata sent to the child admission boundary. The same envelope is now
+  required in `TASK_ATTEMPT_SPAWN_INTENT` and is validated by offline replay;
+  tampered checksums and key mismatches fail closed. The broader durable
+  TaskPlan ledger/settlement work remains explicitly open.
 - Offline reduction verifies every audit against its admitted spawn operation,
   status-read identity and receipt. Audited confirmations are the only route
   for reopening an indeterminate group at this boundary. Unknown outcomes keep
@@ -192,9 +194,9 @@ Increment checks before final commit:
 
 - Spawn recovery audit suite: 33 passed, including a fresh coordinator/process
   restart that re-reads child status and reuses durable receipts.
-- Broader TaskPlan/AgentLoop/supervisor regression: 306 passed; focused spawn
+- Broader TaskPlan/AgentLoop/supervisor regression: 307 passed; focused spawn
   and receipt recovery regression: 61 passed.
-- Final required repository smoke: passed (`2652 passed, 23 deselected`, plus
+- Final required repository smoke: passed (`2653 passed, 23 deselected`, plus
   smoke AgentLoop artifact and source validation).
 - Strict OpenSpec validation: passed.
 

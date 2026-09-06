@@ -249,3 +249,12 @@ def test_replay_rejects_fabricated_attempt_even_with_matching_operation_key(spaw
     intent.update(operation_key=key, idempotency_key=key)
     with pytest.raises(HarnessValidationError, match="admitted task attempt"):
         _replay(projection, events)
+
+
+def test_replay_rejects_tampered_spawn_budget_reservation(spawn_history):
+    projection, events = spawn_history
+    intent = next(item for item in events if item["event_type"] == "TASK_ATTEMPT_SPAWN_INTENT")
+    intent["budget_reservation"] = dict(intent["budget_reservation"])
+    intent["budget_reservation"]["reservation_checksum"] = "sha256:" + "0" * 64
+    with pytest.raises(HarnessValidationError, match="budget reservation checksum"):
+        _replay(projection, events)
