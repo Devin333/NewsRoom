@@ -153,6 +153,11 @@ current checklist is 12/46, superseding the earlier historical counts above.
   loop. It rehydrates both admitted and already-dispatched nonterminal waves
   from canonical history. No new wave, budget charge or child is created by
   this path.
+- The stage now invokes coordinator result recovery on every parallel loop,
+  including when the parent result store is empty. A checksum-bound terminal
+  child result can therefore be written back through the normal TaskPlan
+  result transition after a parent-side crash; failure-attempt history is used
+  for idempotent suppression so retry scheduling is not duplicated.
 - Offline reduction verifies every audit against its admitted spawn operation,
   status-read identity and receipt. Audited confirmations are the only route
   for reopening an indeterminate group at this boundary. Unknown outcomes keep

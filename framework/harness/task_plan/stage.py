@@ -673,17 +673,45 @@ class TaskPlanStageRunner(TaskPlanStageRunnerPort):
                 plan.plan_id,
                 plan.version,
             )
-            if durable_results:
-                self.parallel_coordinator.recover(
-                    admission,
-                    durable_results,
-                    historical_wave_ordinals=self._historical_parallel_wave_ordinals(
-                        request,
-                        group_id=group.group_id,
-                    ),
-                    limits=limits,
-                    event_sink=event_sink,
+            durable_result_history = self.store.result_history_for(
+                request.run_id,
+                request.stage_id,
+                plan.plan_id,
+                plan.version,
+            )
+            # Recovery must run even when the parent store has no result yet:
+            # a child may have durably reached SUCCEEDED before a process crash
+            # interrupted the parent result append. The coordinator can then
+            # recover its checksum-bound terminal envelope and hand the typed
+            # result back to this stage for the normal store transition.
+            durable_result_history_checksums = {
+                (item.task_id, item.result_checksum)
+                for item in durable_result_history
+            }
+            recovered_dispatch = self.parallel_coordinator.recover(
+                admission,
+                durable_results,
+                historical_wave_ordinals=self._historical_parallel_wave_ordinals(
+                    request,
+                    group_id=group.group_id,
+                ),
+                limits=limits,
+                event_sink=event_sink,
+            )
+            coordinator_results = tuple(
+                item
+                for item in recovered_dispatch.results
+                if (
+                    (item.task_id, item.result_checksum)
+                    not in durable_result_history_checksums
                 )
+            )
+            if coordinator_results:
+                for result in coordinator_results:
+                    self.store.append_result(result)
+                for result in coordinator_results:
+                    self._handle_parallel_result(request, plan, result)
+                recovered_any = True
             if recovered_any:
                 continue
             if (
