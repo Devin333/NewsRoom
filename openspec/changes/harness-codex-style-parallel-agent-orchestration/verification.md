@@ -158,6 +158,9 @@ current checklist is 12/46, superseding the earlier historical counts above.
   child result can therefore be written back through the normal TaskPlan
   result transition after a parent-side crash; failure-attempt history is used
   for idempotent suppression so retry scheduling is not duplicated.
+- Supervised child join now revalidates task id, task-instance id, attempt, and
+  frozen plan identity before accepting a result, preventing a terminal child
+  from injecting an outcome from another attempt or plan.
 - Offline reduction verifies every audit against its admitted spawn operation,
   status-read identity and receipt. Audited confirmations are the only route
   for reopening an indeterminate group at this boundary. Unknown outcomes keep
@@ -172,9 +175,9 @@ Increment checks before final commit:
 
 - Spawn recovery audit suite: 33 passed, including a fresh coordinator/process
   restart that re-reads child status and reuses durable receipts.
-- Broader TaskPlan/AgentLoop/supervisor regression: 294 passed; focused spawn
+- Broader TaskPlan/AgentLoop/supervisor regression: 295 passed; focused spawn
   and receipt recovery regression: 61 passed.
-- Final required repository smoke: passed (`2640 passed, 23 deselected`, plus
+- Final required repository smoke: passed (`2641 passed, 23 deselected`, plus
   smoke AgentLoop artifact and source validation).
 - Strict OpenSpec validation: passed.
 

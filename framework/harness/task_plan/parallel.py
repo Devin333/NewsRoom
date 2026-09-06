@@ -2323,7 +2323,12 @@ class ParallelAgentCoordinator:
                             code="TASK_GROUP_INDETERMINATE",
                             details={"task_id": item.task_id, "child_state": receipt.status.value},
                         )
-                    results.append(worker.result)
+                    result = _validated_supervised_task_result(
+                        worker.result,
+                        item,
+                        request.plan,
+                    )
+                    results.append(result)
                     consumed.add(item.task_id)
                     self.child_supervisor.close(
                         handle.child_id,
@@ -2333,7 +2338,7 @@ class ParallelAgentCoordinator:
                         session.active_children.pop(item.task_id, None)
                     if (
                         request.join_policy is JoinPolicy.FAIL_FAST
-                        and worker.result.status is TaskLifecycle.FAILED
+                        and result.status is TaskLifecycle.FAILED
                     ):
                         self._emit(
                             "TASK_GROUP_CANCEL_REQUESTED",
@@ -2647,6 +2652,36 @@ def _validated_task_result(
         raise HarnessValidationError(
             "worker result task identity mismatch",
             code="RESULT_IDENTITY_MISMATCH",
+        )
+    return result
+
+
+def _validated_supervised_task_result(
+    result: TaskResultRecord,
+    task_instance: TaskInstance,
+    plan: ValidatedTaskPlan,
+) -> TaskResultRecord:
+    """Enforce the immutable attempt and plan boundary at child join time."""
+
+    if not isinstance(result, TaskResultRecord):
+        raise HarnessValidationError(
+            "parallel worker returned invalid result",
+            code="RESULT_SCHEMA_INVALID",
+        )
+    if (
+        result.task_id != task_instance.task_id
+        or result.task_instance_id != task_instance.task_instance_id
+        or result.attempt != task_instance.attempt
+        or not result.matches_plan_identity(plan)
+    ):
+        raise HarnessValidationError(
+            "supervised worker result does not match its admitted attempt",
+            code="RESULT_IDENTITY_MISMATCH",
+            details={
+                "task_id": task_instance.task_id,
+                "task_instance_id": task_instance.task_instance_id,
+                "attempt": task_instance.attempt,
+            },
         )
     return result
 

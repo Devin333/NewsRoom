@@ -765,6 +765,24 @@ def test_fresh_coordinator_recovers_embedded_terminal_task_result() -> None:
             restored_supervisor.shutdown()
 
 
+def test_supervised_join_rejects_result_from_wrong_attempt() -> None:
+    plan = _accepted_parallel_plan(("task-1",))
+    request = _request(plan)
+    supervisor = ChildAgentSupervisor(max_children=1)
+    coordinator = ParallelAgentCoordinator(max_workers=1, child_supervisor=supervisor)
+
+    def invoke(instance):
+        result = _result(plan, instance)
+        return replace(result, task_instance_id="wrong-instance")
+
+    try:
+        with pytest.raises(HarnessValidationError, match="does not match its admitted attempt") as exc_info:
+            coordinator.dispatch(request, invoke)
+        assert exc_info.value.code == "RESULT_IDENTITY_MISMATCH"
+    finally:
+        supervisor.shutdown()
+
+
 def test_parallel_contracts_round_trip_and_validate_derived_identity() -> None:
     plan = _accepted_parallel_plan(("task-1",))
     request = _request(plan)
