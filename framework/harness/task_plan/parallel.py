@@ -869,8 +869,11 @@ class SerialTaskExecutorAdapter:
 def _child_budget_reservation(
     task_budget: Mapping[str, Any],
     aggregate_budget: Mapping[str, Any],
-) -> dict[str, int]:
-    """Encode one task charge alongside the parent plan's aggregate limits."""
+    *,
+    owner_scope: str,
+    reservation_key: str,
+) -> dict[str, Any]:
+    """Encode one versioned child charge alongside aggregate limits."""
 
     dimensions = (
         ("turns", "max_turns"),
@@ -878,15 +881,37 @@ def _child_budget_reservation(
         ("memory_ops", "max_memory_ops"),
         ("output_tokens", "max_output_tokens"),
     )
-    reservation: dict[str, int] = {}
+    reservation: dict[str, Any] = {
+        "schema_version": "agora.harness-budget-reservation/v1",
+        "ledger_version": 1,
+        "owner_scope": identifier(owner_scope, "budget_owner_scope"),
+        "reservation_key": identifier(reservation_key, "budget_reservation_key"),
+        "parent_allocation": {},
+        "attempt_allocation": {},
+    }
     for amount_key, limit_key in dimensions:
         raw_amount = task_budget.get(limit_key)
         if isinstance(raw_amount, bool) or not isinstance(raw_amount, int) or raw_amount <= 0:
             continue
         reservation[amount_key] = raw_amount
+        reservation["attempt_allocation"][amount_key] = raw_amount
         raw_limit = aggregate_budget.get(limit_key)
         if isinstance(raw_limit, int) and not isinstance(raw_limit, bool) and raw_limit > 0:
             reservation[f"remaining_{amount_key}"] = raw_limit
+            reservation["parent_allocation"][amount_key] = raw_limit
+    reservation["reservation_checksum"] = canonical_payload_checksum(
+        {
+            key: reservation[key]
+            for key in (
+                "schema_version",
+                "ledger_version",
+                "owner_scope",
+                "reservation_key",
+                "parent_allocation",
+                "attempt_allocation",
+            )
+        }
+    )
     return reservation
 
 
@@ -2063,6 +2088,7 @@ class ParallelAgentCoordinator:
                 "supervised task is missing concrete capability admission",
                 code="CHILD_CAPABILITY_ADMISSION_REQUIRED",
             )
+        operation_id = spawn_operation_key(wave.group_id, wave.wave_id, item.task_instance_id, item.attempt)
         return ChildAgentSpawnRequest(
             parent_graph_identity=request.parent_graph_identity,
             stage_id=request.plan.stage_id,
@@ -2074,8 +2100,10 @@ class ParallelAgentCoordinator:
             budget=_child_budget_reservation(
                 item.budget_snapshot.to_dict(),
                 request.plan.limits.aggregate_task_budget.to_dict(),
+                owner_scope=f"{request.plan.run_id}:{request.plan.stage_id}:{wave.group_id}",
+                reservation_key=operation_id,
             ),
-            operation_id=spawn_operation_key(wave.group_id, wave.wave_id, item.task_instance_id, item.attempt),
+            operation_id=operation_id,
             child_id=f"parallel-{item.task_instance_id}",
             lease_seconds=min(request.max_group_runtime_seconds, 3600.0),
         )

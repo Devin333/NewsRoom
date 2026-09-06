@@ -854,6 +854,24 @@ def test_parallel_contracts_round_trip_multi_pool_policy_evidence() -> None:
     assert restored.reservations[0].capacity_policy_checksums["cpu"] == pool.policy_checksum
 
 
+def test_supervised_spawn_budget_carries_versioned_reservation_identity() -> None:
+    plan = _accepted_parallel_plan(("task-1",))
+    request = _request(plan)
+    wave = DispatchWave(
+        "group-1", 1, ("task-1",), 1,
+        (TaskReservation("task-1", "reservation-key", {"turns": 1}),),
+        DispatchWaveState.ADMITTED,
+    )
+    item = request.task_instances[0]
+    spawn = ParallelAgentCoordinator._spawn_request(request, wave, item)
+    assert spawn.budget["schema_version"] == "agora.harness-budget-reservation/v1"
+    assert spawn.budget["ledger_version"] == 1
+    assert spawn.budget["reservation_key"] == spawn.operation_id
+    assert spawn.budget["reservation_checksum"].startswith("sha256:")
+    assert spawn.budget["attempt_allocation"]["turns"] == 1
+    assert spawn.budget["parent_allocation"]["turns"] == plan.limits.aggregate_task_budget.max_turns
+
+
 @pytest.mark.parametrize(
     "factory,field,mutator,code",
     [
