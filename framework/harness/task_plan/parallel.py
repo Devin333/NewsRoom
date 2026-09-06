@@ -126,7 +126,25 @@ class TaskReservation:
                 raise HarnessValidationError("reservation budget must be non-negative", code="PLAN_SCHEMA_INVALID")
             normalized[str(key)] = value
         object.__setattr__(self, "budget", frozen_mapping(normalized, "reservation.budget"))
-        object.__setattr__(self, "capacity_allocations", frozen_mapping(dict(self.capacity_allocations), "reservation.capacity_allocations"))
+        if not isinstance(self.capacity_allocations, Mapping):
+            raise HarnessValidationError(
+                "reservation capacity allocations must be an object",
+                code="CAPACITY_RESERVATION_INVALID",
+            )
+        capacity_allocations: dict[str, int] = {}
+        for pool_id, quantity in self.capacity_allocations.items():
+            normalized_pool_id = identifier(str(pool_id), "pool_id")
+            if isinstance(quantity, bool) or not isinstance(quantity, int) or quantity < 1:
+                raise HarnessValidationError(
+                    "reservation capacity allocation must be positive",
+                    code="CAPACITY_RESERVATION_INVALID",
+                )
+            capacity_allocations[normalized_pool_id] = quantity
+        object.__setattr__(
+            self,
+            "capacity_allocations",
+            frozen_mapping(capacity_allocations, "reservation.capacity_allocations"),
+        )
         object.__setattr__(self, "state", ReservationState(self.state))
         if self.schema_version != TASK_RESERVATION_SCHEMA:
             raise HarnessValidationError("unsupported reservation schema", code="PLAN_SCHEMA_INVALID")

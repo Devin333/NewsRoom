@@ -896,3 +896,10 @@ def test_parallel_contracts_reject_illegal_state_transitions_and_missing_wave_ou
     with pytest.raises(HarnessValidationError) as exc_info:
         DispatchWave.from_dict(terminal_payload)
     assert exc_info.value.code == "TASK_WAVE_TERMINAL_OUTCOME_REQUIRED"
+
+
+@pytest.mark.parametrize("allocations", [{"cpu": 0}, {"cpu": -1}, {"cpu": True}, {"cpu": "1"}])
+def test_task_reservation_rejects_invalid_capacity_allocations(allocations) -> None:
+    with pytest.raises(HarnessValidationError, match="capacity allocation") as exc_info:
+        TaskReservation("task-1", "reservation-key", {"turns": 1}, capacity_allocations=allocations)
+    assert exc_info.value.code == "CAPACITY_RESERVATION_INVALID"
